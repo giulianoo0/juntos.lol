@@ -113,16 +113,17 @@ func getRoom(store *room.Store) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"id":             r.ID,
-			"fileName":       r.FileName,
-			"status":         r.Status,
-			"errorMessage":   r.ErrorMessage,
-			"controllerId":   r.ControllerID,
-			"audioTracks":    r.AudioTracks,
-			"subtitleTracks": r.SubtitleTracks,
-			"memberCount":    len(members),
-			"createdAt":      r.CreatedAt,
-			"expiresAt":      r.ExpiresAt,
+			"id":                r.ID,
+			"fileName":          r.FileName,
+			"status":            r.Status,
+			"errorMessage":      r.ErrorMessage,
+			"controllerId":      r.ControllerID,
+			"audioTracks":       r.AudioTracks,
+			"subtitleTracks":    r.SubtitleTracks,
+			"bitmapSubsSkipped": r.BitmapSubsSkipped,
+			"memberCount":       len(members),
+			"createdAt":         r.CreatedAt,
+			"expiresAt":         r.ExpiresAt,
 		})
 	}
 }

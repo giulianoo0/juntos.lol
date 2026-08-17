@@ -3,6 +3,8 @@ package httpapi
 
 import (
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -24,5 +26,21 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub) *gin.Engi
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
 	}
+	registerFrontend(r, cfg.WebDir)
 	return r
+}
+
+func registerFrontend(r *gin.Engine, webDir string) {
+	if webDir == "" {
+		return
+	}
+	r.Static("/assets", filepath.Join(webDir, "assets"))
+	r.NoRoute(func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet || strings.HasPrefix(c.Request.URL.Path, "/api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/media/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.File(filepath.Join(webDir, "index.html"))
+	})
 }

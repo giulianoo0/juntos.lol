@@ -9,6 +9,7 @@ import (
 type Config struct {
 	Port             int
 	DataDir          string
+	WebDir           string
 	RedisURL         string
 	MaxUploadMB      int64
 	RoomTTLHours     int
@@ -24,6 +25,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Port:             8080,
 		DataDir:          "/data",
+		WebDir:           "web/dist",
 		RedisURL:         "redis://localhost:6379",
 		MaxUploadMB:      10240,
 		RoomTTLHours:     5,
@@ -41,6 +43,9 @@ func Load() (Config, error) {
 	}
 	if v := os.Getenv("DATA_DIR"); v != "" {
 		cfg.DataDir = v
+	}
+	if v := os.Getenv("WEB_DIR"); v != "" {
+		cfg.WebDir = v
 	}
 	if v := os.Getenv("REDIS_URL"); v != "" {
 		cfg.RedisURL = v
