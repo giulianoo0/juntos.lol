@@ -88,6 +88,41 @@ func TestSetStatusRejectsExpiredRoom(t *testing.T) {
 	require.Equal(t, "uploading", mr.HGet("room:expired", "status"))
 }
 
+func TestLegacyNanosecondExpiryFallback(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(context.Context, *Store) error
+	}{
+		{
+			name: "room mutation",
+			mutate: func(ctx context.Context, store *Store) error {
+				return store.SetStatus(ctx, "legacy", "processing")
+			},
+		},
+		{
+			name: "upload reservation",
+			mutate: func(ctx context.Context, store *Store) error {
+				return store.ReserveUpload(ctx, "legacy", "upload-1", time.Now())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			store := NewStore(rdb, time.Hour)
+			now := time.Now()
+			require.NoError(t, store.Create(t.Context(), &Room{
+				ID: "legacy", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+			}))
+			require.NoError(t, rdb.HDel(t.Context(), roomKey("legacy"), "expires_at_unix_ms").Err())
+
+			require.NoError(t, tt.mutate(t.Context(), store))
+		})
+	}
+}
+
 func TestRoomCreationPersistsLegacyExpiryIndex(t *testing.T) {
 	tests := []struct {
 		name   string

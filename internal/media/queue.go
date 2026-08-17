@@ -121,12 +121,16 @@ func (q *Queue) Submit(roomID string) {
 	default:
 		delete(q.queued, roomID)
 		q.mu.Unlock()
-		rejectCtx, cancel := context.WithTimeout(ctx, queueRejectTimeout)
-		defer cancel()
-		slog.WarnContext(rejectCtx, "media queue full", "room_id", roomID)
-		if err := q.store.SetError(rejectCtx, roomID, publicQueueFullError); err != nil {
-			slog.ErrorContext(rejectCtx, "persist media queue rejection failed", "room_id", roomID, "error", err)
-		}
+		q.rejectFull(ctx, roomID)
+	}
+}
+
+func (q *Queue) rejectFull(ctx context.Context, roomID string) {
+	rejectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), queueRejectTimeout)
+	defer cancel()
+	slog.WarnContext(rejectCtx, "media queue full", "room_id", roomID)
+	if err := q.store.SetError(rejectCtx, roomID, publicQueueFullError); err != nil {
+		slog.ErrorContext(rejectCtx, "persist media queue rejection failed", "room_id", roomID, "error", err)
 	}
 }
 

@@ -135,6 +135,24 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	require.Contains(t, logs.String(), "media queue full")
 }
 
+func TestQueueFullRejectionPersistsAfterCancellation(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "overflow")
+	q := newQueue(1, store, dataDir, nil, pipelineFunc(func(context.Context, string, string, string) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		return nil, nil, 0, nil
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	q.rejectFull(ctx, "overflow")
+
+	got, err := store.Get(t.Context(), "overflow")
+	require.NoError(t, err)
+	require.Equal(t, "error", got.Status)
+	require.Equal(t, "media queue is full", got.ErrorMessage)
+}
+
 func TestQueueDeduplicatesActiveRoom(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "duplicate")
 	started := make(chan struct{}, 1)
