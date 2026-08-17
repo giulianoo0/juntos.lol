@@ -54,7 +54,7 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 	}
 
 	key := roomKey(r.ID)
-	_, err = s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.HSet(ctx, key,
 			"file_name", r.FileName,
 			"status", r.Status,
@@ -68,6 +68,7 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 		)
 		p.Expire(ctx, key, s.ttl)
 		p.ZAdd(ctx, byExpiryKey, redis.Z{Score: float64(r.ExpiresAt.Unix()), Member: r.ID})
+		p.Persist(ctx, byExpiryKey)
 		return nil
 	})
 	return err
@@ -106,6 +107,7 @@ func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
 		p.HSet(ctx, membersKey(r.ID), m.ID, member)
 		p.Expire(ctx, membersKey(r.ID), s.ttl)
 		p.ZAdd(ctx, byExpiryKey, redis.Z{Score: float64(r.ExpiresAt.Unix()), Member: r.ID})
+		p.Persist(ctx, byExpiryKey)
 		return nil
 	})
 	if err != nil {

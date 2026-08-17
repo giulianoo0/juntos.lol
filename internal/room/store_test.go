@@ -26,6 +26,46 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	require.Greater(t, ttl, 4*time.Hour)
 }
 
+func TestRoomCreationPersistsLegacyExpiryIndex(t *testing.T) {
+	tests := []struct {
+		name   string
+		create func(context.Context, *Store, *Room) error
+	}{
+		{
+			name: "room only",
+			create: func(ctx context.Context, s *Store, r *Room) error {
+				return s.Create(ctx, r)
+			},
+		},
+		{
+			name: "room with controller",
+			create: func(ctx context.Context, s *Store, r *Room) error {
+				return s.CreateWithMember(ctx, r, Member{ID: "m1", Nickname: "giuli", JoinedAt: r.CreatedAt})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			s := NewStore(rdb, 5*time.Hour)
+			ctx := context.Background()
+			require.NoError(t, rdb.ZAdd(ctx, byExpiryKey, redis.Z{Score: 0, Member: "legacy"}).Err())
+			require.NoError(t, rdb.Expire(ctx, byExpiryKey, time.Hour).Err())
+
+			now := time.Now()
+			r := &Room{ID: "abc", FileName: "movie.mkv", Status: "uploading",
+				ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(5 * time.Hour)}
+			require.NoError(t, tt.create(ctx, s, r))
+
+			ttl, err := rdb.TTL(ctx, byExpiryKey).Result()
+			require.NoError(t, err)
+			require.Equal(t, time.Duration(-1), ttl)
+		})
+	}
+}
+
 func TestChatCappedAt200(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
