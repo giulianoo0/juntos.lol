@@ -19,6 +19,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub) *gin.Engi
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
+	RegisterScreenshareRoute(r.Group("/api"), store, cfg)
 	RegisterMediaRoutes(r, cfg, store)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
