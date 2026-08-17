@@ -12,6 +12,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
+	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/room"
 	"github.com/giulianoo0/ss/internal/upload"
 )
@@ -31,11 +32,12 @@ func main() {
 
 	ctx := context.Background()
 	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute)
+	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, nil)
+	queue.Start(ctx)
 
 	r := httpapi.NewServer(cfg, store)
 
-	// onComplete stays a no-op until the media queue is wired in (Task 8).
-	tusHandler, err := upload.NewTusHandler(cfg, store, func(roomID string) {})
+	tusHandler, err := upload.NewTusHandler(cfg, store, queue.Submit)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -116,6 +116,7 @@ func getRoom(store *room.Store) gin.HandlerFunc {
 			"id":             r.ID,
 			"fileName":       r.FileName,
 			"status":         r.Status,
+			"errorMessage":   r.ErrorMessage,
 			"controllerId":   r.ControllerID,
 			"audioTracks":    r.AudioTracks,
 			"subtitleTracks": r.SubtitleTracks,

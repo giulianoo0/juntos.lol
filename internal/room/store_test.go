@@ -26,6 +26,23 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	require.Greater(t, ttl, 4*time.Hour)
 }
 
+func TestSetErrorPersistsStatusAndMessage(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "broken", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+
+	require.NoError(t, s.SetError(t.Context(), "broken", "probe failed"))
+
+	got, err := s.Get(t.Context(), "broken")
+	require.NoError(t, err)
+	require.Equal(t, "error", got.Status)
+	require.Equal(t, "probe failed", got.ErrorMessage)
+}
+
 func TestRoomCreationPersistsLegacyExpiryIndex(t *testing.T) {
 	tests := []struct {
 		name   string

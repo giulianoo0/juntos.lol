@@ -37,6 +37,7 @@ type Room struct {
 	ID                string
 	FileName          string
 	Status            string
+	ErrorMessage      string
 	ControllerID      string
 	AudioTracks       []TrackInfo
 	SubtitleTracks    []TrackInfo

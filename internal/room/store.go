@@ -182,6 +182,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r := &Room{ID: id}
 	r.FileName = fields["file_name"]
 	r.Status = fields["status"]
+	r.ErrorMessage = fields["error_message"]
 	r.ControllerID = fields["controller_id"]
 	if v := fields["audio_tracks"]; v != "" {
 		if err := json.Unmarshal([]byte(v), &r.AudioTracks); err != nil {
@@ -222,10 +223,27 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 	key := roomKey(id)
 	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
 		p.HSet(ctx, key, "status", status)
+		if status != "error" {
+			p.HDel(ctx, key, "error_message")
+		}
 		p.Expire(ctx, key, s.ttl)
 		return nil
 	})
 	return err
+}
+
+// SetError marks a room as failed and stores a user-visible processing error.
+func (s *Store) SetError(ctx context.Context, id, message string) error {
+	key := roomKey(id)
+	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, key, "status", "error", "error_message", message)
+		p.Expire(ctx, key, s.ttl)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("set room error: %w", err)
+	}
+	return nil
 }
 
 // SetTracks stores the probed track lists and the bitmap-subtitle skip count.
