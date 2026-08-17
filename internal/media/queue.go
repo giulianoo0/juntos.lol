@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	publicPipelineError  = "media processing failed"
-	publicQueueFullError = "media queue is full"
-	queueRejectTimeout   = 2 * time.Second
+	publicPipelineError    = "media processing failed"
+	publicPipelineCanceled = "media processing canceled"
+	publicQueueFullError   = "media queue is full"
+	queueRejectTimeout     = 2 * time.Second
 )
 
 // Pipeline processes one uploaded source into browser-ready media tracks.
@@ -38,6 +39,10 @@ type Queue struct {
 	start    sync.Once
 	mu       sync.Mutex
 	ctx      context.Context
+	started  bool
+	stopping bool
+	queued   map[string]struct{}
+	active   map[string]struct{}
 }
 
 // NewQueue creates a queue backed by the real ffmpeg pipeline.
@@ -57,6 +62,8 @@ func newQueue(workers int, store *room.Store, dataDir string, onReady func(strin
 		pipeline: pipeline,
 		jobs:     make(chan string, workers),
 		done:     make(chan struct{}),
+		queued:   make(map[string]struct{}),
+		active:   make(map[string]struct{}),
 	}
 }
 
@@ -65,6 +72,7 @@ func (q *Queue) Start(ctx context.Context) {
 	q.start.Do(func() {
 		q.mu.Lock()
 		q.ctx = ctx
+		q.started = true
 		q.mu.Unlock()
 		var workers sync.WaitGroup
 		for range q.workers {
@@ -72,6 +80,9 @@ func (q *Queue) Start(ctx context.Context) {
 		}
 		go func() {
 			workers.Wait()
+			for _, roomID := range q.stopAndDrain() {
+				q.markCanceled(ctx, roomID)
+			}
 			close(q.done)
 		}()
 	})
@@ -81,13 +92,35 @@ func (q *Queue) Start(ctx context.Context) {
 func (q *Queue) Submit(roomID string) {
 	q.mu.Lock()
 	ctx := q.ctx
-	q.mu.Unlock()
-	if ctx == nil || ctx.Err() != nil {
+	if !q.started {
+		q.mu.Unlock()
+		slog.Warn("media queue submission before start", "room_id", roomID)
 		return
 	}
+	if q.stopping || ctx == nil || ctx.Err() != nil {
+		q.mu.Unlock()
+		return
+	}
+	if _, exists := q.queued[roomID]; exists {
+		q.mu.Unlock()
+		return
+	}
+	if _, exists := q.active[roomID]; exists {
+		q.mu.Unlock()
+		return
+	}
+	q.queued[roomID] = struct{}{}
 	select {
+	case <-ctx.Done():
+		delete(q.queued, roomID)
+		q.mu.Unlock()
+		return
 	case q.jobs <- roomID:
+		q.mu.Unlock()
+		return
 	default:
+		delete(q.queued, roomID)
+		q.mu.Unlock()
 		rejectCtx, cancel := context.WithTimeout(ctx, queueRejectTimeout)
 		defer cancel()
 		slog.WarnContext(rejectCtx, "media queue full", "room_id", roomID)
@@ -103,43 +136,95 @@ func (q *Queue) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case roomID := <-q.jobs:
+			q.beginJob(roomID)
 			if ctx.Err() != nil {
+				q.markCanceled(ctx, roomID)
+				q.finishJob(roomID)
 				return
 			}
-			q.process(ctx, roomID)
+			completed := q.process(ctx, roomID)
+			if !completed && ctx.Err() != nil {
+				q.markCanceled(ctx, roomID)
+			}
+			q.finishJob(roomID)
 		}
 	}
 }
 
-func (q *Queue) process(ctx context.Context, roomID string) {
+func (q *Queue) process(ctx context.Context, roomID string) bool {
 	if err := q.store.SetStatus(ctx, roomID, "processing"); err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("set processing status: %w", err))
 		}
-		return
+		return false
 	}
 
 	roomDir, srcPath, err := sourcePath(q.dataDir, roomID)
 	if err != nil {
-		q.fail(ctx, roomID, err)
-		return
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, err)
+		}
+		return false
 	}
 	audio, subs, bitmapSkipped, err := q.pipeline.Run(ctx, roomID, srcPath, roomDir)
 	if err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, err)
 		}
-		return
+		return false
 	}
 	if err := q.store.SetTracks(ctx, roomID, audio, subs, bitmapSkipped); err != nil {
-		q.fail(ctx, roomID, fmt.Errorf("store media tracks: %w", err))
-		return
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("store media tracks: %w", err))
+		}
+		return false
 	}
 	if err := q.store.SetStatus(ctx, roomID, "ready"); err != nil {
-		q.fail(ctx, roomID, fmt.Errorf("set ready status: %w", err))
-		return
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("set ready status: %w", err))
+		}
+		return false
 	}
 	q.notifyReady(roomID)
+	return true
+}
+
+func (q *Queue) beginJob(roomID string) {
+	q.mu.Lock()
+	delete(q.queued, roomID)
+	q.active[roomID] = struct{}{}
+	q.mu.Unlock()
+}
+
+func (q *Queue) finishJob(roomID string) {
+	q.mu.Lock()
+	delete(q.active, roomID)
+	q.mu.Unlock()
+}
+
+func (q *Queue) stopAndDrain() []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.stopping = true
+
+	var roomIDs []string
+	for {
+		select {
+		case roomID := <-q.jobs:
+			delete(q.queued, roomID)
+			roomIDs = append(roomIDs, roomID)
+		default:
+			return roomIDs
+		}
+	}
+}
+
+func (q *Queue) markCanceled(ctx context.Context, roomID string) {
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), queueRejectTimeout)
+	defer cancel()
+	if err := q.store.SetError(persistCtx, roomID, publicPipelineCanceled); err != nil {
+		slog.ErrorContext(persistCtx, "persist media cancellation failed", "room_id", roomID, "error", err)
+	}
 }
 
 func (q *Queue) fail(ctx context.Context, roomID string, err error) {
@@ -166,7 +251,8 @@ func (q *Queue) notifyReady(roomID string) {
 }
 
 func sourcePath(dataDir, roomID string) (roomDir, srcPath string, err error) {
-	if roomID == "." || !filepath.IsLocal(roomID) || filepath.Base(roomID) != roomID {
+	if roomID == "." || strings.ContainsAny(roomID, "*?[]") ||
+		!filepath.IsLocal(roomID) || filepath.Base(roomID) != roomID {
 		return "", "", fmt.Errorf("invalid room id")
 	}
 	roomDir = filepath.Join(dataDir, "rooms", roomID)

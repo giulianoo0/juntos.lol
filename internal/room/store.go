@@ -127,7 +127,9 @@ if status ~= 'uploading' then return 2 end
 local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
 if not expires then
   local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
-  if nanos then expires = math.floor(tonumber(nanos) / 1000000) end
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
 end
 if not expires or tonumber(expires) <= tonumber(ARGV[2]) then return 3 end
 if redis.call('HGET', KEYS[1], 'upload_id') then return 4 end
@@ -266,7 +268,9 @@ func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fiel
 local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
 if not expires then
   local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
-  if nanos then expires = math.floor(tonumber(nanos) / 1000000) end
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
 end
 if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return 0 end
 for i = 3, #ARGV, 2 do

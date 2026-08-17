@@ -135,6 +135,80 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	require.Contains(t, logs.String(), "media queue full")
 }
 
+func TestQueueDeduplicatesActiveRoom(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "duplicate")
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	pipe := pipelineFunc(func(context.Context, string, string, string) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		started <- struct{}{}
+		<-release
+		return nil, nil, 0, nil
+	})
+	q := newQueue(1, store, dataDir, nil, pipe)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+	q.Submit("duplicate")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+
+	for range 10 {
+		q.Submit("duplicate")
+	}
+	got, err := store.Get(t.Context(), "duplicate")
+	require.NoError(t, err)
+	require.Equal(t, "processing", got.Status)
+	require.Empty(t, got.ErrorMessage)
+	require.Empty(t, q.jobs)
+
+	close(release)
+	require.Eventually(t, func() bool {
+		got, err := store.Get(t.Context(), "duplicate")
+		return err == nil && got.Status == "ready"
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestQueueCancellationMarksActiveAndBufferedJobs(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "active")
+	addQueueTestRoom(t, store, dataDir, "buffered")
+	started := make(chan struct{}, 1)
+	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return nil, nil, 0, ctx.Err()
+	})
+	q := newQueue(1, store, dataDir, nil, pipe)
+	ctx, cancel := context.WithCancel(t.Context())
+	q.Start(ctx)
+	q.Submit("active")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	q.Submit("buffered")
+	cancel()
+	select {
+	case <-q.done:
+	case <-time.After(time.Second):
+		t.Fatal("queue did not stop")
+	}
+
+	for _, roomID := range []string{"active", "buffered"} {
+		got, err := store.Get(t.Context(), roomID)
+		require.NoError(t, err)
+		require.Equal(t, "error", got.Status)
+		require.Equal(t, "media processing canceled", got.ErrorMessage)
+	}
+}
+
 func TestSourcePathRejectsDotAndSymlink(t *testing.T) {
 	dataDir := t.TempDir()
 	_, _, err := sourcePath(dataDir, ".")
@@ -147,6 +221,12 @@ func TestSourcePathRejectsDotAndSymlink(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(roomDir, "original.mkv")))
 
 	_, _, err = sourcePath(dataDir, "safe")
+	require.Error(t, err)
+
+	metacharDir := filepath.Join(dataDir, "rooms", "room*")
+	require.NoError(t, os.MkdirAll(metacharDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(metacharDir, "original.mkv"), []byte("media"), 0o644))
+	_, _, err = sourcePath(dataDir, "room*")
 	require.Error(t, err)
 }
 
