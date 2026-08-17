@@ -18,5 +18,6 @@ func NewServer(cfg config.Config, store *room.Store) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
+	RegisterMediaRoutes(r, cfg, store)
 	return r
 }
