@@ -16,6 +16,10 @@ import (
 
 // ExtractSubtitles converts every text subtitle track to an individual WebVTT file.
 func ExtractSubtitles(ctx context.Context, in, outDir string, p *ProbeResult) ([]string, error) {
+	return extractSubtitles(ctx, "ffmpeg", in, outDir, p)
+}
+
+func extractSubtitles(ctx context.Context, binary, in, outDir string, p *ProbeResult) ([]string, error) {
 	if len(p.Subtitles) == 0 {
 		return nil, nil
 	}
@@ -26,20 +30,33 @@ func ExtractSubtitles(ctx context.Context, in, outDir string, p *ProbeResult) ([
 	paths := make([]string, 0, len(p.Subtitles))
 	for position, track := range p.Subtitles {
 		args, output := buildSubtitleCommand(in, outDir, position, track)
-		cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+		cmd := exec.CommandContext(ctx, binary, args...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
+			removeErr := removePartialSubtitle(output)
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return paths, fmt.Errorf("extract subtitles: %w", ctxErr)
+				cancelErr := fmt.Errorf("extract subtitles: %w", ctxErr)
+				if removeErr != nil {
+					return paths, errors.Join(cancelErr, removeErr)
+				}
+				return paths, cancelErr
+			}
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				startErr := fmt.Errorf("start ffmpeg: %w", err)
+				if removeErr != nil {
+					return paths, errors.Join(startErr, removeErr)
+				}
+				return paths, startErr
 			}
 			slog.WarnContext(ctx, "subtitle extraction failed",
 				"track_index", track.Index,
 				"error", err,
 				"stderr", stderrTail(stderr.Bytes(), ffmpegErrorTailBytes),
 			)
-			if removeErr := os.Remove(output); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				slog.WarnContext(ctx, "remove partial subtitle failed", "path", output, "error", removeErr)
+			if removeErr != nil {
+				slog.WarnContext(ctx, "remove partial subtitle failed", "error", removeErr)
 			}
 			continue
 		}
@@ -47,6 +64,13 @@ func ExtractSubtitles(ctx context.Context, in, outDir string, p *ProbeResult) ([
 	}
 
 	return paths, nil
+}
+
+func removePartialSubtitle(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove partial subtitle %q: %w", path, err)
+	}
+	return nil
 }
 
 func buildSubtitleCommand(in, outDir string, position int, track room.TrackInfo) ([]string, string) {

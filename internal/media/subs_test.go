@@ -1,6 +1,8 @@
 package media
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -43,4 +45,30 @@ func TestBuildSubtitleCommand(t *testing.T) {
 			}, args)
 		})
 	}
+}
+
+func TestExtractSubtitlesReturnsProcessStartError(t *testing.T) {
+	p := &ProbeResult{Subtitles: []room.TrackInfo{{Index: 0, Language: "eng"}}}
+
+	_, err := extractSubtitles(t.Context(), filepath.Join(t.TempDir(), "missing-ffmpeg"), "in.mkv", t.TempDir(), p)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "start ffmpeg")
+}
+
+func TestExtractSubtitlesCancellationRemovesPartialOutput(t *testing.T) {
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	outDir := t.TempDir()
+	p := &ProbeResult{Subtitles: []room.TrackInfo{{Index: 0, Language: "eng"}}}
+	_, output := buildSubtitleCommand("in.mkv", outDir, 0, p.Subtitles[0])
+	require.NoError(t, os.WriteFile(output, []byte("partial"), 0o644))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err = extractSubtitles(ctx, binary, "in.mkv", outDir, p)
+
+	require.ErrorIs(t, err, context.Canceled)
+	_, statErr := os.Stat(output)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
