@@ -92,6 +92,12 @@ func TestQueuePersistsPipelineError(t *testing.T) {
 
 func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "busy")
+	originalLogger := slog.Default()
+	var logs bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(originalLogger) })
+	addQueueTestRoom(t, store, dataDir, "queued")
+	addQueueTestRoom(t, store, dataDir, "overflow")
 	started := make(chan struct{}, 1)
 	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
@@ -111,11 +117,10 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 		t.Fatal("worker did not start")
 	}
 
+	q.Submit("queued")
 	submitted := make(chan struct{})
 	go func() {
-		for range 10 {
-			q.Submit("busy")
-		}
+		q.Submit("overflow")
 		close(submitted)
 	}()
 	select {
@@ -123,6 +128,26 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Submit blocked behind a busy worker")
 	}
+	require.Eventually(t, func() bool {
+		got, err := store.Get(t.Context(), "overflow")
+		return err == nil && got.Status == "error" && got.ErrorMessage == "media queue is full"
+	}, time.Second, 10*time.Millisecond)
+	require.Contains(t, logs.String(), "media queue full")
+}
+
+func TestSourcePathRejectsDotAndSymlink(t *testing.T) {
+	dataDir := t.TempDir()
+	_, _, err := sourcePath(dataDir, ".")
+	require.Error(t, err)
+
+	roomDir := filepath.Join(dataDir, "rooms", "safe")
+	require.NoError(t, os.MkdirAll(roomDir, 0o755))
+	outside := filepath.Join(dataDir, "outside.mkv")
+	require.NoError(t, os.WriteFile(outside, []byte("media"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(roomDir, "original.mkv")))
+
+	_, _, err = sourcePath(dataDir, "safe")
+	require.Error(t, err)
 }
 
 func TestQueueRejectsSubmissionsAfterCancellation(t *testing.T) {
@@ -158,13 +183,18 @@ func newQueueTestStore(t *testing.T, roomID string) (*room.Store, string) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	dataDir := t.TempDir()
+	addQueueTestRoom(t, store, dataDir, roomID)
+	return store, dataDir
+}
+
+func addQueueTestRoom(t *testing.T, store *room.Store, dataDir, roomID string) {
+	t.Helper()
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: roomID, FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
-	dataDir := t.TempDir()
 	roomDir := filepath.Join(dataDir, "rooms", roomID)
 	require.NoError(t, os.MkdirAll(roomDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(roomDir, "original.mkv"), []byte("media"), 0o644))
-	return store, dataDir
 }

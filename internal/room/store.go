@@ -64,6 +64,7 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 			"bitmap_subs_skipped", r.BitmapSubsSkipped,
 			"created_at", r.CreatedAt.Format(time.RFC3339Nano),
 			"expires_at", r.ExpiresAt.Format(time.RFC3339Nano),
+			"expires_at_unix_ms", r.ExpiresAt.UnixMilli(),
 			"expires_at_unix_nano", r.ExpiresAt.UnixNano(),
 		)
 		p.Expire(ctx, key, s.ttl)
@@ -101,6 +102,7 @@ func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
 			"bitmap_subs_skipped", r.BitmapSubsSkipped,
 			"created_at", r.CreatedAt.Format(time.RFC3339Nano),
 			"expires_at", r.ExpiresAt.Format(time.RFC3339Nano),
+			"expires_at_unix_ms", r.ExpiresAt.UnixMilli(),
 			"expires_at_unix_nano", r.ExpiresAt.UnixNano(),
 		)
 		p.Expire(ctx, key, s.ttl)
@@ -122,13 +124,17 @@ func (s *Store) ReserveUpload(ctx context.Context, roomID, uploadID string, now 
 local status = redis.call('HGET', KEYS[1], 'status')
 if not status then return 0 end
 if status ~= 'uploading' then return 2 end
-local expires = tonumber(redis.call('HGET', KEYS[1], 'expires_at_unix_nano'))
-if not expires or expires <= tonumber(ARGV[2]) then return 3 end
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos then expires = math.floor(tonumber(nanos) / 1000000) end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[2]) then return 3 end
 if redis.call('HGET', KEYS[1], 'upload_id') then return 4 end
 redis.call('HSET', KEYS[1], 'upload_id', ARGV[1])
 redis.call('SET', KEYS[2], ARGV[1])
 return 1
-`, []string{roomKey(roomID), uploadKey(roomID)}, uploadID, strconv.FormatInt(now.UnixNano(), 10)).Int64()
+`, []string{roomKey(roomID), uploadKey(roomID)}, uploadID, strconv.FormatInt(now.UnixMilli(), 10)).Int64()
 	if err != nil {
 		return fmt.Errorf("reserve upload: %w", err)
 	}
@@ -248,7 +254,7 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 
 func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fields ...any) error {
 	args := make([]any, 0, len(fields)+2)
-	args = append(args, strconv.FormatInt(time.Now().UnixNano(), 10))
+	args = append(args, strconv.FormatInt(time.Now().UnixMilli(), 10))
 	if clearError {
 		args = append(args, "1")
 	} else {
@@ -257,13 +263,17 @@ func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fiel
 	args = append(args, fields...)
 
 	result, err := s.rdb.Eval(ctx, `
-local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos then expires = math.floor(tonumber(nanos) / 1000000) end
+end
 if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return 0 end
 for i = 3, #ARGV, 2 do
   redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
 end
 if ARGV[2] == '1' then redis.call('HDEL', KEYS[1], 'error_message') end
-redis.call('PEXPIREAT', KEYS[1], math.floor(tonumber(expires) / 1000000))
+redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
 return 1
 `, []string{roomKey(id)}, args...).Int64()
 	if err != nil {

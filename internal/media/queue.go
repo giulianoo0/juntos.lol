@@ -8,11 +8,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-const publicPipelineError = "media processing failed"
+const (
+	publicPipelineError  = "media processing failed"
+	publicQueueFullError = "media queue is full"
+	queueRejectTimeout   = 2 * time.Second
+)
 
 // Pipeline processes one uploaded source into browser-ready media tracks.
 type Pipeline interface {
@@ -29,12 +34,10 @@ type Queue struct {
 	onReady  func(roomID string)
 	pipeline Pipeline
 	jobs     chan string
-	wake     chan struct{}
 	done     chan struct{}
 	start    sync.Once
 	mu       sync.Mutex
 	ctx      context.Context
-	pending  []string
 }
 
 // NewQueue creates a queue backed by the real ffmpeg pipeline.
@@ -53,7 +56,6 @@ func newQueue(workers int, store *room.Store, dataDir string, onReady func(strin
 		onReady:  onReady,
 		pipeline: pipeline,
 		jobs:     make(chan string, workers),
-		wake:     make(chan struct{}, 1),
 		done:     make(chan struct{}),
 	}
 }
@@ -68,7 +70,6 @@ func (q *Queue) Start(ctx context.Context) {
 		for range q.workers {
 			workers.Go(func() { q.worker(ctx) })
 		}
-		workers.Go(func() { q.dispatch(ctx) })
 		go func() {
 			workers.Wait()
 			close(q.done)
@@ -79,51 +80,21 @@ func (q *Queue) Start(ctx context.Context) {
 // Submit enqueues roomID, or returns without blocking after the queue stops.
 func (q *Queue) Submit(roomID string) {
 	q.mu.Lock()
-	if q.ctx != nil && q.ctx.Err() != nil {
-		q.mu.Unlock()
+	ctx := q.ctx
+	q.mu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
 		return
 	}
-	q.pending = append(q.pending, roomID)
-	q.mu.Unlock()
 	select {
-	case q.wake <- struct{}{}:
+	case q.jobs <- roomID:
 	default:
-	}
-}
-
-func (q *Queue) dispatch(ctx context.Context) {
-	defer func() {
-		q.mu.Lock()
-		q.pending = nil
-		q.mu.Unlock()
-	}()
-	for {
-		if roomID, ok := q.nextPending(); ok {
-			select {
-			case q.jobs <- roomID:
-			case <-ctx.Done():
-				return
-			}
-			continue
-		}
-		select {
-		case <-q.wake:
-		case <-ctx.Done():
-			return
+		rejectCtx, cancel := context.WithTimeout(ctx, queueRejectTimeout)
+		defer cancel()
+		slog.WarnContext(rejectCtx, "media queue full", "room_id", roomID)
+		if err := q.store.SetError(rejectCtx, roomID, publicQueueFullError); err != nil {
+			slog.ErrorContext(rejectCtx, "persist media queue rejection failed", "room_id", roomID, "error", err)
 		}
 	}
-}
-
-func (q *Queue) nextPending() (string, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.pending) == 0 {
-		return "", false
-	}
-	roomID := q.pending[0]
-	q.pending[0] = ""
-	q.pending = q.pending[1:]
-	return roomID, true
 }
 
 func (q *Queue) worker(ctx context.Context) {
@@ -195,7 +166,7 @@ func (q *Queue) notifyReady(roomID string) {
 }
 
 func sourcePath(dataDir, roomID string) (roomDir, srcPath string, err error) {
-	if !filepath.IsLocal(roomID) || filepath.Base(roomID) != roomID {
+	if roomID == "." || !filepath.IsLocal(roomID) || filepath.Base(roomID) != roomID {
 		return "", "", fmt.Errorf("invalid room id")
 	}
 	roomDir = filepath.Join(dataDir, "rooms", roomID)
@@ -208,13 +179,18 @@ func sourcePath(dataDir, roomID string) (roomDir, srcPath string, err error) {
 		if name != "original" && !strings.HasPrefix(name, "original.") {
 			continue
 		}
-		if entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
+		path := filepath.Join(roomDir, name)
+		info, err := os.Lstat(path)
+		if err != nil {
+			return "", "", fmt.Errorf("inspect original media: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return "", "", fmt.Errorf("original media is not a regular file")
 		}
 		if srcPath != "" {
 			return "", "", fmt.Errorf("multiple original media files")
 		}
-		srcPath = filepath.Join(roomDir, name)
+		srcPath = path
 	}
 	if srcPath == "" {
 		return "", "", fmt.Errorf("original media not found")
