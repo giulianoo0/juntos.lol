@@ -14,6 +14,7 @@ import (
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/room"
+	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/upload"
 )
 
@@ -32,10 +33,14 @@ func main() {
 
 	ctx := context.Background()
 	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute)
-	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, nil)
+	hub := syncapi.NewHub(store, cfg)
+	defer hub.Close()
+	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, func(roomID string) {
+		hub.NotifyStatus(roomID, "ready")
+	})
 	queue.Start(ctx)
 
-	r := httpapi.NewServer(cfg, store)
+	r := httpapi.NewServer(cfg, store, hub)
 
 	tusHandler, err := upload.NewTusHandler(cfg, store, queue.Submit)
 	if err != nil {

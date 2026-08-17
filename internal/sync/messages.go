@@ -16,6 +16,7 @@ type Inbound struct {
 // Outbound is a WebSocket message sent from the server to clients.
 type Outbound struct {
 	Type         string             `json:"type"`
+	MemberID     string             `json:"memberId,omitempty"`
 	State        *room.PlayState    `json:"state,omitempty"`
 	ControllerID string             `json:"controllerId,omitempty"`
 	Members      []room.Member      `json:"members,omitempty"`

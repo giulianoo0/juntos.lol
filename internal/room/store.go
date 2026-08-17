@@ -231,6 +231,11 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 	return s.mutateRoom(ctx, id, status != "error", "status", status)
 }
 
+// SetController updates the room member currently allowed to control playback.
+func (s *Store) SetController(ctx context.Context, id, controllerID string) error {
+	return s.mutateRoom(ctx, id, false, "controller_id", controllerID)
+}
+
 // SetError marks a room as failed and stores a user-visible processing error.
 func (s *Store) SetError(ctx context.Context, id, message string) error {
 	return s.mutateRoom(ctx, id, false, "status", "error", "error_message", message)
