@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATA_DIR: /data
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+    volumes:
+      - ss-data:/data
+    depends_on:
+      - redis
+      - livekit
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory-policy volatile-ttl
+
+  livekit:
+    image: livekit/livekit-server:latest
+    # Dev mode is on by default; override with e.g. LIVEKIT_ARGS="--config /etc/livekit.yaml"
+    command: ${LIVEKIT_ARGS:---dev}
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-60000:50000-60000/udp"
+
+volumes:
+  ss-data:

@@ -1,0 +1,92 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
+
+type Config struct {
+	Port             int
+	DataDir          string
+	RedisURL         string
+	MaxUploadMB      int64
+	RoomTTLHours     int
+	MaxParticipants  int
+	RoomIdleMinutes  int
+	FFmpegJobs       int
+	LivekitURL       string
+	LivekitAPIKey    string
+	LivekitAPISecret string
+}
+
+func Load() (Config, error) {
+	cfg := Config{
+		Port:             8080,
+		DataDir:          "/data",
+		RedisURL:         "redis://localhost:6379",
+		MaxUploadMB:      10240,
+		RoomTTLHours:     5,
+		MaxParticipants:  20,
+		RoomIdleMinutes:  10,
+		FFmpegJobs:       2,
+		LivekitURL:       "",
+		LivekitAPIKey:    "",
+		LivekitAPISecret: "",
+	}
+
+	var err error
+	if cfg.Port, err = envInt("PORT", cfg.Port); err != nil {
+		return Config{}, err
+	}
+	if v := os.Getenv("DATA_DIR"); v != "" {
+		cfg.DataDir = v
+	}
+	if v := os.Getenv("REDIS_URL"); v != "" {
+		cfg.RedisURL = v
+	}
+	if cfg.MaxUploadMB, err = envInt64("MAX_UPLOAD_MB", cfg.MaxUploadMB); err != nil {
+		return Config{}, err
+	}
+	if cfg.RoomTTLHours, err = envInt("ROOM_TTL_HOURS", cfg.RoomTTLHours); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxParticipants, err = envInt("MAX_PARTICIPANTS", cfg.MaxParticipants); err != nil {
+		return Config{}, err
+	}
+	if cfg.RoomIdleMinutes, err = envInt("ROOM_IDLE_MINUTES", cfg.RoomIdleMinutes); err != nil {
+		return Config{}, err
+	}
+	if cfg.FFmpegJobs, err = envInt("FFMPEG_JOBS", cfg.FFmpegJobs); err != nil {
+		return Config{}, err
+	}
+	cfg.LivekitURL = os.Getenv("LIVEKIT_URL")
+	cfg.LivekitAPIKey = os.Getenv("LIVEKIT_API_KEY")
+	cfg.LivekitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
+
+	return cfg, nil
+}
+
+func envInt(key string, fallback int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("config: invalid %s=%q: %w", key, v, err)
+	}
+	return n, nil
+}
+
+func envInt64(key string, fallback int64) (int64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("config: invalid %s=%q: %w", key, v, err)
+	}
+	return n, nil
+}
