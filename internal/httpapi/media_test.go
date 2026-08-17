@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/room"
@@ -87,13 +89,56 @@ func TestServeMediaRejectsTraversalAndEscapingSymlink(t *testing.T) {
 	}
 }
 
+func TestServeMediaRejectsSymlinkedMediaDirectory(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	addMediaTestRoom(t, store, "r1")
+	roomDir := filepath.Join(cfg.DataDir, "rooms", "r1")
+	require.NoError(t, os.MkdirAll(roomDir, 0o755))
+	outside := filepath.Join(cfg.DataDir, "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "master.m3u8"), []byte("secret"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(roomDir, "hls")))
+	e := gin.New()
+	RegisterMediaRoutes(e, cfg, store)
+
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/hls/master.m3u8", nil))
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.NotContains(t, w.Body.String(), "secret")
+}
+
 func TestServeMediaRequiresLiveRoom(t *testing.T) {
 	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "expired", Status: "ready", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute),
+	}))
 	e := gin.New()
-	RegisterMediaRoutes(e, cfg, newTestStore(t))
+	RegisterMediaRoutes(e, cfg, store)
+
+	for _, roomID := range []string{"missing", "expired"} {
+		t.Run(roomID, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/"+roomID+"/hls/master.m3u8", nil))
+			require.Equal(t, http.StatusNotFound, w.Code)
+		})
+	}
+}
+
+func TestServeMediaReportsStoreFailure(t *testing.T) {
+	cfg := testCfg(t)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store := room.NewStore(rdb, time.Hour)
+	require.NoError(t, rdb.Close())
+	e := gin.New()
+	RegisterMediaRoutes(e, cfg, store)
+
 	w := httptest.NewRecorder()
-	e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/missing/hls/master.m3u8", nil))
-	require.Equal(t, http.StatusNotFound, w.Code)
+	e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/hls/master.m3u8", nil))
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func addMediaTestRoom(t *testing.T, store *room.Store, id string) {

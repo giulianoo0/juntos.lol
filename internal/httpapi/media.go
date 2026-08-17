@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"errors"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,7 +32,16 @@ func serveMedia(dataDir string, store *room.Store, mediaDir string) gin.HandlerF
 		}
 
 		storedRoom, err := store.Get(c.Request.Context(), roomID)
-		if err != nil || !storedRoom.ExpiresAt.After(time.Now()) {
+		if errors.Is(err, room.ErrNotFound) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "load room for media failed", "room_id", roomID, "error", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if !storedRoom.ExpiresAt.After(time.Now()) {
 			c.Status(http.StatusNotFound)
 			return
 		}
@@ -41,7 +52,7 @@ func serveMedia(dataDir string, store *room.Store, mediaDir string) gin.HandlerF
 			return
 		}
 
-		root, err := os.OpenRoot(filepath.Join(dataDir, "rooms", roomID, mediaDir))
+		root, err := openMediaRoot(dataDir, roomID, mediaDir)
 		if err != nil {
 			c.Status(http.StatusNotFound)
 			return
@@ -65,6 +76,30 @@ func serveMedia(dataDir string, store *room.Store, mediaDir string) gin.HandlerF
 		}
 		http.ServeContent(c.Writer, c.Request, filepath.Base(name), info.ModTime(), file)
 	}
+}
+
+func openMediaRoot(dataDir, roomID, mediaDir string) (*os.Root, error) {
+	roomsRoot, err := os.OpenRoot(filepath.Join(dataDir, "rooms"))
+	if err != nil {
+		return nil, err
+	}
+	defer roomsRoot.Close()
+
+	roomInfo, err := roomsRoot.Lstat(roomID)
+	if err != nil || roomInfo.Mode()&os.ModeSymlink != 0 || !roomInfo.IsDir() {
+		return nil, fs.ErrNotExist
+	}
+	roomRoot, err := roomsRoot.OpenRoot(roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer roomRoot.Close()
+
+	mediaInfo, err := roomRoot.Lstat(mediaDir)
+	if err != nil || mediaInfo.Mode()&os.ModeSymlink != 0 || !mediaInfo.IsDir() {
+		return nil, fs.ErrNotExist
+	}
+	return roomRoot.OpenRoot(mediaDir)
 }
 
 func validMediaRoomID(roomID string) bool {
