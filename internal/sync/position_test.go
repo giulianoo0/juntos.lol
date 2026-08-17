@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,11 @@ func TestExpectedPositionPaused(t *testing.T) {
 func TestExpectedPositionClampsAtZero(t *testing.T) {
 	st := room.PlayState{Playing: true, PositionMs: 100, Rate: 1, ServerTimeMs: 2_000}
 	require.Zero(t, ExpectedPositionMs(st, 1_000))
+}
+
+func TestExpectedPositionPreservesSmallDeltaAtLargeTimestamp(t *testing.T) {
+	st := room.PlayState{Playing: true, PositionMs: 10, Rate: 1, ServerTimeMs: math.MaxInt64 - 1}
+	require.Equal(t, int64(11), ExpectedPositionMs(st, math.MaxInt64))
 }
 
 func TestNeedsResync(t *testing.T) {

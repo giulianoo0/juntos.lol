@@ -13,8 +13,8 @@ const DriftThresholdMs int64 = 450
 // ExpectedPositionMs projects the shared position to nowServerMs.
 func ExpectedPositionMs(st room.PlayState, nowServerMs int64) int64 {
 	position := float64(st.PositionMs)
-	if st.Playing {
-		position += (float64(nowServerMs) - float64(st.ServerTimeMs)) * st.Rate
+	if st.Playing && !math.IsNaN(st.Rate) && !math.IsInf(st.Rate, 0) {
+		position += elapsedMilliseconds(nowServerMs, st.ServerTimeMs) * st.Rate
 	}
 	if position <= 0 {
 		return 0
@@ -23,6 +23,13 @@ func ExpectedPositionMs(st room.PlayState, nowServerMs int64) int64 {
 		return math.MaxInt64
 	}
 	return int64(position)
+}
+
+func elapsedMilliseconds(nowMs, thenMs int64) float64 {
+	if nowMs >= thenMs {
+		return float64(uint64(nowMs) - uint64(thenMs))
+	}
+	return -float64(uint64(thenMs) - uint64(nowMs))
 }
 
 // NeedsResync reports whether local and expected positions differ too much.
