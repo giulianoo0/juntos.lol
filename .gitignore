@@ -1,0 +1,19 @@
+# Go
+/bin/
+*.test
+*.out
+
+# Node / frontend
+node_modules/
+dist/
+*.local
+
+# Dados efêmeros das salas
+/data/
+
+# Env e segredos locais
+.env
+.env.*
+
+# OS
+.DS_Store
