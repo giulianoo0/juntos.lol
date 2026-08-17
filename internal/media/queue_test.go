@@ -90,6 +90,70 @@ func TestQueuePersistsPipelineError(t *testing.T) {
 	require.Contains(t, logs.String(), "probe failed")
 }
 
+func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "busy")
+	started := make(chan struct{}, 1)
+	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		started <- struct{}{}
+		<-ctx.Done()
+		return nil, nil, 0, ctx.Err()
+	})
+	q := newQueue(1, store, dataDir, nil, pipe)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+	q.Submit("busy")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+
+	submitted := make(chan struct{})
+	go func() {
+		for range 10 {
+			q.Submit("busy")
+		}
+		close(submitted)
+	}()
+	select {
+	case <-submitted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Submit blocked behind a busy worker")
+	}
+}
+
+func TestQueueRejectsSubmissionsAfterCancellation(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "stopped")
+	called := make(chan struct{}, 1)
+	q := newQueue(1, store, dataDir, nil, pipelineFunc(func(context.Context, string, string, string) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		called <- struct{}{}
+		return nil, nil, 0, nil
+	}))
+	ctx, cancel := context.WithCancel(t.Context())
+	q.Start(ctx)
+	cancel()
+	select {
+	case <-q.done:
+	case <-time.After(time.Second):
+		t.Fatal("queue did not stop")
+	}
+
+	for range 100 {
+		q.Submit("stopped")
+	}
+	require.Empty(t, q.jobs)
+	select {
+	case <-called:
+		t.Fatal("pipeline ran after cancellation")
+	default:
+	}
+}
+
 func newQueueTestStore(t *testing.T, roomID string) (*room.Store, string) {
 	t.Helper()
 	mr := miniredis.RunT(t)

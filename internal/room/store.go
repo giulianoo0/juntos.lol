@@ -220,30 +220,12 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 
 // SetStatus updates the room status.
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
-	key := roomKey(id)
-	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, key, "status", status)
-		if status != "error" {
-			p.HDel(ctx, key, "error_message")
-		}
-		p.Expire(ctx, key, s.ttl)
-		return nil
-	})
-	return err
+	return s.mutateRoom(ctx, id, status != "error", "status", status)
 }
 
 // SetError marks a room as failed and stores a user-visible processing error.
 func (s *Store) SetError(ctx context.Context, id, message string) error {
-	key := roomKey(id)
-	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, key, "status", "error", "error_message", message)
-		p.Expire(ctx, key, s.ttl)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("set room error: %w", err)
-	}
-	return nil
+	return s.mutateRoom(ctx, id, false, "status", "error", "error_message", message)
 }
 
 // SetTracks stores the probed track lists and the bitmap-subtitle skip count.
@@ -257,17 +239,40 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 		return fmt.Errorf("marshal subtitle tracks: %w", err)
 	}
 
-	key := roomKey(id)
-	_, err = s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, key,
-			"audio_tracks", a,
-			"subtitle_tracks", b,
-			"bitmap_subs_skipped", bitmapSkipped,
-		)
-		p.Expire(ctx, key, s.ttl)
-		return nil
-	})
-	return err
+	return s.mutateRoom(ctx, id, false,
+		"audio_tracks", string(a),
+		"subtitle_tracks", string(b),
+		"bitmap_subs_skipped", bitmapSkipped,
+	)
+}
+
+func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fields ...any) error {
+	args := make([]any, 0, len(fields)+2)
+	args = append(args, strconv.FormatInt(time.Now().UnixNano(), 10))
+	if clearError {
+		args = append(args, "1")
+	} else {
+		args = append(args, "0")
+	}
+	args = append(args, fields...)
+
+	result, err := s.rdb.Eval(ctx, `
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return 0 end
+for i = 3, #ARGV, 2 do
+  redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+if ARGV[2] == '1' then redis.call('HDEL', KEYS[1], 'error_message') end
+redis.call('PEXPIREAT', KEYS[1], math.floor(tonumber(expires) / 1000000))
+return 1
+`, []string{roomKey(id)}, args...).Int64()
+	if err != nil {
+		return fmt.Errorf("mutate room: %w", err)
+	}
+	if result == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetState stores the shared playback state.

@@ -43,6 +43,51 @@ func TestSetErrorPersistsStatusAndMessage(t *testing.T) {
 	require.Equal(t, "probe failed", got.ErrorMessage)
 }
 
+func TestRoomMutationsDoNotCreateMissingRoom(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(context.Context, *Store) error
+	}{
+		{name: "status", mutate: func(ctx context.Context, s *Store) error {
+			return s.SetStatus(ctx, "missing", "processing")
+		}},
+		{name: "tracks", mutate: func(ctx context.Context, s *Store) error {
+			return s.SetTracks(ctx, "missing", []TrackInfo{{Index: 0}}, nil, 0)
+		}},
+		{name: "error", mutate: func(ctx context.Context, s *Store) error {
+			return s.SetError(ctx, "missing", "media processing failed")
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			s := NewStore(rdb, time.Hour)
+
+			err := tt.mutate(t.Context(), s)
+
+			require.ErrorIs(t, err, ErrNotFound)
+			require.False(t, mr.Exists("room:missing"))
+		})
+	}
+}
+
+func TestSetStatusRejectsExpiredRoom(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "expired", Status: "uploading", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute),
+	}))
+
+	err := s.SetStatus(t.Context(), "expired", "processing")
+
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Equal(t, "uploading", mr.HGet("room:expired", "status"))
+}
+
 func TestRoomCreationPersistsLegacyExpiryIndex(t *testing.T) {
 	tests := []struct {
 		name   string
