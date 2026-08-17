@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/room"
+	"github.com/giulianoo0/ss/internal/upload"
 )
 
 func main() {
@@ -29,10 +32,15 @@ func main() {
 	ctx := context.Background()
 	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute)
 
-	r := gin.Default()
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(200, gin.H{"ok": true})
-	})
+	r := httpapi.NewServer(cfg, store)
+
+	// onComplete stays a no-op until the media queue is wired in (Task 8).
+	tusHandler, err := upload.NewTusHandler(cfg, store, func(roomID string) {})
+	if err != nil {
+		log.Fatal(err)
+	}
+	r.Any("/api/upload", gin.WrapH(http.StripPrefix("/api/upload", tusHandler)))
+	r.Any("/api/upload/*path", gin.WrapH(http.StripPrefix("/api/upload", tusHandler)))
 
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
 		log.Fatal(err)
