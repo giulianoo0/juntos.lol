@@ -28,10 +28,7 @@ func newTestStore(t *testing.T) *room.Store {
 }
 
 // testCfg returns a Config with an isolated data dir for handler tests.
-func testCfg() config.Config {
-	dir, err := os.MkdirTemp("", "ss-httpapi-test")
-	if err != nil {
-		panic(err)
-	}
-	return config.Config{DataDir: dir, MaxUploadMB: 100, RoomTTLHours: 5}
+func testCfg(t *testing.T) config.Config {
+	t.Helper()
+	return config.Config{DataDir: t.TempDir(), MaxUploadMB: 100, RoomTTLHours: 5}
 }

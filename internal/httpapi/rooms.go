@@ -3,13 +3,23 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/room"
+)
+
+const (
+	maxCreateRoomBodyBytes = 4 << 10
+	maxFileNameBytes       = 255
+	maxNicknameBytes       = 64
 )
 
 // RegisterRoomRoutes mounts the room creation and lookup endpoints on rg.
@@ -25,8 +35,13 @@ type createRoomRequest struct {
 
 func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCreateRoomBodyBytes)
 		var req createRoomRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if !validFileName(req.FileName) || !validDisplayName(req.Nickname) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
@@ -47,11 +62,7 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			CreatedAt:    now,
 			ExpiresAt:    now.Add(time.Duration(cfg.RoomTTLHours) * time.Hour),
 		}
-		if err := store.Create(c.Request.Context(), r); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		if err := store.AddMember(c.Request.Context(), id, member); err != nil {
+		if err := store.CreateWithMember(c.Request.Context(), r, member); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
@@ -62,6 +73,26 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			"expiresAt":      r.ExpiresAt,
 		})
 	}
+}
+
+func validFileName(value string) bool {
+	return validRoomText(value, maxFileNameBytes) && filepath.Base(value) == value && value != "."
+}
+
+func validDisplayName(value string) bool {
+	return validRoomText(value, maxNicknameBytes)
+}
+
+func validRoomText(value string, maxBytes int) bool {
+	if value == "" || len(value) > maxBytes || !utf8.ValidString(value) || strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func getRoom(store *room.Store) gin.HandlerFunc {

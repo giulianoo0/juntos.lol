@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 func TestCreateRoom(t *testing.T) {
 	s := newTestStore(t) // helper: miniredis + NewStore
 	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), s, testCfg())
+	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 	w := httptest.NewRecorder()
 	body := `{"fileName":"movie.mkv","nickname":"giuli"}`
 	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
@@ -34,7 +35,7 @@ func TestCreateRoom(t *testing.T) {
 func TestCreateRoomRegistersController(t *testing.T) {
 	s := newTestStore(t)
 	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), s, testCfg())
+	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 	w := httptest.NewRecorder()
 	body := `{"fileName":"movie.mkv","nickname":"giuli"}`
 	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
@@ -60,10 +61,47 @@ func TestCreateRoomRegistersController(t *testing.T) {
 	require.Equal(t, "giuli", members[0].Nickname)
 }
 
+func TestCreateRoomRejectsOversizedOrUnsafeFields(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "oversized filename",
+			body: `{"fileName":"` + strings.Repeat("a", 256) + `","nickname":"giuli"}`,
+		},
+		{
+			name: "path filename",
+			body: `{"fileName":"../movie.mkv","nickname":"giuli"}`,
+		},
+		{
+			name: "control character nickname",
+			body: `{"fileName":"movie.mkv","nickname":"giu\nli"}`,
+		},
+		{
+			name: "oversized body",
+			body: `{"fileName":"movie.mkv","nickname":"` + strings.Repeat("a", 4096) + `"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			e := gin.New()
+			RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/rooms", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			e.ServeHTTP(w, req)
+			require.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
 func TestGetRoom(t *testing.T) {
 	s := newTestStore(t)
 	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), s, testCfg())
+	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 
 	r := &room.Room{ID: "abc12345", FileName: "movie.mkv", Status: "uploading",
 		ControllerID: "m1", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(5 * time.Hour)}
@@ -92,7 +130,7 @@ func TestGetRoom(t *testing.T) {
 func TestGetRoomNotFound(t *testing.T) {
 	s := newTestStore(t)
 	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), s, testCfg())
+	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/rooms/missing1", nil)
 	e.ServeHTTP(w, req)

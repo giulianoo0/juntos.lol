@@ -5,17 +5,17 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
-	"github.com/tus/tusd/v2/pkg/filestore"
-	tusd "github.com/tus/tusd/v2/pkg/handler"
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/room"
@@ -98,6 +98,30 @@ func TestPreCreateAcceptsUploadingRoom(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 }
 
+func TestPreCreateRejectsSecondUploadForRoom(t *testing.T) {
+	s, cfg := testSetup(t)
+	createRoom(t, s, "room1234", "uploading")
+
+	h, err := NewTusHandler(cfg, s, func(string) {})
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/upload/", nil)
+		req.Header.Set("Tus-Resumable", "1.0.0")
+		req.Header.Set("Upload-Length", "10")
+		req.Header.Set("Upload-Metadata", metadataHeader(map[string]string{
+			"roomID":   "room1234",
+			"filename": "movie.mkv",
+		}))
+		http.StripPrefix("/api/upload", h).ServeHTTP(w, req)
+		if i == 0 {
+			require.Equal(t, http.StatusCreated, w.Code)
+			continue
+		}
+		require.Equal(t, http.StatusConflict, w.Code)
+	}
+}
+
 func TestCompleteUploadMovesFile(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
@@ -105,17 +129,33 @@ func TestCompleteUploadMovesFile(t *testing.T) {
 	done := make(chan string, 1)
 	h, err := NewTusHandler(cfg, s, func(roomID string) { done <- roomID })
 	require.NoError(t, err)
-	th := h.(*tusd.Handler)
+	h = http.StripPrefix("/api/upload", h)
 
-	src := filepath.Join(cfg.DataDir, "tus-incoming", "upload1")
-	require.NoError(t, os.MkdirAll(filepath.Dir(src), 0o755))
-	require.NoError(t, os.WriteFile(src, []byte("fake video bytes"), 0o644))
+	create := httptest.NewRecorder()
+	createReq := httptest.NewRequest("POST", "/api/upload/", nil)
+	createReq.Header.Set("Tus-Resumable", "1.0.0")
+	createReq.Header.Set("Upload-Length", "16")
+	createReq.Header.Set("Upload-Metadata", metadataHeader(map[string]string{
+		"roomID":   "room1234",
+		"filename": "movie.mkv",
+	}))
+	h.ServeHTTP(create, createReq)
+	require.Equal(t, http.StatusCreated, create.Code)
 
-	th.CompleteUploads <- tusd.HookEvent{Upload: tusd.FileInfo{
-		ID:       "upload1",
-		MetaData: tusd.MetaData{"roomID": "room1234", "filename": "movie.mkv"},
-		Storage:  map[string]string{filestore.StorageKeyPath: src},
-	}}
+	u, err := url.Parse(create.Header().Get("Location"))
+	require.NoError(t, err)
+	uploadID := filepath.Base(u.Path)
+	require.NotEmpty(t, uploadID)
+	require.FileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID))
+	require.FileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID+".info"))
+
+	patch := httptest.NewRecorder()
+	patchReq := httptest.NewRequest("PATCH", u.Path, strings.NewReader("fake video bytes"))
+	patchReq.Header.Set("Tus-Resumable", "1.0.0")
+	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
+	patchReq.Header.Set("Upload-Offset", "0")
+	h.ServeHTTP(patch, patchReq)
+	require.Equal(t, http.StatusNoContent, patch.Code)
 
 	select {
 	case roomID := <-done:
@@ -127,26 +167,70 @@ func TestCompleteUploadMovesFile(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(cfg.DataDir, "rooms", "room1234", "original.mkv"))
 	require.NoError(t, err)
 	require.Equal(t, "fake video bytes", string(got))
+	require.NoFileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID))
+	require.NoFileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID+".info"))
 }
 
-func TestTerminatedUploadRemovesRoomDir(t *testing.T) {
+func TestExpiredRoomRemovesTusArtifactsAndCannotResume(t *testing.T) {
 	s, cfg := testSetup(t)
-	createRoom(t, s, "room1234", "uploading")
+	r := &room.Room{ID: "expired1", FileName: "movie.mkv", Status: "uploading",
+		ControllerID: "m1", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Second)}
+	require.NoError(t, s.Create(context.Background(), r))
 
 	h, err := NewTusHandler(cfg, s, func(string) {})
 	require.NoError(t, err)
-	th := h.(*tusd.Handler)
+	h = http.StripPrefix("/api/upload", h)
 
-	roomDir := filepath.Join(cfg.DataDir, "rooms", "room1234")
-	require.NoError(t, os.MkdirAll(roomDir, 0o755))
+	create := httptest.NewRecorder()
+	createReq := httptest.NewRequest("POST", "/api/upload/", nil)
+	createReq.Header.Set("Tus-Resumable", "1.0.0")
+	createReq.Header.Set("Upload-Length", "16")
+	createReq.Header.Set("Upload-Metadata", metadataHeader(map[string]string{
+		"roomID": "expired1",
+	}))
+	h.ServeHTTP(create, createReq)
+	require.Equal(t, http.StatusCreated, create.Code)
 
-	th.TerminatedUploads <- tusd.HookEvent{Upload: tusd.FileInfo{
-		ID:       "upload1",
-		MetaData: tusd.MetaData{"roomID": "room1234"},
-	}}
+	u, err := url.Parse(create.Header().Get("Location"))
+	require.NoError(t, err)
+	uploadID := filepath.Base(u.Path)
+	require.FileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID))
 
 	require.Eventually(t, func() bool {
-		_, err := os.Stat(roomDir)
+		room.SweepOnce(context.Background(), s, cfg.DataDir)
+		_, err := os.Stat(filepath.Join(cfg.DataDir, "tus-incoming", uploadID))
 		return os.IsNotExist(err)
 	}, 2*time.Second, 10*time.Millisecond)
+	require.NoFileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID+".info"))
+
+	resume := httptest.NewRecorder()
+	resumeReq := httptest.NewRequest("PATCH", u.Path, strings.NewReader("fake video bytes"))
+	resumeReq.Header.Set("Tus-Resumable", "1.0.0")
+	resumeReq.Header.Set("Content-Type", "application/offset+octet-stream")
+	resumeReq.Header.Set("Upload-Offset", "0")
+	h.ServeHTTP(resume, resumeReq)
+	require.Equal(t, http.StatusNotFound, resume.Code)
+}
+
+func TestMoveCompletedReportsInfoRemovalFailure(t *testing.T) {
+	s, cfg := testSetup(t)
+	createRoom(t, s, "room1234", "uploading")
+
+	src := filepath.Join(cfg.DataDir, "tus-incoming", "upload1")
+	require.NoError(t, os.MkdirAll(src+".info", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src+".info", "child"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(src, []byte("fake video bytes"), 0o644))
+
+	err := moveCompleted(cfg, s, "room1234", src)
+	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTEMPTY)
+}
+
+func TestInvokeCompleteCallbackRecoversPanic(t *testing.T) {
+	called := false
+	invokeCompleteCallback(func(string) {
+		called = true
+		panic("boom")
+	}, "room1234")
+	require.True(t, called)
 }

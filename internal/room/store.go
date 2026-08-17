@@ -14,6 +14,12 @@ import (
 // ErrNotFound is returned when a room does not exist (or has expired).
 var ErrNotFound = errors.New("room not found")
 
+// ErrUploadReserved indicates that a room already has an active tus upload.
+var ErrUploadReserved = errors.New("upload already reserved")
+
+// ErrUploadNotAllowed indicates that a room is missing, expired, or not uploading.
+var ErrUploadNotAllowed = errors.New("upload not allowed")
+
 // chatCap is the maximum number of chat messages kept per room.
 const chatCap = 200
 
@@ -32,6 +38,7 @@ func roomKey(id string) string    { return "room:" + id }
 func stateKey(id string) string   { return "room:" + id + ":state" }
 func chatKey(id string) string    { return "room:" + id + ":chat" }
 func membersKey(id string) string { return "room:" + id + ":members" }
+func uploadKey(id string) string  { return "room:" + id + ":upload" }
 
 const byExpiryKey = "rooms:by_expiry"
 
@@ -57,13 +64,107 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 			"bitmap_subs_skipped", r.BitmapSubsSkipped,
 			"created_at", r.CreatedAt.Format(time.RFC3339Nano),
 			"expires_at", r.ExpiresAt.Format(time.RFC3339Nano),
+			"expires_at_unix_nano", r.ExpiresAt.UnixNano(),
 		)
 		p.Expire(ctx, key, s.ttl)
 		p.ZAdd(ctx, byExpiryKey, redis.Z{Score: float64(r.ExpiresAt.Unix()), Member: r.ID})
-		p.Expire(ctx, byExpiryKey, s.ttl)
 		return nil
 	})
 	return err
+}
+
+// CreateWithMember stores a newly created room and its controller in one Redis
+// transaction so callers never expose a room without its controller member.
+func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
+	audio, err := json.Marshal(r.AudioTracks)
+	if err != nil {
+		return fmt.Errorf("marshal audio tracks: %w", err)
+	}
+	subs, err := json.Marshal(r.SubtitleTracks)
+	if err != nil {
+		return fmt.Errorf("marshal subtitle tracks: %w", err)
+	}
+	member, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("marshal member: %w", err)
+	}
+
+	key := roomKey(r.ID)
+	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, key,
+			"file_name", r.FileName,
+			"status", r.Status,
+			"controller_id", r.ControllerID,
+			"audio_tracks", audio,
+			"subtitle_tracks", subs,
+			"bitmap_subs_skipped", r.BitmapSubsSkipped,
+			"created_at", r.CreatedAt.Format(time.RFC3339Nano),
+			"expires_at", r.ExpiresAt.Format(time.RFC3339Nano),
+			"expires_at_unix_nano", r.ExpiresAt.UnixNano(),
+		)
+		p.Expire(ctx, key, s.ttl)
+		p.HSet(ctx, membersKey(r.ID), m.ID, member)
+		p.Expire(ctx, membersKey(r.ID), s.ttl)
+		p.ZAdd(ctx, byExpiryKey, redis.Z{Score: float64(r.ExpiresAt.Unix()), Member: r.ID})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("create room and controller: %w", err)
+	}
+	return nil
+}
+
+// ReserveUpload atomically reserves uploadID for an unexpired uploading room.
+func (s *Store) ReserveUpload(ctx context.Context, roomID, uploadID string, now time.Time) error {
+	result, err := s.rdb.Eval(ctx, `
+local status = redis.call('HGET', KEYS[1], 'status')
+if not status then return 0 end
+if status ~= 'uploading' then return 2 end
+local expires = tonumber(redis.call('HGET', KEYS[1], 'expires_at_unix_nano'))
+if not expires or expires <= tonumber(ARGV[2]) then return 3 end
+if redis.call('HGET', KEYS[1], 'upload_id') then return 4 end
+redis.call('HSET', KEYS[1], 'upload_id', ARGV[1])
+redis.call('SET', KEYS[2], ARGV[1])
+return 1
+`, []string{roomKey(roomID), uploadKey(roomID)}, uploadID, strconv.FormatInt(now.UnixNano(), 10)).Int64()
+	if err != nil {
+		return fmt.Errorf("reserve upload: %w", err)
+	}
+	switch result {
+	case 1:
+		return nil
+	case 4:
+		return ErrUploadReserved
+	default:
+		return ErrUploadNotAllowed
+	}
+}
+
+// UploadID returns the reserved tus upload ID for roomID, if present.
+func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
+	id, err := s.rdb.Get(ctx, uploadKey(roomID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get reserved upload: %w", err)
+	}
+	return id, nil
+}
+
+// ReleaseUpload clears uploadID when the matching upload is terminated before
+// completion, allowing the room to receive a replacement upload.
+func (s *Store) ReleaseUpload(ctx context.Context, roomID, uploadID string) error {
+	_, err := s.rdb.Eval(ctx, `
+if redis.call('HGET', KEYS[1], 'upload_id') ~= ARGV[1] then return 0 end
+redis.call('HDEL', KEYS[1], 'upload_id')
+redis.call('DEL', KEYS[2])
+return 1
+`, []string{roomKey(roomID), uploadKey(roomID)}, uploadID).Result()
+	if err != nil {
+		return fmt.Errorf("release upload: %w", err)
+	}
+	return nil
 }
 
 // Get loads a room by id. Returns ErrNotFound if the room is missing.
@@ -261,7 +362,7 @@ func (s *Store) Messages(ctx context.Context, id string) ([]ChatMessage, error) 
 // Delete removes the room, its state, chat, members and expiry index entry.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		p.Del(ctx, roomKey(id), stateKey(id), chatKey(id), membersKey(id))
+		p.Del(ctx, roomKey(id), stateKey(id), chatKey(id), membersKey(id), uploadKey(id))
 		p.ZRem(ctx, byExpiryKey, id)
 		return nil
 	})

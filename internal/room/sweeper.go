@@ -18,20 +18,36 @@ func StartSweeper(ctx context.Context, store *Store, dataDir string, interval ti
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sweepOnce(ctx, store, dataDir)
+			SweepOnce(ctx, store, dataDir)
 		}
 	}
 }
 
-// sweepOnce removes the on-disk directory and Redis keys of every room whose
-// ExpiresAt is in the past. Delete already ZREMs rooms:by_expiry.
-func sweepOnce(ctx context.Context, store *Store, dataDir string) {
+// SweepOnce removes expired room data, including the corresponding tus upload
+// bytes and metadata. Delete already ZREMs rooms:by_expiry.
+func SweepOnce(ctx context.Context, store *Store, dataDir string) {
 	ids, err := store.ExpiredIDs(ctx, time.Now())
 	if err != nil {
 		slog.Error("sweeper: list expired rooms", "err", err)
 		return
 	}
 	for _, id := range ids {
+		uploadID, err := store.UploadID(ctx, id)
+		if err != nil {
+			slog.Error("sweeper: get reserved upload", "room", id, "err", err)
+			continue
+		}
+		if uploadID != "" {
+			incoming := filepath.Join(dataDir, "tus-incoming")
+			if err := os.Remove(filepath.Join(incoming, uploadID)); err != nil && !os.IsNotExist(err) {
+				slog.Error("sweeper: remove tus upload", "room", id, "upload", uploadID, "err", err)
+				continue
+			}
+			if err := os.Remove(filepath.Join(incoming, uploadID+".info")); err != nil && !os.IsNotExist(err) {
+				slog.Error("sweeper: remove tus metadata", "room", id, "upload", uploadID, "err", err)
+				continue
+			}
+		}
 		if err := os.RemoveAll(filepath.Join(dataDir, "rooms", id)); err != nil {
 			slog.Error("sweeper: remove room dir", "room", id, "err", err)
 			continue
@@ -40,4 +56,9 @@ func sweepOnce(ctx context.Context, store *Store, dataDir string) {
 			slog.Error("sweeper: delete room", "room", id, "err", err)
 		}
 	}
+}
+
+// sweepOnce is retained for the package-local tests introduced with Task 3.
+func sweepOnce(ctx context.Context, store *Store, dataDir string) {
+	SweepOnce(ctx, store, dataDir)
 }
