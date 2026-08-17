@@ -298,7 +298,9 @@ func TestBuildRemuxArgsMultiAudio(t *testing.T) {
 	require.Contains(t, joined, "-map 0:v:0")
 	require.Contains(t, joined, "-map 0:a:0")
 	require.Contains(t, joined, "-map 0:a:1")
-	require.Contains(t, joined, "-var_stream_map v:0,a:0 a:1")
+	require.Contains(t, joined, "a:0,agroup:audio,default:yes")
+	require.Contains(t, joined, "a:1,agroup:audio")
+	require.Contains(t, joined, "v:0,agroup:audio")
 	require.Contains(t, joined, "-master_pl_name master.m3u8")
 	require.Contains(t, joined, "-hls_segment_type fmp4")
 	require.Contains(t, joined, "aac") // audio transcoded to aac
@@ -314,11 +316,14 @@ ffmpeg -hide_banner -loglevel error -i <in> \
   -map 0:a:0 -c:a aac -b:a 192k \
   [-map 0:a:N -c:a aac -b:a 192k ...] \
   -f hls -hls_time 6 -hls_segment_type fmp4 -hls_playlist_type vod \
-  -var_stream_map "v:0,a:0 a:1 ..." -master_pl_name master.m3u8 \
+  -var_stream_map "a:0,agroup:audio,default:yes a:1,agroup:audio ... v:0,agroup:audio" \
+  -master_pl_name master.m3u8 \
   <outDir>/stream_%v.m3u8
 ```
 
 If `!p.VideoCopyable`: `-c:v libx264 -preset veryfast -crf 23` instead of copy. Segments land as `stream_%v_*.m4s` next to the playlists. `Remux` = `exec.CommandContext("ffmpeg", args...)`, capture stderr, on non-zero exit return error with last 2KB of stderr.
+
+Plan amendment: alternate audio uses ffmpeg `agroup` renditions. The earlier literal `v:0,a:0 a:1` produced an audio-only variant but no `EXT-X-MEDIA`, contradicting the integration requirement for selectable audio tracks.
 - [ ] **Step 4: Run** — unit test PASS.
 - [ ] **Step 5: Integration test** (build tag `integration` or skip if `ffmpeg` not in PATH):
 

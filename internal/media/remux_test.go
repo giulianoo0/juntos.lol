@@ -42,6 +42,34 @@ func TestBuildRemuxArgsTranscodesUncopyableVideo(t *testing.T) {
 	require.NotContains(t, joined, "-c:v copy")
 }
 
+func TestBuildRemuxArgsOmitsUnsafeAudioLanguage(t *testing.T) {
+	tests := []struct {
+		name     string
+		language string
+		want     string
+	}{
+		{name: "ISO 639 code", language: "eng", want: "language:eng"},
+		{name: "BCP 47 code", language: "pt-BR", want: "language:pt-BR"},
+		{name: "space", language: "en us"},
+		{name: "comma", language: "eng,default:no"},
+		{name: "colon", language: "eng:name"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &ProbeResult{VideoCopyable: true, Audio: []room.TrackInfo{{Index: 0, Language: tt.language}}}
+
+			joined := strings.Join(BuildRemuxArgs("in.mkv", "hls", p), " ")
+
+			if tt.want == "" {
+				require.NotContains(t, joined, "language:")
+			} else {
+				require.Contains(t, joined, tt.want)
+			}
+		})
+	}
+}
+
 func TestStderrTail(t *testing.T) {
 	require.Equal(t, "short", stderrTail([]byte("short"), 2048))
 	require.Equal(t, "cdef", stderrTail([]byte("abcdef"), 4))

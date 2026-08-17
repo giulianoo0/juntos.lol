@@ -40,7 +40,7 @@ func BuildRemuxArgs(in, outDir string, p *ProbeResult) []string {
 			if i == 0 {
 				variant += ",default:yes"
 			}
-			if track.Language != "" {
+			if isSafeLanguage(track.Language) {
 				variant += ",language:" + track.Language
 			}
 			variants = append(variants, variant)
@@ -59,6 +59,22 @@ func BuildRemuxArgs(in, outDir string, p *ProbeResult) []string {
 		"-master_pl_name", "master.m3u8",
 		filepath.Join(outDir, "stream_%v.m3u8"),
 	)
+}
+
+func isSafeLanguage(language string) bool {
+	if language == "" || len(language) > 35 {
+		return false
+	}
+	for _, char := range language {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' || char == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // Remux runs ffmpeg and returns the tail of stderr if the command fails.
