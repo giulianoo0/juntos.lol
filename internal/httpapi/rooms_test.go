@@ -61,6 +61,28 @@ func TestCreateRoomRegistersController(t *testing.T) {
 	require.Equal(t, "giuli", members[0].Nickname)
 }
 
+func TestCreateRoomGeneratesNicknameWhenOmitted(t *testing.T) {
+	s := newTestStore(t)
+	e := gin.New()
+	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/rooms", strings.NewReader(`{"fileName":"movie.mkv"}`))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp struct {
+		ID       string
+		Nickname string
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Regexp(t, `^Guest-[A-Za-z0-9_-]{6}$`, resp.Nickname)
+	members, err := s.Members(context.Background(), resp.ID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	require.Equal(t, resp.Nickname, members[0].Nickname)
+}
+
 func TestCreateRoomRejectsOversizedOrUnsafeFields(t *testing.T) {
 	tests := []struct {
 		name string

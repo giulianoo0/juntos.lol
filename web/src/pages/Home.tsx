@@ -20,16 +20,13 @@ export function Home() {
       setError(t('home.tooLarge'))
       return
     }
-    if (!nickname.trim()) {
-      setError(t('home.nickname'))
-      return
-    }
     setError('')
     setProgress(0)
-    localStorage.setItem('ss.nickname', nickname.trim())
     try {
-      const roomID = await createRoomAndUpload(file, nickname.trim(), setProgress)
-      navigate(`/room/${roomID}?nick=${encodeURIComponent(nickname.trim())}`)
+      const room = await createRoomAndUpload(file, nickname.trim(), setProgress)
+      setNickname(room.nickname)
+      localStorage.setItem('ss.nickname', room.nickname)
+      navigate(`/room/${room.roomID}?nick=${encodeURIComponent(room.nickname)}`)
     } catch {
       setError(t('home.failed'))
       setProgress(null)

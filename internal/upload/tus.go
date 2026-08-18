@@ -38,6 +38,7 @@ func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID 
 		BasePath:                "/api/upload/",
 		StoreComposer:           composer,
 		MaxSize:                 cfg.MaxUploadMB << 20,
+		RespectForwardedHeaders: true,
 		NotifyCompleteUploads:   true,
 		NotifyTerminatedUploads: true,
 		PreUploadCreateCallback: func(hook tusd.HookEvent) (tusd.HTTPResponse, tusd.FileInfoChanges, error) {

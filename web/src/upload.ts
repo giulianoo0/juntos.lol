@@ -5,14 +5,20 @@ const TUS_CHUNK_BYTES = 50 * 1024 * 1024
 
 interface CreateRoomResponse {
   id: string
+  nickname: string
   uploadEndpoint: string
+}
+
+export interface UploadResult {
+  roomID: string
+  nickname: string
 }
 
 export async function createRoomAndUpload(
   file: File,
   nickname: string,
   onProgress: (percentage: number) => void,
-): Promise<string> {
+): Promise<UploadResult> {
   const response = await fetch('/api/rooms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -32,12 +38,18 @@ export async function createRoomAndUpload(
         const total = progress.bytesTotal ?? file.size
         onProgress(total > 0 ? Math.round((progress.bytesUploaded / total) * 100) : 0)
       })
-      uppy.on('complete', () => resolve())
+      uppy.on('complete', (result) => {
+        if (result.failed?.length) {
+          reject(new Error('upload failed'))
+          return
+        }
+        resolve()
+      })
       uppy.on('error', reject)
       void uppy.upload().catch(reject)
     })
   } finally {
     uppy.destroy()
   }
-  return room.id
+  return { roomID: room.id, nickname: room.nickname }
 }

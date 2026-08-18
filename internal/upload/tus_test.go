@@ -98,6 +98,29 @@ func TestPreCreateAcceptsUploadingRoom(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 }
 
+func TestPreCreateUsesForwardedHTTPSLocation(t *testing.T) {
+	s, cfg := testSetup(t)
+	createRoom(t, s, "room1234", "uploading")
+	h, err := NewTusHandler(cfg, s, func(string) {})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://app.internal/api/upload/", nil)
+	req.Host = "ss.example.test"
+	req.Header.Set("Tus-Resumable", "1.0.0")
+	req.Header.Set("Upload-Length", "10")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("Upload-Metadata", metadataHeader(map[string]string{
+		"roomID":   "room1234",
+		"filename": "movie.mkv",
+	}))
+
+	http.StripPrefix("/api/upload", h).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.Regexp(t, `^https://ss\.example\.test/api/upload/`, w.Header().Get("Location"))
+}
+
 func TestPreCreateRejectsSecondUploadForRoom(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")

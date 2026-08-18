@@ -30,7 +30,7 @@ func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Confi
 
 type createRoomRequest struct {
 	FileName string `json:"fileName" binding:"required"`
-	Nickname string `json:"nickname" binding:"required"`
+	Nickname string `json:"nickname"`
 }
 
 func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
@@ -41,7 +41,16 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		if !validFileName(req.FileName) || !validDisplayName(req.Nickname) {
+		if !validFileName(req.FileName) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		nickname, err := displayNameOrRandom(req.Nickname)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		if !validDisplayName(nickname) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
@@ -53,7 +62,7 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		}
 
 		now := time.Now()
-		member := room.Member{ID: "m1", Nickname: req.Nickname, JoinedAt: now}
+		member := room.Member{ID: "m1", Nickname: nickname, JoinedAt: now}
 		r := &room.Room{
 			ID:           id,
 			FileName:     req.FileName,
@@ -69,10 +78,23 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 
 		c.JSON(http.StatusCreated, gin.H{
 			"id":             id,
+			"nickname":       nickname,
 			"uploadEndpoint": "/api/upload/",
 			"expiresAt":      r.ExpiresAt,
 		})
 	}
+}
+
+func displayNameOrRandom(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value, nil
+	}
+	suffix, err := gonanoid.New(6)
+	if err != nil {
+		return "", err
+	}
+	return "Guest-" + suffix, nil
 }
 
 func validFileName(value string) bool {

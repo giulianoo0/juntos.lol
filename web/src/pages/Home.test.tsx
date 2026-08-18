@@ -9,8 +9,8 @@ vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn() }))
 describe('Home', () => {
   beforeEach(() => {
     localStorage.clear()
-	vi.clearAllMocks()
-    vi.mocked(createRoomAndUpload).mockResolvedValue('room1234')
+    vi.clearAllMocks()
+    vi.mocked(createRoomAndUpload).mockResolvedValue({ roomID: 'room1234', nickname: 'giuli' })
   })
 
   it('renders the headline and starts upload after file selection', async () => {
@@ -31,5 +31,16 @@ describe('Home', () => {
     fireEvent.change(input, { target: { files: [file] } })
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     expect(createRoomAndUpload).not.toHaveBeenCalled()
+  })
+
+  it('uses the server-generated name when the name is blank', async () => {
+    vi.mocked(createRoomAndUpload).mockResolvedValue({ roomID: 'room1234', nickname: 'Guest-abc123' })
+    render(<MemoryRouter><Home /></MemoryRouter>)
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
+
+    await waitFor(() => expect(createRoomAndUpload).toHaveBeenCalledOnce())
+    expect(createRoomAndUpload).toHaveBeenCalledWith(expect.any(File), '', expect.any(Function))
+    expect(screen.getByLabelText(/your name|seu nome/i)).toHaveValue('Guest-abc123')
   })
 })
