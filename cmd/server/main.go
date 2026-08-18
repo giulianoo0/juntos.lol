@@ -39,10 +39,32 @@ func main() {
 		hub.NotifyStatus(roomID, "ready")
 	})
 	queue.Start(ctx)
+	if err := queue.Recover(ctx); err != nil {
+		log.Printf("recover interrupted media jobs: %v", err)
+	}
+	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, func(roomID string) {
+		hub.NotifyStatus(roomID, "ready")
+	})
+	progressive.Start(ctx)
 
 	r := httpapi.NewServer(cfg, store, hub)
 
-	tusHandler, err := upload.NewTusHandler(cfg, store, queue.Submit)
+	tusHandler, err := upload.NewTusHandler(cfg, store,
+		func(roomID string) {
+			progressive.Cancel(roomID)
+			queue.Submit(roomID)
+		},
+		progressive.Submit,
+		func(roomID string) {
+			progressive.Cancel(roomID)
+			updateCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := store.SetError(updateCtx, roomID, "upload failed"); err != nil {
+				log.Printf("mark terminated upload failed: %v", err)
+			}
+			hub.NotifyStatus(roomID, "error")
+		},
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

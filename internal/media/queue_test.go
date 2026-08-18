@@ -17,14 +17,14 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-type pipelineFunc func(ctx context.Context, roomID, srcPath, outDir string) (
+type pipelineFunc func(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
 	audio, subs []room.TrackInfo, bitmapSkipped int, err error,
 )
 
-func (f pipelineFunc) Run(ctx context.Context, roomID, srcPath, outDir string) (
+func (f pipelineFunc) Run(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
 	[]room.TrackInfo, []room.TrackInfo, int, error,
 ) {
-	return f(ctx, roomID, srcPath, outDir)
+	return f(ctx, roomID, srcPath, outDir, skipSubs)
 }
 
 func TestQueueProcessesRoomAndNotifiesReady(t *testing.T) {
@@ -34,7 +34,7 @@ func TestQueueProcessesRoomAndNotifiesReady(t *testing.T) {
 	ready := make(chan string, 1)
 	type pipelineCall struct{ roomID, srcPath, outDir string }
 	calls := make(chan pipelineCall, 1)
-	pipe := pipelineFunc(func(ctx context.Context, roomID, srcPath, outDir string) (
+	pipe := pipelineFunc(func(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		calls <- pipelineCall{roomID: roomID, srcPath: srcPath, outDir: outDir}
@@ -65,13 +65,118 @@ func TestQueueProcessesRoomAndNotifiesReady(t *testing.T) {
 	require.Equal(t, 2, got.BitmapSubsSkipped)
 }
 
+func TestQueueRecoversInterruptedCompleteUpload(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "recover")
+	require.NoError(t, store.SetStatus(t.Context(), "recover", "processing"))
+	ready := make(chan string, 1)
+	q := newQueue(1, store, dataDir, func(roomID string) { ready <- roomID }, pipelineFunc(
+		func(context.Context, string, string, string, bool) ([]room.TrackInfo, []room.TrackInfo, int, error) {
+			return nil, nil, 0, nil
+		},
+	))
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+
+	require.NoError(t, q.Recover(ctx))
+
+	select {
+	case roomID := <-ready:
+		require.Equal(t, "recover", roomID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for recovered media job")
+	}
+	got, err := store.Get(t.Context(), "recover")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
+}
+
+func TestQueueKeepsPlayablePreviewReadyDuringFinalRemux(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "preview")
+	require.NoError(t, store.SetStatus(t.Context(), "preview", "processing"))
+	hlsDir := filepath.Join(dataDir, "rooms", "preview", "hls")
+	require.NoError(t, os.MkdirAll(hlsDir, 0o755))
+	for _, name := range []string{
+		"master.m3u8",
+		"preview_stream_0.m3u8",
+		"preview_init_0.mp4",
+		"preview_stream_0_000000.m4s",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(hlsDir, name), []byte("ready"), 0o644))
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	ready := make(chan string, 2)
+	q := newQueue(1, store, dataDir, func(roomID string) { ready <- roomID }, pipelineFunc(
+		func(context.Context, string, string, string, bool) ([]room.TrackInfo, []room.TrackInfo, int, error) {
+			started <- struct{}{}
+			<-release
+			return nil, nil, 0, nil
+		},
+	))
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+	q.Submit("preview")
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for final remux")
+	}
+	got, err := store.Get(t.Context(), "preview")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
+	select {
+	case roomID := <-ready:
+		require.Equal(t, "preview", roomID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for preview ready callback")
+	}
+	close(release)
+}
+
+func TestQueuePreservesClientSubtitles(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "r3")
+	clientSubs := []room.TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}
+	require.NoError(t, store.SetClientSubtitles(t.Context(), "r3", clientSubs))
+	wantAudio := []room.TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}
+	ready := make(chan string, 1)
+	pipe := pipelineFunc(func(_ context.Context, _, _, _ string, skipSubs bool) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		require.True(t, skipSubs)
+		return wantAudio, nil, 1, nil
+	})
+	q := newQueue(1, store, dataDir, func(roomID string) { ready <- roomID }, pipe)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+
+	q.Submit("r3")
+
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ready callback")
+	}
+	got, err := store.Get(t.Context(), "r3")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
+	require.Equal(t, wantAudio, got.AudioTracks)
+	require.Equal(t, clientSubs, got.SubtitleTracks)
+	require.Equal(t, 1, got.BitmapSubsSkipped)
+	require.True(t, got.ClientSubs)
+}
+
 func TestQueuePersistsPipelineError(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "r2")
 	originalLogger := slog.Default()
 	var logs bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(originalLogger) })
-	pipe := pipelineFunc(func(context.Context, string, string, string) (
+	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		return nil, nil, 0, errors.New("probe failed")
@@ -99,7 +204,7 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	addQueueTestRoom(t, store, dataDir, "queued")
 	addQueueTestRoom(t, store, dataDir, "overflow")
 	started := make(chan struct{}, 1)
-	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string) (
+	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string, _ bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		started <- struct{}{}
@@ -137,7 +242,7 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 
 func TestQueueFullRejectionPersistsAfterCancellation(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "overflow")
-	q := newQueue(1, store, dataDir, nil, pipelineFunc(func(context.Context, string, string, string) (
+	q := newQueue(1, store, dataDir, nil, pipelineFunc(func(context.Context, string, string, string, bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		return nil, nil, 0, nil
@@ -157,7 +262,7 @@ func TestQueueDeduplicatesActiveRoom(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "duplicate")
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	pipe := pipelineFunc(func(context.Context, string, string, string) (
+	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		started <- struct{}{}
@@ -195,7 +300,7 @@ func TestQueueCancellationMarksActiveAndBufferedJobs(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "active")
 	addQueueTestRoom(t, store, dataDir, "buffered")
 	started := make(chan struct{}, 1)
-	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string) (
+	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string, _ bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		started <- struct{}{}
@@ -251,7 +356,7 @@ func TestSourcePathRejectsDotAndSymlink(t *testing.T) {
 func TestQueueRejectsSubmissionsAfterCancellation(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "stopped")
 	called := make(chan struct{}, 1)
-	q := newQueue(1, store, dataDir, nil, pipelineFunc(func(context.Context, string, string, string) (
+	q := newQueue(1, store, dataDir, nil, pipelineFunc(func(context.Context, string, string, string, bool) (
 		[]room.TrackInfo, []room.TrackInfo, int, error,
 	) {
 		called <- struct{}{}

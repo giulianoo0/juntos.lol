@@ -1,0 +1,10 @@
+FROM node:24-bookworm
+
+WORKDIR /app
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --omit=dev
+COPY bridge/server.mjs ./server.mjs
+
+ENV PORT=8090
+EXPOSE 8090
+CMD ["node", "server.mjs"]

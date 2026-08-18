@@ -12,6 +12,7 @@ type Config struct {
 	WebDir           string
 	RedisURL         string
 	MaxUploadMB      int64
+	StreamStartMB    int64
 	RoomTTLHours     int
 	MaxParticipants  int
 	RoomIdleMinutes  int
@@ -19,6 +20,7 @@ type Config struct {
 	LivekitURL       string
 	LivekitAPIKey    string
 	LivekitAPISecret string
+	TorrentBridgeURL string
 }
 
 func Load() (Config, error) {
@@ -28,6 +30,7 @@ func Load() (Config, error) {
 		WebDir:           "web/dist",
 		RedisURL:         "redis://localhost:6379",
 		MaxUploadMB:      10240,
+		StreamStartMB:    1,
 		RoomTTLHours:     5,
 		MaxParticipants:  20,
 		RoomIdleMinutes:  10,
@@ -53,6 +56,9 @@ func Load() (Config, error) {
 	if cfg.MaxUploadMB, err = envInt64("MAX_UPLOAD_MB", cfg.MaxUploadMB); err != nil {
 		return Config{}, err
 	}
+	if cfg.StreamStartMB, err = envInt64("STREAM_START_MB", cfg.StreamStartMB); err != nil {
+		return Config{}, err
+	}
 	if cfg.RoomTTLHours, err = envInt("ROOM_TTL_HOURS", cfg.RoomTTLHours); err != nil {
 		return Config{}, err
 	}
@@ -68,6 +74,7 @@ func Load() (Config, error) {
 	cfg.LivekitURL = os.Getenv("LIVEKIT_URL")
 	cfg.LivekitAPIKey = os.Getenv("LIVEKIT_API_KEY")
 	cfg.LivekitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
+	cfg.TorrentBridgeURL = os.Getenv("TORRENT_BRIDGE_URL")
 
 	return cfg, nil
 }

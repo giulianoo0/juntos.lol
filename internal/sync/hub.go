@@ -2,6 +2,9 @@ package sync
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -37,13 +40,14 @@ type Hub struct {
 	upgrader  websocket.Upgrader
 	idleAfter time.Duration
 
-	mu        stdsync.Mutex
-	rooms     map[string]*roomConn
-	closed    bool
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce stdsync.Once
-	wg        stdsync.WaitGroup
+	mu           stdsync.Mutex
+	rooms        map[string]*roomConn
+	capabilities map[string]map[string]string
+	closed       bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	closeOnce    stdsync.Once
+	wg           stdsync.WaitGroup
 }
 
 type roomConn struct {
@@ -55,7 +59,7 @@ type roomConn struct {
 	register     chan joinRequest
 	unregister   chan *client
 	inbound      chan clientInbound
-	status       chan string
+	updates      chan Outbound
 }
 
 type joinRequest struct {
@@ -80,16 +84,26 @@ func NewHub(store *room.Store, cfg config.Config) *Hub {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Hub{
-		store:     store,
-		cfg:       cfg,
-		idleAfter: time.Duration(cfg.RoomIdleMinutes) * time.Minute,
-		rooms:     make(map[string]*roomConn),
-		ctx:       ctx,
-		cancel:    cancel,
+		store:        store,
+		cfg:          cfg,
+		idleAfter:    time.Duration(cfg.RoomIdleMinutes) * time.Minute,
+		rooms:        make(map[string]*roomConn),
+		capabilities: make(map[string]map[string]string),
+		ctx:          ctx,
+		cancel:       cancel,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: sameHostnameOrigin,
 		},
 	}
+}
+
+// AuthorizeMember validates the short-lived in-memory capability issued by
+// the WebSocket welcome message. It is never accepted from a URL or nickname.
+func (h *Hub) AuthorizeMember(roomID, memberID, capability string) bool {
+	h.mu.Lock()
+	want := h.capabilities[roomID][memberID]
+	h.mu.Unlock()
+	return want != "" && len(want) == len(capability) && subtle.ConstantTimeCompare([]byte(want), []byte(capability)) == 1
 }
 
 // Close stops all room and client goroutines owned by the hub.
@@ -138,9 +152,6 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	nickname := hello.Nickname
-	if nickname == "" {
-		nickname = c.Query("nickname")
-	}
 	if hello.Type != "hello" || !validNickname(nickname) {
 		writeHandshakeError(conn, "invalid_hello")
 		return
@@ -182,6 +193,16 @@ func (h *Hub) HandleWS(c *gin.Context) {
 
 // NotifyStatus broadcasts a persisted room media status to connected clients.
 func (h *Hub) NotifyStatus(roomID, status string) {
+	h.notify(roomID, Outbound{Type: "roomStatus", Status: status})
+}
+
+// NotifyRoomUpdated tells clients to refresh room metadata without changing
+// media readiness. Subtitle extraction uses this path.
+func (h *Hub) NotifyRoomUpdated(roomID string) {
+	h.notify(roomID, Outbound{Type: "roomUpdated"})
+}
+
+func (h *Hub) notify(roomID string, event Outbound) {
 	h.mu.Lock()
 	connection := h.rooms[roomID]
 	h.mu.Unlock()
@@ -189,7 +210,7 @@ func (h *Hub) NotifyStatus(roomID, status string) {
 		return
 	}
 	select {
-	case connection.status <- status:
+	case connection.updates <- event:
 	default:
 	}
 }
@@ -212,7 +233,7 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID string) *roomConn {
 		register:     make(chan joinRequest),
 		unregister:   make(chan *client),
 		inbound:      make(chan clientInbound),
-		status:       make(chan string, 1),
+		updates:      make(chan Outbound, 4),
 	}
 	h.rooms[roomID] = connection
 	h.wg.Go(connection.run)
@@ -223,6 +244,7 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 	h.mu.Lock()
 	if h.rooms[roomID] == connection {
 		delete(h.rooms, roomID)
+		delete(h.capabilities, roomID)
 	}
 	h.mu.Unlock()
 }
@@ -266,8 +288,8 @@ func (r *roomConn) run() {
 			}
 		case event := <-r.inbound:
 			r.handleInbound(event)
-		case status := <-r.status:
-			r.broadcast(Outbound{Type: "roomStatus", Status: status})
+		case event := <-r.updates:
+			r.broadcast(event)
 		case <-idle:
 			r.cleanupIdle()
 			return
@@ -283,6 +305,12 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	memberID := fmt.Sprintf("m%d", r.nextMember)
 	r.nextMember++
 	request.client.id = memberID
+	capabilityBytes := make([]byte, 32)
+	if _, err := rand.Read(capabilityBytes); err != nil {
+		request.result <- "internal_error"
+		return
+	}
+	request.client.capability = base64.RawURLEncoding.EncodeToString(capabilityBytes)
 	request.client.member = room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now()}
 
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
@@ -319,10 +347,16 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		r.controllerID = memberID
 	}
 	r.clients[memberID] = request.client
+	r.hub.mu.Lock()
+	if r.hub.capabilities[r.id] == nil {
+		r.hub.capabilities[r.id] = make(map[string]string)
+	}
+	r.hub.capabilities[r.id][memberID] = request.client.capability
+	r.hub.mu.Unlock()
 	members := r.members()
 	request.client.send <- Outbound{
 		Type: "welcome", MemberID: memberID, State: &state, ControllerID: r.controllerID,
-		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
+		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(), Capability: request.client.capability,
 	}
 	request.client.send <- Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
@@ -338,6 +372,9 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 		return
 	}
 	delete(r.clients, disconnected.id)
+	r.hub.mu.Lock()
+	delete(r.hub.capabilities[r.id], disconnected.id)
+	r.hub.mu.Unlock()
 	close(disconnected.send)
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
@@ -382,26 +419,9 @@ func (r *roomConn) handleInbound(event clientInbound) {
 			return
 		}
 		r.broadcast(Outbound{Type: "chat", Message: &chat})
-	case "delegate":
-		r.handleDelegate(event.client, message)
 	case "play", "pause", "seek", "rate":
 		r.handleState(event.client, message)
 	}
-}
-
-func (r *roomConn) handleDelegate(sender *client, message Inbound) {
-	if sender.id != r.controllerID || r.clients[message.TargetID] == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
-	defer cancel()
-	if err := r.hub.store.SetController(ctx, r.id, message.TargetID); err != nil {
-		slog.ErrorContext(ctx, "delegate websocket controller failed", "room_id", r.id, "error", err)
-		r.send(sender, Outbound{Type: "error", ErrCode: "internal_error"})
-		return
-	}
-	r.controllerID = message.TargetID
-	r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 }
 
 func (r *roomConn) handleState(sender *client, message Inbound) {
@@ -500,6 +520,23 @@ func (r *roomConn) send(target *client, event Outbound) {
 func (r *roomConn) cleanupIdle() {
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
+	storedRoom, err := r.hub.store.Get(ctx, r.id)
+	if errors.Is(err, room.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "load idle room before cleanup failed", "room_id", r.id, "error", err)
+		return
+	}
+	if storedRoom.Status == "uploading" || storedRoom.Status == "processing" {
+		// A large or slow upload can legitimately outlive the websocket idle
+		// window. Keep its persisted room and files so tus progress can continue
+		// producing the first segment. A later connection gets fresh ownership.
+		if err := r.hub.store.SetController(ctx, r.id, ""); err != nil {
+			slog.ErrorContext(ctx, "clear controller for idle active upload failed", "room_id", r.id, "error", err)
+		}
+		return
+	}
 	fileErr := os.RemoveAll(filepath.Join(r.hub.cfg.DataDir, "rooms", r.id))
 	storeErr := r.hub.store.Delete(ctx, r.id)
 	if err := errors.Join(fileErr, storeErr); err != nil {

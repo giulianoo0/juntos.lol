@@ -3,8 +3,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,15 +15,20 @@ import (
 const maxScreenshareBodyBytes = 4 << 10
 
 type screenshareTokenRequest struct {
-	Nickname string `json:"nickname" binding:"required"`
+	MemberID   string `json:"memberId" binding:"required"`
+	Capability string `json:"capability" binding:"required"`
+}
+
+type memberAuthorizer interface {
+	AuthorizeMember(roomID, memberID, capability string) bool
 }
 
 // RegisterScreenshareRoute mounts the LiveKit token endpoint.
-func RegisterScreenshareRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config) {
-	rg.POST("/rooms/:id/screenshare/token", createScreenshareToken(store, cfg))
+func RegisterScreenshareRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer memberAuthorizer) {
+	rg.POST("/rooms/:id/screenshare/token", createScreenshareToken(store, cfg, authorizer))
 }
 
-func createScreenshareToken(store *room.Store, cfg config.Config) gin.HandlerFunc {
+func createScreenshareToken(store *room.Store, cfg config.Config, authorizer memberAuthorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if cfg.LivekitURL == "" || cfg.LivekitAPIKey == "" || cfg.LivekitAPISecret == "" {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "screenshare_disabled"})
@@ -33,7 +36,7 @@ func createScreenshareToken(store *room.Store, cfg config.Config) gin.HandlerFun
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxScreenshareBodyBytes)
 		var request screenshareTokenRequest
-		if err := c.ShouldBindJSON(&request); err != nil || !validDisplayName(request.Nickname) {
+		if err := c.ShouldBindJSON(&request); err != nil || request.MemberID == "" || request.Capability == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
@@ -48,28 +51,7 @@ func createScreenshareToken(store *room.Store, cfg config.Config) gin.HandlerFun
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		members, err := store.Members(c.Request.Context(), roomID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		slices.SortFunc(members, func(a, b room.Member) int {
-			if a.JoinedAt.Before(b.JoinedAt) {
-				return -1
-			}
-			if a.JoinedAt.After(b.JoinedAt) {
-				return 1
-			}
-			return strings.Compare(a.ID, b.ID)
-		})
-		var identity string
-		for _, member := range members {
-			if member.Nickname == request.Nickname {
-				identity = member.ID
-				break
-			}
-		}
-		if identity == "" {
+		if authorizer == nil || !authorizer.AuthorizeMember(roomID, request.MemberID, request.Capability) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
 			return
 		}
@@ -81,7 +63,7 @@ func createScreenshareToken(store *room.Store, cfg config.Config) gin.HandlerFun
 				RoomJoin: true, Room: roomID,
 				CanPublish: &canPublish, CanSubscribe: &canSubscribe,
 			}).
-			SetIdentity(identity).
+			SetIdentity(request.MemberID).
 			SetValidFor(2 * time.Hour).
 			ToJWT()
 		if err != nil {

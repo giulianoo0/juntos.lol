@@ -15,11 +15,12 @@ const (
 )
 
 type client struct {
-	id     string
-	member room.Member
-	conn   *websocket.Conn
-	room   *roomConn
-	send   chan Outbound
+	id         string
+	capability string
+	member     room.Member
+	conn       *websocket.Conn
+	room       *roomConn
+	send       chan Outbound
 }
 
 func (c *client) readPump() {

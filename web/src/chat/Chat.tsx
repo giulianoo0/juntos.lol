@@ -2,6 +2,8 @@ import { useEffect, useState, type KeyboardEvent } from 'react'
 import type { ChatMessage } from '../types'
 import type { Translator } from '../i18n/useT'
 
+const mobileMediaQuery = '(max-width: 900px)'
+
 interface ChatProps {
   messages: ChatMessage[]
   open: boolean
@@ -12,11 +14,11 @@ interface ChatProps {
 
 export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
   const [text, setText] = useState('')
-  const [mobile, setMobile] = useState(() => matchMedia('(max-width: 767px)').matches)
+  const [mobile, setMobile] = useState(() => matchMedia(mobileMediaQuery).matches)
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
 
   useEffect(() => {
-    const mobileQuery = matchMedia('(max-width: 767px)')
+    const mobileQuery = matchMedia(mobileMediaQuery)
     const motionQuery = matchMedia('(prefers-reduced-motion: reduce)')
     const updateMobile = () => setMobile(mobileQuery.matches)
     const updateMotion = () => setReducedMotion(motionQuery.matches)

@@ -16,6 +16,12 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
+type testMemberAuthorizer struct{ allowed bool }
+
+func (a testMemberAuthorizer) AuthorizeMember(roomID, memberID, capability string) bool {
+	return a.allowed && roomID == "r1" && memberID == "m1" && capability == "secret-capability"
+}
+
 func TestScreenshareToken(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()
@@ -26,9 +32,9 @@ func TestScreenshareToken(t *testing.T) {
 		LivekitURL: "wss://livekit.example.test", LivekitAPIKey: "api-key", LivekitAPISecret: "api-secret",
 	}
 	router := gin.New()
-	RegisterScreenshareRoute(router.Group("/api"), store, cfg)
+	RegisterScreenshareRoute(router.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true})
 
-	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"nickname":"giuli"}`)
+	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability"}`)
 	require.Equal(t, http.StatusOK, w.Code)
 	var response struct {
 		Token string `json:"token"`
@@ -53,8 +59,8 @@ func TestScreenshareToken(t *testing.T) {
 
 func TestScreenshareTokenDisabled(t *testing.T) {
 	router := gin.New()
-	RegisterScreenshareRoute(router.Group("/api"), newTestStore(t), config.Config{})
-	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"nickname":"giuli"}`)
+	RegisterScreenshareRoute(router.Group("/api"), newTestStore(t), config.Config{}, nil)
+	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability"}`)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.JSONEq(t, `{"error":"screenshare_disabled"}`, w.Body.String())
 }
@@ -69,11 +75,11 @@ func TestScreenshareTokenRequiresRoomMember(t *testing.T) {
 		LivekitURL: "wss://livekit.example.test", LivekitAPIKey: "api-key", LivekitAPISecret: "api-secret",
 	}
 	router := gin.New()
-	RegisterScreenshareRoute(router.Group("/api"), store, cfg)
+	RegisterScreenshareRoute(router.Group("/api"), store, cfg, testMemberAuthorizer{})
 
-	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"nickname":"missing"}`)
+	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"wrong"}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
-	w = doScreenshareJSON(router, "/api/rooms/missing/screenshare/token", `{"nickname":"missing"}`)
+	w = doScreenshareJSON(router, "/api/rooms/missing/screenshare/token", `{"memberId":"m1","capability":"wrong"}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 

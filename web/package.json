@@ -15,9 +15,12 @@
     "@uppy/tus": "^5.1.1",
     "hls.js": "^1.7.0",
     "livekit-client": "^2.22.0",
+    "matroska-subtitles": "^3.3.2",
+    "mediabunny": "^1.55.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.18.2"
+    "react-router-dom": "^7.18.2",
+    "webtorrent": "^3.0.21"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",

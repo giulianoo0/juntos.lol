@@ -209,6 +209,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 		r.BitmapSubsSkipped = n
 	}
+	r.ClientSubs = fields["client_subs"] == "1"
 	if v := fields["created_at"]; v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
@@ -257,6 +258,46 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 		"subtitle_tracks", string(b),
 		"bitmap_subs_skipped", bitmapSkipped,
 	)
+}
+
+// SetAudioTracks stores the probed audio tracks and bitmap-subtitle skip
+// count without touching subtitle_tracks, preserving browser-supplied subs.
+func (s *Store) SetAudioTracks(ctx context.Context, id string, audio []TrackInfo, bitmapSkipped int) error {
+	a, err := json.Marshal(audio)
+	if err != nil {
+		return fmt.Errorf("marshal audio tracks: %w", err)
+	}
+
+	return s.mutateRoom(ctx, id, false,
+		"audio_tracks", string(a),
+		"bitmap_subs_skipped", bitmapSkipped,
+	)
+}
+
+// SetClientSubtitles stores browser-extracted WebVTT subtitle tracks and
+// marks the room so the media pipeline skips embedded subtitle extraction.
+func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackInfo) error {
+	b, err := json.Marshal(subs)
+	if err != nil {
+		return fmt.Errorf("marshal subtitle tracks: %w", err)
+	}
+
+	return s.mutateRoom(ctx, id, false,
+		"subtitle_tracks", string(b),
+		"client_subs", "1",
+	)
+}
+
+// HasClientSubs reports whether the room received browser-extracted subs.
+func (s *Store) HasClientSubs(ctx context.Context, id string) (bool, error) {
+	v, err := s.rdb.HGet(ctx, roomKey(id), "client_subs").Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get client subs flag: %w", err)
+	}
+	return v == "1", nil
 }
 
 func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fields ...any) error {

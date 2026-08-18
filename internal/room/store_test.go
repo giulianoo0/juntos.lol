@@ -186,3 +186,49 @@ func TestChatCappedAt200(t *testing.T) {
 	require.Equal(t, "message 11", msgs[0].Text)
 	require.Equal(t, "message 210", msgs[199].Text)
 }
+
+func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "subs", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+
+	has, err := s.HasClientSubs(t.Context(), "subs")
+	require.NoError(t, err)
+	require.False(t, has)
+
+	subs := []TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}
+	require.NoError(t, s.SetClientSubtitles(t.Context(), "subs", subs))
+
+	has, err = s.HasClientSubs(t.Context(), "subs")
+	require.NoError(t, err)
+	require.True(t, has)
+	got, err := s.Get(t.Context(), "subs")
+	require.NoError(t, err)
+	require.True(t, got.ClientSubs)
+	require.Equal(t, subs, got.SubtitleTracks)
+
+	// Audio updates must not clobber client subtitle tracks.
+	require.NoError(t, s.SetAudioTracks(t.Context(), "subs", []TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}, 2))
+	got, err = s.Get(t.Context(), "subs")
+	require.NoError(t, err)
+	require.Equal(t, subs, got.SubtitleTracks)
+	require.Equal(t, "aac", got.AudioTracks[0].Codec)
+	require.Equal(t, 2, got.BitmapSubsSkipped)
+}
+
+func TestSetClientSubtitlesRejectsMissingRoom(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+
+	err := s.SetClientSubtitles(t.Context(), "missing", []TrackInfo{{Index: 0, Codec: "webvtt"}})
+	require.ErrorIs(t, err, ErrNotFound)
+
+	has, err := s.HasClientSubs(t.Context(), "missing")
+	require.NoError(t, err)
+	require.False(t, has)
+}

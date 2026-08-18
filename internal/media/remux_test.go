@@ -1,6 +1,8 @@
 package media
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,7 +29,7 @@ func TestBuildRemuxArgsMultiAudio(t *testing.T) {
 	require.Contains(t, joined, "-var_stream_map a:0,agroup:audio,default:yes,language:eng")
 	require.Contains(t, joined, "a:1,agroup:audio,language:jpn")
 	require.Contains(t, joined, "v:0,agroup:audio")
-	require.Contains(t, joined, "-master_pl_name master.m3u8")
+	require.Contains(t, joined, "-master_pl_name final_master.m3u8")
 	require.Contains(t, joined, "-hls_segment_type fmp4")
 	require.Contains(t, joined, "-c:a aac")
 	require.Equal(t, "/x/hls/stream_%v.m3u8", args[len(args)-1])
@@ -70,7 +72,76 @@ func TestBuildRemuxArgsOmitsUnsafeAudioLanguage(t *testing.T) {
 	}
 }
 
+func TestBuildProgressiveRemuxArgs(t *testing.T) {
+	p := &ProbeResult{
+		VideoCopyable: true,
+		Audio:         []room.TrackInfo{{Index: 0, Language: "eng"}},
+	}
+
+	args := BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p)
+	joined := strings.Join(args, " ")
+	require.Contains(t, joined, "-i pipe:0")
+	require.NotContains(t, joined, "-re")
+	require.Contains(t, joined, "-hls_time 2")
+	require.NotContains(t, joined, "-force_key_frames")
+	require.Contains(t, joined, "-hls_playlist_type event")
+	require.NotContains(t, joined, "-hls_playlist_type vod")
+	require.Contains(t, joined, "-var_stream_map a:0,agroup:audio,default:yes,language:eng")
+	require.Contains(t, joined, "-master_pl_name master.m3u8")
+	require.Contains(t, joined, "-hls_fmp4_init_filename preview_init_%v.mp4")
+	require.Contains(t, joined, "/x/hls/preview_stream_%v_%06d.m4s")
+	require.Equal(t, "/x/hls/preview_stream_%v.m3u8", args[len(args)-1])
+
+	vod := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
+	require.Contains(t, vod, "-hls_playlist_type vod")
+	require.Contains(t, vod, "-hls_time 6")
+	require.Contains(t, vod, "-master_pl_name final_master.m3u8")
+	require.NotContains(t, vod, "-re")
+	require.NotContains(t, vod, "event")
+}
+
+func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
+	p := &ProbeResult{VideoCodec: "av1", VideoCopyable: false}
+
+	joined := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+
+	require.Contains(t, joined, "-c:v libx264 -preset ultrafast -crf 23")
+	require.NotContains(t, joined, "-preset veryfast")
+	require.Contains(t, joined, `-force_key_frames expr:gte(t,n_forced*2)`)
+	require.Contains(t, joined, "-hls_time 2")
+
+	vod := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
+	require.Contains(t, vod, "-c:v libx264 -preset veryfast -crf 23")
+	require.NotContains(t, vod, "-force_key_frames")
+	require.Contains(t, vod, "-hls_time 6")
+}
+
 func TestStderrTail(t *testing.T) {
 	require.Equal(t, "short", stderrTail([]byte("short"), 2048))
 	require.Equal(t, "cdef", stderrTail([]byte("abcdef"), 4))
+}
+
+func TestCleanupProgressiveOutputsPreservesFinalHLS(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{
+		"master.m3u8",
+		"stream_0.m3u8",
+		"stream_0_000.m4s",
+		"init_0.mp4",
+		"preview_stream_0.m3u8",
+		"preview_stream_0_000000.m4s",
+		"preview_init_0.mp4",
+		"preview_stream_0_000001.m4s.tmp",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644))
+	}
+
+	require.NoError(t, cleanupProgressiveOutputs(dir))
+	require.FileExists(t, filepath.Join(dir, "master.m3u8"))
+	require.FileExists(t, filepath.Join(dir, "stream_0.m3u8"))
+	require.FileExists(t, filepath.Join(dir, "stream_0_000.m4s"))
+	require.FileExists(t, filepath.Join(dir, "init_0.mp4"))
+	preview, err := filepath.Glob(filepath.Join(dir, "preview_*"))
+	require.NoError(t, err)
+	require.Empty(t, preview)
 }

@@ -65,6 +65,14 @@ func TestParseProbeClassifiesVideoAndSubtitleCodecs(t *testing.T) {
 	}
 }
 
+func TestParseProbeToleratesMissingDuration(t *testing.T) {
+	for _, data := range []string{`{"streams":[],"format":{}}`, `{"streams":[],"format":{"duration":""}}`} {
+		p, err := parseProbe([]byte(data))
+		require.NoError(t, err)
+		require.Equal(t, int64(0), p.DurationMs)
+	}
+}
+
 func TestParseProbeRejectsMalformedOutput(t *testing.T) {
 	tests := []struct {
 		name string

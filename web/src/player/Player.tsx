@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type Hls from 'hls.js'
 import type { RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
@@ -12,29 +12,67 @@ interface PlayerProps {
 }
 
 export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
+  const playerRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const playRequestedRef = useRef(false)
+  const playAttemptRef = useRef(false)
+  const controlsTimerRef = useRef<number | null>(null)
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>([])
   const [subtitle, setSubtitle] = useState(-1)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
+  const [controlsVisible, setControlsVisible] = useState(true)
+
+  const revealControls = useCallback((autoHide = true) => {
+    if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
+    setControlsVisible(true)
+    if (!autoHide) return
+    controlsTimerRef.current = window.setTimeout(() => {
+      setControlsVisible(false)
+    }, 2500)
+  }, [])
+
+  useEffect(() => {
+    if (playing) revealControls()
+    else revealControls(false)
+    return () => {
+      if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
+    }
+  }, [playing, revealControls])
+
+  useEffect(() => {
+    const updateFullscreen = () => setFullscreen(document.fullscreenElement === playerRef.current)
+    document.addEventListener('fullscreenchange', updateFullscreen)
+    return () => document.removeEventListener('fullscreenchange', updateFullscreen)
+  }, [])
 
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
     const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8`
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = source
-      return
-    }
     let disposed = false
-    void import('hls.js').then(({ default: HlsClass }) => {
-      if (disposed || !HlsClass.isSupported()) return
-      const hls = new HlsClass()
-      hlsRef.current = hls
-      hls.loadSource(source)
-      hls.attachMedia(video)
-      hls.on(HlsClass.Events.MANIFEST_PARSED, () => setAudioTracks(hls.audioTracks))
-      hls.on(HlsClass.Events.AUDIO_TRACKS_UPDATED, () => setAudioTracks(hls.audioTracks))
+    void import('hls.js').then(({ default: HlsClass, ErrorTypes }) => {
+      if (disposed) return
+      if (HlsClass.isSupported()) {
+        // Progressive uploads are EVENT playlists. Native HLS commonly joins
+        // those at the live edge and waits for the next uploaded segment;
+        // hls.js lets an episode reliably start at its beginning instead.
+        const hls = new HlsClass({ startPosition: 0 })
+        hlsRef.current = hls
+        hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
+        hls.on(HlsClass.Events.MANIFEST_PARSED, () => setAudioTracks(hls.audioTracks))
+        hls.on(HlsClass.Events.AUDIO_TRACKS_UPDATED, () => setAudioTracks(hls.audioTracks))
+        hls.on(HlsClass.Events.ERROR, (_event, data) => {
+          if (!data.fatal) return
+          if (data.type === ErrorTypes.NETWORK_ERROR) hls.startLoad()
+          else if (data.type === ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+        })
+        hls.attachMedia(video)
+        return
+      }
+      if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = source
     })
     return () => {
       disposed = true
@@ -43,13 +81,45 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
     }
   }, [room.id, videoRef])
 
+  const attemptPlay = () => {
+    const video = videoRef.current
+    if (!video || !playRequestedRef.current || playAttemptRef.current) return
+    playAttemptRef.current = true
+    void video.play().then(() => {
+      playAttemptRef.current = false
+      if (!playRequestedRef.current) return
+      playRequestedRef.current = false
+      if (isController) {
+        send('play', {
+          positionMs: Math.round(video.currentTime * 1000),
+          rate: video.playbackRate,
+        })
+      }
+    }).catch(() => {
+      // A click can land while hls.js is still attaching the MediaSource.
+      // Keep the intent and retry from the next canplay event.
+      playAttemptRef.current = false
+    })
+  }
+
   const togglePlay = () => {
     const video = videoRef.current
-    if (!video || !isController) return
-    send(video.paused ? 'play' : 'pause', {
-      positionMs: Math.round(video.currentTime * 1000),
-      rate: video.playbackRate,
-    })
+    if (!video) return
+    if (video.paused) {
+      // Calling play inside the click preserves browser user activation. A
+      // WebSocket round trip first would make browsers reject audible autoplay.
+      playRequestedRef.current = true
+      attemptPlay()
+      return
+    }
+    playRequestedRef.current = false
+    video.pause()
+    if (isController) {
+      send('pause', {
+        positionMs: Math.round(video.currentTime * 1000),
+        rate: video.playbackRate,
+      })
+    }
   }
 
   const seek = (seconds: number) => {
@@ -58,14 +128,38 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
     send('seek', { positionMs: Math.round(seconds * 1000) })
   }
 
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined)
+      return
+    }
+    const request = playerRef.current?.requestFullscreen?.()
+    void request?.catch(() => undefined)
+  }
+
   return (
-    <div className="player-wrap raised">
+    <div
+      ref={playerRef}
+      className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''}`}
+      onPointerMove={() => revealControls(playing)}
+      onPointerDown={() => revealControls(playing)}
+      onFocusCapture={() => revealControls(false)}
+      onBlurCapture={() => revealControls(playing)}
+    >
       <video
         ref={videoRef}
         className="video"
         playsInline
-        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-        onDurationChange={(event) => setDuration(event.currentTarget.duration || 0)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onCanPlay={() => attemptPlay()}
+        onTimeUpdate={(event) => {
+          setCurrentTime(event.currentTarget.currentTime)
+          setDuration(playableDuration(event.currentTarget))
+        }}
+        onDurationChange={(event) => setDuration(playableDuration(event.currentTarget))}
+        onLoadedMetadata={(event) => setDuration(playableDuration(event.currentTarget))}
+        onProgress={(event) => setDuration(playableDuration(event.currentTarget))}
       >
         {(room.subtitleTracks ?? []).map((track, index) => (
           <track
@@ -78,7 +172,11 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         ))}
       </video>
       <div className="player-controls raised">
-        <button onClick={togglePlay} disabled={!isController}>{videoRef.current?.paused === false ? '❚❚' : '▶'}</button>
+        <button
+          aria-label={t(playing ? 'room.pause' : 'room.play')}
+          onClick={togglePlay}
+          onPointerUp={(event) => event.currentTarget.blur()}
+        >{playing ? '❚❚' : '▶'}</button>
         <input
           aria-label="Seek"
           type="range"
@@ -109,7 +207,15 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
             </select>
           </label>
         ) : null}
-        {!isController ? <span className="viewer-note">{t('room.viewer')}</span> : null}
+        <button
+          className="fullscreen-button"
+          aria-label={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')}
+          title={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')}
+          onClick={toggleFullscreen}
+        >⛶</button>
+        {!isController ? (
+          <span className="viewer-note">{t('room.viewer')}</span>
+        ) : null}
       </div>
       {room.bitmapSubsSkipped > 0 ? <span className="notice-chip">{t('room.bitmapSkipped')}</span> : null}
     </div>
@@ -120,6 +226,13 @@ function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return '0:00'
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+}
+
+function playableDuration(video: HTMLVideoElement): number {
+  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration
+  if (video.seekable.length > 0) return video.seekable.end(video.seekable.length - 1)
+  if (video.buffered.length > 0) return video.buffered.end(video.buffered.length - 1)
+  return 0
 }
 
 function safeLanguage(language: string): string {

@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,8 +22,10 @@ const (
 )
 
 // Pipeline processes one uploaded source into browser-ready media tracks.
+// skipSubs skips embedded subtitle extraction when the browser already
+// supplied WebVTT tracks.
 type Pipeline interface {
-	Run(ctx context.Context, roomID, srcPath, outDir string) (
+	Run(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
 		audio, subs []room.TrackInfo, bitmapSkipped int, err error,
 	)
 }
@@ -86,6 +89,43 @@ func (q *Queue) Start(ctx context.Context) {
 			close(q.done)
 		}()
 	})
+}
+
+// Recover resubmits complete uploads whose in-memory final-remux job was lost
+// during a process restart. Rooms with only a growing tus file are left to the
+// progressive upload callback; an original.* file means completion was already
+// committed and the authoritative pipeline can safely restart from byte zero.
+func (q *Queue) Recover(ctx context.Context) error {
+	roomsDir := filepath.Join(q.dataDir, "rooms")
+	entries, err := os.ReadDir(roomsDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read rooms for media recovery: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		roomID := entry.Name()
+		storedRoom, err := q.store.Get(ctx, roomID)
+		if err != nil {
+			if !errors.Is(err, room.ErrNotFound) {
+				slog.WarnContext(ctx, "load room for media recovery failed", "room_id", roomID, "error", err)
+			}
+			continue
+		}
+		if storedRoom.Status != "uploading" && storedRoom.Status != "processing" {
+			continue
+		}
+		if _, _, err := sourcePath(q.dataDir, roomID); err != nil {
+			continue
+		}
+		slog.InfoContext(ctx, "recovering interrupted media job", "room_id", roomID)
+		q.Submit(roomID)
+	}
+	return nil
 }
 
 // Submit enqueues roomID, or returns without blocking after the queue stops.
@@ -156,13 +196,13 @@ func (q *Queue) worker(ctx context.Context) {
 }
 
 func (q *Queue) process(ctx context.Context, roomID string) bool {
-	if err := q.store.SetStatus(ctx, roomID, "processing"); err != nil {
+	storedRoom, err := q.store.Get(ctx, roomID)
+	if err != nil {
 		if ctx.Err() == nil {
-			q.fail(ctx, roomID, fmt.Errorf("set processing status: %w", err))
+			q.fail(ctx, roomID, fmt.Errorf("load room before processing: %w", err))
 		}
 		return false
 	}
-
 	roomDir, srcPath, err := sourcePath(q.dataDir, roomID)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -170,14 +210,44 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		}
 		return false
 	}
-	audio, subs, bitmapSkipped, err := q.pipeline.Run(ctx, roomID, srcPath, roomDir)
+
+	// A completed upload may already have a playable progressive preview. Keep
+	// that preview visible while the authoritative VOD remux runs, including
+	// when this job is being recovered after a process restart.
+	keepReady := storedRoom.Status == "ready" || progressiveOutputReady(filepath.Join(roomDir, "hls"))
+	nextStatus := "processing"
+	if keepReady {
+		nextStatus = "ready"
+	}
+	if err := q.store.SetStatus(ctx, roomID, nextStatus); err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("set %s status: %w", nextStatus, err))
+		}
+		return false
+	}
+	if keepReady && storedRoom.Status != "ready" {
+		q.notifyReady(roomID)
+	}
+	skipSubs, err := q.store.HasClientSubs(ctx, roomID)
+	if err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("check client subtitles: %w", err))
+		}
+		return false
+	}
+	audio, subs, bitmapSkipped, err := q.pipeline.Run(ctx, roomID, srcPath, roomDir, skipSubs)
 	if err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, err)
 		}
 		return false
 	}
-	if err := q.store.SetTracks(ctx, roomID, audio, subs, bitmapSkipped); err != nil {
+	if skipSubs {
+		err = q.store.SetAudioTracks(ctx, roomID, audio, bitmapSkipped)
+	} else {
+		err = q.store.SetTracks(ctx, roomID, audio, subs, bitmapSkipped)
+	}
+	if err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("store media tracks: %w", err))
 		}
@@ -290,7 +360,7 @@ func sourcePath(dataDir, roomID string) (roomDir, srcPath string, err error) {
 
 type realPipeline struct{}
 
-func (realPipeline) Run(ctx context.Context, _ string, srcPath, outDir string) (
+func (realPipeline) Run(ctx context.Context, _ string, srcPath, outDir string, skipSubs bool) (
 	[]room.TrackInfo, []room.TrackInfo, int, error,
 ) {
 	probe, err := Probe(ctx, srcPath)
@@ -303,6 +373,12 @@ func (realPipeline) Run(ctx context.Context, _ string, srcPath, outDir string) (
 	}
 	if err := Remux(ctx, srcPath, hlsDir, probe); err != nil {
 		return nil, nil, 0, err
+	}
+	if err := cleanupProgressiveOutputs(hlsDir); err != nil {
+		slog.WarnContext(ctx, "cleanup progressive media failed", "error", err)
+	}
+	if skipSubs {
+		return probe.Audio, nil, probe.BitmapSubs, nil
 	}
 	if _, err := ExtractSubtitles(ctx, srcPath, filepath.Join(outDir, "subs"), probe); err != nil {
 		return nil, nil, 0, err

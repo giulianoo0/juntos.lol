@@ -1,12 +1,13 @@
 export async function startScreenShare(
   roomId: string,
-  nickname: string,
+  memberId: string,
+  capability: string,
   onRemoteTrack?: (element: HTMLMediaElement) => void,
 ) {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/screenshare/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nickname }),
+    body: JSON.stringify({ memberId, capability }),
   })
   if (!response.ok) throw new Error('screenshare unavailable')
   const credentials = (await response.json()) as { token: string; url: string }

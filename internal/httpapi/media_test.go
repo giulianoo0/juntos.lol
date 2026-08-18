@@ -37,7 +37,29 @@ func TestServeHLSRange(t *testing.T) {
 	require.Equal(t, http.StatusPartialContent, w.Code)
 	require.Equal(t, "#EXTM3U", w.Body.String())
 	require.Equal(t, "application/vnd.apple.mpegurl", w.Header().Get("Content-Type"))
+	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	require.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
+}
+
+func TestServeNormalizesGrowingEventPlaylist(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	addMediaTestRoom(t, store, "r1")
+	hlsDir := filepath.Join(cfg.DataDir, "rooms", "r1", "hls")
+	require.NoError(t, os.MkdirAll(hlsDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(hlsDir, "preview_stream_0.m3u8"),
+		[]byte("#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:2.005333,\nsegment.m4s\n"),
+		0o644,
+	))
+	e := gin.New()
+	RegisterMediaRoutes(e, cfg, store)
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/hls/preview_stream_0.m3u8", nil))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "#EXT-X-TARGETDURATION:3\n")
+	require.Contains(t, w.Body.String(), "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n")
 }
 
 func TestServeMediaContentTypes(t *testing.T) {

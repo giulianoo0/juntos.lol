@@ -82,12 +82,15 @@ func parseProbe(data []byte) (*ProbeResult, error) {
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
 
-	durationSeconds, err := strconv.ParseFloat(raw.Format.Duration, 64)
-	if err != nil {
-		return nil, fmt.Errorf("parse duration %q: %w", raw.Format.Duration, err)
+	result := &ProbeResult{}
+	// Partial uploads often lack format.duration; only a present value must parse.
+	if raw.Format.Duration != "" {
+		durationSeconds, err := strconv.ParseFloat(raw.Format.Duration, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse duration %q: %w", raw.Format.Duration, err)
+		}
+		result.DurationMs = int64(math.Round(durationSeconds * 1000))
 	}
-
-	result := &ProbeResult{DurationMs: int64(math.Round(durationSeconds * 1000))}
 	audioIndex := 0
 	subtitleIndex := 0
 	for _, stream := range raw.Streams {

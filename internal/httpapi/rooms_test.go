@@ -18,16 +18,23 @@ import (
 func TestCreateRoom(t *testing.T) {
 	s := newTestStore(t) // helper: miniredis + NewStore
 	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
+	cfg := testCfg(t)
+	cfg.StreamStartMB = 3
+	RegisterRoomRoutes(e.Group("/api"), s, cfg)
 	w := httptest.NewRecorder()
 	body := `{"fileName":"movie.mkv","nickname":"giuli"}`
 	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	e.ServeHTTP(w, req)
 	require.Equal(t, 201, w.Code)
-	var resp struct{ ID, UploadEndpoint string }
+	var resp struct {
+		ID               string
+		UploadEndpoint   string
+		StreamStartBytes int64
+	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.ID, 8)
+	require.Equal(t, int64(3<<20), resp.StreamStartBytes)
 	got, _ := s.Get(context.Background(), resp.ID)
 	require.Equal(t, "uploading", got.Status)
 }

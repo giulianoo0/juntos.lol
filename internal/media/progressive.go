@@ -1,0 +1,389 @@
+package media
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/giulianoo0/ss/internal/room"
+)
+
+const (
+	// masterPollInterval is how often a progressive job checks for the first
+	// complete HLS segment produced by the growing upload.
+	masterPollInterval = 250 * time.Millisecond
+	// probeRetryInterval lets a partial container header grow before ffprobe
+	// tries it again. Upload progress often arrives in the middle of a PATCH.
+	probeRetryInterval = 500 * time.Millisecond
+	// inputPollInterval is the maximum delay before new upload bytes are fed
+	// to ffmpeg after it reaches the file's temporary EOF.
+	inputPollInterval = 100 * time.Millisecond
+)
+
+type probeFunc func(context.Context, string) (*ProbeResult, error)
+
+// progressiveJob is one partial upload awaiting a preview remux.
+type progressiveJob struct {
+	roomID  string
+	srcPath string
+}
+
+// Progressive runs best-effort preview remuxes of still-growing uploads.
+// The final remux started by Queue on upload completion stays authoritative:
+// failures here only leave the room in its current state.
+type Progressive struct {
+	workers  int
+	store    *room.Store
+	dataDir  string
+	onReady  func(roomID string)
+	probe    probeFunc
+	jobs     chan progressiveJob
+	done     chan struct{}
+	start    sync.Once
+	mu       sync.Mutex
+	ctx      context.Context
+	started  bool
+	stopping bool
+	queued   map[string]struct{}
+	active   map[string]context.CancelFunc
+	canceled map[string]struct{}
+}
+
+// NewProgressive creates a preview worker pool. onReady fires once per room
+// when its first complete HLS segment is playable.
+func NewProgressive(workers int, store *room.Store, dataDir string, onReady func(roomID string)) *Progressive {
+	if workers < 1 {
+		workers = 1
+	}
+	return &Progressive{
+		workers:  workers,
+		store:    store,
+		dataDir:  dataDir,
+		onReady:  onReady,
+		probe:    Probe,
+		jobs:     make(chan progressiveJob, workers),
+		done:     make(chan struct{}),
+		queued:   make(map[string]struct{}),
+		active:   make(map[string]context.CancelFunc),
+		canceled: make(map[string]struct{}),
+	}
+}
+
+// Start launches the worker pool once. Workers stop when ctx is canceled.
+func (p *Progressive) Start(ctx context.Context) {
+	p.start.Do(func() {
+		p.mu.Lock()
+		p.ctx = ctx
+		p.started = true
+		p.mu.Unlock()
+		var workers sync.WaitGroup
+		for range p.workers {
+			workers.Go(func() { p.worker(ctx) })
+		}
+		go func() {
+			workers.Wait()
+			p.mu.Lock()
+			p.stopping = true
+			p.mu.Unlock()
+			close(p.done)
+		}()
+	})
+}
+
+// Submit enqueues a preview remux for a partial upload. Duplicates and
+// submissions after shutdown return without blocking.
+func (p *Progressive) Submit(roomID, srcPath string) {
+	p.mu.Lock()
+	ctx := p.ctx
+	if !p.started {
+		p.mu.Unlock()
+		slog.Warn("progressive submission before start", "room_id", roomID)
+		return
+	}
+	if p.stopping || ctx == nil || ctx.Err() != nil {
+		p.mu.Unlock()
+		return
+	}
+	if _, exists := p.queued[roomID]; exists {
+		p.mu.Unlock()
+		return
+	}
+	if _, exists := p.active[roomID]; exists {
+		p.mu.Unlock()
+		return
+	}
+	p.queued[roomID] = struct{}{}
+	select {
+	case <-ctx.Done():
+		delete(p.queued, roomID)
+		p.mu.Unlock()
+	case p.jobs <- progressiveJob{roomID: roomID, srcPath: srcPath}:
+		p.mu.Unlock()
+	default:
+		delete(p.queued, roomID)
+		p.mu.Unlock()
+		slog.WarnContext(ctx, "progressive queue full", "room_id", roomID)
+	}
+}
+
+// Cancel stops a running preview for roomID and drops a queued one. The
+// upload completion and termination paths call this once the partial file is
+// no longer valid input.
+func (p *Progressive) Cancel(roomID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cancel, ok := p.active[roomID]; ok {
+		cancel()
+	}
+	if _, ok := p.queued[roomID]; ok {
+		p.canceled[roomID] = struct{}{}
+	}
+}
+
+func (p *Progressive) worker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-p.jobs:
+			jobCtx, ok := p.beginJob(ctx, job.roomID)
+			if !ok {
+				continue
+			}
+			p.process(ctx, jobCtx, job)
+			p.finishJob(job.roomID)
+		}
+	}
+}
+
+// beginJob registers a per-job context cancel and reports whether the job
+// should run (a canceled queued job is dropped).
+func (p *Progressive) beginJob(ctx context.Context, roomID string) (context.Context, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.queued, roomID)
+	if _, ok := p.canceled[roomID]; ok {
+		delete(p.canceled, roomID)
+		return nil, false
+	}
+	jobCtx, cancel := context.WithCancel(ctx)
+	p.active[roomID] = cancel
+	return jobCtx, true
+}
+
+func (p *Progressive) finishJob(roomID string) {
+	p.mu.Lock()
+	delete(p.active, roomID)
+	p.mu.Unlock()
+}
+
+func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
+	if err := p.store.SetStatus(jobCtx, job.roomID, "processing"); err != nil {
+		slog.WarnContext(ctx, "progressive: set processing status failed",
+			"room_id", job.roomID, "error", err)
+		return
+	}
+	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			slog.WarnContext(ctx, "progressive: probe growing upload failed",
+				"room_id", job.roomID, "error", err)
+		}
+		return
+	}
+	hlsDir := filepath.Join(p.dataDir, "rooms", job.roomID, "hls")
+	if err := os.MkdirAll(hlsDir, 0o755); err != nil {
+		slog.WarnContext(ctx, "progressive: create HLS directory failed",
+			"room_id", job.roomID, "error", err)
+		return
+	}
+	p.remux(ctx, jobCtx, job, hlsDir, probe)
+}
+
+// remux runs the progressive ffmpeg pass. A blocking stdin feeder follows the
+// growing file, so a temporary EOF pauses ffmpeg instead of ending the job.
+// The room becomes ready only after the first complete HLS segment appears.
+func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hlsDir string, probe *ProbeResult) {
+	cmd := exec.CommandContext(jobCtx, "ffmpeg", BuildProgressiveRemuxArgs("pipe:0", hlsDir, probe)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		slog.WarnContext(ctx, "progressive: create ffmpeg input failed",
+			"room_id", job.roomID, "error", err)
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		slog.WarnContext(ctx, "progressive: start ffmpeg failed",
+			"room_id", job.roomID, "error", err)
+		return
+	}
+	inputCtx, stopInput := context.WithCancel(jobCtx)
+	defer stopInput()
+	inputErr := make(chan error, 1)
+	go func() {
+		err := streamGrowingFile(inputCtx, job.srcPath, stdin, inputPollInterval)
+		if closeErr := stdin.Close(); err == nil {
+			err = closeErr
+		}
+		inputErr <- err
+	}()
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- cmd.Wait() }()
+
+	ticker := time.NewTicker(masterPollInterval)
+	defer ticker.Stop()
+	notified := false
+	inputDone := false
+	for {
+		select {
+		case err := <-waitErr:
+			stopInput()
+			_ = stdin.Close()
+			if !inputDone {
+				<-inputErr
+			}
+			switch {
+			case err == nil:
+				slog.InfoContext(ctx, "progressive remux finished", "room_id", job.roomID)
+			case jobCtx.Err() != nil:
+				slog.InfoContext(ctx, "progressive remux stopped", "room_id", job.roomID)
+			default:
+				slog.InfoContext(ctx, "progressive remux exited early",
+					"room_id", job.roomID,
+					"error", err,
+					"stderr", stderrTail(stderr.Bytes(), ffmpegErrorTailBytes),
+				)
+			}
+			return
+		case err := <-inputErr:
+			inputDone = true
+			if err != nil && jobCtx.Err() == nil && !errors.Is(err, io.ErrClosedPipe) {
+				slog.WarnContext(ctx, "progressive: growing input stopped",
+					"room_id", job.roomID, "error", err)
+			}
+		case <-ticker.C:
+			if notified {
+				continue
+			}
+			if !progressiveOutputReady(hlsDir) {
+				continue
+			}
+			if err := p.store.SetStatus(jobCtx, job.roomID, "ready"); err != nil {
+				slog.WarnContext(ctx, "progressive: set ready status failed",
+					"room_id", job.roomID, "error", err)
+				continue
+			}
+			p.notifyReady(job.roomID)
+			notified = true
+		}
+	}
+}
+
+// probeGrowingFile retries transient parse failures until enough of the
+// container header has arrived or the upload is canceled/completed.
+func probeGrowingFile(ctx context.Context, path string, retryInterval time.Duration, probe probeFunc) (*ProbeResult, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result, err := probe(ctx, path)
+		if err == nil && result != nil && result.VideoCodec != "" {
+			return result, nil
+		}
+
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// streamGrowingFile copies bytes already present and then waits at temporary
+// EOF for appended upload bytes. Keeping ffmpeg's stdin open is what turns a
+// regular tus file into an actual streaming input.
+func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInterval time.Duration) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 256*1024)
+	for {
+		n, readErr := file.Read(buffer)
+		if n > 0 {
+			if _, err := dst.Write(buffer[:n]); err != nil {
+				return err
+			}
+		}
+		if readErr == nil {
+			continue
+		}
+		if !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
+
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func progressiveOutputReady(hlsDir string) bool {
+	if info, err := os.Stat(filepath.Join(hlsDir, "master.m3u8")); err != nil || info.Size() == 0 {
+		return false
+	}
+	return hasNonEmptyMatch(filepath.Join(hlsDir, "preview_stream_*.m3u8")) &&
+		hasNonEmptyMatch(filepath.Join(hlsDir, "preview_init_*.mp4")) &&
+		hasNonEmptyMatch(filepath.Join(hlsDir, "preview_stream_*.m4s"))
+}
+
+func hasNonEmptyMatch(pattern string) bool {
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return false
+	}
+	for _, match := range matches {
+		if info, err := os.Stat(match); err == nil && info.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Progressive) notifyReady(roomID string) {
+	if p.onReady == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("progressive ready callback panicked", "room_id", roomID, "panic", recovered)
+		}
+	}()
+	p.onReady(roomID)
+}

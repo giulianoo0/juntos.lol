@@ -26,4 +26,5 @@ type Outbound struct {
 	ServerTimeMs int64              `json:"serverTimeMs,omitempty"`
 	ClientTimeMs int64              `json:"clientTimeMs,omitempty"`
 	ErrCode      string             `json:"error,omitempty"`
+	Capability   string             `json:"capability,omitempty"`
 }

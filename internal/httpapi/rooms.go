@@ -77,10 +77,11 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusCreated, gin.H{
-			"id":             id,
-			"nickname":       nickname,
-			"uploadEndpoint": "/api/upload/",
-			"expiresAt":      r.ExpiresAt,
+			"id":               id,
+			"nickname":         nickname,
+			"uploadEndpoint":   "/api/upload/",
+			"streamStartBytes": cfg.StreamStartMB << 20,
+			"expiresAt":        r.ExpiresAt,
 		})
 	}
 }

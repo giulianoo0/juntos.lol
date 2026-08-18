@@ -47,7 +47,7 @@ func metadataHeader(meta map[string]string) string {
 
 func TestPreCreateRejectsUnknownRoom(t *testing.T) {
 	s, cfg := testSetup(t)
-	h, err := NewTusHandler(cfg, s, func(string) {})
+	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestPreCreateRejectsUnknownRoom(t *testing.T) {
 func TestPreCreateRejectsRoomNotUploading(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "ready")
-	h, err := NewTusHandler(cfg, s, func(string) {})
+	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -83,7 +83,7 @@ func TestPreCreateRejectsRoomNotUploading(t *testing.T) {
 func TestPreCreateAcceptsUploadingRoom(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
-	h, err := NewTusHandler(cfg, s, func(string) {})
+	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestPreCreateAcceptsUploadingRoom(t *testing.T) {
 func TestPreCreateUsesForwardedHTTPSLocation(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
-	h, err := NewTusHandler(cfg, s, func(string) {})
+	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestPreCreateRejectsSecondUploadForRoom(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
 
-	h, err := NewTusHandler(cfg, s, func(string) {})
+	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
 		w := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestCompleteUploadMovesFile(t *testing.T) {
 	createRoom(t, s, "room1234", "uploading")
 
 	done := make(chan string, 1)
-	h, err := NewTusHandler(cfg, s, func(roomID string) { done <- roomID })
+	h, err := NewTusHandler(cfg, s, func(roomID string) { done <- roomID }, nil, nil)
 	require.NoError(t, err)
 	h = http.StripPrefix("/api/upload", h)
 
@@ -194,13 +194,73 @@ func TestCompleteUploadMovesFile(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID+".info"))
 }
 
+func TestUploadProgressKeepsOfferingStreamStart(t *testing.T) {
+	s, cfg := testSetup(t)
+	createRoom(t, s, "room1234", "uploading")
+
+	type streamStart struct{ roomID, srcPath string }
+	started := make(chan streamStart, 4)
+	h, err := NewTusHandler(cfg, s, nil,
+		func(roomID, srcPath string) { started <- streamStart{roomID, srcPath} }, nil)
+	require.NoError(t, err)
+	h = http.StripPrefix("/api/upload", h)
+
+	create := httptest.NewRecorder()
+	createReq := httptest.NewRequest("POST", "/api/upload/", nil)
+	createReq.Header.Set("Tus-Resumable", "1.0.0")
+	createReq.Header.Set("Upload-Length", "48")
+	createReq.Header.Set("Upload-Metadata", metadataHeader(map[string]string{
+		"roomID":   "room1234",
+		"filename": "movie.mkv",
+	}))
+	h.ServeHTTP(create, createReq)
+	require.Equal(t, http.StatusCreated, create.Code)
+
+	u, err := url.Parse(create.Header().Get("Location"))
+	require.NoError(t, err)
+	uploadID := filepath.Base(u.Path)
+
+	patch := func(offset, body string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("PATCH", u.Path, strings.NewReader(body))
+		req.Header.Set("Tus-Resumable", "1.0.0")
+		req.Header.Set("Content-Type", "application/offset+octet-stream")
+		req.Header.Set("Upload-Offset", offset)
+		h.ServeHTTP(w, req)
+		require.Equal(t, http.StatusNoContent, w.Code)
+	}
+
+	// Each partial PATCH past the threshold may offer the room to the
+	// progressive queue. The queue itself deduplicates active work, while a
+	// later event can recover from a temporarily full queue.
+	patch("0", "0123456789abcdef")
+	patch("16", "0123456789abcdef")
+
+	wantPath := filepath.Join(cfg.DataDir, "tus-incoming", uploadID)
+	select {
+	case got := <-started:
+		require.Equal(t, "room1234", got.roomID)
+		require.Equal(t, wantPath, got.srcPath)
+	case <-time.After(2 * time.Second):
+		t.Fatal("onStreamStart not called")
+	}
+	select {
+	case got := <-started:
+		require.Equal(t, "room1234", got.roomID)
+		require.Equal(t, wantPath, got.srcPath)
+	case <-time.After(2 * time.Second):
+		t.Fatal("onStreamStart was not offered again")
+	}
+}
+
 func TestExpiredRoomRemovesTusArtifactsAndCannotResume(t *testing.T) {
 	s, cfg := testSetup(t)
 	r := &room.Room{ID: "expired1", FileName: "movie.mkv", Status: "uploading",
 		ControllerID: "m1", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Second)}
 	require.NoError(t, s.Create(context.Background(), r))
 
-	h, err := NewTusHandler(cfg, s, func(string) {})
+	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
 	require.NoError(t, err)
 	h = http.StripPrefix("/api/upload", h)
 

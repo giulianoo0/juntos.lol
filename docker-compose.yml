@@ -7,6 +7,8 @@ services:
       REDIS_URL: redis://redis:6379
       DATA_DIR: /data
       WEB_DIR: /web
+      GIN_MODE: release
+      TORRENT_BRIDGE_URL: http://torrent-bridge:8090
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
@@ -15,6 +17,29 @@ services:
     depends_on:
       - redis
       - livekit
+      - torrent-bridge
+    networks:
+      - default
+      - torrent-edge
+
+  torrent-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    expose:
+      - "8090"
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1g
+    volumes:
+      - ss-torrent-cache:/cache
+    networks:
+      - torrent-edge
 
   redis:
     image: redis:7-alpine
@@ -32,3 +57,7 @@ services:
 
 volumes:
   ss-data:
+  ss-torrent-cache:
+
+networks:
+  torrent-edge:

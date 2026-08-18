@@ -22,7 +22,7 @@ export function translate(language: string, key: string): string {
 export function useT(): Translator {
   const [language, setLanguageState] = useState<Language>(() => {
     const saved = localStorage.getItem('ss.language')
-    return saved === 'pt-BR' || saved === 'en' ? saved : normalizeLanguage(navigator.language)
+    return saved === 'pt-BR' || saved === 'en' ? saved : 'pt-BR'
   })
   return useMemo(() => {
     const translator = ((key: string) => translate(language, key)) as Translator

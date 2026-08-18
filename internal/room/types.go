@@ -42,6 +42,7 @@ type Room struct {
 	AudioTracks       []TrackInfo `json:"audioTracks"`
 	SubtitleTracks    []TrackInfo `json:"subtitleTracks"`
 	BitmapSubsSkipped int         `json:"bitmapSubsSkipped"`
+	ClientSubs        bool        `json:"clientSubs,omitempty"`
 	CreatedAt         time.Time   `json:"createdAt"`
 	ExpiresAt         time.Time   `json:"expiresAt"`
 }

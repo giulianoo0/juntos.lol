@@ -14,6 +14,7 @@ interface Outbound {
   serverTimeMs?: number
   clientTimeMs?: number
   error?: string
+  capability?: string
 }
 
 interface SyncResult {
@@ -24,9 +25,11 @@ interface SyncResult {
   isController: boolean
   messages: ChatMessage[]
   roomStatus: string
+  roomVersion: number
   connected: boolean
   buffering: boolean
   serverOffsetMs: number
+  capability: string
   send: (type: string, payload?: Record<string, unknown>) => void
 }
 
@@ -46,9 +49,13 @@ export function useSync(
   const [members, setMembers] = useState<Member[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [roomStatus, setRoomStatus] = useState('connecting')
+  // Bumps on every roomStatus message, even repeated ones, so consumers can
+  // refetch tracks without interpreting a subtitle update as media readiness.
+  const [roomVersion, setRoomVersion] = useState(0)
   const [connected, setConnected] = useState(false)
   const [buffering, setBuffering] = useState(false)
   const [serverOffsetMs, setServerOffsetMs] = useState(0)
+  const [capability, setCapability] = useState('')
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}) => {
     const socket = socketRef.current
@@ -63,7 +70,7 @@ export function useSync(
     video?.addEventListener('canplay', onCanPlay)
 
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}?nickname=${encodeURIComponent(nickname)}`)
+    const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}`)
     socketRef.current = socket
 
     const applyState = (nextState: PlayState) => {
@@ -97,6 +104,7 @@ export function useSync(
           setControllerId(message.controllerId ?? '')
           setMembers(message.members ?? [])
           setMessages(message.history ?? [])
+          setCapability(message.capability ?? '')
           setRoomStatus('live')
           if (message.state) applyState(message.state)
           break
@@ -112,6 +120,10 @@ export function useSync(
           break
         case 'roomStatus':
           setRoomStatus(message.status ?? '')
+          setRoomVersion((version) => version + 1)
+          break
+        case 'roomUpdated':
+          setRoomVersion((version) => version + 1)
           break
       }
     }
@@ -145,9 +157,11 @@ export function useSync(
     isController: memberId !== '' && memberId === controllerId,
     messages,
     roomStatus,
+    roomVersion,
     connected,
     buffering,
     serverOffsetMs,
+    capability,
     send,
   }
 }

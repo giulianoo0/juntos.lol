@@ -21,10 +21,14 @@ import (
 
 // NewTusHandler builds a tusd handler storing in-progress uploads under
 // {DataDir}/tus-incoming. Uploads must carry a roomID metadata entry pointing
-// to an existing room still in "uploading" status. Once an upload completes,
-// the file is moved to {DataDir}/rooms/{roomID}/original.{ext} and
-// onComplete(roomID) fires. Terminated uploads remove the room directory.
-func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID string)) (http.Handler, error) {
+// to an existing room still in "uploading" status. Once an upload crosses
+// cfg.StreamStartMB, onStreamStart(roomID, srcPath) is offered on progress so
+// a deduplicating progressive queue can begin or retry after backpressure.
+// Once an upload completes, the file is moved to
+// {DataDir}/rooms/{roomID}/original.{ext} and onComplete(roomID) fires.
+// Terminated uploads fire onTerminate(roomID) and remove the room directory.
+func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID string),
+	onStreamStart func(roomID, srcPath string), onTerminate func(roomID string)) (http.Handler, error) {
 	incoming := filepath.Join(cfg.DataDir, "tus-incoming")
 	if err := os.MkdirAll(incoming, 0o755); err != nil {
 		return nil, err
@@ -41,6 +45,8 @@ func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID 
 		RespectForwardedHeaders: true,
 		NotifyCompleteUploads:   true,
 		NotifyTerminatedUploads: true,
+		NotifyUploadProgress:    true,
+		UploadProgressInterval:  500 * time.Millisecond,
 		PreUploadCreateCallback: func(hook tusd.HookEvent) (tusd.HTTPResponse, tusd.FileInfoChanges, error) {
 			roomID := hook.Upload.MetaData["roomID"]
 			uploadID, err := gonanoid.New(32)
@@ -84,8 +90,29 @@ func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID 
 	}()
 
 	go func() {
+		threshold := cfg.StreamStartMB << 20
+		for ev := range handler.UploadProgress {
+			roomID := ev.Upload.MetaData["roomID"]
+			if roomID == "" {
+				continue
+			}
+			// Completion moves the file and fires onComplete; only partial
+			// progress past the threshold starts the preview.
+			if ev.Upload.Offset < threshold || ev.Upload.Offset >= ev.Upload.Size {
+				continue
+			}
+			srcPath := ev.Upload.Storage[filestore.StorageKeyPath]
+			if srcPath == "" {
+				srcPath = filepath.Join(incoming, ev.Upload.ID)
+			}
+			invokeStreamStartCallback(onStreamStart, roomID, srcPath)
+		}
+	}()
+
+	go func() {
 		for ev := range handler.TerminatedUploads {
 			roomID := ev.Upload.MetaData["roomID"]
+			invokeTerminateCallback(onTerminate, roomID)
 			if roomID == "" {
 				continue
 			}
@@ -156,4 +183,28 @@ func invokeCompleteCallback(onComplete func(string), roomID string) {
 		}
 	}()
 	onComplete(roomID)
+}
+
+func invokeStreamStartCallback(onStreamStart func(string, string), roomID, srcPath string) {
+	if onStreamStart == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("upload: stream start callback panicked", "room", roomID, "panic", recovered)
+		}
+	}()
+	onStreamStart(roomID, srcPath)
+}
+
+func invokeTerminateCallback(onTerminate func(string), roomID string) {
+	if onTerminate == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("upload: termination callback panicked", "room", roomID, "panic", recovered)
+		}
+	}()
+	onTerminate(roomID)
 }

@@ -1,12 +1,16 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,8 +78,65 @@ func serveMedia(dataDir string, store *room.Store, mediaDir string) gin.HandlerF
 		if contentType := mediaContentType(filepath.Ext(name)); contentType != "" {
 			c.Header("Content-Type", contentType)
 		}
+		// Event playlists grow during the progressive phase; never cache them.
+		if strings.EqualFold(filepath.Ext(name), ".m3u8") {
+			c.Header("Cache-Control", "no-store")
+			playlist, err := io.ReadAll(file)
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			playlist = normalizeEventPlaylist(playlist)
+			http.ServeContent(c.Writer, c.Request, filepath.Base(name), info.ModTime(), bytes.NewReader(playlist))
+			return
+		}
 		http.ServeContent(c.Writer, c.Request, filepath.Base(name), info.ModTime(), file)
 	}
+}
+
+// normalizeEventPlaylist makes a growing episode start at its beginning in
+// native HLS players and repairs ffmpeg's occasionally too-small target
+// duration for AAC segments that run a few milliseconds over the boundary.
+func normalizeEventPlaylist(playlist []byte) []byte {
+	text := string(playlist)
+	if !strings.Contains(text, "#EXT-X-PLAYLIST-TYPE:EVENT") {
+		return playlist
+	}
+
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	targetIndex := -1
+	targetDuration := 0
+	maxSegmentDuration := 0.0
+	hasStart := false
+	for index, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "#EXT-X-TARGETDURATION:"):
+			targetIndex = index
+			targetDuration, _ = strconv.Atoi(strings.TrimPrefix(line, "#EXT-X-TARGETDURATION:"))
+		case strings.HasPrefix(line, "#EXTINF:"):
+			value := strings.TrimPrefix(line, "#EXTINF:")
+			value, _, _ = strings.Cut(value, ",")
+			if duration, err := strconv.ParseFloat(value, 64); err == nil {
+				maxSegmentDuration = max(maxSegmentDuration, duration)
+			}
+		case strings.HasPrefix(line, "#EXT-X-START:"):
+			hasStart = true
+		}
+	}
+
+	minimumTarget := int(math.Ceil(maxSegmentDuration))
+	if targetIndex >= 0 && targetDuration < minimumTarget {
+		lines[targetIndex] = "#EXT-X-TARGETDURATION:" + strconv.Itoa(minimumTarget)
+	}
+	if !hasStart {
+		for index, line := range lines {
+			if line == "#EXT-X-PLAYLIST-TYPE:EVENT" {
+				lines = append(lines[:index+1], append([]string{"#EXT-X-START:TIME-OFFSET=0,PRECISE=YES"}, lines[index+1:]...)...)
+				break
+			}
+		}
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
 }
 
 func openMediaRoot(dataDir, roomID, mediaDir string) (*os.Root, error) {

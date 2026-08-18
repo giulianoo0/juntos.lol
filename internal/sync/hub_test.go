@@ -21,11 +21,14 @@ import (
 
 func TestHubSyncFlow(t *testing.T) {
 	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
-	host := dialHubWS(t, server, "host")
+	host := dialHubWS(t, server)
 	hostWelcome := helloHubClient(t, host, "host", 11)
 	require.Equal(t, "m1", hostWelcome.MemberID)
 	require.Equal(t, "m1", hostWelcome.ControllerID)
 	require.NotNil(t, hostWelcome.State)
+	require.NotEmpty(t, hostWelcome.Capability)
+	require.True(t, hub.AuthorizeMember("r1", "m1", hostWelcome.Capability))
+	require.False(t, hub.AuthorizeMember("r1", "m1", "wrong"))
 
 	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 30_000, Rate: 1}))
 	state := readHubEvent(t, host)
@@ -34,7 +37,7 @@ func TestHubSyncFlow(t *testing.T) {
 	require.Equal(t, int64(30_000), state.State.PositionMs)
 	require.Greater(t, state.State.ServerTimeMs, int64(0))
 
-	guest := dialHubWS(t, server, "guest")
+	guest := dialHubWS(t, server)
 	guestWelcome := helloHubClient(t, guest, "guest", 12)
 	require.Equal(t, "m2", guestWelcome.MemberID)
 	require.Equal(t, "m1", guestWelcome.ControllerID)
@@ -50,13 +53,18 @@ func TestHubSyncFlow(t *testing.T) {
 	status := readHubEvent(t, host)
 	require.Equal(t, "roomStatus", status.Type)
 	require.Equal(t, "ready", status.Status)
+
+	hub.NotifyRoomUpdated("r1")
+	update := readHubEvent(t, host)
+	require.Equal(t, "roomUpdated", update.Type)
+	require.Empty(t, update.Status)
 }
 
-func TestHubChatDelegationAndControllerPromotion(t *testing.T) {
+func TestHubChatAndControllerPromotion(t *testing.T) {
 	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
-	host := dialHubWS(t, server, "host")
+	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
-	guest := dialHubWS(t, server, "guest")
+	guest := dialHubWS(t, server)
 	helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
@@ -68,49 +76,71 @@ func TestHubChatDelegationAndControllerPromotion(t *testing.T) {
 		require.Equal(t, "oi", event.Message.Text)
 	}
 
-	require.NoError(t, host.WriteJSON(Inbound{Type: "delegate", TargetID: "m2"}))
-	for _, client := range []*websocket.Conn{host, guest} {
-		event := readHubEvent(t, client)
-		require.Equal(t, "members", event.Type)
-		require.Equal(t, "m2", event.ControllerID)
-	}
+	third := dialHubWS(t, server)
+	helloHubClient(t, third, "third", 3)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+	require.Equal(t, "members", readHubEvent(t, guest).Type)
+	require.NoError(t, host.Close())
+
+	promoted := readHubEvent(t, guest)
+	require.Equal(t, "members", promoted.Type)
+	require.Equal(t, "m2", promoted.ControllerID)
+	require.Equal(t, promoted.ControllerID, readHubEvent(t, third).ControllerID)
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "pause", PositionMs: 31_000, Rate: 1}))
-	for _, client := range []*websocket.Conn{host, guest} {
+	for _, client := range []*websocket.Conn{guest, third} {
 		event := readHubEvent(t, client)
 		require.Equal(t, "state", event.Type)
 		require.False(t, event.State.Playing)
 	}
+}
 
-	third := dialHubWS(t, server, "third")
-	helloHubClient(t, third, "third", 3)
+func TestHubIgnoresControlTakeoverMessages(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	guestWelcome := helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "m2", guestWelcome.MemberID)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
-	require.Equal(t, "members", readHubEvent(t, guest).Type)
-	require.NoError(t, guest.Close())
 
-	promoted := readHubEvent(t, host)
-	require.Equal(t, "members", promoted.Type)
-	require.Equal(t, "m1", promoted.ControllerID)
-	require.Equal(t, promoted.ControllerID, readHubEvent(t, third).ControllerID)
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "claim"}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "delegate", TargetID: "m2"}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "play", PositionMs: 5_000, Rate: 1}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 9}))
+	require.Equal(t, "pong", readHubEvent(t, guest).Type)
+	stored, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "m1", stored.ControllerID)
 }
 
 func TestHubRejectsRoomFull(t *testing.T) {
 	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 1, RoomIdleMinutes: 10})
-	host := dialHubWS(t, server, "host")
+	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
-	guest := dialHubWS(t, server, "guest")
+	guest := dialHubWS(t, server)
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "hello", Nickname: "guest"}))
 	event := readHubEvent(t, guest)
 	require.Equal(t, "error", event.Type)
 	require.Equal(t, "room_full", event.ErrCode)
 }
 
+func TestHubDoesNotAcceptNicknameFromURL(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	client := dialHubWS(t, server, "nickname=url-name")
+	require.NoError(t, client.WriteJSON(Inbound{Type: "hello"}))
+	event := readHubEvent(t, client)
+	require.Equal(t, "error", event.Type)
+	require.Equal(t, "invalid_hello", event.ErrCode)
+}
+
 func TestHubIdleCleanupRemovesRoomAndFiles(t *testing.T) {
 	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
 	hub.idleAfter = 20 * time.Millisecond
+	require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
 	roomDir := filepath.Join(hub.cfg.DataDir, "rooms", "r1")
 	require.NoError(t, os.MkdirAll(roomDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(roomDir, "media"), []byte("x"), 0o644))
-	client := dialHubWS(t, server, "host")
+	client := dialHubWS(t, server)
 	helloHubClient(t, client, "host", 1)
 	require.NoError(t, client.Close())
 
@@ -119,6 +149,33 @@ func TestHubIdleCleanupRemovesRoomAndFiles(t *testing.T) {
 		_, statErr := os.Stat(roomDir)
 		return errors.Is(err, room.ErrNotFound) && os.IsNotExist(statErr)
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestHubIdleCleanupPreservesActiveUpload(t *testing.T) {
+	for _, status := range []string{"uploading", "processing"} {
+		t.Run(status, func(t *testing.T) {
+			hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+			hub.idleAfter = 20 * time.Millisecond
+			require.NoError(t, store.SetStatus(t.Context(), "r1", status))
+			roomDir := filepath.Join(hub.cfg.DataDir, "rooms", "r1")
+			require.NoError(t, os.MkdirAll(roomDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(roomDir, "partial"), []byte("x"), 0o644))
+			client := dialHubWS(t, server)
+			helloHubClient(t, client, "host", 1)
+			require.NoError(t, client.Close())
+
+			require.Eventually(t, func() bool {
+				hub.mu.Lock()
+				defer hub.mu.Unlock()
+				return hub.rooms["r1"] == nil
+			}, time.Second, 10*time.Millisecond)
+			storedRoom, err := store.Get(t.Context(), "r1")
+			require.NoError(t, err)
+			require.Equal(t, status, storedRoom.Status)
+			require.Empty(t, storedRoom.ControllerID)
+			require.FileExists(t, filepath.Join(roomDir, "partial"))
+		})
+	}
 }
 
 func newHubTestServer(t *testing.T, cfg config.Config) (*Hub, *room.Store, *httptest.Server) {
@@ -149,15 +206,15 @@ func newHubTestServer(t *testing.T, cfg config.Config) (*Hub, *room.Store, *http
 	return hub, store, server
 }
 
-func dialHubWS(t *testing.T, server *httptest.Server, nickname string) *websocket.Conn {
+func dialHubWS(t *testing.T, server *httptest.Server, rawQuery ...string) *websocket.Conn {
 	t.Helper()
 	serverURL, err := url.Parse(server.URL)
 	require.NoError(t, err)
 	serverURL.Scheme = "ws"
 	serverURL.Path = "/ws/rooms/r1"
-	query := serverURL.Query()
-	query.Set("nickname", nickname)
-	serverURL.RawQuery = query.Encode()
+	if len(rawQuery) > 0 {
+		serverURL.RawQuery = rawQuery[0]
+	}
 	conn, response, err := websocket.DefaultDialer.Dial(serverURL.String(), nil)
 	if response != nil {
 		defer response.Body.Close()
