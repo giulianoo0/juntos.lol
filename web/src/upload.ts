@@ -1,6 +1,8 @@
 import Uppy from '@uppy/core'
 import Tus from '@uppy/tus'
 
+const TUS_CHUNK_BYTES = 50 * 1024 * 1024
+
 interface CreateRoomResponse {
   id: string
   uploadEndpoint: string
@@ -19,7 +21,9 @@ export async function createRoomAndUpload(
   if (!response.ok) throw new Error('create room failed')
   const room = (await response.json()) as CreateRoomResponse
   const uppy = new Uppy({ autoProceed: false })
-  uppy.use(Tus, { endpoint: room.uploadEndpoint })
+  // Keep each PATCH below the common reverse-proxy upload cap while still
+  // allowing the server's 10 GB room limit to be reached resumably.
+  uppy.use(Tus, { endpoint: room.uploadEndpoint, chunkSize: TUS_CHUNK_BYTES })
   uppy.setMeta({ roomID: room.id })
   uppy.addFile({ name: file.name, type: file.type, data: file })
   try {
