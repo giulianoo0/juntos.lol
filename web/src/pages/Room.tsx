@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
+import { Crown, MonitorUp, Upload } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
-import { startScreenShare } from '../screenshare'
+import {
+  dropScreenStream,
+  isScreenShareCancelled,
+  requestScreenStream,
+  stashScreenStream,
+  startScreenShare,
+  takeScreenStream,
+} from '../screenshare'
 import type { ChatEntry, PresenceEvent, RoomInfo } from '../types'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
@@ -144,8 +152,18 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }
 
   const chooseScreen = () => {
-    void swapSource(async () => {
-      await changeRoomSource(room.id, sync.memberId, sync.capability, 'screen')
+    void requestScreenStream().then((stream) => {
+      stashScreenStream(room.id, stream)
+      return swapSource(async () => {
+        try {
+          await changeRoomSource(room.id, sync.memberId, sync.capability, 'screen')
+        } catch (error) {
+          dropScreenStream(room.id)
+          throw error
+        }
+      })
+    }).catch((error: unknown) => {
+      if (!isScreenShareCancelled(error)) setSourceError(true)
     })
   }
 
@@ -247,7 +265,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           <div className="presence-row">
             {sync.members.map((member) => (
               <span key={member.id} className={`member-chip ${member.id === sync.controllerId ? 'is-controller' : ''}`}>
-                {member.nickname}{member.id === sync.controllerId ? ' ●' : ''}
+{member.nickname}{member.id === sync.controllerId ? <Crown size={12} aria-hidden="true" /> : null}
               </span>
             ))}
           </div>
@@ -274,13 +292,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
                 <p>{t('room.changeSourceGuide')}</p>
                 <div className="source-options">
                   <button type="button" onClick={() => { setSourcePanel(null); fileInputRef.current?.click() }}>
-                    <span aria-hidden="true">↑</span>{t('room.sourceFile')}
+<Upload size={17} aria-hidden="true" />{t('room.sourceFile')}
                   </button>
                   <button type="button" onClick={() => setSourcePanel('torrent')}>
-                    <span aria-hidden="true">⌁</span>{t('room.sourceTorrent')}
+<span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.sourceTorrent')}
                   </button>
                   <button type="button" onClick={chooseScreen}>
-                    <span aria-hidden="true">⧉</span>{t('room.sourceScreen')}
+<MonitorUp size={17} aria-hidden="true" />{t('room.sourceScreen')}
                   </button>
                 </div>
               </>
@@ -315,48 +333,111 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
   isController: boolean
   t: Translator
 }) {
-  const tileRef = useRef<HTMLDivElement>(null)
-  const [live, setLive] = useState<LiveKitRoom | null>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const liveRef = useRef<LiveKitRoom | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const [ready, setReady] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [failed, setFailed] = useState(false)
+
+  // Keeps the last thing everyone saw as a blurred still. Going straight to an
+  // empty surface reads as a fault; a frozen frame reads as an ending.
+  const freezeLastFrame = useCallback(() => {
+    const surface = surfaceRef.current
+    const video = surface?.querySelector('video')
+    if (!surface || !video?.videoWidth) return
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    canvas.className = 'screen-frozen'
+    surface.replaceChildren(canvas)
+  }, [])
+
+  const showLocally = useCallback((stream: MediaStream) => {
+    const video = document.createElement('video')
+    video.srcObject = stream
+    video.autoplay = true
+    video.muted = true
+    video.playsInline = true
+    surfaceRef.current?.replaceChildren(video)
+  }, [])
+
+  const endSharing = useCallback(() => {
+    freezeLastFrame()
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current = null
+    setSharing(false)
+  }, [freezeLastFrame])
+
+  // Watches for the browser's own stop-sharing control, which ends the track
+  // without ever going through this component.
+  const adopt = useCallback((stream: MediaStream) => {
+    streamRef.current = stream
+    showLocally(stream)
+    setSharing(true)
+    stream.getVideoTracks()[0]?.addEventListener('ended', endSharing, { once: true })
+  }, [endSharing, showLocally])
 
   useEffect(() => {
     if (!memberId || !capability) return
     let disposed = false
     let joined: LiveKitRoom | null = null
+    // A screen granted before this room existed is published on arrival, so
+    // the picker is never shown twice for the same share.
+    const granted = takeScreenStream(roomId)
     void startScreenShare(roomId, memberId, capability, (element) => {
-      tileRef.current?.replaceChildren(element)
-    }, { publish: false }).then((connected) => {
-      if (disposed) { void connected.disconnect(); return }
+      surfaceRef.current?.replaceChildren(element)
+    }, { publish: false, stream: granted }).then((connected) => {
+      if (disposed) {
+        void connected.disconnect()
+        granted?.getTracks().forEach((track) => track.stop())
+        return
+      }
       joined = connected
-      setLive(connected)
+      liveRef.current = connected
+      setReady(true)
+      if (granted) adopt(granted)
     }).catch(() => setFailed(true))
     return () => {
       disposed = true
+      liveRef.current = null
       void joined?.disconnect()
     }
-  }, [roomId, memberId, capability])
+  }, [roomId, memberId, capability, adopt])
 
-  const toggleShare = async () => {
-    if (!live) return
+  const startSharing = () => {
     setFailed(false)
-    try {
-      const publication = await live.localParticipant.setScreenShareEnabled(!sharing)
-      const element = publication?.track?.attach()
-      if (element) tileRef.current?.replaceChildren(element)
-      setSharing(!sharing)
-    } catch {
-      setFailed(true)
-    }
+    // Straight out of the click: no await may come first or the picker is
+    // refused for want of user activation.
+    void requestScreenStream().then(async (stream) => {
+      const live = liveRef.current
+      if (!live) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+      const { Track } = await import('livekit-client')
+      const [track] = stream.getVideoTracks()
+      if (track) await live.localParticipant.publishTrack(track, { source: Track.Source.ScreenShare })
+      adopt(stream)
+    }).catch((error: unknown) => {
+      if (!isScreenShareCancelled(error)) setFailed(true)
+    })
+  }
+
+  const stopSharing = () => {
+    const live = liveRef.current
+    void live?.localParticipant.setScreenShareEnabled(false).catch(() => undefined)
+    endSharing()
   }
 
   return (
     <div className="player-wrap screen-stage">
-      <div ref={tileRef} className="screen-surface" />
+      <div ref={surfaceRef} className="screen-surface" />
       <div className="screen-overlay">
         {!sharing ? <p>{isController ? t('room.screenHostHint') : t('room.screenWaiting')}</p> : null}
         {isController ? (
-          <button className="primary-button" disabled={!live} onClick={() => { void toggleShare() }}>
+          <button className="primary-button" disabled={!ready} onClick={sharing ? stopSharing : startSharing}>
             {sharing ? t('room.screenStop') : t('room.screenStart')}
           </button>
         ) : null}

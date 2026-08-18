@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import {
+  FastForward, Lock, Maximize, Minimize, Pause, Play, Rewind,
+  SkipBack, SkipForward, Volume1, Volume2, VolumeX,
+} from 'lucide-react'
 import type Hls from 'hls.js'
 import type { RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
@@ -34,7 +38,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const [controlsVisible, setControlsVisible] = useState(true)
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
-  const [feedback, setFeedback] = useState<{ id: number; text: string } | null>(null)
+  const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
 
   const revealControls = useCallback((autoHide = true) => {
     if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
@@ -48,9 +52,9 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   // A keyboard action gets the same acknowledgement a click gets from the
   // control moving: a symbol in the middle of the frame, since the pointer is
   // nowhere near the controls and they may be hidden entirely.
-  const showFeedback = useCallback((text: string) => {
+  const showFeedback = useCallback((node: ReactNode) => {
     feedbackSeqRef.current += 1
-    setFeedback({ id: feedbackSeqRef.current, text })
+    setFeedback({ id: feedbackSeqRef.current, node })
   }, [])
 
   useEffect(() => {
@@ -230,13 +234,13 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         case 'K':
           handled()
           togglePlay()
-          showFeedback(video?.paused ? '▶' : '❚❚')
+          showFeedback(video?.paused ? <Play size={26} /> : <Pause size={26} />)
           return
         case 'ArrowLeft':
         case 'ArrowRight': {
           handled()
           const delta = event.key === 'ArrowLeft' ? -SEEK_STEP_SECONDS : SEEK_STEP_SECONDS
-          showFeedback(seekBy(delta) ? formatSeekStep(delta) : '🔒')
+          showFeedback(seekBy(delta) ? seekFeedback(delta) : <Lock size={24} />)
           return
         }
         case 'j':
@@ -245,7 +249,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         case 'L': {
           handled()
           const delta = event.key.toLowerCase() === 'j' ? -SEEK_STEP_LARGE_SECONDS : SEEK_STEP_LARGE_SECONDS
-          showFeedback(seekBy(delta) ? formatSeekStep(delta) : '🔒')
+          showFeedback(seekBy(delta) ? seekFeedback(delta) : <Lock size={24} />)
           return
         }
         case 'ArrowUp':
@@ -254,13 +258,15 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           const delta = event.key === 'ArrowUp' ? VOLUME_STEP : -VOLUME_STEP
           const base = video?.muted ? 0 : video?.volume ?? 0
           applyVolume(base + delta)
-          showFeedback(`${Math.round(Math.min(Math.max(base + delta, 0), 1) * 100)}%`)
+          showFeedback(
+            <>{volumeIcon(Math.min(Math.max(base + delta, 0), 1), 24)}{Math.round(Math.min(Math.max(base + delta, 0), 1) * 100)}%</>,
+          )
           return
         }
         case 'm':
         case 'M':
           handled()
-          showFeedback(toggleMute() ? '🔇' : '🔊')
+          showFeedback(toggleMute() ? <VolumeX size={26} /> : <Volume2 size={26} />)
           return
         case 'f':
         case 'F':
@@ -273,8 +279,8 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           const target = event.key === 'Home' ? 0 : Math.max(duration - 1, 0)
           if (isController) {
             seek(target)
-            showFeedback(event.key === 'Home' ? '⏮' : '⏭')
-          } else showFeedback('🔒')
+            showFeedback(event.key === 'Home' ? <SkipBack size={26} /> : <SkipForward size={26} />)
+          } else showFeedback(<Lock size={24} />)
           return
         }
       }
@@ -327,14 +333,14 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           />
         ))}
       </video>
-      {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.text}</span> : null}
+      {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       <div className="player-controls raised">
         <button
           aria-label={playLabel}
           title={`${playLabel} (Space)`}
           onClick={togglePlay}
           onPointerUp={(event) => event.currentTarget.blur()}
-        >{playing ? '❚❚' : '▶'}</button>
+        >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
         <input
           aria-label="Seek"
           type="range"
@@ -352,7 +358,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
             title={`${muteLabel} (M)`}
             onClick={toggleMute}
             onPointerUp={(event) => event.currentTarget.blur()}
-          >{volumeIcon(muted ? 0 : volume)}</button>
+          >{volumeIcon(muted ? 0 : volume, 16)}</button>
           <input
             className="volume-range"
             aria-label={t('room.volume')}
@@ -389,7 +395,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           aria-label={fullscreenLabel}
           title={`${fullscreenLabel} (F)`}
           onClick={toggleFullscreen}
-        >⛶</button>
+        >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
         {!isController ? (
           <span className="viewer-note">{t('room.viewer')}</span>
         ) : null}
@@ -408,13 +414,18 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'OPTION'].includes(target.tagName)
 }
 
-function formatSeekStep(delta: number): string {
-  return `${delta > 0 ? '⏩ +' : '⏪ '}${delta}s`
+function seekFeedback(delta: number): ReactNode {
+  return (
+    <>
+      {delta > 0 ? <FastForward size={24} /> : <Rewind size={24} />}
+      {delta > 0 ? `+${delta}s` : `${delta}s`}
+    </>
+  )
 }
 
-function volumeIcon(value: number): string {
-  if (value === 0) return '🔇'
-  return value < 0.5 ? '🔉' : '🔊'
+function volumeIcon(value: number, size: number): ReactNode {
+  if (value === 0) return <VolumeX size={size} />
+  return value < 0.5 ? <Volume1 size={size} /> : <Volume2 size={size} />
 }
 
 function formatTime(seconds: number): string {

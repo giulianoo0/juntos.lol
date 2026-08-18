@@ -1,6 +1,8 @@
-import { useRef, useState, type DragEvent, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { History, MonitorUp, Plus, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
+import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, type UploadProgress } from '../upload'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
@@ -17,8 +19,9 @@ interface RoomHistoryEntry {
 type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
-  // A shared screen needs no file at all, so it only carries the nickname step.
-  | { kind: 'screen' }
+  // The screen is granted before the room exists, so the pending pick carries
+  // the live stream through the nickname step.
+  | { kind: 'screen'; stream: MediaStream }
 
 function readHistory(): RoomHistoryEntry[] {
   try {
@@ -52,6 +55,47 @@ export function Home() {
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
   const [torrentOpen, setTorrentOpen] = useState(false)
+  const [historyStatus, setHistoryStatus] = useState<Record<string, 'checking' | 'live' | 'expired'>>({})
+
+  // A room outlives its history entry by only a few hours, so the entry alone
+  // says nothing about whether the link still works. Ask the server.
+  useEffect(() => {
+    if (!historyOpen || history.length === 0) return
+    const controller = new AbortController()
+    setHistoryStatus(Object.fromEntries(history.map((entry) => [entry.id, 'checking' as const])))
+    for (const entry of history) {
+      void fetch(`/api/rooms/${encodeURIComponent(entry.id)}`, { signal: controller.signal })
+        .then((response) => {
+          setHistoryStatus((current) => ({ ...current, [entry.id]: response.ok ? 'live' : 'expired' }))
+        })
+        .catch(() => {
+          // A network failure says nothing about the room, so claim nothing.
+          setHistoryStatus((current) => {
+            const next = { ...current }
+            delete next[entry.id]
+            return next
+          })
+        })
+    }
+    return () => controller.abort()
+  }, [historyOpen, history])
+
+  // The picker has to open inside this click, and before any room is created:
+  // closing it then leaves nothing behind.
+  const startScreenRoom = () => {
+    void requestScreenStream().then((stream) => {
+      setError('')
+      setDraftNickname(nickname)
+      setPendingMedia({ kind: 'screen', stream })
+    }).catch((error: unknown) => {
+      if (!isScreenShareCancelled(error)) setError(t('error.screenshare'))
+    })
+  }
+
+  const discardPending = (media: PendingMedia | null) => {
+    if (media?.kind === 'torrent') media.session.destroy()
+    if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
+  }
 
   const selectFile = (file?: File) => {
     if (!file || starting) return
@@ -77,6 +121,7 @@ export function Home() {
         : media.kind === 'torrent'
           ? await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
           : await createScreenRoom(draftNickname.trim())
+      if (media.kind === 'screen') stashScreenStream(room.roomID, media.stream)
       setNickname(room.nickname)
       localStorage.setItem('ss.nickname', room.nickname)
       const nextHistory = [
@@ -87,7 +132,7 @@ export function Home() {
       setHistory(nextHistory)
       navigate(`/room/${room.roomID}`)
     } catch {
-      if (media.kind === 'torrent') media.session.destroy()
+      discardPending(media)
       setError(t('home.failed'))
       setStarting(false)
       setProgress(null)
@@ -109,8 +154,8 @@ export function Home() {
       <header className="home-header">
         <a className="home-wordmark" href="/">ss.giuli.dev</a>
         <nav aria-label={t('home.navigation')}>
-          <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}><span aria-hidden="true">＋</span>{t('home.newRoom')}</button>
-          <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(true)}><span aria-hidden="true">↺</span>{t('home.history')}</button>
+          <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}><Plus size={15} aria-hidden="true" />{t('home.newRoom')}</button>
+          <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(true)}><History size={15} aria-hidden="true" />{t('home.history')}</button>
         </nav>
         <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
           <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
@@ -125,7 +170,14 @@ export function Home() {
               {history.map((entry) => (
                 <Link key={entry.id} to={`/room/${entry.id}`}>
                   <strong>{entry.fileName}</strong>
-                  <span>{new Date(entry.createdAt).toLocaleDateString(t.language)}</span>
+                  <span className="history-meta">
+                    {historyStatus[entry.id] ? (
+                      <span className={`history-status is-${historyStatus[entry.id]}`}>
+                        {t(`home.history${historyStatus[entry.id] === 'live' ? 'Live' : historyStatus[entry.id] === 'expired' ? 'Expired' : 'Checking'}`)}
+                      </span>
+                    ) : null}
+                    <span>{new Date(entry.createdAt).toLocaleDateString(t.language)}</span>
+                  </span>
                 </Link>
               ))}
             </div>
@@ -145,12 +197,18 @@ export function Home() {
           onDrop={onDrop}
         >
           <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
-          <span className="drop-icon" aria-hidden="true">↑</span>
+          <Upload className="drop-icon" size={30} aria-hidden="true" />
           <strong>{t('home.drop')}</strong>
           <span>{t('home.dropHint')}</span>
-          <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
-          <button className="torrent-button" onClick={() => setTorrentOpen(true)}><span aria-hidden="true">⌁</span>{t('home.openTorrent')}</button>
-          <button className="torrent-button" onClick={() => { setError(''); setDraftNickname(nickname); setPendingMedia({ kind: 'screen' }) }}><span aria-hidden="true">⧉</span>{t('home.shareScreen')}</button>
+          <div className="drop-actions">
+            <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
+            <button className="torrent-button" onClick={() => setTorrentOpen(true)}>
+              <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+            </button>
+            <button className="torrent-button" onClick={startScreenRoom}>
+              <MonitorUp size={16} aria-hidden="true" />{t('home.shareScreen')}
+            </button>
+          </div>
         </div>
         {progress?.phase === 'converting' ? (
           <div className="progress-wrap" aria-label={t('home.preparing')}>
@@ -181,7 +239,7 @@ export function Home() {
       {pendingMedia ? (
         <dialog className="name-dialog" open aria-labelledby="name-dialog-title" onKeyDown={(event) => {
           if (event.key === 'Escape') {
-            if (pendingMedia.kind === 'torrent') pendingMedia.session.destroy()
+            discardPending(pendingMedia)
             setPendingMedia(null)
           }
         }}>
@@ -193,7 +251,7 @@ export function Home() {
             <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />
             <div className="dialog-actions">
               <button type="button" onClick={() => {
-                if (pendingMedia.kind === 'torrent') pendingMedia.session.destroy()
+                discardPending(pendingMedia)
                 setPendingMedia(null)
               }}>{t('home.cancel')}</button>
               <button type="submit" className="primary-button">{t('home.continue')}</button>

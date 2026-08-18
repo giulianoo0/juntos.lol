@@ -1,4 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
+import { X } from 'lucide-react'
 import type { ChatEntry } from '../types'
 import type { Translator } from '../i18n/useT'
 
@@ -45,7 +46,7 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
 
   return (
     <aside className={`chat-panel ${mobile ? 'chat-drawer' : 'chat-docked'} ${open ? 'is-open' : ''} ${reducedMotion ? 'reduced-motion' : ''}`}>
-      <header><h2>{t('chat.title')}</h2><button onClick={onClose} aria-label="Close chat">×</button></header>
+      <header><h2>{t('chat.title')}</h2><button onClick={onClose} aria-label="Close chat"><X size={15} /></button></header>
       <div className="chat-messages">
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
           <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ animationDelay: `${Math.min(index * 35, 300)}ms` }}>

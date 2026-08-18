@@ -3,8 +3,17 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { changeRoomSource } from '../upload'
+import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 
-vi.mock('../screenshare', () => ({ startScreenShare: vi.fn().mockResolvedValue({ disconnect: vi.fn() }) }))
+const screenStream = { getTracks: () => [], getVideoTracks: () => [] } as unknown as MediaStream
+vi.mock('../screenshare', () => ({
+  startScreenShare: vi.fn().mockResolvedValue({ disconnect: vi.fn() }),
+  requestScreenStream: vi.fn(),
+  stashScreenStream: vi.fn(),
+  takeScreenStream: vi.fn().mockReturnValue(null),
+  dropScreenStream: vi.fn(),
+  isScreenShareCancelled: vi.fn().mockReturnValue(false),
+}))
 vi.mock('../upload', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../upload')>()),
   changeRoomSource: vi.fn().mockResolvedValue({
@@ -153,6 +162,7 @@ describe('RoomPage source swap', () => {
   })
 
   it('repoints the room at a shared screen without anyone leaving', async () => {
+    vi.mocked(requestScreenStream).mockResolvedValue(screenStream)
     renderRoom()
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
     welcome('m1')
@@ -160,6 +170,26 @@ describe('RoomPage source swap', () => {
     fireEvent.click(await screen.findByRole('button', { name: /change video|trocar vídeo/i }))
     fireEvent.click(await screen.findByRole('button', { name: /share your screen|compartilhar sua tela/i }))
 
+    // The screen is granted first, then carried into the room it will play in.
     await waitFor(() => expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'screen'))
+    expect(requestScreenStream).toHaveBeenCalled()
+    expect(stashScreenStream).toHaveBeenCalledWith('abc123', screenStream)
+  })
+
+  it('leaves the room untouched when the screen picker is dismissed', async () => {
+    const cancelled = new DOMException('denied', 'NotAllowedError')
+    vi.mocked(requestScreenStream).mockRejectedValue(cancelled)
+    vi.mocked(isScreenShareCancelled).mockReturnValue(true)
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m1')
+
+    fireEvent.click(await screen.findByRole('button', { name: /change video|trocar vídeo/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /share your screen|compartilhar sua tela/i }))
+
+    // Nothing was swapped, so the room still plays what it played before.
+    await waitFor(() => expect(requestScreenStream).toHaveBeenCalled())
+    expect(changeRoomSource).not.toHaveBeenCalled()
+    expect(stashScreenStream).not.toHaveBeenCalled()
   })
 })
