@@ -254,6 +254,70 @@ describe('upload registry', () => {
     expect(destroy).toHaveBeenCalledOnce()
   })
 
+  it('prefetches the next torrent chunk while the current PATCH is in flight', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    let resolveFirstPatch!: (response: Response) => void
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'pipe-room', nickname: 'giuli', uploadEndpoint: '/api/upload/', streamStartBytes: 2 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, status: 201, headers: new Headers({ Location: '/api/upload/pipe-id' }),
+      } as Response)
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveFirstPatch = resolve }))
+      .mockResolvedValueOnce({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
+
+    const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
+    const result = await createRoomAndUploadTorrent({
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy: vi.fn() },
+    }, 'giuli')
+    const done = new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
+
+    // The read for the second chunk goes out while the first PATCH is still
+    // unresolved, and no second PATCH is issued before it settles.
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    expect(read.mock.calls).toEqual([[0, 1], [2, 5]])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    resolveFirstPatch({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '2' }) } as Response)
+    await expect(done).resolves.toBeNull()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards a prefetched chunk when a short write moves the offset behind it', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'short-room', nickname: 'giuli', uploadEndpoint: '/api/upload/', streamStartBytes: 4 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, status: 201, headers: new Headers({ Location: '/api/upload/short-id' }),
+      } as Response)
+      // The server accepts only 2 of the 4 bytes sent.
+      .mockResolvedValueOnce({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '2' }) } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
+
+    const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
+    const result = await createRoomAndUploadTorrent({
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy: vi.fn() },
+    }, 'giuli')
+    await new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
+
+    // The prefetch at offset 4 was invalidated by the short write and replaced
+    // with a fresh read from the server's authoritative offset.
+    expect(read.mock.calls).toEqual([[0, 3], [4, 5], [2, 5]])
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'PATCH', headers: expect.objectContaining({ 'Upload-Offset': '0' }) })
+    expect(fetchMock.mock.calls[3][1]).toMatchObject({ method: 'PATCH', headers: expect.objectContaining({ 'Upload-Offset': '2' }) })
+    // The parser sees only the accepted bytes, in order, exactly once.
+    expect(subtitleFakes.written.map((chunk) => chunk.byteLength)).toEqual([2, 4])
+  })
+
   it('parses subtitles out of the torrent bytes it is already uploading', async () => {
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockReset()

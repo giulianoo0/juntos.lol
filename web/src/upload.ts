@@ -290,13 +290,31 @@ export function uploadTorrentToRoom(
         if (!subtitles) collector.publish('embedded', [], false)
       }
 
-      let offset = 0
-      let lastSnapshotAt = Date.now()
-      while (offset < file.size) {
+      const readChunk = (at: number) => {
         // The very first request only waits for the server's preview threshold;
         // later requests are larger for better throughput.
-        const chunkSize = offset === 0 ? Math.min(startBytes, file.size) : Math.min(TORRENT_CHUNK_BYTES, file.size - offset)
-        const body = await file.read(offset, offset + chunkSize - 1)
+        const chunkSize = at === 0 ? Math.min(startBytes, file.size) : Math.min(TORRENT_CHUNK_BYTES, file.size - at)
+        return file.read(at, at + chunkSize - 1)
+      }
+
+      let offset = 0
+      let lastSnapshotAt = Date.now()
+      // Swarm reads and PATCHes are both network bound, so the next chunk is
+      // pulled from the swarm while the current PATCH is in flight. A single
+      // slot of lookahead keeps memory bounded; PATCHes stay strictly
+      // sequential, only the reads overlap.
+      let prefetch: { offset: number; body: Promise<ArrayBuffer> } | null = null
+      while (offset < file.size) {
+        const body: ArrayBuffer = prefetch && prefetch.offset === offset ? await prefetch.body : await readChunk(offset)
+        prefetch = null
+        const expectedNext = offset + body.byteLength
+        if (expectedNext < file.size) {
+          const next = readChunk(expectedNext)
+          // A short write leaves this prefetch unawaited; swallow its
+          // rejection there so only the chunk actually used can throw.
+          void next.catch(() => undefined)
+          prefetch = { offset: expectedNext, body: next }
+        }
         const patchResponse = await fetch(uploadURL, {
           method: 'PATCH',
           headers: {
