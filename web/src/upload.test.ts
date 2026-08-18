@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoomAndUpload, createRoomAndUploadTorrent, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
 import { convertMp4ToMkv } from './convert'
-import { extractAndUploadSubtitles } from './subtitles'
+import { createMatroskaSubtitleStream, extractAndUploadSubtitles } from './subtitles'
 
 type Handler = (...args: never[]) => void
 
@@ -25,7 +25,37 @@ const FakeUppy = vi.hoisted(() => class {
 
 vi.mock('@uppy/core', () => ({ default: FakeUppy }))
 vi.mock('@uppy/tus', () => ({ default: class {} }))
-vi.mock('./subtitles', () => ({ extractAndUploadSubtitles: vi.fn().mockResolvedValue(undefined) }))
+const subtitleFakes = vi.hoisted(() => {
+  const written: Uint8Array[] = []
+  const published: Array<{ source: string; tracks: Array<{ language: string; title: string; vtt: string }>; complete: boolean }> = []
+  return {
+    written,
+    published,
+    reset() {
+      written.length = 0
+      published.length = 0
+    },
+    stream: {
+      write: (chunk: Uint8Array) => { written.push(chunk) },
+      snapshot: () => [{ language: 'eng', title: 'partial', vtt: 'WEBVTT' }],
+      finish: async () => [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }],
+    },
+    collector: {
+      register: vi.fn(),
+      publish: vi.fn((source: string, tracks: Array<{ language: string; title: string; vtt: string }>, complete: boolean) => {
+        published.push({ source, tracks, complete })
+      }),
+      flush: vi.fn().mockResolvedValue(undefined),
+    },
+  }
+})
+
+vi.mock('./subtitles', () => ({
+  extractAndUploadSubtitles: vi.fn().mockResolvedValue(undefined),
+  isMatroska: (file: { name: string; type?: string }) => file.name.toLowerCase().endsWith('.mkv'),
+  createMatroskaSubtitleStream: vi.fn().mockResolvedValue(subtitleFakes.stream),
+  createSubtitleCollector: vi.fn(() => subtitleFakes.collector),
+}))
 vi.mock('./convert', () => ({
   isMp4: vi.fn((file: File) => file.type === 'video/mp4' || /\.(mp4|m4v)$/i.test(file.name)),
   convertMp4ToMkv: vi.fn(),
@@ -37,6 +67,7 @@ describe('upload registry', () => {
 
   beforeEach(() => {
     FakeUppy.instances = []
+    subtitleFakes.reset()
     roomBodies = []
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
       roomCounter += 1
@@ -208,7 +239,7 @@ describe('upload registry', () => {
     const destroy = vi.fn()
     const result = await createRoomAndUploadTorrent({
       file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
-      session: { name: 'show', files: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy },
+      session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy },
     }, 'giuli')
     const done = new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
 
@@ -221,5 +252,77 @@ describe('upload registry', () => {
     expect(fetchMock.mock.calls[2][1]).toMatchObject({ method: 'PATCH', headers: expect.objectContaining({ 'Upload-Offset': '0' }) })
     expect(fetchMock.mock.calls[3][1]).toMatchObject({ method: 'PATCH', headers: expect.objectContaining({ 'Upload-Offset': '2' }) })
     expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('parses subtitles out of the torrent bytes it is already uploading', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'sub-room', nickname: 'giuli', uploadEndpoint: '/api/upload/', streamStartBytes: 2 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, status: 201, headers: new Headers({ Location: '/api/upload/sub-id' }),
+      } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '2' }) } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
+
+    const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
+    const result = await createRoomAndUploadTorrent({
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy: vi.fn() },
+    }, 'giuli')
+    await new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
+
+    // Every uploaded byte reaches the parser exactly once: no second pass over
+    // the swarm is needed to read the muxed subtitle tracks.
+    expect(subtitleFakes.written.map((chunk) => chunk.byteLength)).toEqual([2, 4])
+    expect(createMatroskaSubtitleStream).toHaveBeenCalled()
+    expect(subtitleFakes.published).toContainEqual({
+      source: 'embedded',
+      tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }],
+      complete: true,
+    })
+  })
+
+  it('publishes the subtitle files shipped next to the video in the torrent', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'ext-room', nickname: 'giuli', uploadEndpoint: '/api/upload/', streamStartBytes: 4 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true, status: 201, headers: new Headers({ Location: '/api/upload/ext-id' }),
+      } as Response)
+      .mockResolvedValue({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '4' }) } as Response)
+
+    const srt = new TextEncoder().encode('1\n00:00:01,000 --> 00:00:02,000\nOi\n')
+    const subtitleRead = vi.fn().mockResolvedValue(srt.buffer)
+    const result = await createRoomAndUploadTorrent({
+      file: { name: 'episode.mp4', path: 'show/episode.mp4', size: 4, type: 'video/mp4', progress: 0, downloaded: 0, read: vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1)) },
+      session: {
+        name: 'show',
+        files: [],
+        subtitleFiles: [{ name: 'Portuguese.srt', path: 'show/Subs/Portuguese.srt', size: srt.byteLength, read: subtitleRead }],
+        stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }),
+        select: vi.fn(),
+        destroy: vi.fn(),
+      },
+    }, 'giuli')
+    await new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
+    await vi.waitFor(() => expect(subtitleFakes.published.some((entry) => entry.complete)).toBe(true))
+
+    expect(subtitleRead).toHaveBeenCalledOnce()
+    // An MP4 has no client-side parser, so "external" is the only source and
+    // its completion is what marks the room done.
+    expect(createMatroskaSubtitleStream).not.toHaveBeenCalled()
+    expect(subtitleFakes.published.at(-1)).toEqual({
+      source: 'external',
+      tracks: [{ language: 'por', title: 'Portuguese', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n' }],
+      complete: true,
+    })
   })
 })

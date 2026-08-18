@@ -76,4 +76,62 @@ describe('useSync', () => {
     expect(result.current.roomVersion).toBe(5)
     unmount()
   })
+
+  it('does not announce the people already watching when a client arrives', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+
+    act(() => socket.receive({
+      type: 'welcome',
+      memberId: 'm3',
+      controllerId: 'm1',
+      members: [
+        { id: 'm1', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' },
+        { id: 'm3', nickname: 'giuli', joinedAt: '2026-01-01T00:02:00Z' },
+      ],
+    }))
+
+    expect(result.current.members).toHaveLength(2)
+    expect(result.current.presence).toEqual([])
+    unmount()
+  })
+
+  it('reports who joined and who left by diffing the roster', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    const ana = { id: 'm1', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' }
+    const me = { id: 'm3', nickname: 'giuli', joinedAt: '2026-01-01T00:02:00Z' }
+    const bob = { id: 'm4', nickname: 'Bob', joinedAt: '2026-01-01T00:03:00Z' }
+
+    act(() => socket.receive({ type: 'welcome', memberId: 'm3', controllerId: 'm1', members: [ana, me] }))
+    act(() => socket.receive({ type: 'members', controllerId: 'm1', members: [ana, me, bob] }))
+
+    expect(result.current.presence).toMatchObject([{ memberId: 'm4', nickname: 'Bob', kind: 'join' }])
+
+    act(() => socket.receive({ type: 'members', controllerId: 'm3', members: [me, bob] }))
+
+    expect(result.current.presence).toMatchObject([
+      { memberId: 'm4', nickname: 'Bob', kind: 'join' },
+      { memberId: 'm1', nickname: 'Ana', kind: 'leave' },
+    ])
+    // Ids are unique and increasing so the toast queue can track what it showed.
+    expect(result.current.presence[1].id).toBeGreaterThan(result.current.presence[0].id)
+    unmount()
+  })
+
+  it('reports no change when the roster is rebroadcast unchanged', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    const members = [{ id: 'm1', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' }]
+
+    act(() => socket.receive({ type: 'welcome', memberId: 'm1', controllerId: 'm1', members }))
+    act(() => socket.receive({ type: 'members', controllerId: 'm1', members }))
+    act(() => socket.receive({ type: 'members', controllerId: 'm1', members }))
+
+    expect(result.current.presence).toEqual([])
+    unmount()
+  })
 })

@@ -201,7 +201,7 @@ func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
 	require.False(t, has)
 
 	subs := []TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}
-	require.NoError(t, s.SetClientSubtitles(t.Context(), "subs", subs))
+	require.NoError(t, s.SetClientSubtitles(t.Context(), "subs", subs, true))
 
 	has, err = s.HasClientSubs(t.Context(), "subs")
 	require.NoError(t, err)
@@ -225,7 +225,7 @@ func TestSetClientSubtitlesRejectsMissingRoom(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	s := NewStore(rdb, time.Hour)
 
-	err := s.SetClientSubtitles(t.Context(), "missing", []TrackInfo{{Index: 0, Codec: "webvtt"}})
+	err := s.SetClientSubtitles(t.Context(), "missing", []TrackInfo{{Index: 0, Codec: "webvtt"}}, true)
 	require.ErrorIs(t, err, ErrNotFound)
 
 	has, err := s.HasClientSubs(t.Context(), "missing")

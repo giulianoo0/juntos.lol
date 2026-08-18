@@ -13,7 +13,9 @@
 - chat e lista de participantes por sala;
 - seleção de faixas de áudio e legendas de texto;
 - extração de legendas MKV no navegador e fallback de extração com FFmpeg no servidor;
+- legendas de torrent extraídas durante o download, sem esperar o arquivo inteiro, incluindo os arquivos `.srt` e `.ass` que acompanham o vídeo;
 - torrents com seleção de arquivo e bridge híbrido para Chrome, Dia e Safari;
+- entrada por link pedindo apenas o apelido, com aviso de quem entra e quem sai da sala;
 - compartilhamento de tela com LiveKit;
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed.
@@ -53,7 +55,8 @@ O navegador não depende de peers WebRTC para abrir ou baixar um torrent. O flux
 3. devolve a lista de arquivos para o seletor;
 4. prioriza somente o intervalo solicitado do arquivo escolhido;
 5. entrega blocos binários ao navegador por HTTP;
-6. reutiliza o mesmo upload tus da aplicação para criar a sala.
+6. entrega também os arquivos de legenda que acompanham o vídeo, sem alterar a prioridade das peças do vídeo;
+7. reutiliza o mesmo upload tus da aplicação para criar a sala.
 
 O fallback WebTorrent no navegador é usado apenas quando o bridge não está configurado. A velocidade depende da disponibilidade e da distribuição das peças no swarm.
 
@@ -61,13 +64,17 @@ O fallback WebTorrent no navegador é usado apenas quando o bridge não está co
 
 O primeiro membro criado com a sala é o controlador da reprodução. Somente ele publica play, pause, seek e alteração de velocidade; os demais clientes aplicam o estado recebido e corrigem drift com base no relógio do servidor. Não existe fluxo de “tomar o controle”.
 
+Quem abre o link da sala só precisa informar o apelido; o link já é o convite e nenhum código adicional é pedido. Deixar o campo vazio gera um nome de convidado. Entradas e saídas aparecem como um aviso temporário e como uma linha no chat, comparando a lista de participantes que o servidor transmite.
+
 O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacidades sensíveis, como a autorização do LiveKit, são aleatórias, mantidas em memória e não são persistidas em query strings ou `localStorage`.
 
 ### Áudio e legendas
 
 - Texto: ASS/SSA, SubRip, WebVTT e `mov_text` são convertidos para WebVTT.
 - MKV: o navegador tenta extrair legendas de texto enquanto o upload continua.
-- Fallback: depois do upload, FFmpeg extrai as faixas que ainda não foram fornecidas pelo cliente.
+- Torrent: os mesmos blocos que estão sendo enviados alimentam o parser Matroska, então as legendas embutidas aparecem durante o download em vez de só no final. Nenhum byte é baixado duas vezes.
+- Arquivos externos: `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo no torrent são lidos inteiros, convertidos para WebVTT e publicados quase imediatamente. O idioma vem do nome do arquivo.
+- Fallback: depois do upload, FFmpeg extrai as faixas que ainda não foram fornecidas pelo cliente. Uma extração parcial publica as legendas já disponíveis sem cancelar essa passagem final.
 - Imagem: PGS e VobSub são detectadas, mas não são exibidas; a interface informa quantas foram ignoradas.
 
 ## Executar com Docker
@@ -198,6 +205,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 | `POST` | `/api/torrent-bridge/open` | Abre um magnet e retorna metadados. |
 | `POST` | `/api/torrent-bridge/select` | Seleciona o arquivo da sessão. |
 | `POST` | `/api/torrent-bridge/read` | Entrega um intervalo binário de até 8 MiB. |
+| `POST` | `/api/torrent-bridge/read-file` | Lê outro arquivo do mesmo torrent, usado para legendas externas. |
 | `POST` | `/api/torrent-bridge/stats` | Retorna peers, velocidade e progresso. |
 | `POST` | `/api/torrent-bridge/close` | Fecha a sessão e limpa seu cache. |
 

@@ -140,7 +140,7 @@ func TestQueueKeepsPlayablePreviewReadyDuringFinalRemux(t *testing.T) {
 func TestQueuePreservesClientSubtitles(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "r3")
 	clientSubs := []room.TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}
-	require.NoError(t, store.SetClientSubtitles(t.Context(), "r3", clientSubs))
+	require.NoError(t, store.SetClientSubtitles(t.Context(), "r3", clientSubs, true))
 	wantAudio := []room.TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}
 	ready := make(chan string, 1)
 	pipe := pipelineFunc(func(_ context.Context, _, _, _ string, skipSubs bool) (

@@ -13,6 +13,9 @@ const CACHE_PATH = process.env.TORRENT_CACHE_PATH || '/cache'
 const MAX_BODY_BYTES = 8192
 const MAX_FILE_BYTES = 10 * 1024 * 1024 * 1024
 const MAX_READ_BYTES = 8 * 1024 * 1024
+// Side files are fetched whole in one request. Subtitles are far below this;
+// the cap keeps the endpoint from being used to pull arbitrary payloads.
+const MAX_SIDE_FILE_BYTES = 8 * 1024 * 1024
 const MAX_TORRENTS = 4
 const IDLE_MS = 10 * 60 * 1000
 const TRACKERS = [
@@ -125,11 +128,7 @@ function getStats(id) {
   return torrentStats(getSession(id).entry.torrent)
 }
 
-async function readSelectedFile(id, start, end) {
-  const session = getSession(id)
-  if (!session.selected) throw new Error('file not selected')
-  const file = session.entry.torrent.files.find((candidate) => candidate.path === session.selected)
-  if (!file) throw new Error('selected file not found')
+async function readRange(session, file, start, end, event) {
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end >= file.length) {
     throw new Error('invalid byte range')
   }
@@ -141,7 +140,7 @@ async function readSelectedFile(id, start, end) {
   session.lastUsed = Date.now()
   session.entry.lastUsed = Date.now()
   console.log(JSON.stringify({
-    event: 'torrent_read',
+    event,
     hash: session.hash,
     start,
     bytes: data.byteLength,
@@ -149,6 +148,25 @@ async function readSelectedFile(id, start, end) {
     elapsedMs: Date.now() - startedAt,
   }))
   return data
+}
+
+async function readSelectedFile(id, start, end) {
+  const session = getSession(id)
+  if (!session.selected) throw new Error('file not selected')
+  const file = session.entry.torrent.files.find((candidate) => candidate.path === session.selected)
+  if (!file) throw new Error('selected file not found')
+  return readRange(session, file, start, end, 'torrent_read')
+}
+
+// Reads any file of the same torrent without changing the session selection.
+// External subtitles ship as small sibling files, so they can be fetched
+// alongside the video stream without competing for its piece priority.
+async function readSideFile(id, path, start, end) {
+  const session = getSession(id)
+  const file = session.entry.torrent.files.find((candidate) => candidate.path === path)
+  if (!file || file.length <= 0) throw new Error('invalid file')
+  if (file.length > MAX_SIDE_FILE_BYTES) throw new Error('file too large')
+  return readRange(session, file, start, end, 'torrent_read_side')
 }
 
 async function closeSession(id) {
@@ -203,6 +221,7 @@ const server = http.createServer(async (request, response) => {
     if (request.url === '/api/torrent-bridge/select') return json(response, 200, selectFile(body.id, body.path))
     if (request.url === '/api/torrent-bridge/stats') return json(response, 200, getStats(body.id))
     if (request.url === '/api/torrent-bridge/read') return binary(response, await readSelectedFile(body.id, body.start, body.end))
+    if (request.url === '/api/torrent-bridge/read-file') return binary(response, await readSideFile(body.id, body.path, body.start, body.end))
     if (request.url === '/api/torrent-bridge/close') {
       await closeSession(body.id)
       return json(response, 200, { ok: true })

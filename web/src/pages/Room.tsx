@@ -1,22 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
-import { useT } from '../i18n/useT'
+import { useT, type Translator } from '../i18n/useT'
 import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
 import { startScreenShare } from '../screenshare'
-import type { RoomInfo } from '../types'
+import type { ChatEntry, PresenceEvent, RoomInfo } from '../types'
 import { subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from '../upload'
 
+// How long one arrival or departure stays on screen before the next is shown.
+const PRESENCE_TOAST_MS = 4_000
+const MAX_VISIBLE_TOASTS = 3
+
 export function RoomPage() {
-  const t = useT()
   const { id = '' } = useParams()
-  const initialNickname = localStorage.getItem('ss.nickname') || ''
-  const [nickname, setNickname] = useState(initialNickname)
-  const [draftNickname, setDraftNickname] = useState(initialNickname)
+  const [nickname, setNickname] = useState(() => localStorage.getItem('ss.nickname') || '')
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [missing, setMissing] = useState(false)
 
@@ -41,15 +42,46 @@ export function RoomPage() {
   if (missing) return <EmptyRoom />
   if (!room) return <main className="center-state"><StatusPill status="connecting" label="Connecting" /></main>
   if (!nickname) {
-    return (
-      <main className="center-state"><div className="state-card raised">
-        <h1>{t('room.join')}</h1>
-        <input className="sunken text-field" value={draftNickname} onChange={(event) => setDraftNickname(event.target.value)} maxLength={64} />
-        <button className="primary-button" onClick={() => { const value = draftNickname.trim(); if (value) { localStorage.setItem('ss.nickname', value); setNickname(value) } }}>{t('room.join')}</button>
-      </div></main>
-    )
+    return <JoinRoom onJoin={(value) => { localStorage.setItem('ss.nickname', value); setNickname(value) }} />
   }
   return <ConnectedRoom room={room} nickname={nickname} />
+}
+
+// The room link is the whole invitation: whoever opens it is already in, and
+// the only thing still missing is what to call them.
+function JoinRoom({ onJoin }: { onJoin: (nickname: string) => void }) {
+  const t = useT()
+  const [draft, setDraft] = useState('')
+  return (
+    <main className="center-state">
+      <form className="state-card raised join-card" onSubmit={(event) => {
+        event.preventDefault()
+        onJoin(draft.trim() || guestName())
+      }}>
+        <h1>{t('room.joinTitle')}</h1>
+        <p>{t('room.joinGuide')}</p>
+        <label htmlFor="join-nickname">{t('home.nickname')}</label>
+        <input
+          id="join-nickname"
+          className="sunken text-field"
+          autoFocus
+          value={draft}
+          maxLength={64}
+          placeholder={t('home.nicknamePlaceholder')}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <button type="submit" className="primary-button">{t('room.join')}</button>
+      </form>
+    </main>
+  )
+}
+
+// Mirrors the guest name the server hands out when a room is created, so a
+// blank field is a valid answer here too.
+function guestName(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  const random = crypto.getRandomValues(new Uint8Array(6))
+  return `Guest-${Array.from(random, (value) => alphabet[value % alphabet.length]).join('')}`
 }
 
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
@@ -65,6 +97,21 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState(false)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
+  const toasts = usePresenceToasts(sync.presence)
+
+  // Presence is woven into the chat timeline so someone who was away can still
+  // read who arrived while the toast was on screen.
+  const chatEntries = useMemo((): ChatEntry[] => [
+    ...sync.messages,
+    ...sync.presence.map((event) => ({
+      author: event.nickname,
+      text: t(event.kind === 'join' ? 'presence.joined' : 'presence.left'),
+      at: event.at,
+      system: true,
+    })),
+    // Server timestamps carry an offset and client ones are UTC, so the two
+    // are only comparable once parsed.
+  ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [sync.messages, sync.presence, t])
 
   // Media and subtitle updates carry the current media status; each signal
   // means fresh room metadata is available.
@@ -116,6 +163,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   return (
     <main className="room-shell">
+      <PresenceToasts events={toasts} t={t} />
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{liveRoom.fileName}</span></div>
         <div className="header-actions">
@@ -140,9 +188,45 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             ))}
           </div>
         </section>
-        <Chat open={chatOpen} onClose={() => setChatOpen(false)} messages={sync.messages} onSend={(text) => sync.send('chat', { text })} t={t} />
+        <Chat open={chatOpen} onClose={() => setChatOpen(false)} messages={chatEntries} onSend={(text) => sync.send('chat', { text })} t={t} />
       </div>
     </main>
+  )
+}
+
+// Turns the presence log into a short-lived queue. Each entry is retired on
+// its own timer, so a burst of arrivals drains one at a time instead of
+// stacking up and covering the player.
+function usePresenceToasts(presence: PresenceEvent[]): PresenceEvent[] {
+  const [toasts, setToasts] = useState<PresenceEvent[]>([])
+  const lastSeenRef = useRef(0)
+
+  useEffect(() => {
+    const fresh = presence.filter((event) => event.id > lastSeenRef.current)
+    if (fresh.length === 0) return
+    lastSeenRef.current = fresh[fresh.length - 1].id
+    setToasts((current) => [...current, ...fresh])
+  }, [presence])
+
+  useEffect(() => {
+    if (toasts.length === 0) return
+    const timer = window.setTimeout(() => setToasts((current) => current.slice(1)), PRESENCE_TOAST_MS)
+    return () => window.clearTimeout(timer)
+  }, [toasts])
+
+  return toasts
+}
+
+function PresenceToasts({ events, t }: { events: PresenceEvent[]; t: Translator }) {
+  if (events.length === 0) return null
+  return (
+    <div className="presence-toasts" role="status" aria-live="polite">
+      {events.slice(0, MAX_VISIBLE_TOASTS).map((event) => (
+        <span key={event.id} className={`presence-toast ${event.kind === 'leave' ? 'is-leave' : ''}`}>
+          <strong>{event.nickname}</strong> {t(event.kind === 'join' ? 'presence.joined' : 'presence.left')}
+        </span>
+      ))}
+    </div>
   )
 }
 

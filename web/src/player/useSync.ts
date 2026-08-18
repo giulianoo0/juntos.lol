@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { ChatMessage, Member, PlayState } from '../types'
+import type { ChatMessage, Member, PlayState, PresenceEvent } from '../types'
 import { expectedPositionMs, needsResync } from './position'
+
+// Presence is a rolling log: the room header shows the newest entries and the
+// chat keeps them inline, so an unbounded list would only grow memory.
+const PRESENCE_LIMIT = 50
 
 interface Outbound {
   type: string
@@ -24,6 +28,7 @@ interface SyncResult {
   memberId: string
   isController: boolean
   messages: ChatMessage[]
+  presence: PresenceEvent[]
   roomStatus: string
   roomVersion: number
   connected: boolean
@@ -48,6 +53,12 @@ export function useSync(
   const [memberId, setMemberId] = useState('')
   const [members, setMembers] = useState<Member[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [presence, setPresence] = useState<PresenceEvent[]>([])
+  // Null until the welcome frame lands. The server only broadcasts a member
+  // list to the other clients, so the roster a client is handed on arrival is
+  // the baseline to diff against rather than a room full of arrivals.
+  const knownMembersRef = useRef<Map<string, string> | null>(null)
+  const presenceSeqRef = useRef(0)
   const [roomStatus, setRoomStatus] = useState('connecting')
   // Bumps on every roomStatus message, even repeated ones, so consumers can
   // refetch tracks without interpreting a subtitle update as media readiness.
@@ -72,6 +83,28 @@ export function useSync(
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}`)
     socketRef.current = socket
+    // A reconnect re-seeds from its own welcome frame instead of announcing
+    // everyone who was already watching as a fresh arrival.
+    knownMembersRef.current = null
+
+    // Diffs the roster against the last one seen and logs who came and went.
+    const applyMembers = (next: Member[]) => {
+      const previous = knownMembersRef.current
+      const roster = new Map(next.map((member) => [member.id, member.nickname]))
+      if (previous) {
+        const at = new Date(Date.now() + offsetRef.current).toISOString()
+        const events: PresenceEvent[] = []
+        for (const [id, nickname] of roster) {
+          if (!previous.has(id)) events.push({ id: (presenceSeqRef.current += 1), memberId: id, nickname, kind: 'join', at })
+        }
+        for (const [id, nickname] of previous) {
+          if (!roster.has(id)) events.push({ id: (presenceSeqRef.current += 1), memberId: id, nickname, kind: 'leave', at })
+        }
+        if (events.length > 0) setPresence((current) => [...current, ...events].slice(-PRESENCE_LIMIT))
+      }
+      knownMembersRef.current = roster
+      setMembers(next)
+    }
 
     const applyState = (nextState: PlayState) => {
       setState(nextState)
@@ -102,7 +135,7 @@ export function useSync(
         case 'welcome':
           setMemberId(message.memberId ?? '')
           setControllerId(message.controllerId ?? '')
-          setMembers(message.members ?? [])
+          applyMembers(message.members ?? [])
           setMessages(message.history ?? [])
           setCapability(message.capability ?? '')
           setRoomStatus('live')
@@ -113,7 +146,7 @@ export function useSync(
           break
         case 'members':
           setControllerId(message.controllerId ?? '')
-          setMembers(message.members ?? [])
+          applyMembers(message.members ?? [])
           break
         case 'chat':
           if (message.message) setMessages((current) => [...current, message.message!])
@@ -156,6 +189,7 @@ export function useSync(
     memberId,
     isController: memberId !== '' && memberId === controllerId,
     messages,
+    presence,
     roomStatus,
     roomVersion,
     connected,

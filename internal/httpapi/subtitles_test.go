@@ -136,3 +136,39 @@ func strconvQuote(value string) string {
 	b.WriteByte('"')
 	return b.String()
 }
+
+func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r2", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil)
+
+	body := `{"complete":false,"tracks":[{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
+	w := postSubtitles(t, e, "r2", body)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// The cues are published so playback can already use them...
+	got, err := store.Get(t.Context(), "r2")
+	require.NoError(t, err)
+	require.Equal(t, []room.TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}, got.SubtitleTracks)
+	data, err := os.ReadFile(filepath.Join(cfg.DataDir, "rooms", "r2", "subs", "sub_0_eng.vtt"))
+	require.NoError(t, err)
+	require.Equal(t, validVTT, string(data))
+
+	// ...but the authoritative ffmpeg pass must still run at upload completion.
+	require.False(t, got.ClientSubs)
+	has, err := store.HasClientSubs(t.Context(), "r2")
+	require.NoError(t, err)
+	require.False(t, has)
+
+	// The finishing post promotes the same room to a completed extraction.
+	w = postSubtitles(t, e, "r2", `{"complete":true,"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}]}`)
+	require.Equal(t, http.StatusCreated, w.Code)
+	has, err = store.HasClientSubs(t.Context(), "r2")
+	require.NoError(t, err)
+	require.True(t, has)
+}

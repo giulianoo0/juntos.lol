@@ -274,18 +274,21 @@ func (s *Store) SetAudioTracks(ctx context.Context, id string, audio []TrackInfo
 	)
 }
 
-// SetClientSubtitles stores browser-extracted WebVTT subtitle tracks and
-// marks the room so the media pipeline skips embedded subtitle extraction.
-func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackInfo) error {
+// SetClientSubtitles stores browser-extracted WebVTT subtitle tracks. Only a
+// complete extraction marks the room so the media pipeline skips embedded
+// subtitle extraction; a partial one is published for immediate playback while
+// the authoritative ffmpeg pass stays scheduled.
+func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackInfo, complete bool) error {
 	b, err := json.Marshal(subs)
 	if err != nil {
 		return fmt.Errorf("marshal subtitle tracks: %w", err)
 	}
 
-	return s.mutateRoom(ctx, id, false,
-		"subtitle_tracks", string(b),
-		"client_subs", "1",
-	)
+	fields := []any{"subtitle_tracks", string(b)}
+	if complete {
+		fields = append(fields, "client_subs", "1")
+	}
+	return s.mutateRoom(ctx, id, false, fields...)
 }
 
 // HasClientSubs reports whether the room received browser-extracted subs.

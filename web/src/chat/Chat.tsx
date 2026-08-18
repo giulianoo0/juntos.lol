@@ -1,11 +1,11 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
-import type { ChatMessage } from '../types'
+import type { ChatEntry } from '../types'
 import type { Translator } from '../i18n/useT'
 
 const mobileMediaQuery = '(max-width: 900px)'
 
 interface ChatProps {
-  messages: ChatMessage[]
+  messages: ChatEntry[]
   open: boolean
   onClose: () => void
   onSend: (text: string) => void
@@ -48,8 +48,10 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
       <header><h2>{t('chat.title')}</h2><button onClick={onClose} aria-label="Close chat">×</button></header>
       <div className="chat-messages">
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
-          <article className="chat-message" key={`${message.at}-${index}`} style={{ animationDelay: `${Math.min(index * 35, 300)}ms` }}>
-            <strong>{message.author}</strong><p>{message.text}</p>
+          <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ animationDelay: `${Math.min(index * 35, 300)}ms` }}>
+            {message.system
+              ? <p>{message.author} {message.text}</p>
+              : <><strong>{message.author}</strong><p>{message.text}</p></>}
           </article>
         ))}
       </div>

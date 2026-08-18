@@ -94,6 +94,7 @@ describe('Home', () => {
     vi.mocked(openTorrent).mockResolvedValue({
       name: 'My show',
       files: [episodeOne, episodeTwo],
+      subtitleFiles: [],
       stats: () => ({ peers: 2, downloadSpeed: 100, downloaded: 0, progress: 0 }),
       select: vi.fn().mockResolvedValue(undefined),
       destroy,

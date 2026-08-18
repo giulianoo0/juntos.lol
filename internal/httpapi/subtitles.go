@@ -31,8 +31,17 @@ type clientSubtitleTrack struct {
 	VTT      string `json:"vtt"`
 }
 
+// Complete distinguishes a finished extraction from a progressive one. A
+// torrent or upload still streaming publishes the cues it already has with
+// complete=false, which keeps the authoritative ffmpeg pass scheduled. A
+// missing field means complete, which is what older clients send.
 type clientSubtitlesRequest struct {
-	Tracks []clientSubtitleTrack `json:"tracks"`
+	Tracks   []clientSubtitleTrack `json:"tracks"`
+	Complete *bool                 `json:"complete"`
+}
+
+func (r clientSubtitlesRequest) complete() bool {
+	return r.Complete == nil || *r.Complete
 }
 
 // RegisterSubtitlesRoute mounts the browser-extracted WebVTT upload endpoint.
@@ -109,7 +118,7 @@ func storeClientSubtitles(store *room.Store, cfg config.Config,
 			}
 		}
 
-		if err := store.SetClientSubtitles(c.Request.Context(), roomID, tracks); err != nil {
+		if err := store.SetClientSubtitles(c.Request.Context(), roomID, tracks, req.complete()); err != nil {
 			if errors.Is(err, room.ErrNotFound) {
 				c.Status(http.StatusNotFound)
 				return
@@ -120,7 +129,7 @@ func storeClientSubtitles(store *room.Store, cfg config.Config,
 		}
 
 		invokeSubsStoredCallback(onSubsStored, roomID)
-		c.JSON(http.StatusCreated, gin.H{"subtitleTracks": tracks})
+		c.JSON(http.StatusCreated, gin.H{"subtitleTracks": tracks, "complete": req.complete()})
 	}
 }
 

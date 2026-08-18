@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { extractAndUploadSubtitles, toWebVTT, type SubtitleCue } from './subtitles'
+import { createSubtitleCollector, extractAndUploadSubtitles, toWebVTT, type SubtitleCue } from './subtitles'
 
 describe('toWebVTT', () => {
   it('serializes cues with millisecond timings sorted by start time', () => {
@@ -73,6 +73,7 @@ describe('extractAndUploadSubtitles', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello\n' }],
+        complete: true,
       }),
     })
   })
@@ -86,6 +87,73 @@ describe('extractAndUploadSubtitles', () => {
   it('resolves silently when the request itself fails', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('network down'))
     await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1')).resolves.toBeUndefined()
+    expect(console.error).toHaveBeenCalled()
+  })
+})
+
+describe('createSubtitleCollector', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const body = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
+    tracks: Array<{ title: string }>
+    complete: boolean
+  }
+
+  it('reports incomplete while any registered source is still running', async () => {
+    const collector = createSubtitleCollector('room1')
+    collector.register('embedded')
+    collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(body(0).complete).toBe(false)
+  })
+
+  it('posts the union of every source in registration order once all are done', async () => {
+    const collector = createSubtitleCollector('room1')
+    collector.register('external')
+    collector.register('embedded')
+    collector.publish('embedded', [{ language: 'jpn', title: 'Muxed', vtt: 'WEBVTT' }], true)
+    collector.publish('external', [{ language: 'eng', title: 'Sibling', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    const last = body(vi.mocked(fetch).mock.calls.length - 1)
+    expect(last.tracks.map((track) => track.title)).toEqual(['Sibling', 'Muxed'])
+    expect(last.complete).toBe(true)
+  })
+
+  it('sends nothing while no source has produced a track', async () => {
+    const collector = createSubtitleCollector('room1')
+    collector.publish('embedded', [], false)
+    await collector.flush()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('coalesces progressive updates instead of posting on every publish', async () => {
+    const collector = createSubtitleCollector('room1')
+    collector.register('embedded')
+    for (let index = 0; index < 5; index += 1) {
+      collector.publish('embedded', [{ language: 'eng', title: `cue ${index}`, vtt: 'WEBVTT' }], false)
+    }
+    await collector.flush()
+    expect(vi.mocked(fetch).mock.calls.length).toBeLessThan(5)
+    // The newest snapshot must still be the one that lands.
+    expect(body(vi.mocked(fetch).mock.calls.length - 1).tracks[0].title).toBe('cue 4')
+  })
+
+  it('keeps the room usable when a publish request fails', async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error('offline'))
+    const collector = createSubtitleCollector('room1')
+    collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
+    await expect(collector.flush()).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()
   })
 })

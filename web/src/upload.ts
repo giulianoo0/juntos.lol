@@ -1,11 +1,27 @@
 import Uppy from '@uppy/core'
 import Tus from '@uppy/tus'
 import { convertMp4ToMkv, isMp4 } from './convert'
-import { extractAndUploadSubtitles } from './subtitles'
-import type { TorrentSession, TorrentVideoFile } from './torrent'
+import {
+  createMatroskaSubtitleStream,
+  createSubtitleCollector,
+  extractAndUploadSubtitles,
+  isMatroska,
+  type MatroskaSubtitleStream,
+  type SubtitleCollector,
+} from './subtitles'
+import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
+import type { TorrentSession, TorrentSideFile, TorrentVideoFile } from './torrent'
 
 const TUS_CHUNK_BYTES = 50 * 1024 * 1024
 const TORRENT_CHUNK_BYTES = 8 * 1024 * 1024
+// The server accepts 32 subtitle tracks per room; leave headroom for the
+// tracks muxed into the video itself.
+const MAX_EXTERNAL_SUBTITLES = 16
+// How often the cues seen so far are republished while bytes keep arriving.
+const SUBTITLE_SNAPSHOT_MS = 8_000
+// Subtitle extraction must never hold up the upload. The parser bundle is a
+// same-origin asset, so anything slower than this is a failure to move on from.
+const SUBTITLE_PARSER_TIMEOUT_MS = 10_000
 const REGISTRY_TTL_MS = 30_000
 const DEFAULT_STREAM_START_BYTES = 1024 * 1024
 
@@ -164,8 +180,31 @@ export async function createRoomAndUploadTorrent(
   if (onProgress) entry.progressListeners.add((value) => onProgress({ phase: 'uploading', pct: value.pct }))
 
   const finish = (error: string | null) => finishEntry(room.id, entry, error, session.destroy)
+
+  // Subtitles do not need a second pass over the swarm. Sibling subtitle
+  // files are fetched directly, and the tracks muxed into the video are
+  // parsed from the very bytes that are already being uploaded.
+  const collector = createSubtitleCollector(room.id)
+  const externalSubtitles = session.subtitleFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
+  if (externalSubtitles.length > 0) {
+    collector.register('external')
+    void loadExternalSubtitles(externalSubtitles, collector)
+  }
+
+  // Started before the upload handshake so the bundle loads while the tus
+  // session is being created.
+  let parserPromise: Promise<MatroskaSubtitleStream | null> | null = null
+  if (isMatroska(file)) {
+    collector.register('embedded')
+    parserPromise = createMatroskaSubtitleStream().catch((error: unknown) => {
+      console.error('subtitle parser unavailable', error)
+      return null
+    })
+  }
+
   void (async () => {
     let uploadURL = ''
+    let subtitles: MatroskaSubtitleStream | null = null
     try {
       const createResponse = await fetch(room.uploadEndpoint, {
         method: 'POST',
@@ -180,7 +219,15 @@ export async function createRoomAndUploadTorrent(
       if (!location) throw new Error('torrent upload location missing')
       uploadURL = new URL(location, window.location.href).toString()
 
+      if (parserPromise) {
+        subtitles = await withTimeout(parserPromise, SUBTITLE_PARSER_TIMEOUT_MS)
+        // A source that never produced a parser stays incomplete, which keeps
+        // the authoritative server-side extraction scheduled.
+        if (!subtitles) collector.publish('embedded', [], false)
+      }
+
       let offset = 0
+      let lastSnapshotAt = Date.now()
       while (offset < file.size) {
         // The very first request only waits for the server's preview threshold;
         // later requests are larger for better throughput.
@@ -197,8 +244,34 @@ export async function createRoomAndUploadTorrent(
         })
         if (!patchResponse.ok) throw new Error(`torrent upload failed (${patchResponse.status})`)
         const nextOffset = Number(patchResponse.headers.get('Upload-Offset'))
+        const previousOffset = offset
         offset = Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : offset + body.byteLength
         updateEntry(entry, offset)
+
+        // Feed the parser only the bytes the server actually accepted: a short
+        // write is re-read from the new offset, and anything else would splice
+        // the container stream and desync the parser for good.
+        if (subtitles) {
+          const accepted = offset - previousOffset
+          if (accepted === body.byteLength) subtitles.write(new Uint8Array(body))
+          else if (accepted > 0 && accepted < body.byteLength) subtitles.write(new Uint8Array(body, 0, accepted))
+          else subtitles = null
+        }
+        if (subtitles && Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
+          lastSnapshotAt = Date.now()
+          collector.publish('embedded', subtitles.snapshot(), false)
+        }
+      }
+      if (subtitles) {
+        try {
+          collector.publish('embedded', await subtitles.finish(), true)
+        } catch (error) {
+          console.error('subtitle extraction failed', error)
+          // Leave the source incomplete so the server still extracts the
+          // authoritative tracks once the upload lands.
+          collector.publish('embedded', subtitles.snapshot(), false)
+        }
+        void collector.flush()
       }
       finish(null)
     } catch (error) {
@@ -232,4 +305,31 @@ export function subscribeUploadDone(roomID: string, callback: (err: string | nul
   }
   entry.doneListeners.add(callback)
   return () => { entry.doneListeners.delete(callback) }
+}
+
+// Reads the subtitle files shipped alongside the video and publishes them as
+// they land. Each file is complete on its own, so they are usable long before
+// the video finishes downloading.
+async function loadExternalSubtitles(files: TorrentSideFile[], collector: SubtitleCollector): Promise<void> {
+  const tracks: VttTrack[] = []
+  for (const file of files) {
+    try {
+      const track = convertSubtitleFile(file.path, await file.read())
+      if (!track) continue
+      tracks.push(track)
+      collector.publish('external', [...tracks], false)
+    } catch (error) {
+      console.warn('external subtitle unavailable', file.path, error)
+    }
+  }
+  collector.publish('external', tracks, true)
+  await collector.flush()
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    void promise.then((value) => { clearTimeout(timer); resolve(value) },
+      () => { clearTimeout(timer); resolve(null) })
+  })
 }

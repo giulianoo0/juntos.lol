@@ -24,6 +24,25 @@ export interface ChatMessage {
   at: string
 }
 
+// A member arriving or leaving, derived by diffing the roster the server
+// broadcasts. Rendered both as a transient toast and as a chat entry.
+export interface PresenceEvent {
+  id: number
+  memberId: string
+  nickname: string
+  kind: 'join' | 'leave'
+  at: string
+}
+
+// One row of the chat timeline: either a message someone sent or a presence
+// note the client synthesized.
+export interface ChatEntry {
+  author: string
+  text: string
+  at: string
+  system?: boolean
+}
+
 export interface RoomInfo {
   id: string
   fileName: string

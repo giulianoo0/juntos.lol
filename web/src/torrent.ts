@@ -1,6 +1,10 @@
 import webTorrentBundleURL from 'webtorrent/dist/webtorrent.min.js?url'
+import { isSubtitleFileName } from './subtitleFormats'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
+// Sibling subtitle files are read whole in a single request, and the bridge
+// refuses anything larger. Real subtitle files are orders of magnitude below.
+const MAX_SIDE_FILE_BYTES = 8 * 1024 * 1024
 
 interface TorrentEventTarget {
   on(event: string, listener: (...args: unknown[]) => void): void
@@ -57,6 +61,15 @@ export interface TorrentVideoFile {
   read(start: number, endInclusive: number): Promise<ArrayBuffer>
 }
 
+// A small non-video file shipped in the same torrent, read in full. Releases
+// put their subtitles here instead of muxing them into the container.
+export interface TorrentSideFile {
+  name: string
+  path: string
+  size: number
+  read(): Promise<ArrayBuffer>
+}
+
 export interface TorrentStats {
   peers: number
   downloadSpeed: number
@@ -67,6 +80,7 @@ export interface TorrentStats {
 export interface TorrentSession {
   name: string
   files: TorrentVideoFile[]
+  subtitleFiles: TorrentSideFile[]
   stats(): TorrentStats
   select(path: string): Promise<void>
   destroy(): void
@@ -161,9 +175,19 @@ export async function openTorrent(
           }))
           .sort((a, b) => b.size - a.size)
 
+        const subtitleFiles = readyTorrent.files
+          .filter((file) => isSubtitleFileName(file.name) && file.length > 0 && file.length <= MAX_SIDE_FILE_BYTES)
+          .map((file): TorrentSideFile => ({
+            name: file.name,
+            path: file.path,
+            size: file.length,
+            read: () => file.arrayBuffer({ start: 0, end: file.length - 1 }),
+          }))
+
         resolve({
           name: readyTorrent.name,
           files,
+          subtitleFiles,
           stats: getStats,
           select: async (path) => {
             const file = files.find((candidate) => candidate.path === path)
@@ -192,7 +216,7 @@ function openBridgeSession(
   let currentStats = bridge.stats
   let destroyed = false
 
-  const request = async (path: 'select' | 'stats' | 'read', body: Record<string, unknown>): Promise<Response> => {
+  const request = async (path: 'select' | 'stats' | 'read' | 'read-file', body: Record<string, unknown>): Promise<Response> => {
     const response = await fetch(`/api/torrent-bridge/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -226,6 +250,21 @@ function openBridgeSession(
     }))
     .sort((a, b) => b.size - a.size)
 
+  // Read without touching the session selection, so fetching subtitles never
+  // interrupts the video byte stream feeding the upload.
+  const subtitleFiles = bridge.files
+    .filter((file) => isSubtitleFileName(file.name) && file.size > 0 && file.size <= MAX_SIDE_FILE_BYTES)
+    .map((file): TorrentSideFile => ({
+      name: file.name,
+      path: file.path,
+      size: file.size,
+      read: async () => {
+        if (destroyed) throw new Error('torrent session closed')
+        const response = await request('read-file', { path: file.path, start: 0, end: file.size - 1 })
+        return await response.arrayBuffer()
+      },
+    }))
+
   const refreshStats = async () => {
     try {
       const response = await request('stats', {})
@@ -242,6 +281,7 @@ function openBridgeSession(
   return {
     name: bridge.name,
     files,
+    subtitleFiles,
     stats: () => currentStats,
     select: async (path) => {
       if (!files.some((file) => file.path === path)) throw new Error('torrent file not found')
