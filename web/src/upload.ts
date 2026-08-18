@@ -66,14 +66,61 @@ interface TorrentUploadSource {
 // the room page subscribe after navigation.
 const uploads = new Map<string, UploadEntry>()
 
-async function createRoom(fileName: string, nickname: string): Promise<CreateRoomResponse> {
+async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
   const response = await fetch('/api/rooms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileName, nickname }),
+    body: JSON.stringify({ fileName, nickname, kind }),
   })
   if (!response.ok) throw new Error('create room failed')
   return await response.json() as CreateRoomResponse
+}
+
+// A shared screen has no file and no pipeline: the room opens ready and the
+// picture arrives over WebRTC.
+export async function createScreenRoom(nickname: string): Promise<UploadResult> {
+  const room = await createRoom('', nickname, 'screen')
+  return { roomID: room.id, nickname: room.nickname }
+}
+
+// What the room plays after the controller swaps its source.
+export interface RoomSource {
+  status: string
+  sourceKind: 'upload' | 'screen'
+  fileName: string
+  mediaGeneration: number
+  uploadEndpoint: string
+  streamStartBytes: number
+}
+
+// Repoints an existing room at a new source. Only the controller is allowed
+// to, and everyone stays where they are: nobody moves to another room.
+export async function changeRoomSource(
+  roomID: string,
+  memberId: string,
+  capability: string,
+  kind: 'upload' | 'screen',
+  fileName?: string,
+): Promise<RoomSource> {
+  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId, capability, kind, fileName }),
+  })
+  if (!response.ok) throw new Error(`change source failed (${response.status})`)
+  return await response.json() as RoomSource
+}
+
+// MP4s with a trailing moov atom cannot be remuxed progressively on the
+// server, so remux to Matroska locally first (codec copy). On failure the
+// original file is used unchanged; a missing video track rejects.
+export async function prepareLocalFile(
+  file: File,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<File> {
+  if (!isMp4(file)) return file
+  const converted = await convertMp4ToMkv(file, (pct) => onProgress?.({ phase: 'converting', pct }))
+  return converted ?? file
 }
 
 function streamStartBytes(room: CreateRoomResponse): number {
@@ -124,16 +171,22 @@ export async function createRoomAndUpload(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
-  // MP4s with a trailing moov atom cannot be remuxed progressively on the
-  // server, so remux to Matroska locally first (codec copy). On failure the
-  // original file is uploaded unchanged; a missing video track rejects.
-  let uploadFile = file
-  if (isMp4(file)) {
-    const converted = await convertMp4ToMkv(file, (pct) => onProgress?.({ phase: 'converting', pct }))
-    if (converted) uploadFile = converted
-  }
+  const uploadFile = await prepareLocalFile(file, onProgress)
   const room = await createRoom(uploadFile.name, nickname)
-  const startBytes = streamStartBytes(room)
+  uploadFileToRoom(room.id, room.uploadEndpoint, streamStartBytes(room), uploadFile, onProgress)
+  return { roomID: room.id, nickname: room.nickname }
+}
+
+// Streams a prepared file into a room that already exists, which is what a
+// source swap needs: the room, its members and its chat are all already there.
+export function uploadFileToRoom(
+  roomID: string,
+  uploadEndpoint: string,
+  startBytes: number,
+  uploadFile: File,
+  onProgress?: (progress: UploadProgress) => void,
+): void {
+  const room = { id: roomID, uploadEndpoint }
   const uppy = new Uppy({ autoProceed: false })
   // Keep each PATCH below the common reverse-proxy upload cap while still
   // allowing the server's 10 GB room limit to be reached resumably.
@@ -163,8 +216,6 @@ export async function createRoomAndUpload(
   // For a converted file this runs against the fresh MKV; for an unconverted
   // MP4 it silently no-ops.
   void extractAndUploadSubtitles(uploadFile, room.id)
-
-  return { roomID: room.id, nickname: room.nickname }
 }
 
 export async function createRoomAndUploadTorrent(
@@ -172,9 +223,22 @@ export async function createRoomAndUploadTorrent(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
+  const created = await createRoom(source.file.name, nickname)
+  uploadTorrentToRoom(created.id, created.uploadEndpoint, streamStartBytes(created), source, onProgress)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
+// Pulls a torrent into a room that already exists. Same swarm bookkeeping and
+// same progressive subtitle extraction as a fresh room, minus the room.
+export function uploadTorrentToRoom(
+  roomID: string,
+  uploadEndpoint: string,
+  startBytes: number,
+  source: TorrentUploadSource,
+  onProgress?: (progress: UploadProgress) => void,
+): void {
   const { file, session } = source
-  const room = await createRoom(file.name, nickname)
-  const startBytes = streamStartBytes(room)
+  const room = { id: roomID, uploadEndpoint }
   const entry = createEntry(file.size, startBytes)
   uploads.set(room.id, entry)
   if (onProgress) entry.progressListeners.add((value) => onProgress({ phase: 'uploading', pct: value.pct }))
@@ -284,8 +348,6 @@ export async function createRoomAndUploadTorrent(
       finish(error instanceof Error ? error.message : 'torrent upload failed')
     }
   })()
-
-  return { roomID: room.id, nickname: room.nickname }
 }
 
 export function subscribeUploadProgress(roomID: string, callback: (progress: RoomUploadProgress) => void): () => void {

@@ -32,11 +32,26 @@ type PlayState struct {
 	ServerTimeMs int64   `json:"serverTimeMs"`
 }
 
+// Source kinds a room can play. An uploaded file (a local pick or a torrent,
+// which reaches the server through the same upload) drives the media pipeline;
+// a shared screen bypasses it entirely and is carried live over WebRTC.
+const (
+	SourceUpload = "upload"
+	SourceScreen = "screen"
+)
+
 // Room is the aggregate stored under room:{id}.
 type Room struct {
-	ID                string      `json:"id"`
-	FileName          string      `json:"fileName"`
-	Status            string      `json:"status"`
+	ID       string `json:"id"`
+	FileName string `json:"fileName"`
+	Status   string `json:"status"`
+	// SourceKind is what the room is currently playing. Rooms created before
+	// sources existed read back as an upload.
+	SourceKind string `json:"sourceKind"`
+	// MediaGeneration increments every time the controller swaps the source.
+	// Clients compare it to decide that the media behind an unchanged URL is a
+	// different recording and the player has to be torn down and rebuilt.
+	MediaGeneration   int         `json:"mediaGeneration"`
 	ErrorMessage      string      `json:"errorMessage,omitempty"`
 	ControllerID      string      `json:"controllerId"`
 	AudioTracks       []TrackInfo `json:"audioTracks"`

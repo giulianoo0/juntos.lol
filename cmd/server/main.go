@@ -47,7 +47,12 @@ func main() {
 	})
 	progressive.Start(ctx)
 
-	r := httpapi.NewServer(cfg, store, hub)
+	r := httpapi.NewServer(cfg, store, hub, httpapi.WithSourceHooks(httpapi.SourceHooks{
+		// Swapping the source retires the previous media, so any preview still
+		// being built for it has to stop before its files are removed.
+		CancelMedia:  progressive.Cancel,
+		NotifyStatus: hub.NotifyStatus,
+	}))
 
 	tusHandler, err := upload.NewTusHandler(cfg, store,
 		func(roomID string) {

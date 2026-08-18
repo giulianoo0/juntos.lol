@@ -58,6 +58,8 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 		p.HSet(ctx, key,
 			"file_name", r.FileName,
 			"status", r.Status,
+			"source_kind", r.SourceKind,
+			"media_generation", r.MediaGeneration,
 			"controller_id", r.ControllerID,
 			"audio_tracks", audio,
 			"subtitle_tracks", subs,
@@ -96,6 +98,8 @@ func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
 		p.HSet(ctx, key,
 			"file_name", r.FileName,
 			"status", r.Status,
+			"source_kind", r.SourceKind,
+			"media_generation", r.MediaGeneration,
 			"controller_id", r.ControllerID,
 			"audio_tracks", audio,
 			"subtitle_tracks", subs,
@@ -209,6 +213,17 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 		r.BitmapSubsSkipped = n
 	}
+	r.SourceKind = fields["source_kind"]
+	if r.SourceKind == "" {
+		r.SourceKind = SourceUpload
+	}
+	if v := fields["media_generation"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse media_generation: %w", err)
+		}
+		r.MediaGeneration = n
+	}
 	r.ClientSubs = fields["client_subs"] == "1"
 	if v := fields["created_at"]; v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
@@ -289,6 +304,58 @@ func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackI
 		fields = append(fields, "client_subs", "1")
 	}
 	return s.mutateRoom(ctx, id, false, fields...)
+}
+
+// SwapSource repoints a live room at a new source without disturbing its
+// members, chat or controller. Everything describing the previous media is
+// cleared in one step: the tracks, the error, the browser-subtitle flag, the
+// upload reservation and the playback position. It returns the upload id that
+// was reserved before the swap, if any, so the caller can reclaim the bytes of
+// an upload that is still in flight, plus the new media generation.
+//
+// A room that is gone or expired reports ErrNotFound rather than resurrecting.
+func (s *Store) SwapSource(ctx context.Context, id, kind, fileName, status string, now time.Time) (previousUpload string, generation int, err error) {
+	result, err := s.rdb.Eval(ctx, `
+local status = redis.call('HGET', KEYS[1], 'status')
+if not status then return {0, '', 0} end
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[4]) then return {0, '', 0} end
+local previous = redis.call('HGET', KEYS[1], 'upload_id') or ''
+local generation = tonumber(redis.call('HGET', KEYS[1], 'media_generation') or '0') + 1
+redis.call('HSET', KEYS[1],
+  'status', ARGV[1],
+  'file_name', ARGV[2],
+  'source_kind', ARGV[3],
+  'media_generation', generation,
+  'audio_tracks', 'null',
+  'subtitle_tracks', 'null',
+  'bitmap_subs_skipped', 0)
+redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs')
+redis.call('DEL', KEYS[2])
+redis.call('DEL', KEYS[3])
+redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
+return {1, previous, generation}
+`, []string{roomKey(id), uploadKey(id), stateKey(id)},
+		status, fileName, kind, strconv.FormatInt(now.UnixMilli(), 10)).Slice()
+	if err != nil {
+		return "", 0, fmt.Errorf("swap room source: %w", err)
+	}
+	if len(result) != 3 {
+		return "", 0, fmt.Errorf("swap room source: unexpected reply")
+	}
+	ok, _ := result[0].(int64)
+	if ok != 1 {
+		return "", 0, ErrNotFound
+	}
+	previousUpload, _ = result[1].(string)
+	newGeneration, _ := result[2].(int64)
+	return previousUpload, int(newGeneration), nil
 }
 
 // HasClientSubs reports whether the room received browser-extracted subs.

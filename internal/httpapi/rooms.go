@@ -28,9 +28,12 @@ func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Confi
 	rg.GET("/rooms/:id", getRoom(store))
 }
 
+// Kind selects what the room starts out playing. It is optional so existing
+// clients, which only ever create upload rooms, keep working unchanged.
 type createRoomRequest struct {
-	FileName string `json:"fileName" binding:"required"`
+	FileName string `json:"fileName"`
 	Nickname string `json:"nickname"`
+	Kind     string `json:"kind"`
 }
 
 func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
@@ -41,7 +44,23 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		if !validFileName(req.FileName) {
+		kind := req.Kind
+		if kind == "" {
+			kind = room.SourceUpload
+		}
+		// A shared screen has no file to name or to wait for, so it opens ready.
+		status := "uploading"
+		fileName := req.FileName
+		switch kind {
+		case room.SourceUpload:
+			if !validFileName(fileName) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+				return
+			}
+		case room.SourceScreen:
+			status = "ready"
+			fileName = ""
+		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
@@ -65,8 +84,9 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		member := room.Member{ID: "m1", Nickname: nickname, JoinedAt: now}
 		r := &room.Room{
 			ID:           id,
-			FileName:     req.FileName,
-			Status:       "uploading",
+			FileName:     fileName,
+			Status:       status,
+			SourceKind:   kind,
 			ControllerID: member.ID,
 			CreatedAt:    now,
 			ExpiresAt:    now.Add(time.Duration(cfg.RoomTTLHours) * time.Hour),
@@ -79,6 +99,8 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		c.JSON(http.StatusCreated, gin.H{
 			"id":               id,
 			"nickname":         nickname,
+			"sourceKind":       kind,
+			"status":           status,
 			"uploadEndpoint":   "/api/upload/",
 			"streamStartBytes": cfg.StreamStartMB << 20,
 			"expiresAt":        r.ExpiresAt,
@@ -139,6 +161,8 @@ func getRoom(store *room.Store) gin.HandlerFunc {
 			"id":                r.ID,
 			"fileName":          r.FileName,
 			"status":            r.Status,
+			"sourceKind":        r.SourceKind,
+			"mediaGeneration":   r.MediaGeneration,
 			"errorMessage":      r.ErrorMessage,
 			"controllerId":      r.ControllerID,
 			"audioTracks":       r.AudioTracks,

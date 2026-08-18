@@ -91,7 +91,9 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8`
+    // The URL is stable across a source swap, so the generation is what tells
+    // the browser, hls.js and any proxy that this is different media.
+    const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8?g=${room.mediaGeneration}`
     let disposed = false
     void import('hls.js').then(({ default: HlsClass, ErrorTypes }) => {
       if (disposed) return
@@ -119,7 +121,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, videoRef])
+  }, [room.id, room.mediaGeneration, videoRef])
 
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
@@ -319,7 +321,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           <track
             key={`${track.index}-${track.language}`}
             kind="subtitles"
-            src={`/media/${encodeURIComponent(room.id)}/subs/sub_${index}_${safeLanguage(track.language)}.vtt`}
+            src={`/media/${encodeURIComponent(room.id)}/subs/sub_${index}_${safeLanguage(track.language)}.vtt?g=${room.mediaGeneration}`}
             srcLang={track.language || 'und'}
             label={track.title || track.language || `Subtitle ${index + 1}`}
           />

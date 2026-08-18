@@ -1,8 +1,13 @@
+// Joins the room's WebRTC session. `publish` decides whether this client also
+// offers its own screen: a viewer of a screen-share room only subscribes, and
+// the controller publishes from inside its own click so the browser still sees
+// a user gesture when the picker opens.
 export async function startScreenShare(
   roomId: string,
   memberId: string,
   capability: string,
   onRemoteTrack?: (element: HTMLMediaElement) => void,
+  options: { publish?: boolean } = {},
 ) {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/screenshare/token`, {
     method: 'POST',
@@ -17,6 +22,6 @@ export async function startScreenShare(
     if (track.kind === 'video') onRemoteTrack?.(track.attach())
   })
   await livekitRoom.connect(credentials.url, credentials.token)
-  await livekitRoom.localParticipant.setScreenShareEnabled(true)
+  if (options.publish !== false) await livekitRoom.localParticipant.setScreenShareEnabled(true)
   return livekitRoom
 }

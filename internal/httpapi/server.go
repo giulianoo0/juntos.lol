@@ -15,9 +15,26 @@ import (
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 )
 
+// ServerOption tunes the engine without forcing every caller to pass hooks
+// they do not have.
+type ServerOption func(*serverOptions)
+
+type serverOptions struct {
+	sourceHooks SourceHooks
+}
+
+// WithSourceHooks connects the room source endpoint to the media pipeline.
+func WithSourceHooks(hooks SourceHooks) ServerOption {
+	return func(o *serverOptions) { o.sourceHooks = hooks }
+}
+
 // NewServer assembles the HTTP engine: the health check plus the room API.
 // Later features (media serving, WebSocket, screenshare) extend this.
-func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub) *gin.Engine {
+func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...ServerOption) *gin.Engine {
+	var options serverOptions
+	for _, apply := range opts {
+		apply(&options)
+	}
 	r := gin.Default()
 	// The app is bound to loopback behind the edge proxy. Do not accept
 	// client-controlled forwarding headers as authoritative addresses.
@@ -36,6 +53,13 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub) *gin.Engi
 		onSubsStored = hub.NotifyRoomUpdated
 	}
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, onSubsStored)
+	// hub is a typed nil in tests; pass the interface only when it is real so
+	// the authorizer check inside the handler stays meaningful.
+	var authorizer memberAuthorizer
+	if hub != nil {
+		authorizer = hub
+	}
+	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
 	registerTorrentBridge(r, cfg.TorrentBridgeURL)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)

@@ -14,6 +14,8 @@ const room: RoomInfo = {
   id: 'r1',
   fileName: 'movie.mkv',
   status: 'ready',
+  sourceKind: 'upload',
+  mediaGeneration: 0,
   controllerId: 'm1',
   audioTracks: null,
   subtitleTracks: null,

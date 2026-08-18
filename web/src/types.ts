@@ -47,6 +47,11 @@ export interface RoomInfo {
   id: string
   fileName: string
   status: string
+  // What the room is playing. A screen share has no media pipeline behind it.
+  sourceKind: 'upload' | 'screen'
+  // Increments whenever the controller swaps the source, so the player knows
+  // the media behind an unchanged URL is a different recording.
+  mediaGeneration: number
   errorMessage?: string
   controllerId: string
   audioTracks: TrackInfo[] | null

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
+import { useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useT } from '../i18n/useT'
-import { createRoomAndUpload, createRoomAndUploadTorrent, type UploadProgress } from '../upload'
-import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
+import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, type UploadProgress } from '../upload'
+import { TorrentPicker } from '../components/TorrentPicker'
+import type { TorrentSession, TorrentVideoFile } from '../torrent'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 const HISTORY_KEY = 'ss.room-history.v1'
@@ -16,20 +17,8 @@ interface RoomHistoryEntry {
 type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
-
-const EMPTY_TORRENT_STATS: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = bytes / 1024
-  let unit = units[0]
-  for (let index = 1; index < units.length && value >= 1024; index += 1) {
-    value /= 1024
-    unit = units[index]
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`
-}
+  // A shared screen needs no file at all, so it only carries the nickname step.
+  | { kind: 'screen' }
 
 function readHistory(): RoomHistoryEntry[] {
   try {
@@ -63,14 +52,6 @@ export function Home() {
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
   const [torrentOpen, setTorrentOpen] = useState(false)
-  const [magnet, setMagnet] = useState('')
-  const [torrentLoading, setTorrentLoading] = useState(false)
-  const [torrentError, setTorrentError] = useState('')
-  const [torrentSession, setTorrentSession] = useState<TorrentSession | null>(null)
-  const [torrentStats, setTorrentStats] = useState<TorrentStats>(EMPTY_TORRENT_STATS)
-  const ownedTorrent = useRef<TorrentSession | null>(null)
-
-  useEffect(() => () => ownedTorrent.current?.destroy(), [])
 
   const selectFile = (file?: File) => {
     if (!file || starting) return
@@ -83,55 +64,6 @@ export function Home() {
     setPendingMedia({ kind: 'local', file })
   }
 
-  const closeTorrent = () => {
-    ownedTorrent.current?.destroy()
-    ownedTorrent.current = null
-    setTorrentSession(null)
-    setTorrentLoading(false)
-    setTorrentError('')
-    setTorrentOpen(false)
-  }
-
-  const loadTorrent = async () => {
-    if (!magnet.trim() || torrentLoading) return
-    ownedTorrent.current?.destroy()
-    ownedTorrent.current = null
-    setTorrentSession(null)
-    setTorrentError('')
-    setTorrentStats(EMPTY_TORRENT_STATS)
-    setTorrentLoading(true)
-    try {
-      const session = await openTorrent(magnet, setTorrentStats)
-      ownedTorrent.current = session
-      setTorrentSession(session)
-      if (session.files.length === 0) setTorrentError(t('home.torrentNoVideos'))
-    } catch {
-      setTorrentError(t('home.torrentFailed'))
-    } finally {
-      setTorrentLoading(false)
-    }
-  }
-
-  const selectTorrentFile = async (file: TorrentVideoFile) => {
-    const session = torrentSession
-    if (!session) return
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setTorrentError(t('home.tooLarge'))
-      return
-    }
-    try {
-      await session.select(file.path)
-    } catch {
-      setTorrentError(t('home.torrentFailed'))
-      return
-    }
-    ownedTorrent.current = null
-    setTorrentSession(null)
-    setTorrentOpen(false)
-    setDraftNickname(nickname)
-    setPendingMedia({ kind: 'torrent', file, session })
-  }
-
   const startUpload = async () => {
     const media = pendingMedia
     if (!media || starting) return
@@ -142,11 +74,13 @@ export function Home() {
       // converted to MKV first, which is what the preparing state covers.
       const room = media.kind === 'local'
         ? await createRoomAndUpload(media.file, draftNickname.trim(), setProgress)
-        : await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
+        : media.kind === 'torrent'
+          ? await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
+          : await createScreenRoom(draftNickname.trim())
       setNickname(room.nickname)
       localStorage.setItem('ss.nickname', room.nickname)
       const nextHistory = [
-        { id: room.roomID, fileName: media.file.name, createdAt: Date.now() },
+        { id: room.roomID, fileName: media.kind === 'screen' ? t('room.screenLabel') : media.file.name, createdAt: Date.now() },
         ...history.filter((entry) => entry.id !== room.roomID),
       ].slice(0, 12)
       localStorage.setItem(HISTORY_KEY, JSON.stringify(nextHistory))
@@ -216,6 +150,7 @@ export function Home() {
           <span>{t('home.dropHint')}</span>
           <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
           <button className="torrent-button" onClick={() => setTorrentOpen(true)}><span aria-hidden="true">⌁</span>{t('home.openTorrent')}</button>
+          <button className="torrent-button" onClick={() => { setError(''); setDraftNickname(nickname); setPendingMedia({ kind: 'screen' }) }}><span aria-hidden="true">⧉</span>{t('home.shareScreen')}</button>
         </div>
         {progress?.phase === 'converting' ? (
           <div className="progress-wrap" aria-label={t('home.preparing')}>
@@ -228,39 +163,19 @@ export function Home() {
       )}
       {torrentOpen ? (
         <dialog className="name-dialog torrent-dialog" open aria-labelledby="torrent-dialog-title" onKeyDown={(event) => {
-          if (event.key === 'Escape') closeTorrent()
+          if (event.key === 'Escape') setTorrentOpen(false)
         }}>
-          <form onSubmit={(event) => { event.preventDefault(); void loadTorrent() }}>
+          <div className="dialog-body">
             <span className="dialog-file">WebTorrent</span>
-            <h2 id="torrent-dialog-title">{torrentSession ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
-            <p>{torrentSession ? t('home.torrentChooseGuide') : t('home.torrentGuide')}</p>
-            {!torrentSession ? (
-              <>
-                <label htmlFor="magnet-link">{t('home.magnet')}</label>
-                <textarea id="magnet-link" className="sunken magnet-input" autoFocus rows={4} value={magnet} placeholder="magnet:?xt=urn:btih:…" onChange={(event) => setMagnet(event.target.value)} />
-                {torrentLoading ? <div className="torrent-loading"><span className="torrent-spinner" aria-hidden="true" />{t('home.torrentMetadata')}</div> : null}
-              </>
-            ) : (
-              <>
-                <div className="torrent-summary">
-                  <strong>{torrentSession.name}</strong>
-                  <span>{torrentStats.peers} {t('home.peers')} · {formatBytes(torrentStats.downloadSpeed)}/s</span>
-                </div>
-                <div className="torrent-files">
-                  {torrentSession.files.map((file) => (
-                    <button type="button" key={file.path} onClick={() => { void selectTorrentFile(file) }}>
-                      <span>{file.name}</span><small>{formatBytes(file.size)}</small>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {torrentError ? <div className="error-card torrent-error" role="alert">{torrentError}</div> : null}
+            <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={(file, session) => {
+              setTorrentOpen(false)
+              setDraftNickname(nickname)
+              setPendingMedia({ kind: 'torrent', file, session })
+            }} />
             <div className="dialog-actions">
-              <button type="button" onClick={closeTorrent}>{t('home.cancel')}</button>
-              {!torrentSession ? <button type="submit" className="primary-button" disabled={torrentLoading || !magnet.trim()}>{t('home.torrentLoad')}</button> : null}
+              <button type="button" onClick={() => setTorrentOpen(false)}>{t('home.cancel')}</button>
             </div>
-          </form>
+          </div>
         </dialog>
       ) : null}
       {pendingMedia ? (
@@ -271,7 +186,7 @@ export function Home() {
           }
         }}>
           <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
-            <span className="dialog-file">{pendingMedia.file.name}</span>
+            <span className="dialog-file">{pendingMedia.kind === 'screen' ? t('home.screenDialog') : pendingMedia.file.name}</span>
             <h2 id="name-dialog-title">{t('home.dialogTitle')}</h2>
             <p>{t('home.dialogGuide')}</p>
             <label htmlFor="nickname">{t('home.nickname')}</label>

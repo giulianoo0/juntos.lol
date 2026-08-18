@@ -9,7 +9,18 @@ import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
 import { startScreenShare } from '../screenshare'
 import type { ChatEntry, PresenceEvent, RoomInfo } from '../types'
-import { subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from '../upload'
+import { TorrentPicker } from '../components/TorrentPicker'
+import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import { MAX_UPLOAD_BYTES } from './Home'
+import {
+  changeRoomSource,
+  prepareLocalFile,
+  subscribeUploadDone,
+  subscribeUploadProgress,
+  uploadFileToRoom,
+  uploadTorrentToRoom,
+  type RoomUploadProgress,
+} from '../upload'
 
 // How long one arrival or departure stays on screen before the next is shown.
 const PRESENCE_TOAST_MS = 4_000
@@ -98,6 +109,45 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [uploadFailed, setUploadFailed] = useState(false)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   const toasts = usePresenceToasts(sync.presence)
+  const [sourcePanel, setSourcePanel] = useState<'menu' | 'torrent' | null>(null)
+  const [sourceError, setSourceError] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const isScreenRoom = liveRoom.sourceKind === 'screen'
+
+  // Repointing the room is the controller's call alone; the server enforces it
+  // too, so a stale client cannot swap what everyone is watching.
+  const swapSource = async (run: () => Promise<void>) => {
+    setSourceError(false)
+    setSourcePanel(null)
+    try {
+      await run()
+    } catch (error) {
+      console.error('change source failed', error)
+      setSourceError(true)
+    }
+  }
+
+  const chooseFile = (file?: File) => {
+    if (!file) return
+    void swapSource(async () => {
+      const prepared = await prepareLocalFile(file)
+      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', prepared.name)
+      uploadFileToRoom(room.id, next.uploadEndpoint, next.streamStartBytes, prepared)
+    })
+  }
+
+  const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
+    void swapSource(async () => {
+      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      uploadTorrentToRoom(room.id, next.uploadEndpoint, next.streamStartBytes, { file, session })
+    })
+  }
+
+  const chooseScreen = () => {
+    void swapSource(async () => {
+      await changeRoomSource(room.id, sync.memberId, sync.capability, 'screen')
+    })
+  }
 
   // Presence is woven into the chat timeline so someone who was away can still
   // read who arrived while the toast was on screen.
@@ -128,11 +178,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [sync.roomVersion, room.id])
 
   // Show this tab's own background upload progress while it is running.
-  useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id])
-  useEffect(() => subscribeUploadDone(room.id, (error) => {
-    setUploadProgress(null)
-    if (error) setUploadFailed(true)
-  }), [room.id])
+  useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
+  useEffect(() => {
+    setUploadFailed(false)
+    return subscribeUploadDone(room.id, (error) => {
+      setUploadProgress(null)
+      if (error) setUploadFailed(true)
+    })
+  }, [room.id, liveRoom.mediaGeneration])
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
@@ -165,20 +218,31 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     <main className="room-shell">
       <PresenceToasts events={toasts} t={t} />
       <header className="room-header">
-        <div className="room-heading"><span className="room-file">{liveRoom.fileName}</span></div>
+        <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
           {uploadProgress !== null ? <span className="upload-chip">{t('home.uploading')} {uploadProgress.pct}%</span> : null}
           {uploadFailed ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
+          {sync.isController ? <button onClick={() => { setSourceError(false); setSourcePanel('menu') }}>{t('room.changeSource')}</button> : null}
           <button onClick={copyLink}>{copied ? t('room.copied') : t('room.copy')}</button>
-          <button onClick={shareScreen}>{shareRoom ? t('room.stopScreen') : t('room.shareScreen')}</button>
+          {!isScreenRoom ? <button onClick={shareScreen}>{shareRoom ? t('room.stopScreen') : t('room.shareScreen')}</button> : null}
           <button onClick={() => setChatOpen((open) => !open)}>{t('chat.title')}</button>
         </div>
       </header>
       {shareError ? <div className="error-card compact">{t('error.screenshare')}</div> : null}
       <div className="room-layout">
         <section className="media-column">
-          <Player room={liveRoom} isController={sync.isController} videoRef={videoRef} send={sync.send} t={t} />
+          {isScreenRoom ? (
+            <ScreenStage
+              roomId={room.id}
+              memberId={sync.memberId}
+              capability={sync.capability}
+              isController={sync.isController}
+              t={t}
+            />
+          ) : (
+            <Player room={liveRoom} isController={sync.isController} videoRef={videoRef} send={sync.send} t={t} />
+          )}
           <div ref={remoteTileRef} className="screen-tile" />
           <div className="presence-row">
             {sync.members.map((member) => (
@@ -190,7 +254,115 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         </section>
         <Chat open={chatOpen} onClose={() => setChatOpen(false)} messages={chatEntries} onSend={(text) => sync.send('chat', { text })} t={t} />
       </div>
+      <input
+        ref={fileInputRef}
+        hidden
+        type="file"
+        accept="video/*,.mkv"
+        onChange={(event) => chooseFile(event.target.files?.[0])}
+      />
+      {sourceError ? <div className="error-card compact" role="alert">{t('room.changeFailed')}</div> : null}
+      {sourcePanel !== null ? (
+        <dialog className="name-dialog torrent-dialog" open aria-labelledby="source-dialog-title" onKeyDown={(event) => {
+          if (event.key === 'Escape') setSourcePanel(null)
+        }}>
+          <div className="dialog-body">
+            {sourcePanel === 'menu' ? (
+              <>
+                <span className="dialog-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span>
+                <h2 id="source-dialog-title">{t('room.changeSourceTitle')}</h2>
+                <p>{t('room.changeSourceGuide')}</p>
+                <div className="source-options">
+                  <button type="button" onClick={() => { setSourcePanel(null); fileInputRef.current?.click() }}>
+                    <span aria-hidden="true">↑</span>{t('room.sourceFile')}
+                  </button>
+                  <button type="button" onClick={() => setSourcePanel('torrent')}>
+                    <span aria-hidden="true">⌁</span>{t('room.sourceTorrent')}
+                  </button>
+                  <button type="button" onClick={chooseScreen}>
+                    <span aria-hidden="true">⧉</span>{t('room.sourceScreen')}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="dialog-file">WebTorrent</span>
+                <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={chooseTorrent} />
+              </>
+            )}
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setSourcePanel(null)}>{t('home.cancel')}</button>
+            </div>
+          </div>
+        </dialog>
+      ) : null}
     </main>
+  )
+}
+
+/**
+ * The room's picture when its source is a shared screen.
+ *
+ * Everyone joins the WebRTC session as a subscriber. The controller publishes
+ * from inside its own click, so the browser still sees a user gesture when the
+ * screen picker opens, and attaches its own track locally since a publisher is
+ * never subscribed to itself.
+ */
+function ScreenStage({ roomId, memberId, capability, isController, t }: {
+  roomId: string
+  memberId: string
+  capability: string
+  isController: boolean
+  t: Translator
+}) {
+  const tileRef = useRef<HTMLDivElement>(null)
+  const [live, setLive] = useState<LiveKitRoom | null>(null)
+  const [sharing, setSharing] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    if (!memberId || !capability) return
+    let disposed = false
+    let joined: LiveKitRoom | null = null
+    void startScreenShare(roomId, memberId, capability, (element) => {
+      tileRef.current?.replaceChildren(element)
+    }, { publish: false }).then((connected) => {
+      if (disposed) { void connected.disconnect(); return }
+      joined = connected
+      setLive(connected)
+    }).catch(() => setFailed(true))
+    return () => {
+      disposed = true
+      void joined?.disconnect()
+    }
+  }, [roomId, memberId, capability])
+
+  const toggleShare = async () => {
+    if (!live) return
+    setFailed(false)
+    try {
+      const publication = await live.localParticipant.setScreenShareEnabled(!sharing)
+      const element = publication?.track?.attach()
+      if (element) tileRef.current?.replaceChildren(element)
+      setSharing(!sharing)
+    } catch {
+      setFailed(true)
+    }
+  }
+
+  return (
+    <div className="player-wrap screen-stage">
+      <div ref={tileRef} className="screen-surface" />
+      <div className="screen-overlay">
+        {!sharing ? <p>{isController ? t('room.screenHostHint') : t('room.screenWaiting')}</p> : null}
+        {isController ? (
+          <button className="primary-button" disabled={!live} onClick={() => { void toggleShare() }}>
+            {sharing ? t('room.screenStop') : t('room.screenStart')}
+          </button>
+        ) : null}
+        {failed ? <span className="error-card compact">{t('error.screenshare')}</span> : null}
+      </div>
+    </div>
   )
 }
 
