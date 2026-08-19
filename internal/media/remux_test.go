@@ -121,27 +121,37 @@ func TestStderrTail(t *testing.T) {
 	require.Equal(t, "cdef", stderrTail([]byte("abcdef"), 4))
 }
 
-func TestCleanupProgressiveOutputsPreservesFinalHLS(t *testing.T) {
+func TestFinalizeProgressiveOutputsKeepsPreviewPlayable(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{
-		"master.m3u8",
-		"stream_0.m3u8",
-		"stream_0_000.m4s",
-		"init_0.mp4",
-		"preview_stream_0.m3u8",
-		"preview_stream_0_000000.m4s",
-		"preview_init_0.mp4",
-		"preview_stream_0_000001.m4s.tmp",
+	event := "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:2.000,\npreview_stream_0_000000.m4s\n"
+	for name, content := range map[string]string{
+		"master.m3u8":                     "x",
+		"stream_0.m3u8":                   "x",
+		"stream_0_000.m4s":                "x",
+		"init_0.mp4":                      "x",
+		"preview_stream_0.m3u8":           event,
+		"preview_stream_0_000000.m4s":     "x",
+		"preview_init_0.mp4":              "x",
+		"preview_stream_0_000001.m4s.tmp": "x",
 	} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
 	}
 
-	require.NoError(t, cleanupProgressiveOutputs(dir))
+	require.NoError(t, finalizeProgressiveOutputs(dir))
+	// A viewer who joined during the preview still holds these playlists, so
+	// segments and inits must survive the final publish.
+	require.FileExists(t, filepath.Join(dir, "preview_stream_0_000000.m4s"))
+	require.FileExists(t, filepath.Join(dir, "preview_init_0.mp4"))
+	require.NoFileExists(t, filepath.Join(dir, "preview_stream_0_000001.m4s.tmp"))
+	playlist, err := os.ReadFile(filepath.Join(dir, "preview_stream_0.m3u8"))
+	require.NoError(t, err)
+	require.Contains(t, string(playlist), "#EXT-X-ENDLIST\n")
 	require.FileExists(t, filepath.Join(dir, "master.m3u8"))
 	require.FileExists(t, filepath.Join(dir, "stream_0.m3u8"))
-	require.FileExists(t, filepath.Join(dir, "stream_0_000.m4s"))
-	require.FileExists(t, filepath.Join(dir, "init_0.mp4"))
-	preview, err := filepath.Glob(filepath.Join(dir, "preview_*"))
+
+	// Finalizing again must not stack a second ENDLIST.
+	require.NoError(t, finalizeProgressiveOutputs(dir))
+	again, err := os.ReadFile(filepath.Join(dir, "preview_stream_0.m3u8"))
 	require.NoError(t, err)
-	require.Empty(t, preview)
+	require.Equal(t, 1, strings.Count(string(again), "#EXT-X-ENDLIST"))
 }

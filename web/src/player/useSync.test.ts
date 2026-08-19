@@ -77,6 +77,19 @@ describe('useSync', () => {
     unmount()
   })
 
+  it('bumps roomVersion on welcome so a reconnect refetches missed room updates', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+
+    expect(result.current.roomVersion).toBe(0)
+    // A client that was disconnected while the final remux published would
+    // otherwise keep playing the superseded preview forever.
+    act(() => socket.receive({ type: 'welcome', memberId: 'm1', members: [] }))
+    expect(result.current.roomVersion).toBe(1)
+    unmount()
+  })
+
   it('does not announce the people already watching when a client arrives', () => {
     const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))

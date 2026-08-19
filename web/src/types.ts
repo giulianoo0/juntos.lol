@@ -52,6 +52,13 @@ export interface RoomInfo {
   // Increments whenever the controller swaps the source, so the player knows
   // the media behind an unchanged URL is a different recording.
   mediaGeneration: number
+  // Increments when the media behind the current generation is republished in
+  // place (the final remux replacing the progressive preview), telling the
+  // player to reload the same source URL. Optional: older responses omit it.
+  mediaVersion?: number
+  // Increments when subtitle files are rewritten under their stable names, so
+  // <track> elements refetch cues the browser would otherwise cache forever.
+  subsVersion?: number
   errorMessage?: string
   controllerId: string
   audioTracks: TrackInfo[] | null

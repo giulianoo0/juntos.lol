@@ -224,6 +224,20 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 		r.MediaGeneration = n
 	}
+	if v := fields["media_version"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse media_version: %w", err)
+		}
+		r.MediaVersion = n
+	}
+	if v := fields["subs_version"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse subs_version: %w", err)
+		}
+		r.SubsVersion = n
+	}
 	r.ClientSubs = fields["client_subs"] == "1"
 	if v := fields["created_at"]; v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
@@ -268,11 +282,17 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 		return fmt.Errorf("marshal subtitle tracks: %w", err)
 	}
 
-	return s.mutateRoom(ctx, id, false,
+	return s.mutateRoomBump(ctx, id, false, "subs_version",
 		"audio_tracks", string(a),
 		"subtitle_tracks", string(b),
 		"bitmap_subs_skipped", bitmapSkipped,
 	)
+}
+
+// BumpMediaVersion announces that the media behind the current generation was
+// republished in place, telling players to reload the unchanged source URL.
+func (s *Store) BumpMediaVersion(ctx context.Context, id string) error {
+	return s.mutateRoomBump(ctx, id, false, "media_version")
 }
 
 // SetAudioTracks stores the probed audio tracks and bitmap-subtitle skip
@@ -303,7 +323,7 @@ func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackI
 	if complete {
 		fields = append(fields, "client_subs", "1")
 	}
-	return s.mutateRoom(ctx, id, false, fields...)
+	return s.mutateRoomBump(ctx, id, false, "subs_version", fields...)
 }
 
 // SwapSource repoints a live room at a new source without disturbing its
@@ -333,6 +353,8 @@ redis.call('HSET', KEYS[1],
   'file_name', ARGV[2],
   'source_kind', ARGV[3],
   'media_generation', generation,
+  'media_version', 0,
+  'subs_version', 0,
   'audio_tracks', 'null',
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
@@ -371,13 +393,20 @@ func (s *Store) HasClientSubs(ctx context.Context, id string) (bool, error) {
 }
 
 func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fields ...any) error {
-	args := make([]any, 0, len(fields)+2)
+	return s.mutateRoomBump(ctx, id, clearError, "", fields...)
+}
+
+// mutateRoomBump is mutateRoom plus an optional counter field incremented in
+// the same atomic step, so a version can never advance without its payload.
+func (s *Store) mutateRoomBump(ctx context.Context, id string, clearError bool, bumpField string, fields ...any) error {
+	args := make([]any, 0, len(fields)+3)
 	args = append(args, strconv.FormatInt(time.Now().UnixMilli(), 10))
 	if clearError {
 		args = append(args, "1")
 	} else {
 		args = append(args, "0")
 	}
+	args = append(args, bumpField)
 	args = append(args, fields...)
 
 	result, err := s.rdb.Eval(ctx, `
@@ -389,9 +418,10 @@ if not expires then
   end
 end
 if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return 0 end
-for i = 3, #ARGV, 2 do
+for i = 4, #ARGV, 2 do
   redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
 end
+if ARGV[3] ~= '' then redis.call('HINCRBY', KEYS[1], ARGV[3], 1) end
 if ARGV[2] == '1' then redis.call('HDEL', KEYS[1], 'error_message') end
 redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
 return 1

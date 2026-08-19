@@ -220,6 +220,42 @@ func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
 	require.Equal(t, 2, got.BitmapSubsSkipped)
 }
 
+func TestVersionsAdvanceWithRepublishedMedia(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "v", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	got, err := s.Get(t.Context(), "v")
+	require.NoError(t, err)
+	require.Equal(t, 0, got.MediaVersion)
+	require.Equal(t, 0, got.SubsVersion)
+
+	require.NoError(t, s.BumpMediaVersion(t.Context(), "v"))
+	require.NoError(t, s.BumpMediaVersion(t.Context(), "v"))
+	got, err = s.Get(t.Context(), "v")
+	require.NoError(t, err)
+	require.Equal(t, 2, got.MediaVersion)
+
+	// Every subtitle write must move the version: the files keep their names,
+	// so the version is the only thing that makes a <track> refetch cues.
+	require.NoError(t, s.SetClientSubtitles(t.Context(), "v", []TrackInfo{{Index: 0}}, false))
+	require.NoError(t, s.SetClientSubtitles(t.Context(), "v", []TrackInfo{{Index: 0}}, true))
+	require.NoError(t, s.SetTracks(t.Context(), "v", nil, []TrackInfo{{Index: 0}}, 0))
+	got, err = s.Get(t.Context(), "v")
+	require.NoError(t, err)
+	require.Equal(t, 3, got.SubsVersion)
+}
+
+func TestBumpMediaVersionRejectsMissingRoom(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+	require.ErrorIs(t, s.BumpMediaVersion(t.Context(), "missing"), ErrNotFound)
+}
+
 func TestSetClientSubtitlesRejectsMissingRoom(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

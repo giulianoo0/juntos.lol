@@ -147,14 +147,16 @@ func Remux(ctx context.Context, in, outDir string, p *ProbeResult) error {
 		}
 		return fmt.Errorf("run ffmpeg: %w: %s", err, detail)
 	}
+	// Annotate before publishing so a viewer can never fetch a master carrying
+	// ffmpeg's own HEVC codec string, which some releases render invalidly.
+	// Best effort: an unlabelled playlist still plays wherever the codec is
+	// supported, so a failure here must not fail the whole remux.
+	if err := annotateHEVCMaster(outDir, "final_master.m3u8", "init_*.mp4", p); err != nil {
+		slog.WarnContext(ctx, "annotate HLS codecs failed", "error", err)
+	}
 	finalMaster := filepath.Join(outDir, "final_master.m3u8")
 	if err := os.Rename(finalMaster, filepath.Join(outDir, "master.m3u8")); err != nil {
 		return fmt.Errorf("publish final HLS master: %w", err)
-	}
-	// Best effort: an unlabelled playlist still plays wherever the codec is
-	// supported, so a failure here must not fail the whole remux.
-	if err := annotateHEVCMaster(outDir, "master.m3u8", "init_*.mp4", p); err != nil {
-		slog.WarnContext(ctx, "annotate HLS codecs failed", "error", err)
 	}
 	return nil
 }
@@ -166,27 +168,57 @@ func stderrTail(stderr []byte, limit int) string {
 	return strings.TrimSpace(string(stderr))
 }
 
-// cleanupProgressiveOutputs removes preview-only files after the final VOD
-// master playlist has been written. Authoritative stream_* files are kept.
-func cleanupProgressiveOutputs(hlsDir string) error {
-	patterns := []string{
-		"preview_init_*.mp4",
-		"preview_stream_*.m3u8",
-		"preview_stream_*.m4s",
-		"preview_*.tmp",
-	}
+// finalizeProgressiveOutputs closes every preview EVENT playlist after the
+// final VOD master replaces the preview master.
+//
+// The preview files themselves are deliberately kept: a player that joined
+// during the preview still holds those playlists and may be mid-fetch of a
+// segment, so deleting them would 404 a connected viewer. They are reclaimed
+// with the room directory on source swap or expiry. Appending EXT-X-ENDLIST
+// turns the canceled remux's never-growing event playlist into a finished one,
+// so any straggler plays out what exists and stops polling instead of waiting
+// forever for a segment that will never arrive.
+func finalizeProgressiveOutputs(hlsDir string) error {
 	var errs []error
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(filepath.Join(hlsDir, pattern))
-		if err != nil {
-			errs = append(errs, err)
-			continue
+	tmps, err := filepath.Glob(filepath.Join(hlsDir, "preview_*.tmp"))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, match := range tmps {
+		// Temp files of the killed preview remux are referenced by nothing.
+		if err := os.Remove(match); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove progressive temp file %s: %w", match, err))
 		}
-		for _, match := range matches {
-			if err := os.Remove(match); err != nil && !errors.Is(err, os.ErrNotExist) {
-				errs = append(errs, fmt.Errorf("remove progressive output %s: %w", match, err))
-			}
+	}
+	playlists, err := filepath.Glob(filepath.Join(hlsDir, "preview_stream_*.m3u8"))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, playlist := range playlists {
+		if err := endEventPlaylist(playlist); err != nil {
+			errs = append(errs, fmt.Errorf("finalize preview playlist %s: %w", playlist, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// endEventPlaylist appends EXT-X-ENDLIST via a whole-file replace, so a player
+// polling the playlist sees either the old version or the finished one.
+func endEventPlaylist(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if bytes.Contains(data, []byte("#EXT-X-ENDLIST")) {
+		return nil
+	}
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		data = append(data, '\n')
+	}
+	data = append(data, []byte("#EXT-X-ENDLIST\n")...)
+	temp := path + ".end"
+	if err := os.WriteFile(temp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(temp, path)
 }

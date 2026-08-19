@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -198,6 +199,12 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 		}
 		return
 	}
+	slog.InfoContext(ctx, "progressive preview starting",
+		"room_id", job.roomID,
+		"video_codec", probe.VideoCodec,
+		"video_copyable", probe.VideoCopyable,
+		"audio_tracks", len(probe.Audio),
+	)
 	hlsDir := filepath.Join(p.dataDir, "rooms", job.roomID, "hls")
 	if err := os.MkdirAll(hlsDir, 0o755); err != nil {
 		slog.WarnContext(ctx, "progressive: create HLS directory failed",
@@ -273,7 +280,7 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 			if notified {
 				continue
 			}
-			if !progressiveOutputReady(hlsDir) {
+			if !progressivePlayableFrom(hlsDir, videoVariantPlaylist("preview_stream", probe)) {
 				continue
 			}
 			// The preview playlist needs the same codec label as the final
@@ -287,6 +294,7 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 					"room_id", job.roomID, "error", err)
 				continue
 			}
+			slog.InfoContext(ctx, "progressive preview ready", "room_id", job.roomID)
 			p.notifyReady(job.roomID)
 			notified = true
 		}
@@ -367,6 +375,30 @@ func progressiveOutputReady(hlsDir string) bool {
 	return hasNonEmptyMatch(filepath.Join(hlsDir, "preview_stream_*.m3u8")) &&
 		hasNonEmptyMatch(filepath.Join(hlsDir, "preview_init_*.mp4")) &&
 		hasNonEmptyMatch(filepath.Join(hlsDir, "preview_stream_*.m4s"))
+}
+
+// progressivePlayableFrom additionally requires a complete segment in the
+// named video variant playlist. Audio variants publish fixed-length segments
+// quickly while a copied video track can only split at source keyframes, so
+// "some segment exists" can announce a room whose video playlist is still
+// empty — a viewer would hear sound over a black frame until the first
+// keyframe arrives.
+func progressivePlayableFrom(hlsDir, videoPlaylist string) bool {
+	if !progressiveOutputReady(hlsDir) {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(hlsDir, videoPlaylist))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(data, []byte("#EXTINF"))
+}
+
+// videoVariantPlaylist names the media playlist of the video rendition. The
+// stream map orders audio variants first, so the video variant's index equals
+// the audio track count in every case, including zero.
+func videoVariantPlaylist(prefix string, p *ProbeResult) string {
+	return fmt.Sprintf("%s_%d.m3u8", prefix, len(p.Audio))
 }
 
 func hasNonEmptyMatch(pattern string) bool {

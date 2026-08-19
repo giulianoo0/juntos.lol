@@ -63,6 +63,10 @@ func TestQueueProcessesRoomAndNotifiesReady(t *testing.T) {
 	require.Equal(t, wantAudio, got.AudioTracks)
 	require.Equal(t, wantSubs, got.SubtitleTracks)
 	require.Equal(t, 2, got.BitmapSubsSkipped)
+	// The publish must be observable: players reload the unchanged source URL
+	// only when the media version moves, and refetch subtitles likewise.
+	require.Equal(t, 1, got.MediaVersion)
+	require.Equal(t, 1, got.SubsVersion)
 }
 
 func TestQueueRecoversInterruptedCompleteUpload(t *testing.T) {
@@ -128,6 +132,9 @@ func TestQueueKeepsPlayablePreviewReadyDuringFinalRemux(t *testing.T) {
 	got, err := store.Get(t.Context(), "preview")
 	require.NoError(t, err)
 	require.Equal(t, "ready", got.Status)
+	// Keeping the preview visible must not look like a republish, or players
+	// would reload right as the final remux begins instead of when it lands.
+	require.Equal(t, 0, got.MediaVersion)
 	select {
 	case roomID := <-ready:
 		require.Equal(t, "preview", roomID)
@@ -135,6 +142,16 @@ func TestQueueKeepsPlayablePreviewReadyDuringFinalRemux(t *testing.T) {
 		t.Fatal("timed out waiting for preview ready callback")
 	}
 	close(release)
+
+	select {
+	case roomID := <-ready:
+		require.Equal(t, "preview", roomID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for final ready callback")
+	}
+	got, err = store.Get(t.Context(), "preview")
+	require.NoError(t, err)
+	require.Equal(t, 1, got.MediaVersion)
 }
 
 func TestQueuePreservesClientSubtitles(t *testing.T) {

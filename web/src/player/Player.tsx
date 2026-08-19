@@ -4,6 +4,7 @@ import {
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
 } from 'lucide-react'
 import type Hls from 'hls.js'
+import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 import type { RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 
@@ -24,6 +25,11 @@ const FEEDBACK_MS = 700
 // A media error can be a corrupt append worth retrying, but only a couple of
 // times. Past that the retry is the bug, not the fix.
 const MAX_MEDIA_RECOVERIES = 2
+const FRAME_WATCH_INTERVAL_MS = 1000
+// Seconds the clock may advance without a single new displayed video frame
+// before the player declares the video dead. Even a slideshow-style encode
+// composites a frame well inside this budget.
+const VIDEO_STARVATION_SECONDS = 5
 
 export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const playerRef = useRef<HTMLDivElement>(null)
@@ -44,6 +50,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
   const [unplayable, setUnplayable] = useState(false)
   const recoveriesRef = useRef(0)
+  const resumeRef = useRef({ generation: -1, time: 0 })
 
   const revealControls = useCallback((autoHide = true) => {
     if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
@@ -100,41 +107,143 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    const generation = room.mediaGeneration
     // The URL is stable across a source swap, so the generation is what tells
-    // the browser, hls.js and any proxy that this is different media.
-    const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8?g=${room.mediaGeneration}`
+    // the browser, hls.js and any proxy that this is different media. The
+    // version moves when the same media is republished behind the URL — the
+    // final remux replacing the progressive preview — and reloading then is
+    // what hands a preview viewer the finished playlists.
+    const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8?g=${generation}&v=${room.mediaVersion ?? 0}`
     let disposed = false
     setUnplayable(false)
     recoveriesRef.current = 0
+    // A republish of the same recording resumes where this player was; only a
+    // different recording starts over from its beginning.
+    const startPosition = resumeRef.current.generation === generation ? resumeRef.current.time : 0
+
+    const failPlayback = (reason: string) => {
+      if (disposed) return
+      plog('error', `giving up: ${reason}`)
+      hlsRef.current?.destroy()
+      hlsRef.current = null
+      setUnplayable(true)
+    }
+
+    // The one observation that needs no error event: the clock moving while
+    // the decoder produces nothing. Both known silent failures end up here —
+    // hls.js dropping the video track and a hardware decoder dying mid-play —
+    // so playback is judged by displayed frames, not only by which errors fire.
+    let lastTime = video.currentTime
+    let lastFrames = -1
+    let starvedSeconds = 0
+    const watchdog = window.setInterval(() => {
+      if (typeof video.getVideoPlaybackQuality !== 'function') return
+      // A seek can move the clock arbitrarily far in one tick; clamping keeps
+      // a single jump from being mistaken for seconds of framelessness.
+      const advanced = Math.min(Math.max(video.currentTime - lastTime, 0), FRAME_WATCH_INTERVAL_MS / 1000)
+      lastTime = video.currentTime
+      const frames = video.getVideoPlaybackQuality().totalVideoFrames
+      if (frames !== lastFrames) {
+        lastFrames = frames
+        starvedSeconds = 0
+        return
+      }
+      if (video.paused || advanced <= 0) return
+      starvedSeconds += advanced
+      if (starvedSeconds < VIDEO_STARVATION_SECONDS) return
+      // A counter that has never moved is ambiguous: some platforms render
+      // through an overlay and report zero throughout. Only an element with
+      // no video dimensions proves nothing is attached. A counter that did
+      // move and then froze is unambiguous on its own.
+      const decodedBefore = frames > 0
+      if (!decodedBefore && video.videoWidth > 0) {
+        plog('warn', 'frame counter is not reported by this platform; watchdog disabled')
+        window.clearInterval(watchdog)
+        return
+      }
+      window.clearInterval(watchdog)
+      plog('error', `clock advanced ${starvedSeconds.toFixed(1)}s with no new video frames (total ${frames}, videoWidth ${video.videoWidth})`)
+      failPlayback('video frames stopped while playback advanced')
+    }, FRAME_WATCH_INTERVAL_MS)
+
     void import('hls.js').then(({ default: HlsClass, ErrorTypes, ErrorDetails }) => {
       if (disposed) return
-      if (HlsClass.isSupported()) {
+      if (!HlsClass.isSupported()) {
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          plog('info', 'using native HLS', source)
+          video.src = source
+          if (startPosition > 0) video.currentTime = startPosition
+          return
+        }
+        failPlayback('this browser supports neither MediaSource HLS nor native HLS')
+        return
+      }
+
+      const logLevels = (hls: InstanceType<HlsModule['default']>, note: string) => {
+        for (const level of hls.levels) {
+          const codecs = [level.videoCodec, level.audioCodec].filter(Boolean).join(',')
+          const supported = typeof MediaSource === 'undefined'
+            ? 'unknown'
+            : MediaSource.isTypeSupported(`video/mp4;codecs="${codecs}"`)
+          plog('info', `${note} level ${level.width}x${level.height} codecs="${codecs}" mediasource-supported=${String(supported)}`)
+        }
+      }
+
+      const buildPlayer = (stripCodecs: boolean) => {
         // Progressive uploads are EVENT playlists. Native HLS commonly joins
         // those at the live edge and waits for the next uploaded segment;
         // hls.js lets an episode reliably start at its beginning instead.
-        const hls = new HlsClass({ startPosition: 0 })
+        const config: Partial<HlsConfig> = { startPosition }
+        if (stripCodecs) config.pLoader = codecStrippingLoader(HlsClass)
+        const hls = new HlsClass(config)
         hlsRef.current = hls
         hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
-        hls.on(HlsClass.Events.MANIFEST_PARSED, () => setAudioTracks(hls.audioTracks))
+        hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
+          setAudioTracks(hls.audioTracks)
+          logLevels(hls, 'parsed')
+        })
+        // Fires when hls.js drops a level, e.g. after an undecodable codec.
+        hls.on(HlsClass.Events.LEVELS_UPDATED, () => logLevels(hls, 'updated'))
         hls.on(HlsClass.Events.AUDIO_TRACKS_UPDATED, () => setAudioTracks(hls.audioTracks))
-        // Only an append that actually failed proves the browser has no
-        // decoder. A manifest-level rejection is a prediction made from the
-        // codec string in the playlist, and a wrong string there would turn a
-        // room that plays perfectly well into a dead end, so it is allowed to
-        // proceed and be judged on what the buffer does.
+        hls.on(HlsClass.Events.BUFFER_CREATED, (_event, data) =>
+          plog('info', `source buffers created: ${Object.keys(data.tracks).join(', ') || 'none'}`))
         const undecodable = new Set<string>([
           ErrorDetails.BUFFER_INCOMPATIBLE_CODECS_ERROR,
           ErrorDetails.BUFFER_ADD_CODEC_ERROR,
         ])
-        const giveUp = () => {
-          hls.destroy()
-          if (hlsRef.current === hls) hlsRef.current = null
-          setUnplayable(true)
-        }
         hls.on(HlsClass.Events.ERROR, (_event, data) => {
-          if (!data.fatal) return
+          plog(data.fatal ? 'error' : 'warn',
+            `hls ${data.fatal ? 'fatal' : 'non-fatal'} error ${data.type}/${data.details}`,
+            data.reason ?? data.error?.message ?? '')
+          if (!data.fatal) {
+            // hls.js reports a failed video SourceBuffer as non-fatal, drops
+            // the track and keeps playing the audio group. When no remaining
+            // rendition carries a different video codec, nothing will ever
+            // render and staying quiet would mean sound over a black frame.
+            if (data.details === ErrorDetails.BUFFER_ADD_CODEC_ERROR && data.sourceBufferName !== 'audio') {
+              const failed = data.mimeType ?? ''
+              const alternate = hls.levels.some((level) => level.videoCodec && !failed.includes(level.videoCodec))
+              if (!alternate) failPlayback(`no decodable video rendition (${failed})`)
+            }
+            return
+          }
+          // A manifest-level rejection is a prediction made from the codec
+          // string in the playlist, and a wrong string there would turn a
+          // room that plays perfectly well into a dead end. Retry once with
+          // the prediction stripped so the buffer gets to judge the actual
+          // bytes; if the buffer also refuses, the room truly is unplayable.
+          if (data.details === ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR) {
+            if (!stripCodecs) {
+              plog('warn', 'every CODECS string was rejected; retrying without the prediction')
+              hls.destroy()
+              if (!disposed) buildPlayer(true)
+              return
+            }
+            failPlayback('no compatible codecs in manifest')
+            return
+          }
           if (undecodable.has(data.details)) {
-            giveUp()
+            failPlayback(`undecodable media (${data.details})`)
             return
           }
           if (data.type === ErrorTypes.NETWORK_ERROR) {
@@ -143,22 +252,39 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           }
           if (data.type === ErrorTypes.MEDIA_ERROR && recoveriesRef.current < MAX_MEDIA_RECOVERIES) {
             recoveriesRef.current += 1
+            plog('warn', `attempting media error recovery ${recoveriesRef.current}/${MAX_MEDIA_RECOVERIES}`)
             hls.recoverMediaError()
             return
           }
-          giveUp()
+          failPlayback(`unrecoverable ${data.type}/${data.details}`)
         })
         hls.attachMedia(video)
-        return
       }
-      if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = source
+      buildPlayer(false)
     })
     return () => {
       disposed = true
+      window.clearInterval(watchdog)
+      resumeRef.current = { generation, time: video.currentTime }
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, videoRef])
+  }, [room.id, room.mediaGeneration, room.mediaVersion, videoRef])
+
+  // Subtitle modes are driven from state instead of the <select> handler so
+  // the choice survives everything that reloads cues: a subsVersion bump
+  // republishing the .vtt files under the same names (a growing extraction),
+  // a media republish remounting hls.js, and any per-browser mode reset that
+  // comes with a <track> src change. Only the first subtitleCount text tracks
+  // belong to this component; hls.js may append its own after them.
+  const subtitleCount = (room.subtitleTracks ?? []).length
+  useEffect(() => {
+    const tracks = videoRef.current?.textTracks
+    if (!tracks) return
+    for (let index = 0; index < Math.min(tracks.length, subtitleCount); index += 1) {
+      tracks[index].mode = index === subtitle ? 'showing' : subtitle === -1 ? 'disabled' : 'hidden'
+    }
+  }, [subtitle, subtitleCount, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
 
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
@@ -360,7 +486,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           <track
             key={`${track.index}-${track.language}`}
             kind="subtitles"
-            src={`/media/${encodeURIComponent(room.id)}/subs/sub_${index}_${safeLanguage(track.language)}.vtt?g=${room.mediaGeneration}`}
+            src={`/media/${encodeURIComponent(room.id)}/subs/sub_${index}_${safeLanguage(track.language)}.vtt?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`}
             srcLang={track.language || 'und'}
             label={track.title || track.language || `Subtitle ${index + 1}`}
           />
@@ -394,12 +520,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         ) : null}
         {(room.subtitleTracks?.length ?? 0) > 0 ? (
           <label>{t('room.subtitles')}
-            <select value={subtitle} onChange={(event) => {
-              const next = Number(event.target.value)
-              setSubtitle(next)
-              const tracks = videoRef.current?.textTracks
-              if (tracks) for (let index = 0; index < tracks.length; index += 1) tracks[index].mode = index === next ? 'showing' : 'hidden'
-            }}>
+            <select value={subtitle} onChange={(event) => setSubtitle(Number(event.target.value))}>
               <option value={-1}>{t('room.off')}</option>
               {(room.subtitleTracks ?? []).map((track, index) => <option key={track.index} value={index}>{track.title || track.language || index + 1}</option>)}
             </select>
@@ -479,4 +600,38 @@ function playableDuration(video: HTMLVideoElement): number {
 
 function safeLanguage(language: string): string {
   return language && language.length <= 35 && /^[A-Za-z0-9_-]+$/.test(language) ? language : 'und'
+}
+
+type HlsModule = typeof import('hls.js')
+
+// One greppable prefix for the player's whole account of a session: codec
+// verdicts, dropped levels, recoveries and the reason it gave up. A bug report
+// is otherwise a shrug — none of these failures surface in the UI until the
+// player decides the room is unplayable.
+function plog(level: 'info' | 'warn' | 'error', ...parts: unknown[]): void {
+  console[level]('[ss-player]', ...parts)
+}
+
+// A playlist loader that deletes every CODECS attribute from the multivariant
+// playlist, so hls.js probes the init segments instead of trusting a codec
+// string some ffmpeg releases render invalidly. Used only for the retry after
+// every declared codec was rejected up front.
+function codecStrippingLoader(HlsClass: HlsModule['default']): HlsConfig['pLoader'] {
+  const Base = HlsClass.DefaultConfig.loader
+  return class extends Base {
+    load(context: LoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>): void {
+      if (context.type === 'manifest') {
+        const onSuccess = callbacks.onSuccess
+        callbacks.onSuccess = (response, stats, loadedContext, networkDetails) => {
+          if (typeof response.data === 'string') {
+            response.data = response.data
+              .replace(/CODECS="[^"]*",/g, '')
+              .replace(/,?CODECS="[^"]*"/g, '')
+          }
+          onSuccess(response, stats, loadedContext, networkDetails)
+        }
+      }
+      super.load(context, config, callbacks)
+    }
+  } as HlsConfig['pLoader']
 }

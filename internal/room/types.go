@@ -51,7 +51,16 @@ type Room struct {
 	// MediaGeneration increments every time the controller swaps the source.
 	// Clients compare it to decide that the media behind an unchanged URL is a
 	// different recording and the player has to be torn down and rebuilt.
-	MediaGeneration   int         `json:"mediaGeneration"`
+	MediaGeneration int `json:"mediaGeneration"`
+	// MediaVersion increments every time the media behind the current
+	// generation is republished in place — the final VOD remux replacing the
+	// progressive preview. Players reload the same source URL when it moves,
+	// so nobody keeps following playlists the pipeline has superseded.
+	MediaVersion int `json:"mediaVersion"`
+	// SubsVersion increments every time the subtitle files are rewritten.
+	// Progressive browser extraction republishes the same file names with more
+	// cues, and a <track> element only refetches when its URL changes.
+	SubsVersion       int         `json:"subsVersion"`
 	ErrorMessage      string      `json:"errorMessage,omitempty"`
 	ControllerID      string      `json:"controllerId"`
 	AudioTracks       []TrackInfo `json:"audioTracks"`

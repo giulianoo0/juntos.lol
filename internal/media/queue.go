@@ -253,12 +253,21 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		}
 		return false
 	}
+	// The version moves before the ready broadcast, so the refetch the
+	// broadcast triggers is guaranteed to observe the republished media.
+	if err := q.store.BumpMediaVersion(ctx, roomID); err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("bump media version: %w", err))
+		}
+		return false
+	}
 	if err := q.store.SetStatus(ctx, roomID, "ready"); err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("set ready status: %w", err))
 		}
 		return false
 	}
+	slog.InfoContext(ctx, "final media published", "room_id", roomID)
 	q.notifyReady(roomID)
 	return true
 }
@@ -360,13 +369,20 @@ func sourcePath(dataDir, roomID string) (roomDir, srcPath string, err error) {
 
 type realPipeline struct{}
 
-func (realPipeline) Run(ctx context.Context, _ string, srcPath, outDir string, skipSubs bool) (
+func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir string, skipSubs bool) (
 	[]room.TrackInfo, []room.TrackInfo, int, error,
 ) {
 	probe, err := Probe(ctx, srcPath)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	slog.InfoContext(ctx, "final remux starting",
+		"room_id", roomID,
+		"video_codec", probe.VideoCodec,
+		"video_copyable", probe.VideoCopyable,
+		"duration_ms", probe.DurationMs,
+		"audio_tracks", len(probe.Audio),
+	)
 	hlsDir := filepath.Join(outDir, "hls")
 	if err := os.MkdirAll(hlsDir, 0o755); err != nil {
 		return nil, nil, 0, fmt.Errorf("create HLS directory: %w", err)
@@ -374,8 +390,11 @@ func (realPipeline) Run(ctx context.Context, _ string, srcPath, outDir string, s
 	if err := Remux(ctx, srcPath, hlsDir, probe); err != nil {
 		return nil, nil, 0, err
 	}
-	if err := cleanupProgressiveOutputs(hlsDir); err != nil {
-		slog.WarnContext(ctx, "cleanup progressive media failed", "error", err)
+	slog.InfoContext(ctx, "final HLS master published", "room_id", roomID)
+	if err := finalizeProgressiveOutputs(hlsDir); err != nil {
+		slog.WarnContext(ctx, "finalize progressive media failed", "room_id", roomID, "error", err)
+	} else {
+		slog.InfoContext(ctx, "progressive preview finalized", "room_id", roomID)
 	}
 	if skipSubs {
 		return probe.Audio, nil, probe.BitmapSubs, nil

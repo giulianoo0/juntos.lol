@@ -139,6 +139,9 @@ export function useSync(
           setMessages(message.history ?? [])
           setCapability(message.capability ?? '')
           setRoomStatus('live')
+          // A reconnecting client may have missed roomStatus/roomUpdated
+          // broadcasts entirely; refetching on every welcome closes that gap.
+          setRoomVersion((version) => version + 1)
           if (message.state) applyState(message.state)
           break
         case 'state':
