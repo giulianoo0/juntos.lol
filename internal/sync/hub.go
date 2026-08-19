@@ -602,7 +602,14 @@ func (r *roomConn) cleanupIdle() {
 	storeErr := r.hub.store.Delete(ctx, r.id)
 	if err := errors.Join(fileErr, storeErr); err != nil {
 		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", r.id, "error", err)
+		return
 	}
+	// A room that everyone left is reclaimed well before its TTL, and used to
+	// go without a word. Its link then answers room_not_found with nothing
+	// anywhere saying why, which reads like data loss rather than the cleanup
+	// it is.
+	slog.InfoContext(ctx, "idle room reclaimed",
+		"room_id", r.id, "idle_for", r.hub.idleAfter)
 }
 
 func writeHandshakeError(conn *websocket.Conn, code string) {

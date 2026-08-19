@@ -58,7 +58,13 @@ func SweepOnce(ctx context.Context, store *Store, dataDir string) {
 		}
 		if err := store.Delete(ctx, id); err != nil {
 			slog.Error("sweeper: delete room", "room", id, "err", err)
+			continue
 		}
+		// Removing a room is the one thing here that a viewer notices
+		// immediately and cannot undo, and it used to happen in silence: a
+		// room that vanished left nothing behind saying it was the sweeper
+		// that took it, or when it was due to go.
+		slog.InfoContext(ctx, "sweeper: removed expired room", "room", id)
 	}
 }
 
