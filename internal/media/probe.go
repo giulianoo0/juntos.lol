@@ -30,15 +30,21 @@ type ProbeResult struct {
 	DurationMs    int64
 	VideoCodec    string
 	VideoCopyable bool
-	Audio         []room.TrackInfo
-	Subtitles     []room.TrackInfo
-	BitmapSubs    int
+	// VideoHeight is the source's own height, which bounds the rendition
+	// ladder: offering a size the source never had is upscaling, and costs
+	// bandwidth to deliver a blurrier picture.
+	VideoHeight int
+	Audio       []room.TrackInfo
+	Subtitles   []room.TrackInfo
+	BitmapSubs  int
 }
 
 type probeOutput struct {
 	Streams []struct {
 		CodecName string `json:"codec_name"`
 		CodecType string `json:"codec_type"`
+		Width     int    `json:"width"`
+		Height    int    `json:"height"`
 		Tags      struct {
 			Language string `json:"language"`
 			Title    string `json:"title"`
@@ -99,6 +105,7 @@ func parseProbe(data []byte) (*ProbeResult, error) {
 			if result.VideoCodec == "" {
 				result.VideoCodec = stream.CodecName
 				result.VideoCopyable = stream.CodecName == "h264" || stream.CodecName == "hevc"
+				result.VideoHeight = stream.Height
 			}
 		case "audio":
 			result.Audio = append(result.Audio, room.TrackInfo{

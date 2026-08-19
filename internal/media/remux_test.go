@@ -22,7 +22,7 @@ func TestBuildRemuxArgsMultiAudio(t *testing.T) {
 
 	args := BuildRemuxArgs("/x/original.mkv", "/x/hls", p)
 	joined := strings.Join(args, " ")
-	require.Contains(t, joined, "-c:v copy")
+	require.Contains(t, joined, "-c:v:0 copy")
 	require.Contains(t, joined, "-map 0:v:0")
 	require.Contains(t, joined, "-map 0:a:0")
 	require.Contains(t, joined, "-map 0:a:1")
@@ -40,8 +40,8 @@ func TestBuildRemuxArgsTranscodesUncopyableVideo(t *testing.T) {
 
 	joined := strings.Join(BuildRemuxArgs("in.webm", "hls", p), " ")
 
-	require.Contains(t, joined, "-c:v libx264 -preset veryfast -crf 23")
-	require.NotContains(t, joined, "-c:v copy")
+	require.Contains(t, joined, "-c:v:0 libx264 -preset:v:0 veryfast -crf:v:0 23")
+	require.NotContains(t, joined, "-c:v:0 copy")
 }
 
 func TestBuildRemuxArgsOmitsUnsafeAudioLanguage(t *testing.T) {
@@ -105,13 +105,13 @@ func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
 
 	joined := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
 
-	require.Contains(t, joined, "-c:v libx264 -preset ultrafast -crf 23")
+	require.Contains(t, joined, "-c:v:0 libx264 -preset:v:0 ultrafast -crf:v:0 23")
 	require.NotContains(t, joined, "-preset veryfast")
 	require.Contains(t, joined, `-force_key_frames expr:gte(t,n_forced*2)`)
 	require.Contains(t, joined, "-hls_time 2")
 
 	vod := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
-	require.Contains(t, vod, "-c:v libx264 -preset veryfast -crf 23")
+	require.Contains(t, vod, "-c:v:0 libx264 -preset:v:0 veryfast -crf:v:0 23")
 	require.NotContains(t, vod, "-force_key_frames")
 	require.Contains(t, vod, "-hls_time 6")
 }

@@ -58,6 +58,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const controlsTimerRef = useRef<number | null>(null)
   const feedbackSeqRef = useRef(0)
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>([])
+  // The picture sizes this source was published in, and which one this viewer
+  // is watching. -1 is hls.js's "pick for me". The choice is deliberately per
+  // person: everyone in a room has a different connection, and picking a
+  // quality for the group would just move the stalling to whoever has least.
+  const [levels, setLevels] = useState<Array<{ height: number; bitrate: number }>>([])
+  const [level, setLevel] = useState(-1)
   const [subtitle, setSubtitle] = useState(-1)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -146,6 +152,8 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       plog('error', `giving up: ${reason}`)
       hlsRef.current?.destroy()
       hlsRef.current = null
+      setLevels([])
+      setLevel(-1)
       setUnplayable(true)
     }
 
@@ -218,12 +226,18 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         const hls = new HlsClass(config)
         hlsRef.current = hls
         hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
+        const readLevels = () => setLevels(hls.levels.map(
+          ({ height, bitrate }) => ({ height, bitrate })))
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
           setAudioTracks(hls.audioTracks)
+          readLevels()
           logLevels(hls, 'parsed')
         })
         // Fires when hls.js drops a level, e.g. after an undecodable codec.
-        hls.on(HlsClass.Events.LEVELS_UPDATED, () => logLevels(hls, 'updated'))
+        hls.on(HlsClass.Events.LEVELS_UPDATED, () => {
+          readLevels()
+          logLevels(hls, 'updated')
+        })
         hls.on(HlsClass.Events.AUDIO_TRACKS_UPDATED, () => setAudioTracks(hls.audioTracks))
         hls.on(HlsClass.Events.BUFFER_CREATED, (_event, data) =>
           plog('info', `source buffers created: ${Object.keys(data.tracks).join(', ') || 'none'}`))
@@ -616,6 +630,25 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             title={t(atLiveEdge ? 'room.liveInSync' : 'room.liveBehind')}
             onClick={goLive}
           >LIVE</button>
+        ) : null}
+        {levels.length > 1 ? (
+          <label>{t('room.quality')}
+            <select
+              value={level}
+              onChange={(event) => {
+                const next = Number(event.target.value)
+                setLevel(next)
+                if (hlsRef.current) hlsRef.current.currentLevel = next
+              }}
+            >
+              <option value={-1}>{t('room.qualityAuto')}</option>
+              {levels.map((entry, index) => (
+                <option key={`${entry.height}-${index}`} value={index}>
+                  {entry.height ? `${entry.height}p` : `${Math.round(entry.bitrate / 1000)} kbps`}
+                </option>
+              ))}
+            </select>
+          </label>
         ) : null}
         {audioTracks.length > 1 ? (
           <label>{t('room.audio')}

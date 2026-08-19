@@ -30,7 +30,7 @@ func BuildProgressiveRemuxArgs(in, outDir string, p *ProbeResult) []string {
 
 func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []string {
 	args := []string{"-hide_banner", "-loglevel", "error", "-y"}
-	args = append(args, "-i", in, "-map", "0:v:0")
+	args = append(args, "-i", in)
 
 	mapping, streamMap := buildStreamMapping(p, progressive)
 	args = append(args, mapping...)
@@ -75,23 +75,16 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 // buildStreamMapping returns the -map/-c arguments and the -var_stream_map
 // value shared by the vod and progressive remux builders.
 func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, streamMap string) {
-	if p.VideoCopyable {
-		args = append(args, "-c:v", "copy")
-		if p.VideoCodec == "hevc" {
-			// ffmpeg labels a copied HEVC track hev1, which Safari's HLS stack
-			// refuses. hvc1 is the same bitstream with its parameter sets in
-			// the sample description instead of in band.
-			args = append(args, "-tag:v", "hvc1")
-		}
-	} else {
-		preset := "veryfast"
-		if progressive {
-			// Favor startup latency for the temporary preview. The authoritative
-			// final remux keeps the denser veryfast encode.
-			preset = "ultrafast"
-		}
-		args = append(args, "-c:v", "libx264", "-preset", preset, "-crf", "23")
+	// The preview stays a single pass-through rendition. It exists to make a
+	// room playable seconds after the first megabyte, and encoding anything
+	// there would spend that head start; the ladder arrives with the final
+	// remux, which is what viewers settle on.
+	ladder := []Rendition{{Copy: p.VideoCopyable, Height: p.VideoHeight}}
+	if !progressive {
+		ladder = RenditionLadder(p)
 	}
+	videoArgs, videoMap := buildVideoRenditionArgs(ladder, p, progressive)
+	args = append(args, videoArgs...)
 
 	for _, track := range p.Audio {
 		args = append(args, "-map", "0:a:"+strconv.Itoa(track.Index))
@@ -100,23 +93,28 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 		args = append(args, "-c:a", "aac", "-b:a", "192k")
 	}
 
-	streamMap = "v:0"
-	if len(p.Audio) > 0 {
-		variants := make([]string, 0, len(p.Audio)+1)
-		for i, track := range p.Audio {
-			variant := "a:" + strconv.Itoa(i) + ",agroup:audio"
-			if i == 0 {
-				variant += ",default:yes"
-			}
-			if isSafeLanguage(track.Language) {
-				variant += ",language:" + track.Language
-			}
-			variants = append(variants, variant)
-		}
-		variants = append(variants, "v:0,agroup:audio")
-		streamMap = strings.Join(variants, " ")
+	if len(p.Audio) == 0 {
+		streamMap = strings.Join(videoMap, " ")
+		return args, streamMap
 	}
-	return args, streamMap
+
+	variants := make([]string, 0, len(p.Audio)+len(videoMap))
+	for i, track := range p.Audio {
+		variant := "a:" + strconv.Itoa(i) + ",agroup:audio"
+		if i == 0 {
+			variant += ",default:yes"
+		}
+		if isSafeLanguage(track.Language) {
+			variant += ",language:" + track.Language
+		}
+		variants = append(variants, variant)
+	}
+	// Every video rendition points at the same audio group, so switching
+	// picture quality never reopens the audio the viewer chose.
+	for _, video := range videoMap {
+		variants = append(variants, video+",agroup:audio")
+	}
+	return args, strings.Join(variants, " ")
 }
 
 func isSafeLanguage(language string) bool {

@@ -38,6 +38,8 @@ export const en: Record<string, string> = {
   'home.failed': 'Could not create the room. Try again.',
   'room.copy': 'Copy link',
   'room.copiedToast': 'Link copied',
+  'room.quality': 'Quality',
+  'room.qualityAuto': 'Auto',
   'room.audio': 'Audio',
   'room.subtitles': 'Subtitles',
   'room.off': 'Off',

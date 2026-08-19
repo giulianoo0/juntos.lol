@@ -165,7 +165,7 @@ func TestAnnotateHEVCMasterOnlyTouchesCopiedHEVC(t *testing.T) {
 func TestBuildRemuxArgsTagsCopiedHEVC(t *testing.T) {
 	hevc := &ProbeResult{VideoCodec: "hevc", VideoCopyable: true}
 	args := BuildRemuxArgs("in.mkv", "/out", hevc)
-	require.Subset(t, args, []string{"-tag:v", "hvc1"})
+	require.Subset(t, args, []string{"-tag:v:0", "hvc1"})
 
 	// Only a copy needs relabelling, and only for HEVC.
 	h264 := BuildRemuxArgs("in.mkv", "/out", &ProbeResult{VideoCodec: "h264", VideoCopyable: true})

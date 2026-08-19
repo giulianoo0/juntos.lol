@@ -137,6 +137,13 @@ describe('Player', () => {
     expect(container.querySelector('.player-loading')).not.toBeInTheDocument()
   })
 
+  it('offers no quality control when there is only one rendition', () => {
+    render(<Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+    // A single-quality source has nothing to choose between, and an empty
+    // menu is worse than none.
+    expect(screen.queryByLabelText(/quality|qualidade/i)).not.toBeInTheDocument()
+  })
+
   it('opens the player in fullscreen', () => {
     const requestFullscreen = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {

@@ -38,6 +38,8 @@ export const ptBR: Record<string, string> = {
   'home.failed': 'Não foi possível criar a sala. Tente novamente.',
   'room.copy': 'Copiar link',
   'room.copiedToast': 'Link copiado',
+  'room.quality': 'Qualidade',
+  'room.qualityAuto': 'Automática',
   'room.audio': 'Áudio',
   'room.subtitles': 'Legendas',
   'room.off': 'Desligadas',
