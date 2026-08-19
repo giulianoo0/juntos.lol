@@ -187,3 +187,10 @@ h1, h2, p { margin-top: 0; }
 .chat-panel header .ui-button--icon { width: 30px; height: 30px; background: transparent; border-color: transparent; color: var(--text-dim); }
 .chat-panel header .ui-button--icon:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.06); }
 .chat-composer .ui-button--ghost { border-radius: 999px; color: #b8bcff; }
+
+/* A player waiting on data is indistinguishable from a broken one without
+   this. It sits over the picture and under the controls, so it never covers
+   what someone is reaching for. */
+.player-loading { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; pointer-events: none; }
+.player-spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.16); border-top-color: #c9ccff; border-radius: 50%; animation: torrent-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .player-spinner { animation-duration: 2s; } }

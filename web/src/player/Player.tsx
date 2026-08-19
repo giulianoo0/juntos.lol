@@ -502,6 +502,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     if (start < Math.min(currentTime, end)) behindBands.push({ from: start, to: Math.min(currentTime, end) })
     if (end > Math.max(start, currentTime)) aheadBands.push({ from: Math.max(start, currentTime), to: end })
   }
+  // A player waiting on data looks exactly like one that has stopped working.
+  // The spinner is the only thing that distinguishes them, and a room whose
+  // source is still downloading spends real time here.
+  const [loading, setLoading] = useState(true)
+
   // The controller defines the room position, so it can never be out of sync
   // with itself; LIVE exists only for viewers.
   const expectedMs = !isController && syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : null
@@ -522,13 +527,29 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         toggleFullscreen()
       }}
     >
+      {loading ? (
+        <div className="player-loading" role="status" aria-live="polite">
+          <span className="player-spinner" aria-hidden="true" />
+          <span className="sr-only">{t('status.buffering')}</span>
+        </div>
+      ) : null}
       <video
         ref={videoRef}
         className="video"
         playsInline
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
-        onCanPlay={() => attemptPlay()}
+        onWaiting={() => setLoading(true)}
+        onStalled={() => setLoading(true)}
+        onSeeking={() => setLoading(true)}
+        onPlaying={() => setLoading(false)}
+        onSeeked={() => setLoading(false)}
+        onCanPlay={() => {
+          // canplay fires with enough data buffered to advance, which is the
+          // honest moment to stop saying "loading" even while still paused.
+          setLoading(false)
+          attemptPlay()
+        }}
         onTimeUpdate={(event) => {
           setCurrentTime(event.currentTarget.currentTime)
           setDuration(playableDuration(event.currentTarget))

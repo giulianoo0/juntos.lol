@@ -109,6 +109,34 @@ describe('Player', () => {
     expect(send).not.toHaveBeenCalledWith('seek', expect.anything())
   })
 
+  it('shows a spinner until the video can actually play', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(
+      <Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    // A room whose source is still downloading starts here, and without this
+    // the picture is just black with no sign anything is happening.
+    expect(container.querySelector('.player-loading')).toBeInTheDocument()
+
+    fireEvent.canPlay(videoRef.current!)
+
+    expect(container.querySelector('.player-loading')).not.toBeInTheDocument()
+  })
+
+  it('brings the spinner back when playback runs out of data', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(
+      <Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    fireEvent.canPlay(videoRef.current!)
+
+    fireEvent.waiting(videoRef.current!)
+    expect(container.querySelector('.player-loading')).toBeInTheDocument()
+
+    fireEvent.playing(videoRef.current!)
+    expect(container.querySelector('.player-loading')).not.toBeInTheDocument()
+  })
+
   it('opens the player in fullscreen', () => {
     const requestFullscreen = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {

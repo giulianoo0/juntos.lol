@@ -368,12 +368,14 @@ func TestTorrentKeepsEveryAudioAndSubtitleTrack(t *testing.T) {
 		"fileName": "movie.mkv", "size": info.Size(),
 	}, http.StatusAccepted)
 
-	// The sidecar subtitle is usable while the video is still arriving.
+	// Subtitles are usable while the video is still arriving. This is what the
+	// server-side ingest took away when the bytes stopped passing through a
+	// browser, and what the progressive extraction gives back.
 	require.Eventually(t, func() bool {
 		stored, err := server.store.Get(t.Context(), roomID)
 		return err == nil && len(stored.SubtitleTracks) > 0 && stored.Status != "ready"
 	}, 30*time.Second, 200*time.Millisecond,
-		"the sidecar subtitle was not usable before the video finished")
+		"no subtitle was usable before the video finished downloading")
 
 	require.Eventually(t, func() bool {
 		stored, err := server.store.Get(t.Context(), roomID)
@@ -428,4 +430,53 @@ func makeMultiTrackVideo(t *testing.T, seconds int) string {
 		"-metadata:s:s:0", "language=por",
 		path)
 	return path
+}
+
+// TestEmbeddedSubtitlesArriveDuringTheDownload isolates the muxed-in case,
+// which is what most releases actually ship: no sibling files at all, and a
+// viewer who should still be able to read the first minutes.
+func TestEmbeddedSubtitlesArriveDuringTheDownload(t *testing.T) {
+	requireFFmpeg(t)
+
+	video := makeMultiTrackVideo(t, 16)
+	info, err := os.Stat(video)
+	require.NoError(t, err)
+	content, err := os.ReadFile(video)
+	require.NoError(t, err)
+
+	// Slow enough that "during the download" is a meaningful window rather
+	// than a race the test happens to win.
+	bridge := newThrottledBridge(content, len(content)/30, "movie.mkv")
+	bridgeServer := httptest.NewServer(bridge)
+	t.Cleanup(bridgeServer.Close)
+
+	server := startServer(t, bridgeServer.URL)
+	roomID := server.createRoom(t, "movie.mkv")
+	server.post(t, "/api/rooms/"+roomID+"/torrent", map[string]any{
+		"sessionId": "session-1", "path": "movie.mkv",
+		"fileName": "movie.mkv", "size": info.Size(),
+	}, http.StatusAccepted)
+
+	var receivedWhenPublished int64
+	require.Eventually(t, func() bool {
+		stored, err := server.store.Get(t.Context(), roomID)
+		if err != nil || len(stored.SubtitleTracks) == 0 {
+			return false
+		}
+		receivedWhenPublished = stored.Preparation.ReceivedBytes
+		return true
+	}, 60*time.Second, 200*time.Millisecond,
+		"the embedded subtitle only appeared once the download had finished")
+
+	require.Less(t, receivedWhenPublished, info.Size(),
+		"the subtitle waited for the last byte, which is the delay this fixes")
+	t.Logf("subtitles readable after %d of %d bytes", receivedWhenPublished, info.Size())
+
+	// And the file the player will ask for actually holds cues.
+	stored, err := server.store.Get(t.Context(), roomID)
+	require.NoError(t, err)
+	name := fmt.Sprintf("sub_0_%s.vtt", stored.SubtitleTracks[0].Language)
+	data, err := os.ReadFile(filepath.Join(server.dataDir, "rooms", roomID, "subs", name))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "-->")
 }

@@ -251,6 +251,9 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 			"room_id", job.roomID, "error", err)
 		return
 	}
+	// Subtitles run alongside the video rather than after it: a viewer who can
+	// already watch the first minutes should be able to read them too.
+	go p.extractSubtitles(ctx, jobCtx, job, probe)
 	p.remux(ctx, jobCtx, job, hlsDir, probe)
 }
 
