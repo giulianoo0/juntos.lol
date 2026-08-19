@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { History, MonitorUp, Plus, Upload } from 'lucide-react'
+import { History, MonitorUp, Plus, Upload, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, type UploadProgress } from '../upload'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { BrowserNotice } from '../components/BrowserNotice'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
@@ -161,6 +162,7 @@ export function Home() {
           <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
         </button>
       </header>
+      <BrowserNotice t={t} />
 
       {historyOpen ? (
         <section className="history-panel" aria-labelledby="history-title">
@@ -224,15 +226,14 @@ export function Home() {
           if (event.key === 'Escape') setTorrentOpen(false)
         }}>
           <div className="dialog-body">
-            <span className="dialog-file">WebTorrent</span>
+            <button type="button" className="dialog-close" aria-label={t('home.closeDialog')} onClick={() => setTorrentOpen(false)}>
+              <X size={16} />
+            </button>
             <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={(file, session) => {
               setTorrentOpen(false)
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
             }} />
-            <div className="dialog-actions">
-              <button type="button" onClick={() => setTorrentOpen(false)}>{t('home.cancel')}</button>
-            </div>
           </div>
         </dialog>
       ) : null}

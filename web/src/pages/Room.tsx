@@ -4,7 +4,7 @@ import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
-import { Crown, MonitorUp, Upload } from 'lucide-react'
+import { Crown, MonitorUp, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -18,6 +18,7 @@ import {
 } from '../screenshare'
 import type { ChatEntry, PresenceEvent, RoomInfo } from '../types'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { BrowserNotice } from '../components/BrowserNotice'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
@@ -234,6 +235,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   return (
     <main className="room-shell">
+      <BrowserNotice t={t} />
       <PresenceToasts events={toasts} t={t} />
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
@@ -285,6 +287,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           if (event.key === 'Escape') setSourcePanel(null)
         }}>
           <div className="dialog-body">
+            <button type="button" className="dialog-close" aria-label={t('home.closeDialog')} onClick={() => setSourcePanel(null)}>
+              <X size={16} />
+            </button>
             {sourcePanel === 'menu' ? (
               <>
                 <span className="dialog-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span>
@@ -303,14 +308,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
                 </div>
               </>
             ) : (
-              <>
-                <span className="dialog-file">WebTorrent</span>
-                <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={chooseTorrent} />
-              </>
+              <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={chooseTorrent} />
             )}
-            <div className="dialog-actions">
-              <button type="button" onClick={() => setSourcePanel(null)}>{t('home.cancel')}</button>
-            </div>
           </div>
         </dialog>
       ) : null}
