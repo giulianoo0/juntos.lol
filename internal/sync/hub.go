@@ -35,10 +35,11 @@ const (
 )
 
 type Hub struct {
-	store     *room.Store
-	cfg       config.Config
-	upgrader  websocket.Upgrader
-	idleAfter time.Duration
+	store       *room.Store
+	cfg         config.Config
+	upgrader    websocket.Upgrader
+	idleAfter   time.Duration
+	gateTimeout time.Duration
 
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
@@ -54,12 +55,16 @@ type roomConn struct {
 	id           string
 	hub          *Hub
 	controllerID string
-	nextMember   int
-	clients      map[string]*client
-	register     chan joinRequest
-	unregister   chan *client
-	inbound      chan clientInbound
-	updates      chan Outbound
+	// gating mirrors the persisted room setting so the welcome frame does not
+	// cost a store read. Only this connection's goroutine ever changes it.
+	gating     bool
+	gate       *playGate
+	nextMember int
+	clients    map[string]*client
+	register   chan joinRequest
+	unregister chan *client
+	inbound    chan clientInbound
+	updates    chan Outbound
 }
 
 type joinRequest struct {
@@ -87,6 +92,7 @@ func NewHub(store *room.Store, cfg config.Config) *Hub {
 		store:        store,
 		cfg:          cfg,
 		idleAfter:    time.Duration(cfg.RoomIdleMinutes) * time.Minute,
+		gateTimeout:  GateMaxWait,
 		rooms:        make(map[string]*roomConn),
 		capabilities: make(map[string]map[string]string),
 		ctx:          ctx,
@@ -157,7 +163,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 
-	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID)
+	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.GatingEnabled)
 	if roomConnection == nil {
 		writeHandshakeError(conn, "server_stopping")
 		return
@@ -215,7 +221,7 @@ func (h *Hub) notify(roomID string, event Outbound) {
 	}
 }
 
-func (h *Hub) getOrCreateRoom(roomID, controllerID string) *roomConn {
+func (h *Hub) getOrCreateRoom(roomID, controllerID string, gating bool) *roomConn {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -228,6 +234,7 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID string) *roomConn {
 		id:           roomID,
 		hub:          h,
 		controllerID: controllerID,
+		gating:       gating,
 		nextMember:   1,
 		clients:      make(map[string]*client),
 		register:     make(chan joinRequest),
@@ -251,6 +258,7 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 
 func (r *roomConn) run() {
 	defer r.hub.removeRoom(r.id, r)
+	defer r.dropGate()
 	defer func() {
 		for _, connected := range r.clients {
 			close(connected.send)
@@ -259,6 +267,11 @@ func (r *roomConn) run() {
 	var idleTimer *time.Timer
 	var idle <-chan time.Time
 	for {
+		// A nil channel blocks forever, so the case only fires while gated.
+		var gateExpired <-chan time.Time
+		if r.gate != nil {
+			gateExpired = r.gate.timer.C
+		}
 		select {
 		case <-r.hub.ctx.Done():
 			if idleTimer != nil {
@@ -290,6 +303,8 @@ func (r *roomConn) run() {
 			r.handleInbound(event)
 		case event := <-r.updates:
 			r.broadcast(event)
+		case <-gateExpired:
+			r.releaseGate()
 		case <-idle:
 			r.cleanupIdle()
 			return
@@ -354,9 +369,11 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.hub.capabilities[r.id][memberID] = request.client.capability
 	r.hub.mu.Unlock()
 	members := r.members()
+	gating := r.gating
 	request.client.send <- Outbound{
 		Type: "welcome", MemberID: memberID, State: &state, ControllerID: r.controllerID,
-		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(), Capability: request.client.capability,
+		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
+		Capability: request.client.capability, Gating: &gating,
 	}
 	request.client.send <- Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
@@ -364,6 +381,9 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.broadcastExcept(request.client, Outbound{
 		Type: "members", ControllerID: r.controllerID, Members: members,
 	})
+	// A mid-wait joiner is counted in the quorum but never restarts the clock:
+	// it only gets the pending roster so its client starts reporting.
+	r.broadcastWaiting()
 	request.result <- ""
 }
 
@@ -395,6 +415,15 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 	if len(r.clients) > 0 {
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 	}
+	// A member who left must not keep the wait alive: everyone remaining may
+	// now be the whole quorum.
+	if r.gate != nil {
+		if len(r.clients) == 0 {
+			r.dropGate()
+		} else if !r.evaluateGate() {
+			r.broadcastWaiting()
+		}
+	}
 }
 
 func (r *roomConn) handleInbound(event clientInbound) {
@@ -404,6 +433,21 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.send(event.client, Outbound{
 			Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: message.ClientTimeMs,
 		})
+	case "ready":
+		if message.PositionMs < 0 || message.BufferAheadMs < 0 {
+			return
+		}
+		event.client.report = memberReport{
+			positionMs:    message.PositionMs,
+			bufferAheadMs: message.BufferAheadMs,
+			stalled:       message.Stalled,
+			received:      true,
+		}
+		if r.gate != nil && !r.evaluateGate() {
+			r.broadcastWaiting()
+		}
+	case "gating":
+		r.handleGatingToggle(event.client, message)
 	case "chat":
 		if !validChat(message.Text) {
 			r.send(event.client, Outbound{Type: "error", ErrCode: "invalid_chat"})
@@ -442,14 +486,18 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	now := time.Now().UnixMilli()
 	switch message.Type {
 	case "play":
-		state.Playing = true
-		state.PositionMs = message.PositionMs
 		if message.Rate != 0 {
 			if !validRate(message.Rate) {
 				return
 			}
 			state.Rate = message.Rate
 		}
+		if r.shouldGate(ctx) {
+			r.openGate(ctx, sender, message.PositionMs, state, now)
+			return
+		}
+		state.Playing = true
+		state.PositionMs = message.PositionMs
 	case "pause":
 		state.Playing = false
 		state.PositionMs = message.PositionMs
@@ -460,6 +508,13 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 			state.Rate = message.Rate
 		}
 	case "seek":
+		// A seek that lands in playback is gated exactly like play, so it
+		// puts everyone at the target together. A seek while a gate is
+		// already pending retargets it rather than leaving a stale start.
+		if (state.Playing || r.gate != nil) && r.shouldGate(ctx) {
+			r.openGate(ctx, sender, message.PositionMs, state, now)
+			return
+		}
 		state.PositionMs = message.PositionMs
 	case "rate":
 		if !validRate(message.Rate) {
@@ -476,6 +531,12 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	}
 	stateCopy := state
 	r.broadcast(Outbound{Type: "state", State: &stateCopy})
+	// An ungated play, pause or seek supersedes any start still pending;
+	// leaving it would replay a stale target on timeout.
+	switch message.Type {
+	case "play", "pause", "seek":
+		r.dropGate()
+	}
 }
 
 func (r *roomConn) members() []room.Member {

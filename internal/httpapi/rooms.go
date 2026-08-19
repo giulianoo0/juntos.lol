@@ -165,6 +165,7 @@ func getRoom(store *room.Store) gin.HandlerFunc {
 			"mediaGeneration":   r.MediaGeneration,
 			"mediaVersion":      r.MediaVersion,
 			"subsVersion":       r.SubsVersion,
+			"gatingEnabled":     r.GatingEnabled,
 			"errorMessage":      r.ErrorMessage,
 			"controllerId":      r.ControllerID,
 			"audioTracks":       r.AudioTracks,

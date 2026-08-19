@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { ChatMessage, Member, PlayState, PresenceEvent } from '../types'
+import type { ChatMessage, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting } from '../types'
 import { expectedPositionMs, needsResync } from './position'
 
 // Presence is a rolling log: the room header shows the newest entries and the
 // chat keeps them inline, so an unbounded list would only grow memory.
 const PRESENCE_LIMIT = 50
+// Mirrors the server's GateReadyBufferMs. Only used to round a buffer that
+// runs to the very end of the media up to "enough": the last seconds of a
+// video can never hold 3s of lookahead, and must not stall a gated start.
+const GATE_READY_BUFFER_MS = 3000
+// Readiness cadence while the room is waiting on a gated start. The 5s
+// heartbeat carries the steady reports; this only exists during the wait.
+const WAITING_REPORT_MS = 1000
 
 interface Outbound {
   type: string
@@ -19,6 +26,9 @@ interface Outbound {
   clientTimeMs?: number
   error?: string
   capability?: string
+  readiness?: MemberReadiness[]
+  targetMs?: number
+  gating?: boolean
 }
 
 interface SyncResult {
@@ -35,6 +45,8 @@ interface SyncResult {
   buffering: boolean
   serverOffsetMs: number
   capability: string
+  waiting: RoomWaiting | null
+  gatingEnabled: boolean
   send: (type: string, payload?: Record<string, unknown>) => void
 }
 
@@ -67,11 +79,33 @@ export function useSync(
   const [buffering, setBuffering] = useState(false)
   const [serverOffsetMs, setServerOffsetMs] = useState(0)
   const [capability, setCapability] = useState('')
+  const [waiting, setWaiting] = useState<RoomWaiting | null>(null)
+  const [gatingEnabled, setGatingEnabled] = useState(true)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}) => {
     const socket = socketRef.current
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, ...payload }))
   }, [])
+
+  // Reports this client's buffering picture: position, contiguous buffer held
+  // ahead of it, and whether playback is stalled. A screen-share room has no
+  // media element here and simply never reports.
+  const sendReadiness = useCallback(() => {
+    const media = videoRef.current
+    if (!media) return
+    const positionMs = Math.round(media.currentTime * 1000)
+    let bufferAheadMs = 0
+    for (let index = 0; index < media.buffered.length; index += 1) {
+      if (media.buffered.start(index) > media.currentTime + 0.1 || media.currentTime > media.buffered.end(index)) continue
+      bufferAheadMs = Math.round((media.buffered.end(index) - media.currentTime) * 1000)
+      // Buffer running to the very end of the media is all there will ever be.
+      if (Number.isFinite(media.duration) && media.buffered.end(index) >= media.duration - 0.3) {
+        bufferAheadMs = Math.max(bufferAheadMs, GATE_READY_BUFFER_MS)
+      }
+      break
+    }
+    send('ready', { positionMs, bufferAheadMs, stalled: bufferingRef.current })
+  }, [send, videoRef])
 
   useEffect(() => {
     const video = videoRef.current
@@ -138,6 +172,8 @@ export function useSync(
           applyMembers(message.members ?? [])
           setMessages(message.history ?? [])
           setCapability(message.capability ?? '')
+          setGatingEnabled(message.gating ?? true)
+          setWaiting(null)
           setRoomStatus('live')
           // A reconnecting client may have missed roomStatus/roomUpdated
           // broadcasts entirely; refetching on every welcome closes that gap.
@@ -145,7 +181,16 @@ export function useSync(
           if (message.state) applyState(message.state)
           break
         case 'state':
+          // Any state broadcast supersedes a pending gated start: either the
+          // gate released into it or the controller withdrew the start.
+          setWaiting(null)
           if (message.state) applyState(message.state)
+          break
+        case 'waiting':
+          setWaiting({ targetMs: message.targetMs ?? 0, readiness: message.readiness ?? [] })
+          break
+        case 'gating':
+          setGatingEnabled(message.gating ?? true)
           break
         case 'members':
           setControllerId(message.controllerId ?? '')
@@ -167,6 +212,7 @@ export function useSync(
     const heartbeat = window.setInterval(() => {
       const clientTimeMs = Date.now()
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'heartbeat', clientTimeMs }))
+      sendReadiness()
       const media = videoRef.current
       if (!media || bufferingRef.current) return
       setState((current) => {
@@ -183,7 +229,17 @@ export function useSync(
       socket.close()
       if (socketRef.current === socket) socketRef.current = null
     }
-  }, [nickname, roomId, videoRef])
+  }, [nickname, roomId, sendReadiness, videoRef])
+
+  // The waiting window is exactly when readiness matters, so reports tighten
+  // to ~1s for its duration — and only for its duration.
+  const waitingForStart = waiting !== null
+  useEffect(() => {
+    if (!waitingForStart) return
+    sendReadiness()
+    const reporter = window.setInterval(sendReadiness, WAITING_REPORT_MS)
+    return () => window.clearInterval(reporter)
+  }, [sendReadiness, waitingForStart])
 
   return {
     state,
@@ -199,6 +255,8 @@ export function useSync(
     buffering,
     serverOffsetMs,
     capability,
+    waiting,
+    gatingEnabled,
     send,
   }
 }

@@ -16,7 +16,7 @@ import {
   startScreenShare,
   takeScreenStream,
 } from '../screenshare'
-import type { ChatEntry, PresenceEvent, RoomInfo } from '../types'
+import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting } from '../types'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
@@ -248,6 +248,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           {uploadProgress !== null ? <span className="upload-chip">{t('home.uploading')} {uploadProgress.pct}%</span> : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
+          {sync.isController && !isScreenRoom ? (
+            <button onClick={() => sync.send('gating', { enabled: !sync.gatingEnabled })}>
+              {t(sync.gatingEnabled ? 'room.gatingOn' : 'room.gatingOff')}
+            </button>
+          ) : null}
           {sync.isController ? <button onClick={() => { setSourceError(false); setSourcePanel('menu') }}>{t('room.changeSource')}</button> : null}
           <button onClick={copyLink}>{copied ? t('room.copied') : t('room.copy')}</button>
           {!isScreenRoom ? <button onClick={shareScreen}>{shareRoom ? t('room.stopScreen') : t('room.shareScreen')}</button> : null}
@@ -266,8 +271,19 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               t={t}
             />
           ) : (
-            <Player room={liveRoom} isController={sync.isController} videoRef={videoRef} send={sync.send} t={t} />
+            <Player
+              room={liveRoom}
+              isController={sync.isController}
+              videoRef={videoRef}
+              send={sync.send}
+              t={t}
+              syncState={sync.state}
+              serverOffsetMs={sync.serverOffsetMs}
+            />
           )}
+          {sync.waiting !== null && !isScreenRoom ? (
+            <WaitingPanel waiting={sync.waiting} members={sync.members} t={t} />
+          ) : null}
           <div ref={remoteTileRef} className="screen-tile" />
           <div className="presence-row">
             {sync.members.map((member) => (
@@ -319,6 +335,28 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         </dialog>
       ) : null}
     </main>
+  )
+}
+
+// While the server holds a gated start, everyone sees the same picture of who
+// is ready and who is still buffering, instead of a play that quietly ignores
+// the people it left behind.
+function WaitingPanel({ waiting, members, t }: {
+  waiting: RoomWaiting
+  members: Member[]
+  t: Translator
+}) {
+  const names = new Map(members.map((member) => [member.id, member.nickname]))
+  return (
+    <div className="waiting-panel raised" role="status">
+      <strong>{t('room.waitingStart')}</strong>
+      {waiting.readiness.map((member) => (
+        <span key={member.memberId} className={`waiting-row ${member.ready ? 'is-ready' : ''}`}>
+          {names.get(member.memberId) ?? member.memberId}
+          <span>{member.ready ? t('room.waitingReady') : t('room.waitingBuffering')}</span>
+        </span>
+      ))}
+    </div>
   )
 }
 

@@ -34,6 +34,21 @@ export interface PresenceEvent {
   at: string
 }
 
+// One member's buffering picture while the room waits for a gated start.
+export interface MemberReadiness {
+  memberId: string
+  bufferAheadMs: number
+  stalled?: boolean
+  ready: boolean
+}
+
+// The pending gated start the server is holding: where playback will begin
+// and how far along each member's buffer is.
+export interface RoomWaiting {
+  targetMs: number
+  readiness: MemberReadiness[]
+}
+
 // One row of the chat timeline: either a message someone sent or a presence
 // note the client synthesized.
 export interface ChatEntry {
@@ -59,6 +74,9 @@ export interface RoomInfo {
   // Increments when subtitle files are rewritten under their stable names, so
   // <track> elements refetch cues the browser would otherwise cache forever.
   subsVersion?: number
+  // Whether play and seek wait for every member to buffer the target.
+  // Controller-owned; the live value travels over the sync protocol.
+  gatingEnabled?: boolean
   errorMessage?: string
   controllerId: string
   audioTracks: TrackInfo[] | null

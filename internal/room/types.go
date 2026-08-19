@@ -60,7 +60,11 @@ type Room struct {
 	// SubsVersion increments every time the subtitle files are rewritten.
 	// Progressive browser extraction republishes the same file names with more
 	// cues, and a <track> element only refetches when its URL changes.
-	SubsVersion       int         `json:"subsVersion"`
+	SubsVersion int `json:"subsVersion"`
+	// GatingEnabled is the controller-owned setting that makes play and seek
+	// wait until every member has buffered the target. Stored inverted
+	// (gating_disabled) so rooms created before it existed read back as on.
+	GatingEnabled     bool        `json:"gatingEnabled"`
 	ErrorMessage      string      `json:"errorMessage,omitempty"`
 	ControllerID      string      `json:"controllerId"`
 	AudioTracks       []TrackInfo `json:"audioTracks"`

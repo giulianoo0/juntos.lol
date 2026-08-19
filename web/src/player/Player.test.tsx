@@ -243,6 +243,64 @@ describe('Player', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
+  it('shows the LIVE control only to viewers and seeks locally without publishing', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(100_000)
+    const syncState = { playing: true, positionMs: 60_000, rate: 1, serverTimeMs: 100_000 }
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const { rerender } = render(
+      <Player room={room} isController videoRef={videoRef} send={send} t={t} syncState={syncState} serverOffsetMs={0} />,
+    )
+
+    // The controller defines the room position; LIVE would be meaningless.
+    expect(screen.queryByRole('button', { name: 'LIVE' })).not.toBeInTheDocument()
+
+    rerender(
+      <Player room={room} isController={false} videoRef={videoRef} send={send} t={t} syncState={syncState} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    video.currentTime = 10
+    fireEvent.timeUpdate(video)
+    const live = screen.getByRole('button', { name: 'LIVE' })
+    expect(live).not.toHaveClass('is-live')
+
+    fireEvent.click(live)
+
+    expect(video.currentTime).toBe(60)
+    expect(send).not.toHaveBeenCalled()
+    fireEvent.timeUpdate(video)
+    expect(screen.getByRole('button', { name: 'LIVE' })).toHaveClass('is-live')
+  })
+
+  it('renders every buffered range split into behind and ahead of the playhead', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(<Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />)
+    const video = videoRef.current!
+    Object.defineProperty(video, 'duration', { configurable: true, value: 100 })
+    Object.defineProperty(video, 'buffered', {
+      configurable: true,
+      value: { length: 2, start: (i: number) => [0, 50][i], end: (i: number) => [20, 70][i] },
+    })
+    video.currentTime = 10
+
+    fireEvent.timeUpdate(video)
+
+    // [0,20] splits at the playhead; [50,70] is entirely ahead of it.
+    expect(container.querySelectorAll('.seek-behind')).toHaveLength(1)
+    expect(container.querySelectorAll('.seek-ahead')).toHaveLength(2)
+    expect(container.querySelector<HTMLElement>('.seek-played')!.style.width).toBe('10%')
+    const behind = container.querySelector<HTMLElement>('.seek-behind')!
+    expect(behind.style.left).toBe('0%')
+    expect(behind.style.width).toBe('10%')
+    const ahead = container.querySelectorAll<HTMLElement>('.seek-ahead')
+    expect(ahead[0].style.left).toBe('10%')
+    expect(ahead[0].style.width).toBe('10%')
+    expect(ahead[1].style.left).toBe('50%')
+    expect(ahead[1].style.width).toBe('20%')
+    // The real range input survives the rebuild, still viewer-locked.
+    expect(container.querySelector('input[aria-label="Seek"]')).toBeInTheDocument()
+  })
+
   it('toggles fullscreen with the f key', () => {
     const requestFullscreen = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: requestFullscreen })

@@ -268,3 +268,28 @@ func TestSetClientSubtitlesRejectsMissingRoom(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, has)
 }
+
+func TestGatingSettingDefaultsOnAndRoundTrips(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	s := NewStore(rdb, time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "gated", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+
+	// A room that never stored the field — every pre-existing room — is on.
+	got, err := s.Get(t.Context(), "gated")
+	require.NoError(t, err)
+	require.True(t, got.GatingEnabled)
+
+	require.NoError(t, s.SetGatingDisabled(t.Context(), "gated", true))
+	got, err = s.Get(t.Context(), "gated")
+	require.NoError(t, err)
+	require.False(t, got.GatingEnabled)
+
+	require.NoError(t, s.SetGatingDisabled(t.Context(), "gated", false))
+	got, err = s.Get(t.Context(), "gated")
+	require.NoError(t, err)
+	require.True(t, got.GatingEnabled)
+}

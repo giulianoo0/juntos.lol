@@ -21,6 +21,8 @@ type client struct {
 	conn       *websocket.Conn
 	room       *roomConn
 	send       chan Outbound
+	// report is owned by the room goroutine, like every other mutable field.
+	report memberReport
 }
 
 func (c *client) readPump() {

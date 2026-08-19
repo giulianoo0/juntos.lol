@@ -5,8 +5,9 @@ import {
 } from 'lucide-react'
 import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
-import type { RoomInfo } from '../types'
+import type { PlayState, RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
+import { expectedPositionMs } from './position'
 
 interface PlayerProps {
   room: RoomInfo
@@ -14,6 +15,9 @@ interface PlayerProps {
   videoRef: MutableRefObject<HTMLVideoElement | null>
   send: (type: string, payload?: Record<string, unknown>) => void
   t: Translator
+  // The shared playback state and clock offset, for the viewer LIVE control.
+  syncState?: PlayState
+  serverOffsetMs?: number
 }
 
 const SEEK_STEP_SECONDS = 5
@@ -30,8 +34,17 @@ const FRAME_WATCH_INTERVAL_MS = 1000
 // before the player declares the video dead. Even a slideshow-style encode
 // composites a frame well inside this budget.
 const VIDEO_STARVATION_SECONDS = 5
+// Drift past this reads as out of sync on the LIVE control. Wider than the
+// auto-resync threshold, so it only lights up for drift that resyncing is
+// not already absorbing — a stalled or long-buffering viewer.
+const LIVE_SYNC_THRESHOLD_MS = 1000
 
-export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
+interface BufferedRange {
+  start: number
+  end: number
+}
+
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0 }: PlayerProps) {
   const playerRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const playRequestedRef = useRef(false)
@@ -42,6 +55,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const [subtitle, setSubtitle] = useState(-1)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [bufferedRanges, setBufferedRanges] = useState<BufferedRange[]>([])
   const [playing, setPlaying] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [controlsVisible, setControlsVisible] = useState(true)
@@ -333,6 +347,15 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
     send('seek', { positionMs: Math.round(seconds * 1000) })
   }, [isController, send, videoRef])
 
+  // A viewer catching up moves only itself: never a room-wide command.
+  const goLive = useCallback(() => {
+    const video = videoRef.current
+    if (!video || !syncState) return
+    const expected = expectedPositionMs(syncState, Date.now() + serverOffsetMs)
+    if (Math.abs(video.currentTime * 1000 - expected) <= LIVE_SYNC_THRESHOLD_MS) return
+    video.currentTime = expected / 1000
+  }, [serverOffsetMs, syncState, videoRef])
+
   // Relative seeking goes through the same synchronized command as the
   // scrubber, so the controller's own picture moves only once the server has
   // agreed on the position and everyone moves together.
@@ -452,6 +475,24 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const fullscreenLabel = t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
+  const seekMax = Math.max(duration, 1)
+  const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
+  // Each buffered range is split at the playhead: buffer kept behind it is a
+  // different fact than buffer ready ahead of it, and both are drawn over the
+  // played and unbuffered ground.
+  const behindBands: Array<{ from: number; to: number }> = []
+  const aheadBands: Array<{ from: number; to: number }> = []
+  for (const range of bufferedRanges) {
+    const start = Math.min(Math.max(range.start, 0), seekMax)
+    const end = Math.min(Math.max(range.end, 0), seekMax)
+    if (start < Math.min(currentTime, end)) behindBands.push({ from: start, to: Math.min(currentTime, end) })
+    if (end > Math.max(start, currentTime)) aheadBands.push({ from: Math.max(start, currentTime), to: end })
+  }
+  // The controller defines the room position, so it can never be out of sync
+  // with itself; LIVE exists only for viewers.
+  const expectedMs = !isController && syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : null
+  const atLiveEdge = expectedMs === null || Math.abs(currentTime * 1000 - expectedMs) <= LIVE_SYNC_THRESHOLD_MS
+
   return (
     <div
       ref={playerRef}
@@ -477,10 +518,14 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         onTimeUpdate={(event) => {
           setCurrentTime(event.currentTarget.currentTime)
           setDuration(playableDuration(event.currentTarget))
+          setBufferedRanges(readBufferedRanges(event.currentTarget))
         }}
         onDurationChange={(event) => setDuration(playableDuration(event.currentTarget))}
         onLoadedMetadata={(event) => setDuration(playableDuration(event.currentTarget))}
-        onProgress={(event) => setDuration(playableDuration(event.currentTarget))}
+        onProgress={(event) => {
+          setDuration(playableDuration(event.currentTarget))
+          setBufferedRanges(readBufferedRanges(event.currentTarget))
+        }}
       >
         {(room.subtitleTracks ?? []).map((track, index) => (
           <track
@@ -501,16 +546,42 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           onClick={togglePlay}
           onPointerUp={(event) => event.currentTarget.blur()}
         >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
-        <input
-          aria-label="Seek"
-          type="range"
-          min="0"
-          max={Math.max(duration, 1)}
-          value={Math.min(currentTime, Math.max(duration, 1))}
-          disabled={!isController}
-          onChange={(event) => seek(Number(event.target.value))}
-        />
+        <div className="seek-control">
+          <div className="seek-track" aria-hidden="true">
+            <div className="seek-played" style={{ width: pct(currentTime) }} />
+            {behindBands.map((band) => (
+              <div
+                key={`b${band.from}`}
+                className="seek-behind"
+                style={{ left: pct(band.from), width: `${((band.to - band.from) / seekMax) * 100}%` }}
+              />
+            ))}
+            {aheadBands.map((band) => (
+              <div
+                key={`a${band.from}`}
+                className="seek-ahead"
+                style={{ left: pct(band.from), width: `${((band.to - band.from) / seekMax) * 100}%` }}
+              />
+            ))}
+          </div>
+          <input
+            aria-label="Seek"
+            type="range"
+            min="0"
+            max={seekMax}
+            value={Math.min(currentTime, seekMax)}
+            disabled={!isController}
+            onChange={(event) => seek(Number(event.target.value))}
+          />
+        </div>
         <span className="timecode">{formatTime(currentTime)} / {formatTime(duration)}</span>
+        {expectedMs !== null ? (
+          <button
+            className={`live-button ${atLiveEdge ? 'is-live' : ''}`}
+            title={t(atLiveEdge ? 'room.liveInSync' : 'room.liveBehind')}
+            onClick={goLive}
+          >LIVE</button>
+        ) : null}
         {audioTracks.length > 1 ? (
           <label>{t('room.audio')}
             <select onChange={(event) => { if (hlsRef.current) hlsRef.current.audioTrack = Number(event.target.value) }}>
@@ -589,6 +660,16 @@ function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return '0:00'
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+}
+
+// video.buffered can hold several disjoint ranges — a seek leaves islands
+// behind — and the scrub bar draws every one of them.
+function readBufferedRanges(video: HTMLVideoElement): BufferedRange[] {
+  const ranges: BufferedRange[] = []
+  for (let index = 0; index < video.buffered.length; index += 1) {
+    ranges.push({ start: video.buffered.start(index), end: video.buffered.end(index) })
+  }
+  return ranges
 }
 
 function playableDuration(video: HTMLVideoElement): number {

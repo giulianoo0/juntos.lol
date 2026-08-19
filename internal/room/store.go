@@ -238,6 +238,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 		r.SubsVersion = n
 	}
+	r.GatingEnabled = fields["gating_disabled"] != "1"
 	r.ClientSubs = fields["client_subs"] == "1"
 	if v := fields["created_at"]; v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
@@ -264,6 +265,16 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 // SetController updates the room member currently allowed to control playback.
 func (s *Store) SetController(ctx context.Context, id, controllerID string) error {
 	return s.mutateRoom(ctx, id, false, "controller_id", controllerID)
+}
+
+// SetGatingDisabled stores the synchronized-start setting, inverted so that
+// its absence — every room created before the setting existed — means on.
+func (s *Store) SetGatingDisabled(ctx context.Context, id string, disabled bool) error {
+	value := "0"
+	if disabled {
+		value = "1"
+	}
+	return s.mutateRoom(ctx, id, false, "gating_disabled", value)
 }
 
 // SetError marks a room as failed and stores a user-visible processing error.

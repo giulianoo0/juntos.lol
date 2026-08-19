@@ -245,3 +245,168 @@ func readHubEvent(t *testing.T, conn *websocket.Conn) Outbound {
 	require.NoError(t, conn.ReadJSON(&event))
 	return event
 }
+
+func TestHubGateReleasesOnQuorum(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	welcome := helloHubClient(t, host, "host", 1)
+	require.NotNil(t, welcome.Gating)
+	require.True(t, *welcome.Gating)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 30_000, Rate: 1}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		parked := readHubEvent(t, conn)
+		require.Equal(t, "state", parked.Type)
+		require.False(t, parked.State.Playing)
+		require.Equal(t, int64(30_000), parked.State.PositionMs)
+		waiting := readHubEvent(t, conn)
+		require.Equal(t, "waiting", waiting.Type)
+		require.Equal(t, int64(30_000), waiting.TargetMs)
+		require.Len(t, waiting.Readiness, 2)
+		for _, member := range waiting.Readiness {
+			require.False(t, member.Ready)
+		}
+	}
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 30_000, BufferAheadMs: 5_000}))
+	waiting := readHubEvent(t, host)
+	require.Equal(t, "waiting", waiting.Type)
+	byMember := map[string]MemberReadiness{}
+	for _, member := range waiting.Readiness {
+		byMember[member.MemberID] = member
+	}
+	require.True(t, byMember["m1"].Ready)
+	require.False(t, byMember["m2"].Ready)
+	require.Equal(t, "waiting", readHubEvent(t, guest).Type)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_100, BufferAheadMs: GateReadyBufferMs}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		released := readHubEvent(t, conn)
+		require.Equal(t, "state", released.Type)
+		require.True(t, released.State.Playing)
+		require.Equal(t, int64(30_000), released.State.PositionMs)
+	}
+}
+
+func TestHubGateReleasesOnTimeout(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub.gateTimeout = 60 * time.Millisecond
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 10_000, Rate: 1}))
+	require.Equal(t, "state", readHubEvent(t, host).Type)
+	require.Equal(t, "waiting", readHubEvent(t, host).Type)
+
+	// A member joining mid-wait is handed the pending roster without the
+	// clock restarting on its account.
+	third := dialHubWS(t, server)
+	thirdWelcome := helloHubClient(t, third, "third", 3)
+	require.False(t, thirdWelcome.State.Playing)
+	require.Equal(t, int64(10_000), thirdWelcome.State.PositionMs)
+	require.Equal(t, "waiting", readHubEvent(t, third).Type)
+
+	// Nobody ever reports ready; only the timeout can start playback.
+	deadline := time.Now().Add(2 * time.Second)
+	for _, conn := range []*websocket.Conn{host, guest, third} {
+		for {
+			require.Less(t, time.Now().UnixMilli(), deadline.UnixMilli())
+			event := readHubEvent(t, conn)
+			if event.Type == "state" && event.State.Playing {
+				require.Equal(t, int64(10_000), event.State.PositionMs)
+				break
+			}
+		}
+	}
+}
+
+func TestHubGateDisconnectDoesNotHangRoom(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 5_000, Rate: 1}))
+	require.Equal(t, "state", readHubEvent(t, host).Type)
+	require.Equal(t, "waiting", readHubEvent(t, host).Type)
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 5_000, BufferAheadMs: 5_000}))
+	require.Equal(t, "waiting", readHubEvent(t, host).Type)
+
+	// The guest never buffers; its disconnect must complete the quorum.
+	require.NoError(t, guest.Close())
+	for {
+		event := readHubEvent(t, host)
+		if event.Type == "state" {
+			require.True(t, event.State.Playing)
+			require.Equal(t, int64(5_000), event.State.PositionMs)
+			break
+		}
+		require.Equal(t, "members", event.Type)
+	}
+}
+
+func TestHubGatingSettingIsControllerOnly(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	disabled := false
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "gating", Enabled: &disabled}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 7}))
+	require.Equal(t, "pong", readHubEvent(t, guest).Type)
+	stored, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.True(t, stored.GatingEnabled)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "gating", Enabled: &disabled}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		event := readHubEvent(t, conn)
+		require.Equal(t, "gating", event.Type)
+		require.NotNil(t, event.Gating)
+		require.False(t, *event.Gating)
+	}
+	stored, err = store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.False(t, stored.GatingEnabled)
+
+	// With gating off, play with several members broadcasts immediately.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 1_000, Rate: 1}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		event := readHubEvent(t, conn)
+		require.Equal(t, "state", event.Type)
+		require.True(t, event.State.Playing)
+	}
+}
+
+func TestHubGateSkipsScreenRooms(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "ready", SourceKind: room.SourceScreen, ControllerID: "m1",
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	// A live screen has nothing to buffer, so play is never gated.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 0, Rate: 1}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		event := readHubEvent(t, conn)
+		require.Equal(t, "state", event.Type)
+		require.True(t, event.State.Playing)
+	}
+}

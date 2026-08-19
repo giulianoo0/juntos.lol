@@ -134,6 +134,53 @@ describe('useSync', () => {
     unmount()
   })
 
+  it('reports readiness from the buffered range immediately when the room starts waiting', () => {
+    const video = document.createElement('video')
+    Object.defineProperty(video, 'paused', { value: true, configurable: true })
+    video.play = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(video, 'duration', { value: 100, configurable: true })
+    Object.defineProperty(video, 'buffered', {
+      configurable: true,
+      value: { length: 1, start: () => 0, end: () => 5 },
+    })
+    video.currentTime = 1
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+
+    act(() => socket.receive({
+      type: 'waiting',
+      targetMs: 1_000,
+      readiness: [{ memberId: 'm1', bufferAheadMs: 0, ready: false }],
+    }))
+
+    expect(result.current.waiting).toEqual({
+      targetMs: 1_000,
+      readiness: [{ memberId: 'm1', bufferAheadMs: 0, ready: false }],
+    })
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: 'ready', positionMs: 1_000, bufferAheadMs: 4_000, stalled: false,
+    }))
+
+    // Any state broadcast ends the wait, released or withdrawn alike.
+    act(() => socket.receive({ type: 'state', state: { playing: true, positionMs: 1_000, rate: 1, serverTimeMs: 100_000 } }))
+    expect(result.current.waiting).toBeNull()
+    unmount()
+  })
+
+  it('tracks the room gating setting from welcome and gating broadcasts', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+
+    expect(result.current.gatingEnabled).toBe(true)
+    act(() => socket.receive({ type: 'welcome', memberId: 'm1', members: [], gating: false }))
+    expect(result.current.gatingEnabled).toBe(false)
+    act(() => socket.receive({ type: 'gating', gating: true }))
+    expect(result.current.gatingEnabled).toBe(true)
+    unmount()
+  })
+
   it('reports no change when the roster is rebroadcast unchanged', () => {
     const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
