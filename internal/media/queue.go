@@ -215,12 +215,11 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		return false
 	}
 
-	// A completed upload may already have a playable progressive preview. Keep
-	// that preview visible while the authoritative VOD remux runs, including
-	// when this job is being recovered after a process restart.
-	// A completed upload may already have a playable progressive preview.
-	// Whether it does is recorded in the published playlists, not on disk:
-	// the segments themselves have been handed to the bucket and deleted.
+	// A completed upload may already have a playable progressive preview, which
+	// stays visible while the authoritative remux runs — including when this
+	// job is being recovered after a restart. Whether there is one is recorded
+	// in the published playlists, not on disk: the segments themselves have
+	// been handed to the bucket and deleted.
 	previewPublished, err := q.store.HasPlaylist(ctx, roomID, "master.m3u8")
 	if err != nil {
 		if ctx.Err() == nil {

@@ -46,6 +46,14 @@ func (f *Fake) Put(_ context.Context, key string, reader io.Reader, _ int64,
 	return nil
 }
 
+// SetFailOn changes the refusal predicate. It exists so a test can flip the
+// bucket's behaviour while a publisher goroutine is reading it.
+func (f *Fake) SetFailOn(failOn func(key string) bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.FailOn = failOn
+}
+
 // Get returns a stored object and whether it exists.
 func (f *Fake) Get(key string) (FakeObject, bool) {
 	f.mu.Lock()

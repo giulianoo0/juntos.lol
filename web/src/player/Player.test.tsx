@@ -44,7 +44,9 @@ describe('Player', () => {
     )
   })
 
-  it('falls back to this server for a room answered before the move', () => {
+  it('offers no subtitles at all when the room names no bucket', () => {
+    // This server stopped serving subtitle files, so a track without a base
+    // would be one the browser can never load.
     const withSubs: RoomInfo = {
       ...room,
       subtitleTracks: [{ index: 0, language: 'por', title: 'Legendas', codec: 'webvtt' }],
@@ -53,9 +55,7 @@ describe('Player', () => {
       <Player room={withSubs} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
     )
 
-    expect(container.querySelector('track')?.getAttribute('src')).toBe(
-      '/media/r1/subs/sub_0_por.vtt?g=0&s=0',
-    )
+    expect(container.querySelector('track')).toBeNull()
   })
 
   it('starts media inside the controller click before sending synchronized play', async () => {

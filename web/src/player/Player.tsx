@@ -48,13 +48,13 @@ interface BufferedRange {
 // subtitleSource points a track at the bucket the subtitle files live in. The
 // version query string stays: the file keeps its name as more cues are
 // extracted, so only a changed URL makes the browser refetch it.
+//
+// Without a base there is nowhere to point: this server no longer serves
+// subtitle files. The caller renders no tracks at all rather than offering
+// ones that cannot load.
 function subtitleSource(room: RoomInfo, index: number, language: string): string {
-  const name = `sub_${index}_${safeLanguage(language)}.vtt`
   const version = `?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`
-  if (!room.mediaBaseUrl) {
-    return `/media/${encodeURIComponent(room.id)}/subs/${name}${version}`
-  }
-  return `${room.mediaBaseUrl}/subs/${name}${version}`
+  return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
 export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0 }: PlayerProps) {
@@ -588,7 +588,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           setBufferedRanges(readBufferedRanges(event.currentTarget))
         }}
       >
-        {(room.subtitleTracks ?? []).map((track, index) => (
+        {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track, index) => (
           <track
             key={`${track.index}-${track.language}`}
             kind="subtitles"

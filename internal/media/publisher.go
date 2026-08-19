@@ -53,10 +53,17 @@ type Publisher struct {
 	store   *room.Store
 	bucket  objectstore.Store
 	baseURL string
+	// interval is how often Run publishes. Tests shorten it.
+	interval time.Duration
 }
 
 func NewPublisher(store *room.Store, bucket objectstore.Store, mediaPublicURL string) *Publisher {
-	return &Publisher{store: store, bucket: bucket, baseURL: strings.TrimSuffix(mediaPublicURL, "/")}
+	return &Publisher{
+		store:    store,
+		bucket:   bucket,
+		baseURL:  strings.TrimSuffix(mediaPublicURL, "/"),
+		interval: PublishInterval,
+	}
 }
 
 func hlsPrefix(roomID string) string  { return "rooms/" + roomID + "/hls/" }
@@ -97,6 +104,13 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 				continue
 			}
 			if err != nil {
+				// Whatever already reached the bucket is recorded before
+				// giving up, so a retry pays for the remaining objects rather
+				// than for all of them again.
+				if markErr := p.store.MarkPublished(ctx, roomID, uploaded...); markErr != nil {
+					slog.WarnContext(ctx, "record published objects after upload failure",
+						"room_id", roomID, "error", markErr)
+				}
 				return err
 			}
 			published[object] = struct{}{}
@@ -125,8 +139,9 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 // Run publishes on a tick until ctx ends, then makes one final pass so an
 // encode that stopped between ticks still lands whole.
 func (p *Publisher) Run(ctx context.Context, roomID, hlsDir string, patterns []string) {
-	ticker := time.NewTicker(PublishInterval)
+	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
+	failing := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -139,11 +154,22 @@ func (p *Publisher) Run(ctx context.Context, roomID, hlsDir string, patterns []s
 			}
 			return
 		case <-ticker.C:
-			if err := p.Publish(ctx, roomID, hlsDir, patterns); err != nil {
-				if ctx.Err() == nil {
-					slog.WarnContext(ctx, "media publish failed", "room_id", roomID, "error", err)
-				}
-				return
+			err := p.Publish(ctx, roomID, hlsDir, patterns)
+			if err != nil && ctx.Err() == nil && failing == 0 {
+				// Only the start of a run of failures is logged. Giving up
+				// here would freeze a preview at its last confirmed segment
+				// over one blip, and nothing downstream would notice: this
+				// loop is best effort, and the pass that decides whether the
+				// room has media runs after the encode.
+				slog.WarnContext(ctx, "media publish failing", "room_id", roomID, "error", err)
+			}
+			switch {
+			case err != nil:
+				failing++
+			case failing > 0:
+				slog.InfoContext(ctx, "media publish recovered",
+					"room_id", roomID, "failed_attempts", failing)
+				failing = 0
 			}
 		}
 	}

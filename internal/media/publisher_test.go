@@ -1,6 +1,7 @@
 package media
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,7 +137,7 @@ func TestPublisherLeavesTheMasterPointingAtVariantPlaylists(t *testing.T) {
 func TestPublisherFailsWhenTheBucketRefusesASegment(t *testing.T) {
 	publisher, bucket, store, hlsDir := newPublisherFixture(t)
 	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 2, 2, true)
-	bucket.FailOn = func(key string) bool { return strings.HasSuffix(key, segmentName(1)) }
+	bucket.SetFailOn(func(key string) bool { return strings.HasSuffix(key, segmentName(1)) })
 
 	err := publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"})
 
@@ -152,7 +153,7 @@ func TestPublisherSkipsObjectsAlreadyInTheBucket(t *testing.T) {
 
 	// The segments are gone from disk now, so a second pass that tried to
 	// re-upload them would fail rather than quietly repeat work.
-	bucket.FailOn = func(string) bool { return true }
+	bucket.SetFailOn(func(string) bool { return true })
 	require.NoError(t, publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
 }
 
@@ -180,4 +181,48 @@ func TestPublisherSubtitleDirectoryMayNotExistYet(t *testing.T) {
 // subject is something else.
 func testPublisher(store *room.Store) *Publisher {
 	return NewPublisher(store, objectstore.NewFake(), publicBase)
+}
+
+func TestPublisherKeepsGoingAfterAFailedPass(t *testing.T) {
+	// Giving up on the first failure would freeze a preview at its last
+	// confirmed segment for the rest of the encode, and nothing downstream
+	// would notice: this loop only logs.
+	publisher, bucket, store, hlsDir := newPublisherFixture(t)
+	publisher.interval = 5 * time.Millisecond
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 2, 2, true)
+	bucket.SetFailOn(func(string) bool { return true })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		publisher.Run(ctx, "r1", hlsDir, []string{"preview_stream_*.m3u8"})
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+
+	time.Sleep(30 * time.Millisecond)
+	_, err := store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
+	require.ErrorIs(t, err, room.ErrNotFound, "a refusing bucket publishes nothing")
+
+	bucket.SetFailOn(nil)
+
+	require.Eventually(t, func() bool {
+		_, err := store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
+		return err == nil
+	}, 2*time.Second, 10*time.Millisecond, "a recovered bucket should be published to again")
+}
+
+func TestPublisherRecordsWhatReachedTheBucketBeforeFailing(t *testing.T) {
+	// A retry should pay for the objects still missing, not for all of them.
+	publisher, bucket, store, hlsDir := newPublisherFixture(t)
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 2, 2, true)
+	bucket.SetFailOn(func(key string) bool { return strings.HasSuffix(key, segmentName(1)) })
+
+	require.Error(t, publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
+
+	published, err := store.Published(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Contains(t, published, "preview_init_0.mp4")
+	require.Contains(t, published, segmentName(0))
+	require.NotContains(t, published, segmentName(1))
 }
