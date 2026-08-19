@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
@@ -369,4 +369,112 @@ describe('RoomPage waiting screen', () => {
     await waitFor(() => expect(screen.getByText('40.0 MB / 100.0 MB')).toBeInTheDocument(),
       { timeout: 6000 })
   }, 10_000)
+})
+
+describe('RoomPage waiting panel', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('ss.nickname', 'Giuli')
+    vi.clearAllMocks()
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({
+        id: 'abc123', fileName: 'movie.mkv', status: 'ready',
+        sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+        audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+        memberCount: 2, expiresAt: '2099-01-01T00:00:00Z',
+      }),
+    }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  // Presence toasts are role=status too, so the panel is found by its own
+  // heading rather than by role alone.
+  const waitingPanel = async () => {
+    const heading = await screen.findByText(/everyone to buffer|todo mundo/i)
+    return heading.closest('.waiting-panel') as HTMLElement
+  }
+
+  const joinAndWait = (memberId: string, readiness: Array<Record<string, unknown>>) => {
+    act(() => {
+      FakeWebSocket.instances[0].onmessage?.({
+        data: JSON.stringify({
+          type: 'welcome', memberId, controllerId: 'm1', capability: 'cap-token',
+          members: [
+            { id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' },
+            { id: 'm2', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' },
+          ],
+          state: { playing: false, positionMs: 30000, rate: 1, serverTimeMs: 0 },
+        }),
+      })
+    })
+    act(() => {
+      FakeWebSocket.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'waiting', targetMs: 30000, readiness }),
+      })
+    })
+  }
+
+  it('offers Ignore to the controller for whoever is holding the room up', async () => {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    joinAndWait('m1', [
+      { memberId: 'm1', bufferAheadMs: 5000, ready: true },
+      { memberId: 'm2', bufferAheadMs: 0, ready: false, stalled: true },
+    ])
+
+    const panel = await waitingPanel()
+    expect(within(panel).getByText('Ana')).toBeInTheDocument()
+    fireEvent.click(within(panel).getByRole('button', { name: /ignore|ignorar/i }))
+
+    expect(FakeWebSocket.instances[0].send).toHaveBeenCalledWith(
+      JSON.stringify({ type: 'ignore', targetId: 'm2' }),
+    )
+  })
+
+  it('does not offer Ignore for members who are already ready', async () => {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    joinAndWait('m1', [
+      { memberId: 'm1', bufferAheadMs: 5000, ready: true },
+      { memberId: 'm2', bufferAheadMs: 5000, ready: true },
+    ])
+
+    const panel = await waitingPanel()
+    expect(within(panel).getByText('Ana')).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: /ignore|ignorar/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps Ignore away from viewers', async () => {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    // m2 is a viewer; the controller is m1.
+    joinAndWait('m2', [
+      { memberId: 'm1', bufferAheadMs: 0, ready: false, stalled: true },
+      { memberId: 'm2', bufferAheadMs: 5000, ready: true },
+    ])
+
+    const panel = await waitingPanel()
+    expect(within(panel).getByText('Giuli')).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: /ignore|ignorar/i })).not.toBeInTheDocument()
+  })
+
+  it('shows an ignored member as watching separately, with no button', async () => {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    joinAndWait('m1', [
+      { memberId: 'm1', bufferAheadMs: 5000, ready: true },
+      { memberId: 'm2', bufferAheadMs: 0, ready: true, stalled: true, ignored: true },
+    ])
+
+    const panel = await waitingPanel()
+    expect(within(panel).getByText(/watching on their own|assistindo por conta/i)).toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: /ignore|ignorar/i })).not.toBeInTheDocument()
+  })
 })

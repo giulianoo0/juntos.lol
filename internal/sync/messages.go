@@ -49,4 +49,7 @@ type MemberReadiness struct {
 	BufferAheadMs int64  `json:"bufferAheadMs"`
 	Stalled       bool   `json:"stalled,omitempty"`
 	Ready         bool   `json:"ready"`
+	// Ignored marks a member the controller excused: the room no longer waits
+	// for them, and they are shown as watching on their own.
+	Ignored bool `json:"ignored,omitempty"`
 }

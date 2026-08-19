@@ -18,6 +18,12 @@ const (
 	// gatePositionSlackMs is how far a report's position may sit from the
 	// target before its buffer describes the wrong part of the media.
 	gatePositionSlackMs int64 = 2000
+	// stallRegateCooldown is how long the room refuses to stop for a stall
+	// again after releasing. Without it, one viewer whose connection cannot
+	// keep up would pause everyone every few seconds, which is worse for the
+	// room than the desync it is trying to prevent — and leaves no calm moment
+	// for the controller to reach for Ignore.
+	stallRegateCooldown = 20 * time.Second
 )
 
 // memberReport is the latest readiness a client reported. Only the room
@@ -110,6 +116,11 @@ func (r *roomConn) evaluateGate() bool {
 }
 
 func (r *roomConn) clientReady(connected *client) bool {
+	// An ignored member is deliberately not waited for. They keep watching at
+	// their own pace; the room stops holding still for them.
+	if _, ignored := r.ignored[connected.id]; ignored {
+		return true
+	}
 	report := connected.report
 	if !report.received || report.stalled {
 		return false
@@ -129,6 +140,9 @@ func (r *roomConn) releaseGate() {
 	}
 	r.gate = nil
 	gate.timer.Stop()
+	// Whatever this gate was for, the room has just started moving again and
+	// should be left alone for a while.
+	r.stallGateReadyAt = time.Now().Add(r.hub.stallCooldown)
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
 	state, err := r.hub.store.GetState(ctx, r.id)
@@ -168,11 +182,13 @@ func (r *roomConn) broadcastWaiting() {
 	readiness := make([]MemberReadiness, 0, len(members))
 	for _, member := range members {
 		connected := r.clients[member.ID]
+		_, ignored := r.ignored[member.ID]
 		readiness = append(readiness, MemberReadiness{
 			MemberID:      member.ID,
 			BufferAheadMs: connected.report.bufferAheadMs,
 			Stalled:       connected.report.stalled,
 			Ready:         r.clientReady(connected),
+			Ignored:       ignored,
 		})
 	}
 	r.broadcast(Outbound{Type: "waiting", TargetMs: r.gate.targetMs, Readiness: readiness})
@@ -198,5 +214,79 @@ func (r *roomConn) handleGatingToggle(sender *client, message Inbound) {
 	// A pending start has nothing left to wait for once gating is off.
 	if !enabled {
 		r.releaseGate()
+	}
+}
+
+// stalledMember names a connected member whose playback has run dry, or "" if
+// everyone is keeping up. Ignored members never qualify: the room already
+// decided not to wait for them.
+func (r *roomConn) stalledMember() string {
+	for id, connected := range r.clients {
+		if _, ignored := r.ignored[id]; ignored {
+			continue
+		}
+		if connected.report.received && connected.report.stalled {
+			return id
+		}
+	}
+	return ""
+}
+
+// gateOnStall stops the room when someone's playback runs dry mid-episode.
+//
+// Until now the room only waited for people at a play or a seek. Someone whose
+// buffer emptied ten minutes in was simply left behind, watching alone, and
+// nobody else knew. This is the same gate, opened at wherever the room
+// currently is.
+func (r *roomConn) gateOnStall(ctx context.Context, now int64) {
+	if r.gate != nil || !r.gating || len(r.clients) < 2 {
+		return
+	}
+	if !r.stallGateReadyAt.IsZero() && time.Now().Before(r.stallGateReadyAt) {
+		return
+	}
+	if r.stalledMember() == "" {
+		return
+	}
+
+	state, err := r.hub.store.GetState(ctx, r.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "load state for stall gate failed", "room_id", r.id, "error", err)
+		return
+	}
+	// Only a room that is actually playing can be interrupted by a stall.
+	if !state.Playing {
+		return
+	}
+	slog.InfoContext(ctx, "room stopped for a stalled viewer", "room_id", r.id)
+	r.openGate(ctx, nil, ExpectedPositionMs(state, now), state, now)
+}
+
+// handleIgnore drops a member from everything the room waits for. It is the
+// controller's escape hatch: one person on a hopeless connection would
+// otherwise hold the room still indefinitely, and the alternative — never
+// waiting — is the desync this exists to prevent.
+func (r *roomConn) handleIgnore(sender *client, message Inbound) {
+	if sender.id != r.controllerID || message.TargetID == "" {
+		return
+	}
+	// The controller cannot ignore themselves: they drive playback, so a room
+	// that stopped waiting for them would be waiting for nobody.
+	if message.TargetID == r.controllerID {
+		return
+	}
+	if _, connected := r.clients[message.TargetID]; !connected {
+		return
+	}
+	if r.ignored == nil {
+		r.ignored = make(map[string]struct{})
+	}
+	r.ignored[message.TargetID] = struct{}{}
+	slog.Info("member ignored for synchronized playback", "room_id", r.id, "member_id", message.TargetID)
+
+	// Ignoring is usually done to escape a gate that is stuck on this person,
+	// so the room should move the moment they stop counting.
+	if !r.evaluateGate() {
+		r.broadcastWaiting()
 	}
 }

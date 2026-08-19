@@ -203,3 +203,8 @@ h1, h2, p { margin-top: 0; }
 .build-info a:hover { color: var(--text); }
 .build-commit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: -.02em; }
 @media (max-width: 620px) { .build-commit { display: none; } }
+/* Someone the controller excused: still listed, so the room can see who is
+   watching separately, but visibly not part of what everyone waits for. */
+.waiting-row.is-ignored { opacity: .55; }
+.waiting-state { display: inline-flex; align-items: center; gap: 8px; }
+.waiting-state .ui-button { padding: 3px 8px; font-size: 11px; }

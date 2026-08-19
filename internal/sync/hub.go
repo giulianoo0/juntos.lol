@@ -40,6 +40,10 @@ type Hub struct {
 	upgrader    websocket.Upgrader
 	idleAfter   time.Duration
 	gateTimeout time.Duration
+	// stallCooldown is how long a room refuses to stop for a stall again after
+	// releasing. A field so tests can exercise the stall path without waiting
+	// out the real interval.
+	stallCooldown time.Duration
 
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
@@ -57,14 +61,20 @@ type roomConn struct {
 	controllerID string
 	// gating mirrors the persisted room setting so the welcome frame does not
 	// cost a store read. Only this connection's goroutine ever changes it.
-	gating     bool
-	gate       *playGate
-	nextMember int
-	clients    map[string]*client
-	register   chan joinRequest
-	unregister chan *client
-	inbound    chan clientInbound
-	updates    chan Outbound
+	gating bool
+	gate   *playGate
+	// ignored holds members the controller has excused from synchronized
+	// playback: the room neither waits for them nor stops when they stall.
+	ignored map[string]struct{}
+	// stallGateReadyAt is when the room may next stop for a stall, so one bad
+	// connection cannot pause everyone in a loop.
+	stallGateReadyAt time.Time
+	nextMember       int
+	clients          map[string]*client
+	register         chan joinRequest
+	unregister       chan *client
+	inbound          chan clientInbound
+	updates          chan Outbound
 }
 
 type joinRequest struct {
@@ -89,14 +99,15 @@ func NewHub(store *room.Store, cfg config.Config) *Hub {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Hub{
-		store:        store,
-		cfg:          cfg,
-		idleAfter:    time.Duration(cfg.RoomIdleMinutes) * time.Minute,
-		gateTimeout:  GateMaxWait,
-		rooms:        make(map[string]*roomConn),
-		capabilities: make(map[string]map[string]string),
-		ctx:          ctx,
-		cancel:       cancel,
+		store:         store,
+		cfg:           cfg,
+		idleAfter:     time.Duration(cfg.RoomIdleMinutes) * time.Minute,
+		gateTimeout:   GateMaxWait,
+		stallCooldown: stallRegateCooldown,
+		rooms:         make(map[string]*roomConn),
+		capabilities:  make(map[string]map[string]string),
+		ctx:           ctx,
+		cancel:        cancel,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: sameHostnameOrigin,
 		},
@@ -392,6 +403,10 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 		return
 	}
 	delete(r.clients, disconnected.id)
+	// Being ignored is a decision about a person in this room right now. If
+	// they come back — usually after fixing whatever was wrong — they rejoin
+	// as a full member rather than silently still excluded.
+	delete(r.ignored, disconnected.id)
 	r.hub.mu.Lock()
 	delete(r.hub.capabilities[r.id], disconnected.id)
 	r.hub.mu.Unlock()
@@ -443,11 +458,21 @@ func (r *roomConn) handleInbound(event clientInbound) {
 			stalled:       message.Stalled,
 			received:      true,
 		}
-		if r.gate != nil && !r.evaluateGate() {
-			r.broadcastWaiting()
+		if r.gate != nil {
+			if !r.evaluateGate() {
+				r.broadcastWaiting()
+			}
+			return
 		}
+		// Nobody is waiting yet, so this report is the room's only chance to
+		// notice that someone's playback has run dry mid-episode.
+		stallCtx, cancelStall := context.WithTimeout(r.hub.ctx, storeTimeout)
+		defer cancelStall()
+		r.gateOnStall(stallCtx, time.Now().UnixMilli())
 	case "gating":
 		r.handleGatingToggle(event.client, message)
+	case "ignore":
+		r.handleIgnore(event.client, message)
 	case "chat":
 		if !validChat(message.Text) {
 			r.send(event.client, Outbound{Type: "error", ErrCode: "invalid_chat"})

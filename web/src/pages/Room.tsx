@@ -323,7 +323,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             />
           )}
           {sync.waiting !== null && !isScreenRoom ? (
-            <WaitingPanel waiting={sync.waiting} members={sync.members} t={t} />
+            <WaitingPanel
+              waiting={sync.waiting}
+              members={sync.members}
+              isController={sync.isController}
+              selfId={sync.memberId}
+              onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
+              t={t}
+            />
           ) : null}
           <div className="presence-row">
             {sync.members.map((member) => (
@@ -377,9 +384,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 // While the server holds a gated start, everyone sees the same picture of who
 // is ready and who is still buffering, instead of a play that quietly ignores
 // the people it left behind.
-function WaitingPanel({ waiting, members, t }: {
+function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
   waiting: RoomWaiting
   members: Member[]
+  isController: boolean
+  selfId: string
+  onIgnore: (memberId: string) => void
   t: Translator
 }) {
   const names = new Map(members.map((member) => [member.id, member.nickname]))
@@ -387,9 +397,21 @@ function WaitingPanel({ waiting, members, t }: {
     <div className="waiting-panel raised" role="status">
       <strong>{t('room.waitingStart')}</strong>
       {waiting.readiness.map((member) => (
-        <span key={member.memberId} className={`waiting-row ${member.ready ? 'is-ready' : ''}`}>
+        <span key={member.memberId} className={`waiting-row ${member.ready ? 'is-ready' : ''} ${member.ignored ? 'is-ignored' : ''}`}>
           {names.get(member.memberId) ?? member.memberId}
-          <span>{member.ready ? t('room.waitingReady') : t('room.waitingBuffering')}</span>
+          <span className="waiting-state">
+            {member.ignored
+              ? t('room.waitingIgnored')
+              : member.ready ? t('room.waitingReady') : t('room.waitingBuffering')}
+            {/* Only offered for whoever is actually holding the room up, and
+                never for the controller themselves: a room that stopped
+                waiting for the person driving it would wait for nobody. */}
+            {isController && !member.ignored && !member.ready && member.memberId !== selfId ? (
+              <Button variant="ghost" size="small" onClick={() => onIgnore(member.memberId)}>
+                {t('room.ignore')}
+              </Button>
+            ) : null}
+          </span>
         </span>
       ))}
     </div>

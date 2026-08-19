@@ -40,6 +40,9 @@ export interface MemberReadiness {
   bufferAheadMs: number
   stalled?: boolean
   ready: boolean
+  // Whether the controller excused this member: the room stopped waiting for
+  // them and they watch at their own pace.
+  ignored?: boolean
 }
 
 // The pending gated start the server is holding: where playback will begin

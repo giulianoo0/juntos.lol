@@ -96,6 +96,8 @@ export const en: Record<string, string> = {
   'room.unplayable': 'Your browser cannot decode this video. Chrome, Edge or Safari should play it.',
   'room.gating': 'Force sync',
   'room.waitingStart': 'Waiting for everyone to buffer',
+  'room.ignore': 'Ignore',
+  'room.waitingIgnored': 'watching on their own',
   'room.waitingReady': 'Ready',
   'room.waitingBuffering': 'Buffering',
   'room.liveInSync': 'In sync with the room',

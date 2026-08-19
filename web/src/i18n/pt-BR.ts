@@ -96,6 +96,8 @@ export const ptBR: Record<string, string> = {
   'room.unplayable': 'Seu navegador não consegue decodificar este vídeo. Chrome, Edge ou Safari devem conseguir.',
   'room.gating': 'Forçar sincronizar',
   'room.waitingStart': 'Esperando todo mundo carregar',
+  'room.ignore': 'Ignorar',
+  'room.waitingIgnored': 'assistindo por conta',
   'room.waitingReady': 'Pronto',
   'room.waitingBuffering': 'Carregando',
   'room.liveInSync': 'Sincronizado com a sala',

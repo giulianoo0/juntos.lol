@@ -410,3 +410,127 @@ func TestHubGateSkipsScreenRooms(t *testing.T) {
 		require.True(t, event.State.Playing)
 	}
 }
+
+// startedRoom brings a room to playing with two members, which is the state a
+// mid-episode stall has to interrupt.
+func startedRoom(t *testing.T, server *httptest.Server) (host, guest *websocket.Conn) {
+	t.Helper()
+	host = dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest = dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 30_000, Rate: 1}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		require.Equal(t, "state", readHubEvent(t, conn).Type)
+		require.Equal(t, "waiting", readHubEvent(t, conn).Type)
+	}
+	// Both buffer the start, which releases the gate.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 30_000, BufferAheadMs: 5_000}))
+	require.Equal(t, "waiting", readHubEvent(t, host).Type)
+	require.Equal(t, "waiting", readHubEvent(t, guest).Type)
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_000, BufferAheadMs: 5_000}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		released := readHubEvent(t, conn)
+		require.Equal(t, "state", released.Type)
+		require.True(t, released.State.Playing)
+	}
+	return host, guest
+}
+
+func TestHubStopsTheRoomWhenSomeoneStallsMidPlayback(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	// The cooldown only exists to stop a loop; it must not stop the first one.
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	host, guest := startedRoom(t, server)
+
+	// The guest's buffer runs dry ten minutes in. Until now this left them
+	// watching alone with nobody else aware of it.
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 45_000, BufferAheadMs: 0, Stalled: true}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		parked := readHubEvent(t, conn)
+		require.Equal(t, "state", parked.Type, "the room did not stop for the stall")
+		require.False(t, parked.State.Playing)
+		waiting := readHubEvent(t, conn)
+		require.Equal(t, "waiting", waiting.Type)
+	}
+}
+
+func TestHubIgnoreLetsTheRoomCarryOnWithoutTheStalledMember(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	host, guest := startedRoom(t, server)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 45_000, BufferAheadMs: 0, Stalled: true}))
+	var target int64
+	for _, conn := range []*websocket.Conn{host, guest} {
+		require.Equal(t, "state", readHubEvent(t, conn).Type)
+		waiting := readHubEvent(t, conn)
+		require.Equal(t, "waiting", waiting.Type)
+		target = waiting.TargetMs
+	}
+	// The host has buffer at wherever the room stopped; the guest is what it
+	// is stuck on.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: target, BufferAheadMs: 5_000}))
+	require.Equal(t, "waiting", readHubEvent(t, host).Type)
+	require.Equal(t, "waiting", readHubEvent(t, guest).Type)
+
+	// One person on a hopeless connection would otherwise hold everyone still.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ignore", TargetID: "m2"}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		released := readHubEvent(t, conn)
+		require.Equal(t, "state", released.Type, "ignoring did not restart the room")
+		require.True(t, released.State.Playing)
+	}
+}
+
+func TestHubIgnoreIsTheControllersAlone(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	host, guest := startedRoom(t, server)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 45_000, BufferAheadMs: 0, Stalled: true}))
+	var target int64
+	for _, conn := range []*websocket.Conn{host, guest} {
+		require.Equal(t, "state", readHubEvent(t, conn).Type)
+		waiting := readHubEvent(t, conn)
+		require.Equal(t, "waiting", waiting.Type)
+		target = waiting.TargetMs
+	}
+
+	// A viewer excusing themselves would defeat the whole mechanism.
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ignore", TargetID: "m2"}))
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: target, BufferAheadMs: 5_000}))
+
+	waiting := readHubEvent(t, host)
+	require.Equal(t, "waiting", waiting.Type, "the room resumed on a viewer's say-so")
+	byMember := map[string]MemberReadiness{}
+	for _, member := range waiting.Readiness {
+		byMember[member.MemberID] = member
+	}
+	require.False(t, byMember["m2"].Ignored)
+	require.False(t, byMember["m2"].Ready)
+}
+
+func TestHubDoesNotStopForAStalledMemberAlone(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 10_000, Rate: 1}))
+	playing := readHubEvent(t, host)
+	require.Equal(t, "state", playing.Type)
+	require.True(t, playing.State.Playing, "a lone viewer was gated")
+
+	// Alone in the room there is nobody to wait with, so a stall is nobody
+	// else's problem and must not pause anything.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 12_000, BufferAheadMs: 0, Stalled: true}))
+	require.NoError(t, host.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 5}))
+	require.Equal(t, "pong", readHubEvent(t, host).Type, "the room reacted to a solo stall")
+}
