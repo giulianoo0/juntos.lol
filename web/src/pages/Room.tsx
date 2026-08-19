@@ -206,18 +206,46 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [preparing, room.id])
 
   // Media and subtitle updates carry the current media status; each signal
-  // means fresh room metadata is available.
+  // means fresh room metadata is available. The refetch in flight is never
+  // cancelled by the next signal: during a download the signals arrive every
+  // second or so, and on a connection where each round trip is slower than
+  // that, cancelling would throw away every response and freeze the room —
+  // and its subtitles — at whatever the viewer joined with. Signals that land
+  // mid-fetch coalesce into a single trailing refetch instead.
+  const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
   useEffect(() => {
-    if (sync.roomVersion === 0) return
+    const state = refetch.current
+    state.latest = sync.roomVersion
+    if (sync.roomVersion === 0 || state.running) return
+    state.running = true
     const controller = new AbortController()
-    void fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal }).then(async (response) => {
-      if (response.ok) setLiveRoom(await response.json() as RoomInfo)
-    }).catch((error: unknown) => {
-      if (error instanceof DOMException && error.name === 'AbortError') return
-      console.error('room refetch failed', error)
-    })
-    return () => controller.abort()
+    state.controller = controller
+    void (async () => {
+      try {
+        let fetched = -1
+        while (fetched !== state.latest) {
+          fetched = state.latest
+          const response = await fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
+          if (response.ok) setLiveRoom(await response.json() as RoomInfo)
+        }
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          console.error('room refetch failed', error)
+        }
+      } finally {
+        state.running = false
+        state.controller = null
+      }
+    })()
   }, [sync.roomVersion, room.id])
+  useEffect(() => {
+    const state = refetch.current
+    return () => {
+      state.controller?.abort()
+      state.running = false
+      state.latest = 0
+    }
+  }, [room.id])
 
   useEffect(() => {
     if (chatOpen) setReadMark(sync.messages.length)

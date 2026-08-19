@@ -112,6 +112,58 @@ describe('RoomPage join screen', () => {
   })
 })
 
+describe('RoomPage refetch under version churn', () => {
+  const base = {
+    id: 'abc123', fileName: 'movie.mkv', status: 'ready',
+    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('ss.nickname', 'Giuli')
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('lands a slow refetch even when more version signals arrive meanwhile', async () => {
+    // During a torrent download the server announces fresh metadata every
+    // second or so. On a connection where each round trip is slower than that
+    // cadence, a refetch that gets cancelled by the next signal means no
+    // response ever lands and the room stays frozen at its join-time state.
+    const slow: Array<(json: unknown) => void> = []
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => {
+      calls += 1
+      if (calls === 1) return Promise.resolve({ ok: true, status: 200, json: async () => base })
+      return new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        slow.push((json) => resolve({ ok: true, status: 200, json: async () => json }))
+      })
+    }))
+    renderRoom()
+    await screen.findByText('movie.mkv')
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    const socket = FakeWebSocket.instances[0]
+    const signal = () => act(() => { socket.onmessage?.({ data: JSON.stringify({ type: 'roomUpdated' }) }) })
+
+    signal()
+    await waitFor(() => expect(slow.length).toBeGreaterThan(0))
+    // The next signal arrives while that refetch is still in flight.
+    signal()
+    // The slow response finally lands and must not have been thrown away.
+    act(() => slow[0]({ ...base, fileName: 'updated.mkv' }))
+
+    await screen.findByText('updated.mkv')
+  })
+})
+
 describe('RoomPage source swap', () => {
   beforeEach(() => {
     localStorage.clear()
