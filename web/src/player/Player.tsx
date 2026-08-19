@@ -21,6 +21,11 @@ interface PlayerProps {
   serverOffsetMs?: number
 }
 
+// TAP_TOGGLE_DELAY_MS is how long a tap waits to see whether it is really the
+// first half of a double click. Long enough for a deliberate double click,
+// short enough that pausing still feels like it happened on contact.
+const TAP_TOGGLE_DELAY_MS = 200
+
 const SEEK_STEP_SECONDS = 5
 const SEEK_STEP_LARGE_SECONDS = 10
 const VOLUME_STEP = 0.05
@@ -353,6 +358,19 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     })
   }, [isController, send, videoRef])
 
+  // A double click fullscreens the player, and its first click is
+  // indistinguishable from a single one until the second arrives. Acting
+  // immediately would toggle twice and send a pause and a play over the sync
+  // protocol, blinking playback for everyone in the room over a gesture that
+  // was never about playback.
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPendingTap = useCallback(() => {
+    if (tapTimerRef.current === null) return
+    clearTimeout(tapTimerRef.current)
+    tapTimerRef.current = null
+  }, [])
+  useEffect(() => cancelPendingTap, [cancelPendingTap])
+
   const togglePlay = useCallback(() => {
     const video = videoRef.current
     if (!video) return
@@ -546,10 +564,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       onPointerDown={() => revealControls(playing)}
       onFocusCapture={() => revealControls(false)}
       onBlurCapture={() => revealControls(playing)}
+      onClick={(event) => {
+        // The control bar has its own buttons; a click there is theirs.
+        if ((event.target as HTMLElement).closest('.player-controls')) return
+        cancelPendingTap()
+        tapTimerRef.current = setTimeout(() => {
+          tapTimerRef.current = null
+          togglePlay()
+          showFeedback(videoRef.current?.paused ? <Play size={26} /> : <Pause size={26} />)
+        }, TAP_TOGGLE_DELAY_MS)
+      }}
       onDoubleClick={(event) => {
         // Ignore double clicks aimed at the control bar, where they would
         // otherwise fullscreen the player while someone is dragging a slider.
         if ((event.target as HTMLElement).closest('.player-controls')) return
+        cancelPendingTap()
         toggleFullscreen()
       }}
     >

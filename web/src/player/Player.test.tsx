@@ -25,6 +25,12 @@ const room: RoomInfo = {
   expiresAt: new Date(Date.now() + 60_000).toISOString(),
 }
 
+// playing marks one element as mid-playback. Defined on the instance rather
+// than the prototype, so it cannot leak into the next test.
+function playing(video: HTMLVideoElement) {
+  Object.defineProperty(video, 'paused', { configurable: true, value: false })
+}
+
 afterEach(() => vi.restoreAllMocks())
 
 describe('Player', () => {
@@ -215,6 +221,59 @@ describe('Player', () => {
     fireEvent.durationChange(video)
 
     expect(screen.getByText('0:00 / 0:42')).toBeInTheDocument()
+  })
+
+  it('pauses when the video is tapped', () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    render(<Player room={room} isController videoRef={videoRef} send={send} t={t} />)
+    playing(videoRef.current!)
+
+    fireEvent.click(videoRef.current!)
+    act(() => void vi.advanceTimersByTime(250))
+
+    expect(pause).toHaveBeenCalledOnce()
+    expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 0 }))
+    vi.useRealTimers()
+  })
+
+  it('does not touch playback when the tap turns out to be a double click', () => {
+    // Acting on the first click would pause and then play again, sending both
+    // over the sync protocol and blinking playback for the whole room over a
+    // gesture that was only ever about fullscreen.
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: requestFullscreen })
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    render(<Player room={room} isController videoRef={videoRef} send={send} t={t} />)
+    playing(videoRef.current!)
+
+    fireEvent.click(videoRef.current!)
+    fireEvent.doubleClick(videoRef.current!)
+    act(() => void vi.advanceTimersByTime(250))
+
+    expect(pause).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+
+  it('leaves a click on the control bar to its own buttons', () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    vi.useFakeTimers()
+    const { container } = render(
+      <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+
+    fireEvent.click(container.querySelector('input[aria-label="Seek"]')!)
+    act(() => void vi.advanceTimersByTime(250))
+
+    expect(play).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 
   it('opens fullscreen on a double click on the video', () => {
