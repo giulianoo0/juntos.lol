@@ -351,25 +351,6 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
           onChange={(event) => seek(Number(event.target.value))}
         />
         <span className="timecode">{formatTime(currentTime)} / {formatTime(duration)}</span>
-        <div className="volume-control">
-          <button
-            className="volume-button"
-            aria-label={muteLabel}
-            title={`${muteLabel} (M)`}
-            onClick={toggleMute}
-            onPointerUp={(event) => event.currentTarget.blur()}
-          >{volumeIcon(muted ? 0 : volume, 16)}</button>
-          <input
-            className="volume-range"
-            aria-label={t('room.volume')}
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={muted ? 0 : volume}
-            onChange={(event) => applyVolume(Number(event.target.value))}
-          />
-        </div>
         {audioTracks.length > 1 ? (
           <label>{t('room.audio')}
             <select onChange={(event) => { if (hlsRef.current) hlsRef.current.audioTrack = Number(event.target.value) }}>
@@ -390,6 +371,27 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
             </select>
           </label>
         ) : null}
+        <div className="volume-control">
+          <button
+            className="volume-button"
+            aria-label={muteLabel}
+            title={`${muteLabel} (M)`}
+            onClick={toggleMute}
+            onPointerUp={(event) => event.currentTarget.blur()}
+          >{volumeIcon(muted ? 0 : volume, 16)}</button>
+          <div className="volume-panel">
+            <input
+              className="volume-range"
+              aria-label={t('room.volume')}
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={muted ? 0 : volume}
+              onChange={(event) => applyVolume(Number(event.target.value))}
+            />
+          </div>
+        </div>
         <button
           className="fullscreen-button"
           aria-label={fullscreenLabel}

@@ -199,7 +199,7 @@ export function Home() {
           onDrop={onDrop}
         >
           <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
-          <Upload className="drop-icon" size={30} aria-hidden="true" />
+          <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
           <strong>{t('home.drop')}</strong>
           <span>{t('home.dropHint')}</span>
           <div className="drop-actions">
