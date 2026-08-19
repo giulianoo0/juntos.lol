@@ -305,4 +305,20 @@ describe('Player HLS lifecycle', () => {
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=2')
     expect(textTracks[0].mode).toBe('showing')
   })
+
+  it('replaces the track element when the subtitles grow, so the browser reloads the cues', async () => {
+    const subtitleTracks = [{ index: 0, language: 'en', title: 'English', codec: 'webvtt' }]
+    const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
+    const before = view.container.querySelector('track')
+
+    // Browsers do not reliably refetch a <track> whose src attribute merely
+    // changed: the cue list loaded first stays. Only a fresh element makes the
+    // new version's cues reach a viewer who joined while extraction ran.
+    view.rerender(
+      <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    const after = view.container.querySelector('track')
+    expect(after).not.toBeNull()
+    expect(after).not.toBe(before)
+  })
 })

@@ -635,7 +635,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       >
         {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track, index) => (
           <track
-            key={`${track.index}-${track.language}`}
+            // The versions are in the key on purpose: browsers do not reliably
+            // refetch a <track> whose src attribute merely changed, so a grown
+            // subtitle file only reaches the viewer as a fresh element.
+            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.subsVersion ?? 0}`}
             kind="subtitles"
             src={subtitleSource(room, index, track.language)}
             srcLang={track.language || 'und'}
