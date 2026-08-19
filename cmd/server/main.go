@@ -15,6 +15,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/torrent"
@@ -34,12 +35,23 @@ func main() {
 	rdb := redis.NewClient(opts)
 	store := room.NewStore(rdb, time.Duration(cfg.RoomTTLHours)*time.Hour)
 
+	bucket, err := objectstore.NewR2(objectstore.R2Config{
+		AccountID: cfg.R2AccountID,
+		Bucket:    cfg.R2Bucket,
+		AccessKey: cfg.R2AccessKeyID,
+		SecretKey: cfg.R2SecretAccessKey,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	publisher := media.NewPublisher(store, bucket, cfg.MediaPublicURL)
+
 	ctx := context.Background()
 	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute,
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	hub := syncapi.NewHub(store, cfg)
 	defer hub.Close()
-	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, func(roomID string) {
+	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(roomID string) {
 		hub.NotifyStatus(roomID, "ready")
 	})
 	queue.Start(ctx)
@@ -47,7 +59,7 @@ func main() {
 		log.Printf("recover interrupted media jobs: %v", err)
 	}
 	streamStartBytes := cfg.StreamStartMB << 20
-	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, streamStartBytes,
+	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, publisher, streamStartBytes,
 		func(roomID string) { hub.NotifyStatus(roomID, "ready") },
 		hub.NotifyRoomUpdated,
 	)
@@ -63,7 +75,7 @@ func main() {
 		cfg.FFmpegJobs,
 		media.IsSubtitleFileName,
 		torrent.Hooks{
-			OnSubtitles: publishSideSubtitles(store, hub, cfg.DataDir),
+			OnSubtitles: publishSideSubtitles(store, hub, publisher, cfg.DataDir),
 			OnFailed: func(roomID string, err error) {
 				failCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 				defer cancel()
@@ -77,6 +89,7 @@ func main() {
 	ingestor.Start(ctx)
 
 	r := httpapi.NewServer(cfg, store, hub,
+		httpapi.WithSubtitlePublisher(publisher),
 		httpapi.WithSourceHooks(httpapi.SourceHooks{
 			// Swapping the source retires the previous media, so any preview
 			// still being built for it has to stop before its files are
@@ -162,7 +175,8 @@ func publishIngestProgress(store *room.Store, hub *syncapi.Hub) func(string, int
 // They are marked incomplete on purpose: the authoritative ffmpeg pass over
 // the finished video still runs and still contributes the tracks muxed into
 // the container itself, and the two sets are merged then.
-func publishSideSubtitles(store *room.Store, hub *syncapi.Hub, dataDir string) func(string, []torrent.SideFile) {
+func publishSideSubtitles(store *room.Store, hub *syncapi.Hub, publisher *media.Publisher,
+	dataDir string) func(string, []torrent.SideFile) {
 	return func(roomID string, files []torrent.SideFile) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -186,6 +200,10 @@ func publishSideSubtitles(store *room.Store, hub *syncapi.Hub, dataDir string) f
 			return
 		}
 		if len(tracks) == 0 {
+			return
+		}
+		if err := publisher.PublishSubtitles(ctx, roomID, subsDir); err != nil {
+			log.Printf("upload torrent subtitles for %s: %v", roomID, err)
 			return
 		}
 		if err := store.SetClientSubtitles(ctx, roomID, tracks, false); err != nil {

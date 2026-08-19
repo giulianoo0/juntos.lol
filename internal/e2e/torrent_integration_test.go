@@ -27,6 +27,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 	"github.com/giulianoo0/ss/internal/torrent"
 	"github.com/giulianoo0/ss/internal/upload"
@@ -262,9 +263,14 @@ func startServer(t *testing.T, bridgeURL string) *testServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, func(string) {})
+	// Media leaves the process for a bucket now, so the whole path only runs
+	// end to end with somewhere to put it.
+	cfg.MediaPublicURL = "https://media.example.test"
+	publisher := media.NewPublisher(store, objectstore.NewFake(), cfg.MediaPublicURL)
+
+	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(string) {})
 	queue.Start(ctx)
-	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir,
+	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, publisher,
 		cfg.StreamStartMB<<20, func(string) {}, func(string) {})
 	progressive.Start(ctx)
 

@@ -3,8 +3,15 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 )
+
+// mediaLifecycleHours mirrors the bucket's own expiry rule. It is duplicated
+// here on purpose: the application cannot read the rule, and a room outliving
+// its media is worth refusing to boot over.
+const mediaLifecycleHours = 24
 
 type Config struct {
 	Port              int
@@ -22,6 +29,13 @@ type Config struct {
 	LivekitAPIKey     string
 	LivekitAPISecret  string
 	TorrentBridgeURL  string
+	R2AccountID       string
+	R2Bucket          string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	// MediaPublicURL is the origin the bucket is served from. Playlists point
+	// segments at it, so it is what a viewer actually fetches media from.
+	MediaPublicURL string
 }
 
 func Load() (Config, error) {
@@ -81,7 +95,46 @@ func Load() (Config, error) {
 	cfg.LivekitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
 	cfg.TorrentBridgeURL = os.Getenv("TORRENT_BRIDGE_URL")
 
+	cfg.R2AccountID = os.Getenv("R2_ACCOUNT_ID")
+	cfg.R2Bucket = os.Getenv("R2_BUCKET")
+	cfg.R2AccessKeyID = os.Getenv("R2_ACCESS_KEY_ID")
+	cfg.R2SecretAccessKey = os.Getenv("R2_SECRET_ACCESS_KEY")
+	cfg.MediaPublicURL = strings.TrimSuffix(os.Getenv("MEDIA_PUBLIC_URL"), "/")
+	if err := cfg.validateMedia(); err != nil {
+		return Config{}, err
+	}
+
 	return cfg, nil
+}
+
+// validateMedia fails the boot on incomplete object storage settings. Media
+// has no disk fallback, so a missing variable is a room that breaks the
+// moment someone uploads to it — better to never come up than to come up
+// broken.
+func (c Config) validateMedia() error {
+	missing := []string{}
+	for name, value := range map[string]string{
+		"R2_ACCOUNT_ID":        c.R2AccountID,
+		"R2_BUCKET":            c.R2Bucket,
+		"R2_ACCESS_KEY_ID":     c.R2AccessKeyID,
+		"R2_SECRET_ACCESS_KEY": c.R2SecretAccessKey,
+		"MEDIA_PUBLIC_URL":     c.MediaPublicURL,
+	} {
+		if value == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		return fmt.Errorf("config: media storage needs %s", strings.Join(missing, ", "))
+	}
+	// The bucket lifecycle reclaims media a day after it is written, so a
+	// longer room TTL would outlive its own video.
+	if c.RoomTTLHours >= mediaLifecycleHours {
+		return fmt.Errorf("config: ROOM_TTL_HOURS=%d outlives the %dh media lifecycle",
+			c.RoomTTLHours, mediaLifecycleHours)
+	}
+	return nil
 }
 
 func envInt(key string, fallback int) (int, error) {

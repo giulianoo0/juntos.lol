@@ -68,36 +68,6 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 	require.ErrorIs(t, <-done, context.Canceled)
 }
 
-func TestProgressiveOutputReadyRequiresPlayableSegment(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte("master"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_stream_0.m3u8"), []byte("media"), 0o644))
-	require.False(t, progressiveOutputReady(dir))
-
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_stream_0_000000.m4s"), []byte("segment"), 0o644))
-	require.False(t, progressiveOutputReady(dir))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_init_0.mp4"), []byte("init"), 0o644))
-	require.True(t, progressiveOutputReady(dir))
-}
-
-func TestProgressivePlayableFromRequiresVideoVariantSegment(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte("master"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_init_0.mp4"), []byte("init"), 0o644))
-	// Audio variants publish fixed-length segments long before a copied video
-	// track reaches its first keyframe split; that state must not count as
-	// playable or a viewer joins to sound over a black frame.
-	audioPlaylist := "#EXTM3U\n#EXTINF:2.000,\npreview_stream_0_000000.m4s\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_stream_0.m3u8"), []byte(audioPlaylist), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_stream_0_000000.m4s"), []byte("segment"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_stream_1.m3u8"), []byte("#EXTM3U\n"), 0o644))
-	require.False(t, progressivePlayableFrom(dir, "preview_stream_1.m3u8"))
-
-	videoPlaylist := "#EXTM3U\n#EXTINF:4.379000,\npreview_stream_1_000000.m4s\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "preview_stream_1.m3u8"), []byte(videoPlaylist), 0o644))
-	require.True(t, progressivePlayableFrom(dir, "preview_stream_1.m3u8"))
-}
-
 func TestVideoVariantPlaylistFollowsAudioCount(t *testing.T) {
 	require.Equal(t, "preview_stream_0.m3u8",
 		videoVariantPlaylist("preview_stream", &ProbeResult{}))
@@ -106,7 +76,7 @@ func TestVideoVariantPlaylistFollowsAudioCount(t *testing.T) {
 }
 
 func TestProgressiveCancelKeepsQueuedJobCanceled(t *testing.T) {
-	p := NewProgressive(1, nil, t.TempDir(), 1<<20, nil, nil)
+	p := NewProgressive(1, nil, t.TempDir(), nil, 1<<20, nil, nil)
 	p.ctx = t.Context()
 	p.started = true
 

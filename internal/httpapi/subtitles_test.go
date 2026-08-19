@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,7 +37,7 @@ func TestStoreClientSubtitlesHappyPath(t *testing.T) {
 	}))
 	stored := make(chan string, 1)
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, func(id string) { stored <- id })
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, func(id string) { stored <- id })
 
 	body := `{"tracks":[` +
 		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `},` +
@@ -69,7 +71,7 @@ func TestStoreClientSubtitlesHappyPath(t *testing.T) {
 func TestStoreClientSubtitlesMissingRoom(t *testing.T) {
 	cfg := testCfg(t)
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), newTestStore(t), cfg, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), newTestStore(t), cfg, nil, nil)
 
 	w := postSubtitles(t, e, "missing", `{"tracks":[{"language":"eng","vtt":"WEBVTT"}]}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
@@ -83,7 +85,7 @@ func TestStoreClientSubtitlesExpiredRoom(t *testing.T) {
 		ID: "expired", Status: "uploading", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
 
 	w := postSubtitles(t, e, "expired", `{"tracks":[{"language":"eng","vtt":"WEBVTT"}]}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
@@ -97,7 +99,7 @@ func TestStoreClientSubtitlesRejectsBadInput(t *testing.T) {
 		ID: "r1", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
 
 	tests := []struct {
 		name string
@@ -145,7 +147,7 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 		ID: "r2", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
 
 	body := `{"complete":false,"tracks":[{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
 	w := postSubtitles(t, e, "r2", body)
@@ -171,4 +173,59 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 	has, err = store.HasClientSubs(t.Context(), "r2")
 	require.NoError(t, err)
 	require.True(t, has)
+}
+
+// recordingSubtitlePublisher stands in for the bucket in handler tests.
+type recordingSubtitlePublisher struct {
+	dirs []string
+	err  error
+}
+
+func (p *recordingSubtitlePublisher) PublishSubtitles(_ context.Context, _, subsDir string) error {
+	p.dirs = append(p.dirs, subsDir)
+	return p.err
+}
+
+func oneTrackBody() string {
+	return `{"tracks":[{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
+}
+
+func addSubtitlesTestRoom(t *testing.T, store *room.Store, id string) {
+	t.Helper()
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: id, FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+}
+
+func TestStoreClientSubtitlesUploadsBeforeAnnouncing(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	addSubtitlesTestRoom(t, store, "r1")
+	publisher := &recordingSubtitlePublisher{}
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, publisher, nil)
+
+	w := postSubtitles(t, e, "r1", oneTrackBody())
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, []string{filepath.Join(cfg.DataDir, "rooms", "r1", "subs")}, publisher.dirs)
+}
+
+func TestStoreClientSubtitlesFailsWhenTheBucketRefuses(t *testing.T) {
+	// Announcing tracks the bucket does not hold would point every connected
+	// player at a subtitle URL that 404s.
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	addSubtitlesTestRoom(t, store, "r1")
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg,
+		&recordingSubtitlePublisher{err: errors.New("bucket refused")}, nil)
+
+	w := postSubtitles(t, e, "r1", oneTrackBody())
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, got.SubtitleTracks, "tracks must not be announced without files behind them")
 }

@@ -45,6 +45,18 @@ interface BufferedRange {
   end: number
 }
 
+// subtitleSource points a track at the bucket the subtitle files live in. The
+// version query string stays: the file keeps its name as more cues are
+// extracted, so only a changed URL makes the browser refetch it.
+function subtitleSource(room: RoomInfo, index: number, language: string): string {
+  const name = `sub_${index}_${safeLanguage(language)}.vtt`
+  const version = `?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`
+  if (!room.mediaBaseUrl) {
+    return `/media/${encodeURIComponent(room.id)}/subs/${name}${version}`
+  }
+  return `${room.mediaBaseUrl}/subs/${name}${version}`
+}
+
 export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0 }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
@@ -580,7 +592,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           <track
             key={`${track.index}-${track.language}`}
             kind="subtitles"
-            src={`/media/${encodeURIComponent(room.id)}/subs/sub_${index}_${safeLanguage(track.language)}.vtt?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`}
+            src={subtitleSource(room, index, track.language)}
             srcLang={track.language || 'und'}
             label={track.title || track.language || `Subtitle ${index + 1}`}
           />

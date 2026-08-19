@@ -40,6 +40,12 @@ func chatKey(id string) string    { return "room:" + id + ":chat" }
 func membersKey(id string) string { return "room:" + id + ":members" }
 func uploadKey(id string) string  { return "room:" + id + ":upload" }
 
+// Media playlists and the set of objects already in the bucket live in Redis
+// rather than on the encoding machine's disk. That is what lets any instance
+// serve a room another instance encoded.
+func playlistsKey(id string) string { return "room:" + id + ":playlists" }
+func publishedKey(id string) string { return "room:" + id + ":published" }
+
 const byExpiryKey = "rooms:by_expiry"
 
 // Create stores a new room and indexes it by expiry.
@@ -594,7 +600,8 @@ func (s *Store) Messages(ctx context.Context, id string) ([]ChatMessage, error) 
 // Delete removes the room, its state, chat, members and expiry index entry.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		p.Del(ctx, roomKey(id), stateKey(id), chatKey(id), membersKey(id), uploadKey(id))
+		p.Del(ctx, roomKey(id), stateKey(id), chatKey(id), membersKey(id), uploadKey(id),
+			playlistsKey(id), publishedKey(id))
 		p.ZRem(ctx, byExpiryKey, id)
 		return nil
 	})
@@ -607,4 +614,76 @@ func (s *Store) ExpiredIDs(ctx context.Context, now time.Time) ([]string, error)
 		Min: "-inf",
 		Max: strconv.FormatInt(now.Unix(), 10),
 	}).Result()
+}
+
+// SetPlaylists publishes rendered HLS playlists for a room.
+//
+// Every playlist in one call lands in a single transaction. The final remux
+// replaces the master and its variants together, and a viewer who fetched the
+// new master while the variants were still the preview's would be asking for
+// a rendition ladder that the variant playlists do not describe.
+func (s *Store) SetPlaylists(ctx context.Context, id string, playlists map[string]string) error {
+	if len(playlists) == 0 {
+		return nil
+	}
+	fields := make([]any, 0, len(playlists)*2)
+	for name, body := range playlists {
+		fields = append(fields, name, body)
+	}
+	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, playlistsKey(id), fields...)
+		p.Expire(ctx, playlistsKey(id), s.ttl)
+		return nil
+	})
+	return err
+}
+
+// Playlist returns one rendered playlist. A missing one is ErrNotFound: it
+// means the room has not published that name, which a viewer sees as a 404.
+func (s *Store) Playlist(ctx context.Context, id, name string) (string, error) {
+	body, err := s.rdb.HGet(ctx, playlistsKey(id), name).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return body, nil
+}
+
+// HasPlaylist reports whether a room has published the named playlist.
+func (s *Store) HasPlaylist(ctx context.Context, id, name string) (bool, error) {
+	return s.rdb.HExists(ctx, playlistsKey(id), name).Result()
+}
+
+// MarkPublished records that objects are readable from the bucket. Playlists
+// only ever reference names recorded here, so this set is what keeps a viewer
+// from being handed a segment that has not finished uploading.
+func (s *Store) MarkPublished(ctx context.Context, id string, names ...string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	members := make([]any, len(names))
+	for i, name := range names {
+		members[i] = name
+	}
+	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.SAdd(ctx, publishedKey(id), members...)
+		p.Expire(ctx, publishedKey(id), s.ttl)
+		return nil
+	})
+	return err
+}
+
+// Published returns the set of object names already in the bucket.
+func (s *Store) Published(ctx context.Context, id string) (map[string]struct{}, error) {
+	names, err := s.rdb.SMembers(ctx, publishedKey(id)).Result()
+	if err != nil {
+		return nil, err
+	}
+	published := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		published[name] = struct{}{}
+	}
+	return published, nil
 }

@@ -25,7 +25,7 @@ const (
 // RegisterRoomRoutes mounts the room creation and lookup endpoints on rg.
 func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config) {
 	rg.POST("/rooms", createRoom(store, cfg))
-	rg.GET("/rooms/:id", getRoom(store))
+	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL))
 }
 
 // Kind selects what the room starts out playing. It is optional so existing
@@ -140,7 +140,10 @@ func validRoomText(value string, maxBytes int) bool {
 	return true
 }
 
-func getRoom(store *room.Store) gin.HandlerFunc {
+// getRoom answers with the room and where its media is served from. The
+// client builds subtitle URLs itself, and those objects live in the bucket
+// rather than on this server.
+func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, err := store.Get(c.Request.Context(), c.Param("id"))
 		if errors.Is(err, room.ErrNotFound) {
@@ -175,6 +178,7 @@ func getRoom(store *room.Store) gin.HandlerFunc {
 			"memberCount":       len(members),
 			"createdAt":         r.CreatedAt,
 			"expiresAt":         r.ExpiresAt,
+			"mediaBaseUrl":      mediaBaseURL + "/rooms/" + r.ID,
 		})
 	}
 }

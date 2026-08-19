@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,9 +44,10 @@ type progressiveJob struct {
 // The final remux started by Queue on upload completion stays authoritative:
 // failures here only leave the room in its current state.
 type Progressive struct {
-	workers int
-	store   *room.Store
-	dataDir string
+	workers   int
+	store     *room.Store
+	dataDir   string
+	publisher *Publisher
 	// previewFloorBytes is the smallest sensible preview estimate: the
 	// threshold that started this job in the first place.
 	previewFloorBytes int64
@@ -74,8 +76,8 @@ type Progressive struct {
 // NewProgressive creates a preview worker pool. onReady fires once per room
 // when its first complete HLS segment is playable; onUpdated fires whenever
 // the preview phase or its estimate changes.
-func NewProgressive(workers int, store *room.Store, dataDir string, previewFloorBytes int64,
-	onReady, onUpdated func(roomID string)) *Progressive {
+func NewProgressive(workers int, store *room.Store, dataDir string, publisher *Publisher,
+	previewFloorBytes int64, onReady, onUpdated func(roomID string)) *Progressive {
 	if workers < 1 {
 		workers = 1
 	}
@@ -83,6 +85,7 @@ func NewProgressive(workers int, store *room.Store, dataDir string, previewFloor
 		workers:           workers,
 		store:             store,
 		dataDir:           dataDir,
+		publisher:         publisher,
 		previewFloorBytes: previewFloorBytes,
 		onReady:           onReady,
 		onUpdated:         onUpdated,
@@ -254,6 +257,9 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 	// Subtitles run alongside the video rather than after it: a viewer who can
 	// already watch the first minutes should be able to read them too.
 	go p.extractSubtitles(ctx, jobCtx, job, probe)
+	// Publishing runs alongside the remux for the same reason: a preview that
+	// only reached the bucket at the end would not be a preview.
+	go p.publisher.Run(jobCtx, job.roomID, hlsDir, previewPublishPatterns)
 	p.remux(ctx, jobCtx, job, hlsDir, probe)
 }
 
@@ -323,7 +329,7 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 			if notified {
 				continue
 			}
-			if !progressivePlayableFrom(hlsDir, videoVariantPlaylist("preview_stream", probe)) {
+			if !p.previewPlayable(jobCtx, job.roomID, probe) {
 				continue
 			}
 			// The preview playlist needs the same codec label as the final
@@ -342,6 +348,27 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 			notified = true
 		}
 	}
+}
+
+// previewPlayable reports whether the room can be announced as ready.
+//
+// The question is not what ffmpeg has written but what a viewer would be
+// handed: the published playlist is cut at the last segment the bucket has
+// confirmed, so a segment on disk that has not been uploaded does not count.
+//
+// It asks the video variant specifically. Audio variants publish fixed-length
+// segments quickly while a copied video track can only split at source
+// keyframes, so "some segment exists" can announce a room whose video is still
+// empty — a viewer would hear sound over a black frame.
+func (p *Progressive) previewPlayable(ctx context.Context, roomID string, probe *ProbeResult) bool {
+	if ready, err := p.store.HasPlaylist(ctx, roomID, "master.m3u8"); err != nil || !ready {
+		return false
+	}
+	playlist, err := p.store.Playlist(ctx, roomID, videoVariantPlaylist("preview_stream", probe))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(playlist, "#EXTINF")
 }
 
 // probeGrowingFile retries transient parse failures until enough of the
@@ -417,32 +444,6 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 		case <-timer.C:
 		}
 	}
-}
-
-func progressiveOutputReady(hlsDir string) bool {
-	if info, err := os.Stat(filepath.Join(hlsDir, "master.m3u8")); err != nil || info.Size() == 0 {
-		return false
-	}
-	return hasNonEmptyMatch(filepath.Join(hlsDir, "preview_stream_*.m3u8")) &&
-		hasNonEmptyMatch(filepath.Join(hlsDir, "preview_init_*.mp4")) &&
-		hasNonEmptyMatch(filepath.Join(hlsDir, "preview_stream_*.m4s"))
-}
-
-// progressivePlayableFrom additionally requires a complete segment in the
-// named video variant playlist. Audio variants publish fixed-length segments
-// quickly while a copied video track can only split at source keyframes, so
-// "some segment exists" can announce a room whose video playlist is still
-// empty — a viewer would hear sound over a black frame until the first
-// keyframe arrives.
-func progressivePlayableFrom(hlsDir, videoPlaylist string) bool {
-	if !progressiveOutputReady(hlsDir) {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(hlsDir, videoPlaylist))
-	if err != nil {
-		return false
-	}
-	return bytes.Contains(data, []byte("#EXTINF"))
 }
 
 // videoVariantPlaylist names the media playlist of the video rendition. The

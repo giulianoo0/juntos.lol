@@ -11,14 +11,12 @@ import (
 	"time"
 )
 
-// PreviewGracePeriod is how long the superseded preview files are kept after
-// the final media replaces them. A player that joined during the preview may
-// still be mid-fetch of one of its segments, and the final master does not
-// reach every client at the same instant.
-const PreviewGracePeriod = 5 * time.Minute
-
 // StartSweeper ticks every interval and removes expired rooms from disk and
 // Redis until ctx is cancelled. This guarantees nothing outlives the room TTL.
+//
+// Encoded media is not its concern: segments live in the bucket, and the
+// bucket's own lifecycle rule expires them. What is left here is the Redis
+// record, the room directory and uploads that stalled without finishing.
 func StartSweeper(ctx context.Context, store *Store, dataDir string, interval, uploadIdle time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -29,77 +27,8 @@ func StartSweeper(ctx context.Context, store *Store, dataDir string, interval, u
 		case <-ticker.C:
 			SweepOnce(ctx, store, dataDir)
 			SweepStaleUploads(ctx, store, dataDir, uploadIdle)
-			SweepSupersededPreviews(ctx, dataDir, PreviewGracePeriod)
 		}
 	}
-}
-
-// SweepSupersededPreviews reclaims the preview segments of rooms whose final
-// media has been published for longer than grace.
-//
-// The preview is a second, complete copy of the video in two-second segments,
-// and it is dead weight the moment the final playlists take over — on a 96 GB
-// disk it is the difference between four concurrent rooms and six. Deleting it
-// at publish time would 404 whoever was still reading it, hence the grace.
-//
-// Living on the sweeper rather than on a timer in the publishing path is what
-// makes it survive a restart: a process that died between publishing and
-// cleaning up would otherwise leave the copy behind for the room's whole life.
-func SweepSupersededPreviews(ctx context.Context, dataDir string, grace time.Duration) {
-	rooms, err := os.ReadDir(filepath.Join(dataDir, "rooms"))
-	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.ErrorContext(ctx, "sweeper: read rooms for preview cleanup", "err", err)
-		}
-		return
-	}
-
-	cutoff := time.Now().Add(-grace)
-	for _, entry := range rooms {
-		if !entry.IsDir() {
-			continue
-		}
-		hlsDir := filepath.Join(dataDir, "rooms", entry.Name(), "hls")
-		// The final remux renames its master into place, so this file's
-		// modification time is exactly when the preview stopped being needed.
-		master, err := os.Stat(filepath.Join(hlsDir, "master.m3u8"))
-		if err != nil || master.ModTime().After(cutoff) {
-			continue
-		}
-		if !finalMediaPublished(hlsDir) {
-			continue
-		}
-		reclaimed := removePreviewFiles(ctx, hlsDir, entry.Name())
-		if reclaimed > 0 {
-			slog.InfoContext(ctx, "sweeper: reclaimed superseded preview",
-				"room", entry.Name(), "bytes", reclaimed)
-		}
-	}
-}
-
-// finalMediaPublished reports whether the VOD remux has taken over, so a room
-// still serving only its preview never has that preview taken away.
-func finalMediaPublished(hlsDir string) bool {
-	matches, err := filepath.Glob(filepath.Join(hlsDir, "stream_*.m3u8"))
-	return err == nil && len(matches) > 0
-}
-
-func removePreviewFiles(ctx context.Context, hlsDir, roomID string) int64 {
-	matches, err := filepath.Glob(filepath.Join(hlsDir, "preview_*"))
-	if err != nil {
-		slog.ErrorContext(ctx, "sweeper: list preview files", "room", roomID, "err", err)
-		return 0
-	}
-	var reclaimed int64
-	for _, match := range matches {
-		if info, err := os.Stat(match); err == nil {
-			reclaimed += info.Size()
-		}
-		if err := os.Remove(match); err != nil && !os.IsNotExist(err) {
-			slog.ErrorContext(ctx, "sweeper: remove preview file", "room", roomID, "path", match, "err", err)
-		}
-	}
-	return reclaimed
 }
 
 // SweepOnce removes expired room data, including the corresponding tus upload

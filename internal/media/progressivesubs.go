@@ -139,6 +139,15 @@ func (p *Progressive) publishSubtitleSnapshot(ctx, jobCtx context.Context, roomI
 	if len(tracks) <= *published {
 		return
 	}
+	// The files reach the bucket before the tracks are announced, so a client
+	// that refetches on the version bump finds something to read. Uploading
+	// here rather than every tick is deliberate: an unchanged version means no
+	// client refetches, so a fresh copy would be paid for and never used.
+	subsDir := filepath.Join(p.dataDir, "rooms", roomID, "subs")
+	if err := p.publisher.PublishSubtitles(jobCtx, roomID, subsDir); err != nil {
+		slog.WarnContext(ctx, "progressive subs: upload failed", "room_id", roomID, "error", err)
+		return
+	}
 	// Incomplete on purpose: the authoritative pass over the finished file
 	// still runs, and it is the one that gets every cue.
 	if err := p.store.SetClientSubtitles(jobCtx, roomID, tracks, false); err != nil {

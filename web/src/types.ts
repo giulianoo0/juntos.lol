@@ -102,4 +102,8 @@ export interface RoomInfo {
   preparation?: RoomPreparation
   memberCount: number
   expiresAt: string
+  // Where this room's media objects are served from. Segments and subtitles
+  // come straight from the bucket; only playlists come from the application.
+  // Optional: a response from before the move omits it.
+  mediaBaseUrl?: string
 }

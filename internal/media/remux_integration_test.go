@@ -88,9 +88,35 @@ func TestProgressiveRemuxIntegration(t *testing.T) {
 		inputDone <- streamGrowingFile(ctx, src, stdin, time.Millisecond)
 	}()
 
-	require.Eventually(t, func() bool { return progressiveOutputReady(out) }, 10*time.Second, 50*time.Millisecond)
+	// This test drives ffmpeg directly, with no publisher behind it, so what
+	// it can check is what ffmpeg wrote: a master, a variant playlist, an init
+	// segment and a media segment.
+	require.Eventually(t, func() bool { return ffmpegWroteAPlayableSet(out) }, 10*time.Second, 50*time.Millisecond)
 	cancel()
 	_ = stdin.Close()
 	_ = cmd.Wait()
 	require.Error(t, <-inputDone)
+}
+
+func ffmpegWroteAPlayableSet(hlsDir string) bool {
+	if info, err := os.Stat(filepath.Join(hlsDir, "master.m3u8")); err != nil || info.Size() == 0 {
+		return false
+	}
+	for _, pattern := range []string{"preview_stream_*.m3u8", "preview_init_*.mp4", "preview_stream_*.m4s"} {
+		matches, err := filepath.Glob(filepath.Join(hlsDir, pattern))
+		if err != nil || len(matches) == 0 {
+			return false
+		}
+		found := false
+		for _, match := range matches {
+			if info, err := os.Stat(match); err == nil && info.Size() > 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

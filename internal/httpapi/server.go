@@ -20,8 +20,9 @@ import (
 type ServerOption func(*serverOptions)
 
 type serverOptions struct {
-	sourceHooks SourceHooks
-	ingestor    TorrentIngestor
+	sourceHooks       SourceHooks
+	ingestor          TorrentIngestor
+	subtitlePublisher SubtitlePublisher
 }
 
 // WithSourceHooks connects the room source endpoint to the media pipeline.
@@ -34,6 +35,12 @@ func WithSourceHooks(hooks SourceHooks) ServerOption {
 // browser.
 func WithTorrentIngestor(ingestor TorrentIngestor) ServerOption {
 	return func(o *serverOptions) { o.ingestor = ingestor }
+}
+
+// WithSubtitlePublisher sends browser-extracted subtitles to the bucket they
+// are served from. Without it they are stored but never delivered.
+func WithSubtitlePublisher(publisher SubtitlePublisher) ServerOption {
+	return func(o *serverOptions) { o.subtitlePublisher = publisher }
 }
 
 // NewServer assembles the HTTP engine: the health check plus the room API.
@@ -55,12 +62,12 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	})
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
 	RegisterScreenshareRoute(r.Group("/api"), store, cfg, hub)
-	RegisterMediaRoutes(r, cfg, store)
+	RegisterMediaRoutes(r, store)
 	var onSubsStored func(string)
 	if hub != nil {
 		onSubsStored = hub.NotifyRoomUpdated
 	}
-	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, onSubsStored)
+	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
 	// hub is a typed nil in tests; pass the interface only when it is real so
 	// the authorizer check inside the handler stays meaningful.
 	var authorizer memberAuthorizer

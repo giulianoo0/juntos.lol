@@ -32,41 +32,45 @@ type Pipeline interface {
 
 // Queue owns a bounded media-job channel and a fixed worker pool.
 type Queue struct {
-	workers  int
-	store    *room.Store
-	dataDir  string
-	onReady  func(roomID string)
-	pipeline Pipeline
-	jobs     chan string
-	done     chan struct{}
-	start    sync.Once
-	mu       sync.Mutex
-	ctx      context.Context
-	started  bool
-	stopping bool
-	queued   map[string]struct{}
-	active   map[string]struct{}
+	workers   int
+	store     *room.Store
+	dataDir   string
+	publisher *Publisher
+	onReady   func(roomID string)
+	pipeline  Pipeline
+	jobs      chan string
+	done      chan struct{}
+	start     sync.Once
+	mu        sync.Mutex
+	ctx       context.Context
+	started   bool
+	stopping  bool
+	queued    map[string]struct{}
+	active    map[string]struct{}
 }
 
 // NewQueue creates a queue backed by the real ffmpeg pipeline.
-func NewQueue(workers int, store *room.Store, dataDir string, onReady func(roomID string)) *Queue {
-	return newQueue(workers, store, dataDir, onReady, realPipeline{})
+func NewQueue(workers int, store *room.Store, dataDir string, publisher *Publisher,
+	onReady func(roomID string)) *Queue {
+	return newQueue(workers, store, dataDir, publisher, onReady, realPipeline{})
 }
 
-func newQueue(workers int, store *room.Store, dataDir string, onReady func(string), pipeline Pipeline) *Queue {
+func newQueue(workers int, store *room.Store, dataDir string, publisher *Publisher,
+	onReady func(string), pipeline Pipeline) *Queue {
 	if workers < 1 {
 		workers = 1
 	}
 	return &Queue{
-		workers:  workers,
-		store:    store,
-		dataDir:  dataDir,
-		onReady:  onReady,
-		pipeline: pipeline,
-		jobs:     make(chan string, workers),
-		done:     make(chan struct{}),
-		queued:   make(map[string]struct{}),
-		active:   make(map[string]struct{}),
+		workers:   workers,
+		store:     store,
+		dataDir:   dataDir,
+		publisher: publisher,
+		onReady:   onReady,
+		pipeline:  pipeline,
+		jobs:      make(chan string, workers),
+		done:      make(chan struct{}),
+		queued:    make(map[string]struct{}),
+		active:    make(map[string]struct{}),
 	}
 }
 
@@ -214,7 +218,17 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 	// A completed upload may already have a playable progressive preview. Keep
 	// that preview visible while the authoritative VOD remux runs, including
 	// when this job is being recovered after a process restart.
-	keepReady := storedRoom.Status == "ready" || progressiveOutputReady(filepath.Join(roomDir, "hls"))
+	// A completed upload may already have a playable progressive preview.
+	// Whether it does is recorded in the published playlists, not on disk:
+	// the segments themselves have been handed to the bucket and deleted.
+	previewPublished, err := q.store.HasPlaylist(ctx, roomID, "master.m3u8")
+	if err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("check published preview: %w", err))
+		}
+		return false
+	}
+	keepReady := storedRoom.Status == "ready" || previewPublished
 	nextStatus := "processing"
 	if keepReady {
 		nextStatus = "ready"
@@ -235,10 +249,35 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		}
 		return false
 	}
+	// Publishing runs alongside the encode so segments leave the disk as they
+	// are written, then once more afterwards as the authoritative pass: the
+	// first is best effort, the second decides whether the room has media.
+	hlsDir := filepath.Join(roomDir, "hls")
+	publishCtx, stopPublishing := context.WithCancel(ctx)
+	publishing := make(chan struct{})
+	go func() {
+		defer close(publishing)
+		q.publisher.Run(publishCtx, roomID, hlsDir, finalPublishPatterns)
+	}()
+
 	audio, subs, bitmapSkipped, err := q.pipeline.Run(ctx, roomID, srcPath, roomDir, skipSubs)
+	stopPublishing()
+	<-publishing
 	if err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, err)
+		}
+		return false
+	}
+	if err := q.publisher.Publish(ctx, roomID, hlsDir, finalPublishPatterns); err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("publish final media: %w", err))
+		}
+		return false
+	}
+	if err := q.publisher.PublishSubtitles(ctx, roomID, filepath.Join(roomDir, "subs")); err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("publish subtitles: %w", err))
 		}
 		return false
 	}
@@ -268,6 +307,12 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		return false
 	}
 	slog.InfoContext(ctx, "final media published", "room_id", roomID)
+	// The source exists to be encoded, and the encode is published. Recovery
+	// after a restart only ever looks at rooms still uploading or processing,
+	// so from here it is a few hundred megabytes held for nothing.
+	if err := os.Remove(srcPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.WarnContext(ctx, "remove encoded source failed", "room_id", roomID, "error", err)
+	}
 	q.notifyReady(roomID)
 	return true
 }

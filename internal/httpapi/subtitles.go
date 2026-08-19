@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -44,15 +45,22 @@ func (r clientSubtitlesRequest) complete() bool {
 	return r.Complete == nil || *r.Complete
 }
 
+// SubtitlePublisher copies a room's subtitle files to the bucket viewers read
+// them from. It is an interface here so this package keeps depending only on
+// what it uses.
+type SubtitlePublisher interface {
+	PublishSubtitles(ctx context.Context, roomID, subsDir string) error
+}
+
 // RegisterSubtitlesRoute mounts the browser-extracted WebVTT upload endpoint.
 // onSubsStored fires after the tracks are persisted (nil-safe). Subtitle
 // availability is a room update, not a media-status transition.
 func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
-	onSubsStored func(roomID string)) {
-	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, onSubsStored))
+	publisher SubtitlePublisher, onSubsStored func(roomID string)) {
+	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, publisher, onSubsStored))
 }
 
-func storeClientSubtitles(store *room.Store, cfg config.Config,
+func storeClientSubtitles(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
 	onSubsStored func(roomID string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roomID := c.Param("id")
@@ -113,6 +121,17 @@ func storeClientSubtitles(store *room.Store, cfg config.Config,
 		for i, path := range files {
 			if err := os.WriteFile(path, []byte(req.Tracks[i].VTT), 0o644); err != nil {
 				slog.ErrorContext(c.Request.Context(), "write subtitle file failed", "room_id", roomID, "error", err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
+
+		// The bucket gets the files before the tracks are announced: the
+		// announcement is what makes a client go and fetch them.
+		if publisher != nil {
+			if err := publisher.PublishSubtitles(c.Request.Context(), roomID, subsDir); err != nil {
+				slog.ErrorContext(c.Request.Context(), "upload client subtitles failed",
+					"room_id", roomID, "error", err)
 				c.Status(http.StatusInternalServerError)
 				return
 			}

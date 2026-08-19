@@ -28,6 +28,36 @@ const room: RoomInfo = {
 afterEach(() => vi.restoreAllMocks())
 
 describe('Player', () => {
+  it('reads subtitles from the bucket the room names', () => {
+    const withSubs: RoomInfo = {
+      ...room,
+      subtitleTracks: [{ index: 0, language: 'por', title: 'Legendas', codec: 'webvtt' }],
+      subsVersion: 3,
+      mediaBaseUrl: 'https://media.example.test/rooms/r1',
+    }
+    const { container } = render(
+      <Player room={withSubs} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+
+    expect(container.querySelector('track')?.getAttribute('src')).toBe(
+      'https://media.example.test/rooms/r1/subs/sub_0_por.vtt?g=0&s=3',
+    )
+  })
+
+  it('falls back to this server for a room answered before the move', () => {
+    const withSubs: RoomInfo = {
+      ...room,
+      subtitleTracks: [{ index: 0, language: 'por', title: 'Legendas', codec: 'webvtt' }],
+    }
+    const { container } = render(
+      <Player room={withSubs} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+
+    expect(container.querySelector('track')?.getAttribute('src')).toBe(
+      '/media/r1/subs/sub_0_por.vtt?g=0&s=0',
+    )
+  })
+
   it('starts media inside the controller click before sending synchronized play', async () => {
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
     const send = vi.fn()
