@@ -456,11 +456,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 
   // Shortcuts are bound on the document so they work without first clicking
   // the video, which is the whole point of a keyboard shortcut. Anything typed
-  // into a field, or aimed at a focused control, is left alone.
+  // into a field, or aimed at a control that owns the key, is left alone.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-      if (isTypingTarget(event.target)) return
+      if (focusOwnsKey(event.target, event.key)) return
 
       const video = videoRef.current
       const handled = () => {
@@ -742,10 +742,41 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 // Keystrokes meant for a text field or an already focused control must never
 // be stolen by the player. Space activates buttons and links, and both arrow
 // keys drive range inputs and selects natively.
-function isTypingTarget(target: EventTarget | null): boolean {
+// focusOwnsKey reports whether the focused element should keep a key for
+// itself instead of letting it reach the player's shortcuts.
+//
+// Text entry keeps everything. So does any control outside the player, whose
+// keys are none of the player's business. Inside the player the rule inverts:
+// the control bar must not shadow the shortcuts of the player it belongs to.
+// Clicking pause leaves that button focused, and Space would press it again
+// rather than resume — which reads as the shortcut being ignored.
+//
+// The sliders and the track picker are the exception, keeping the arrows they
+// use to change their own value.
+function focusOwnsKey(target: EventTarget | null, key: string): boolean {
   if (!(target instanceof HTMLElement)) return false
-  if (target.isContentEditable) return true
-  return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'OPTION'].includes(target.tagName)
+  if (target.isContentEditable || target.tagName === 'TEXTAREA') return true
+
+  const insidePlayer = target.closest('.player-wrap') !== null
+  switch (target.tagName) {
+    case 'INPUT':
+      // A range slider is a control; every other input takes typing.
+      if ((target as HTMLInputElement).type !== 'range') return true
+      return !insidePlayer || isArrowKey(key)
+    case 'SELECT':
+    case 'OPTION':
+      // Space is how a picker opens, so it keeps that one too.
+      return !insidePlayer || isArrowKey(key) || key === ' '
+    case 'BUTTON':
+    case 'A':
+      return !insidePlayer
+    default:
+      return false
+  }
+}
+
+function isArrowKey(key: string): boolean {
+  return key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown'
 }
 
 function seekFeedback(delta: number): ReactNode {

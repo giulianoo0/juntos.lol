@@ -298,6 +298,53 @@ describe('Player', () => {
     expect(requestFullscreen).not.toHaveBeenCalled()
   })
 
+  it('still answers the space bar after a control was clicked', () => {
+    // Clicking a control leaves it focused, and space would press that button
+    // again — reading as the shortcut being swallowed by the player's own bar.
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: requestFullscreen })
+    render(<Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+    const fullscreen = screen.getByRole('button', { name: 'Enter fullscreen' })
+
+    fullscreen.focus()
+    fireEvent.keyDown(fullscreen, { key: ' ' })
+
+    expect(play).toHaveBeenCalledOnce()
+    expect(requestFullscreen).not.toHaveBeenCalled()
+  })
+
+  it('leaves the arrow keys to the scrubber while it has focus', () => {
+    // The slider changes its own value with the arrows; seeking on top of that
+    // would move the video twice for one key press.
+    const send = vi.fn()
+    const { container } = render(
+      <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />,
+    )
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+
+    scrubber.focus()
+    fireEvent.keyDown(scrubber, { key: 'ArrowRight' })
+
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('leaves the space bar to controls outside the player', () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    render(
+      <>
+        <button type="button">Send</button>
+        <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />
+      </>,
+    )
+    const outside = screen.getByRole('button', { name: 'Send' })
+
+    outside.focus()
+    fireEvent.keyDown(outside, { key: ' ' })
+
+    expect(play).not.toHaveBeenCalled()
+  })
+
   it('toggles playback with the space bar', () => {
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
     const send = vi.fn()
