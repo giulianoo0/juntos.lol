@@ -81,9 +81,14 @@ export interface TorrentSession {
   name: string
   files: TorrentVideoFile[]
   subtitleFiles: TorrentSideFile[]
+  // The bridge session id, when the torrent is being served by the bridge.
+  // Handing it to the server is what lets the server pull the file itself,
+  // instead of the bytes making a round trip through this browser. Absent for
+  // the in-browser WebTorrent fallback, which has no server to hand it to.
+  bridgeSessionID?: string
   stats(): TorrentStats
   select(path: string): Promise<void>
-  destroy(): void
+  destroy(keepSession?: boolean): void
 }
 
 interface BridgeResponse {
@@ -282,6 +287,7 @@ function openBridgeSession(
     name: bridge.name,
     files,
     subtitleFiles,
+    bridgeSessionID: bridge.id,
     stats: () => currentStats,
     select: async (path) => {
       if (!files.some((file) => file.path === path)) throw new Error('torrent file not found')
@@ -289,10 +295,14 @@ function openBridgeSession(
       selectedPath = path
       downloaded = 0
     },
-    destroy: () => {
+    // Stops this tab's polling. `keepSession` is what a handover needs: the
+    // server is now streaming from that session, and closing it here would
+    // destroy the torrent out from under the download it just started.
+    destroy: (keepSession?: boolean) => {
       if (destroyed) return
       destroyed = true
       window.clearInterval(statsTimer)
+      if (keepSession) return
       void fetch('/api/torrent-bridge/close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

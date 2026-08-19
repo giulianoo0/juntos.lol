@@ -258,8 +258,47 @@ export async function createRoomAndUploadTorrent(
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
   const created = await createRoom(source.file.name, nickname)
-  uploadTorrentToRoom(created.id, created.uploadEndpoint, streamStartBytes(created), source, onProgress)
+  await startTorrentTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), source, onProgress)
   return { roomID: created.id, nickname: created.nickname }
+}
+
+// Hands the chosen file to the server, which then pulls it from the bridge
+// itself. Returns false when there is no bridge session to hand over — the
+// in-browser WebTorrent fallback — and the browser has to do the transfer.
+async function handOverToServer(roomID: string, source: TorrentUploadSource): Promise<boolean> {
+  const sessionID = source.session.bridgeSessionID
+  if (!sessionID) return false
+  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/torrent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: sessionID,
+      path: source.file.path,
+      fileName: source.file.name,
+      size: source.file.size,
+    }),
+  })
+  // A server without the ingest wired up answers 404 for the route itself,
+  // which is the one failure that should fall back rather than surface.
+  if (response.status === 404) return false
+  if (!response.ok) throw new Error(`torrent handover failed (${response.status})`)
+  // The session belongs to the server now: tearing it down here would destroy
+  // the torrent underneath the download that just started.
+  source.session.destroy(true)
+  return true
+}
+
+// Starts a torrent transfer the best way available: server-side when a bridge
+// session can be handed over, and through this browser otherwise.
+export async function startTorrentTransfer(
+  roomID: string,
+  uploadEndpoint: string,
+  startBytes: number,
+  source: TorrentUploadSource,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<void> {
+  if (await handOverToServer(roomID, source)) return
+  uploadTorrentToRoom(roomID, uploadEndpoint, startBytes, source, onProgress)
 }
 
 // Pulls a torrent into a room that already exists. Same swarm bookkeeping and

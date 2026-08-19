@@ -27,7 +27,7 @@ import {
   subscribeUploadDone,
   subscribeUploadProgress,
   uploadFileToRoom,
-  uploadTorrentToRoom,
+  startTorrentTransfer,
   type RoomUploadProgress,
 } from '../upload'
 
@@ -148,7 +148,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
     void swapSource(async () => {
       const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
-      uploadTorrentToRoom(room.id, next.uploadEndpoint, next.streamStartBytes, { file, session })
+      await startTorrentTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, { file, session })
     })
   }
 
@@ -233,7 +233,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     )
   }
   if (mediaStatus === 'processing' || mediaStatus === 'uploading') {
-    return <main className="center-state"><UploadAvailability progress={uploadProgress} t={t} /></main>
+    return (
+      <main className="center-state">
+        <UploadAvailability progress={uploadProgress} preparation={liveRoom.preparation} t={t} />
+      </main>
+    )
   }
   if (mediaStatus === 'error') {
     return <main className="center-state"><div className="state-card error-card"><h1>{t('room.error')}</h1><p>{liveRoom.errorMessage}</p><Link to="/">{t('room.new')}</Link></div></main>

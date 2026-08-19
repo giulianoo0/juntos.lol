@@ -58,6 +58,20 @@ export interface ChatEntry {
   system?: boolean
 }
 
+// How far the room is from being playable, as the server sees it. It replaces
+// what used to be a purely local guess in whichever tab did the uploading.
+export interface RoomPreparation {
+  // Size of the incoming file, and how much of it the server holds.
+  sourceBytes?: number
+  receivedBytes?: number
+  // Which stage the preview is in. 'unavailable' means this source cannot be
+  // previewed at all and only plays once the whole file has arrived.
+  previewPhase?: 'receiving' | 'probing' | 'segmenting' | 'unavailable'
+  // How many bytes the preview is expected to need before the first segment
+  // can be published. Absent while the bitrate is still unknown.
+  previewTargetBytes?: number
+}
+
 export interface RoomInfo {
   id: string
   fileName: string
@@ -82,6 +96,7 @@ export interface RoomInfo {
   audioTracks: TrackInfo[] | null
   subtitleTracks: TrackInfo[] | null
   bitmapSubsSkipped: number
+  preparation?: RoomPreparation
   memberCount: number
   expiresAt: string
 }

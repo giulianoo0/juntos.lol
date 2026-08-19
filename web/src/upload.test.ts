@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FILE_UNREADABLE, createRoomAndUpload, createRoomAndUploadTorrent, isUnreadableFile, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
+import { FILE_UNREADABLE, createRoomAndUpload, createRoomAndUploadTorrent, isUnreadableFile, startTorrentTransfer, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
 import { convertMp4ToMkv } from './convert'
 import { createMatroskaSubtitleStream, extractAndUploadSubtitles } from './subtitles'
 
@@ -413,5 +413,77 @@ describe('upload registry', () => {
     expect(isUnreadableFile(new DOMException('x', 'NotFoundError'))).toBe(true)
     expect(isUnreadableFile(new Error(FILE_UNREADABLE))).toBe(true)
     expect(isUnreadableFile(new Error('network down'))).toBe(false)
+  })
+})
+
+describe('torrent handover', () => {
+  const file = {
+    name: 'episode.mkv', path: 'show/episode.mkv', size: 6,
+    type: 'video/x-matroska', progress: 0, downloaded: 0,
+    read: vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1)),
+  }
+  const session = (bridgeSessionID?: string) => ({
+    name: 'show', files: [], subtitleFiles: [], bridgeSessionID,
+    stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }),
+    select: vi.fn(), destroy: vi.fn(),
+  })
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    file.read.mockClear()
+  })
+
+  it('asks the server to pull the file, so the bytes never come through here', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({}) } as Response)
+    const torrent = session('session-1')
+
+    await startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: torrent })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/rooms/room1/torrent')
+    expect(JSON.parse(String(init.body))).toEqual({
+      sessionId: 'session-1', path: 'show/episode.mkv', fileName: 'episode.mkv', size: 6,
+    })
+    // Not one byte was read locally.
+    expect(file.read).not.toHaveBeenCalled()
+    // The session outlives this tab: the server is streaming from it now.
+    expect(torrent.destroy).toHaveBeenCalledWith(true)
+  })
+
+  it('uploads from here when there is no bridge session to hand over', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, status: 201, headers: new Headers({ Location: '/api/upload/x' }) } as Response)
+      .mockResolvedValue({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
+
+    await startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: session(undefined) })
+
+    // Straight to tus creation: no handover was attempted at all.
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/upload/')
+  })
+
+  it('uploads from here when the server has no ingest route', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 404 } as Response)
+      .mockResolvedValueOnce({ ok: true, status: 201, headers: new Headers({ Location: '/api/upload/x' }) } as Response)
+      .mockResolvedValue({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
+
+    await startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: session('session-1') })
+
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/upload/')
+  })
+
+  it('surfaces a handover the server actually rejected', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 409 } as Response)
+
+    await expect(startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: session('s1') }))
+      .rejects.toThrow('torrent handover failed (409)')
+    // A conflict means someone else is already feeding this room; silently
+    // starting a second transfer from here would be the wrong repair.
+    expect(file.read).not.toHaveBeenCalled()
   })
 })
