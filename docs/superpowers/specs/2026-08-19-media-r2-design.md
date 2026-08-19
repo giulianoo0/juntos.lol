@@ -195,6 +195,33 @@ MEDIA_PUBLIC_URL       https://media.giuli.dev
 - Domínio `media.giuli.dev` anexado à zona `giuli.dev`, TLS mínimo 1.2.
 - Regra de lifecycle `expire-room-media-24h`: apaga o prefixo `rooms/`
   após 24h e aborta uploads multipart pendentes no mesmo prazo.
+- Cache Rule `Cache room media from R2 (media.giuli.dev)`, respeitando o
+  `Cache-Control` gravado no objeto.
+- **Política de CORS no bucket**, detalhada abaixo.
+
+### CORS não é opcional
+
+Segmentos passam a viver num domínio diferente do da aplicação, e o hls.js
+os busca por `fetch` — o que exige CORS. Sem política no bucket o navegador
+dispara as requisições e descarta as respostas: o player mostra duração e
+legendas corretas, porque a playlist ainda vem do mesmo domínio, e trava
+carregando para sempre. No DevTools o sintoma é centenas de requisições
+somando alguns kB.
+
+O handler antigo mandava `Access-Control-Allow-Origin: *` em toda resposta de
+mídia. Mover os bytes para outro domínio joga fora esse header, e reproduzi-lo
+é responsabilidade do bucket.
+
+A política permite `GET` e `HEAD` a partir de `https://ss.giuli.dev` e de
+`http://localhost:5173`, aceita o header `Range` e expõe `Content-Range` e
+companhia. O R2 acompanha isso com `Vary: Origin`, então o edge guarda uma
+entrada por origem e não há como uma requisição sem `Origin` envenenar o
+cache para os navegadores.
+
+Uma ressalva que custou um bug em produção: objetos cacheados **antes** de a
+política existir foram guardados como variante única, sem header nenhum, e
+continuam sendo servidos assim até vencerem. Ao mudar a política de CORS,
+purgue o cache da zona.
 
 Falta apenas o token de API, que precisa ser criado manualmente — o token
 OAuth do plugin não tem escopo para criar credenciais.
