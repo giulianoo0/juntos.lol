@@ -79,8 +79,8 @@ export function TorrentPicker({ maxFileBytes, onPicked, t }: TorrentPickerProps)
 
   return (
     <>
-      <h2 id="torrent-dialog-title">{session ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
-      <p>{session ? t('home.torrentChooseGuide') : t('home.torrentGuide')}</p>
+      <h2 className="ui-dialog-title">{session ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
+      <p className="ui-dialog-description">{session ? t('home.torrentChooseGuide') : t('home.torrentGuide')}</p>
       {!session ? (
         <>
           <label htmlFor="magnet-link">{t('home.magnet')}</label>

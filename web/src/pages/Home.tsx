@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { History, MonitorUp, Plus, Upload, X } from 'lucide-react'
+import { History, MonitorUp, Plus, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { Button } from '../ui/Button'
+import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
@@ -221,45 +223,51 @@ export function Home() {
         {error ? <div className="error-card" role="alert">{error}</div> : null}
       </section>
       )}
-      {torrentOpen ? (
-        <dialog className="name-dialog torrent-dialog" open aria-labelledby="torrent-dialog-title" onKeyDown={(event) => {
-          if (event.key === 'Escape') setTorrentOpen(false)
-        }}>
-          <div className="dialog-body">
-            <button type="button" className="dialog-close" aria-label={t('home.closeDialog')} onClick={() => setTorrentOpen(false)}>
-              <X size={16} />
-            </button>
+      <Dialog open={torrentOpen} onOpenChange={setTorrentOpen}>
+        {torrentOpen ? (
+          <DialogContent
+            className="torrent-dialog"
+            closeLabel={t('home.closeDialog')}
+            hideTitle
+            title={t('home.torrentTitle')}
+          >
             <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={(file, session) => {
               setTorrentOpen(false)
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
             }} />
-          </div>
-        </dialog>
-      ) : null}
-      {pendingMedia ? (
-        <dialog className="name-dialog" open aria-labelledby="name-dialog-title" onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            discardPending(pendingMedia)
-            setPendingMedia(null)
-          }
-        }}>
-          <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      <Dialog
+        open={pendingMedia !== null}
+        onOpenChange={(open) => {
+          if (open || !pendingMedia) return
+          discardPending(pendingMedia)
+          setPendingMedia(null)
+        }}
+      >
+        {pendingMedia ? (
+          <DialogContent
+            closeLabel={t('home.closeDialog')}
+            title={t('home.dialogTitle')}
+            description={t('home.dialogGuide')}
+          >
             <span className="dialog-file">{pendingMedia.kind === 'screen' ? t('home.screenDialog') : pendingMedia.file.name}</span>
-            <h2 id="name-dialog-title">{t('home.dialogTitle')}</h2>
-            <p>{t('home.dialogGuide')}</p>
-            <label htmlFor="nickname">{t('home.nickname')}</label>
-            <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />
-            <div className="dialog-actions">
-              <button type="button" onClick={() => {
-                discardPending(pendingMedia)
-                setPendingMedia(null)
-              }}>{t('home.cancel')}</button>
-              <button type="submit" className="primary-button">{t('home.continue')}</button>
-            </div>
-          </form>
-        </dialog>
-      ) : null}
+            <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
+              <label htmlFor="nickname">{t('home.nickname')}</label>
+              <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />
+              <div className="dialog-actions">
+                <Button onClick={() => {
+                  discardPending(pendingMedia)
+                  setPendingMedia(null)
+                }}>{t('home.cancel')}</Button>
+                <Button type="submit" variant="primary">{t('home.continue')}</Button>
+              </div>
+            </form>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </main>
   )
 }

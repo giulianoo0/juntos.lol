@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { translate, type Translator } from '../i18n/useT'
 import type { RoomInfo } from '../types'
 import { Player } from './Player'
+import { ToastProvider } from '../ui/Toast'
 
 const t = Object.assign((key: string) => translate('en', key), {
   language: 'en' as const,
@@ -68,7 +69,44 @@ describe('Player', () => {
   it('does not expose control takeover to viewers', () => {
     render(<Player room={room} isController={false} videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
     expect(screen.queryByRole('button', { name: 'Take control' })).not.toBeInTheDocument()
-    expect(screen.getByText('Host controls sync')).toBeInTheDocument()
+    // The bar no longer carries a standing note about who is in charge: it is
+    // said when a control is actually used, and not before.
+    expect(screen.queryByText(/only the host|só o líder/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Seek' })).toBeDisabled()
+  })
+
+  it('tells a viewer why pausing did nothing, and leaves playback alone', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    render(
+      <ToastProvider>
+        <Player room={room} isController={false} videoRef={videoRef} send={send} t={t} />
+      </ToastProvider>,
+    )
+    // A playing video is what turns the control into a pause.
+    fireEvent.play(videoRef.current!)
+    Object.defineProperty(videoRef.current!, 'paused', { configurable: true, value: false })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+
+    expect(await screen.findByText(/only the host/i)).toBeInTheDocument()
+    expect(pause).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalledWith('pause', expect.anything())
+  })
+
+  it('tells a viewer why an arrow key did nothing', async () => {
+    const send = vi.fn()
+    render(
+      <ToastProvider>
+        <Player room={room} isController={false} videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />
+      </ToastProvider>,
+    )
+
+    fireEvent.keyDown(document, { key: 'ArrowRight' })
+
+    expect(await screen.findByText(/only the host/i)).toBeInTheDocument()
+    expect(send).not.toHaveBeenCalledWith('seek', expect.anything())
   })
 
   it('opens the player in fullscreen', () => {

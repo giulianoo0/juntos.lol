@@ -4,7 +4,7 @@ import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
-import { Crown, MonitorUp, Upload, X } from 'lucide-react'
+import { Check, Crown, MessageSquare, MonitorUp, Upload } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -16,6 +16,9 @@ import {
   startScreenShare,
   takeScreenStream,
 } from '../screenshare'
+import { Button } from '../ui/Button'
+import { Dialog, DialogContent } from '../ui/Dialog'
+import { useToast } from '../ui/toastContext'
 import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting } from '../types'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
@@ -34,6 +37,9 @@ import {
 // How long one arrival or departure stays on screen before the next is shown.
 const PRESENCE_TOAST_MS = 4_000
 const MAX_VISIBLE_TOASTS = 3
+// How often a room still being prepared re-reads its own progress, as a
+// fallback for the live updates rather than a replacement for them.
+const PREPARING_POLL_MS = 3_000
 
 export function RoomPage() {
   const { id = '' } = useParams()
@@ -107,18 +113,19 @@ function guestName(): string {
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
-  const remoteTileRef = useRef<HTMLDivElement>(null)
   const sync = useSync(room.id, nickname, videoRef)
+  const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
   const [chatOpen, setChatOpen] = useState(true)
-  const [copied, setCopied] = useState(false)
-  const [shareRoom, setShareRoom] = useState<LiveKitRoom | null>(null)
-  const [shareError, setShareError] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   const toasts = usePresenceToasts(sync.presence)
   const [sourcePanel, setSourcePanel] = useState<'menu' | 'torrent' | null>(null)
+  // Messages that arrived while the chat was shut. Counting from a mark rather
+  // than incrementing a tally keeps it right when history arrives at once.
+  const [readMark, setReadMark] = useState(() => sync.messages.length)
+  const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isScreenRoom = liveRoom.sourceKind === 'screen'
@@ -182,6 +189,22 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     // are only comparable once parsed.
   ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [sync.messages, sync.presence, t])
 
+  // While a room is being prepared its numbers move on the server, and the
+  // only signal that they moved is a WebSocket frame. A connection that drops
+  // during a long download would otherwise leave the waiting screen frozen on
+  // whatever it last heard, which reads exactly like a transfer that died.
+  const preparing = mediaStatus === 'uploading' || mediaStatus === 'processing'
+  useEffect(() => {
+    if (!preparing) return
+    const controller = new AbortController()
+    const timer = window.setInterval(() => {
+      void fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
+        .then(async (response) => { if (response.ok) setLiveRoom(await response.json() as RoomInfo) })
+        .catch(() => undefined)
+    }, PREPARING_POLL_MS)
+    return () => { window.clearInterval(timer); controller.abort() }
+  }, [preparing, room.id])
+
   // Media and subtitle updates carry the current media status; each signal
   // means fresh room metadata is available.
   useEffect(() => {
@@ -196,6 +219,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return () => controller.abort()
   }, [sync.roomVersion, room.id])
 
+  useEffect(() => {
+    if (chatOpen) setReadMark(sync.messages.length)
+  }, [chatOpen, sync.messages.length])
+
   // Show this tab's own background upload progress while it is running.
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {
@@ -208,19 +235,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
-  }
-
-  const shareScreen = async () => {
-    setShareError(false)
-    try {
-      if (shareRoom) { await shareRoom.disconnect(); setShareRoom(null); return }
-      const nextRoom = await startScreenShare(room.id, sync.memberId, sync.capability, (element) => {
-        remoteTileRef.current?.replaceChildren(element)
-      })
-      setShareRoom(nextRoom)
-    } catch { setShareError(true) }
+    toast(t('room.copiedToast'))
   }
 
   if (uploadFailed) {
@@ -253,18 +268,40 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController && !isScreenRoom ? (
-            <button onClick={() => sync.send('gating', { enabled: !sync.gatingEnabled })}>
-              {t(sync.gatingEnabled ? 'room.gatingOn' : 'room.gatingOff')}
-            </button>
+            <Button
+              className={`sync-toggle ${sync.gatingEnabled ? 'is-on' : ''}`}
+              variant="ghost"
+              size="small"
+              role="switch"
+              aria-checked={sync.gatingEnabled}
+              onClick={() => sync.send('gating', { enabled: !sync.gatingEnabled })}
+            >
+              <span className="sync-toggle-box" aria-hidden="true">
+                {sync.gatingEnabled ? <Check size={11} strokeWidth={3.5} /> : null}
+              </span>
+              {t('room.gating')}
+            </Button>
           ) : null}
-          {sync.isController ? <button onClick={() => { setSourceError(false); setSourcePanel('menu') }}>{t('room.changeSource')}</button> : null}
-          <button onClick={copyLink}>{copied ? t('room.copied') : t('room.copy')}</button>
-          {!isScreenRoom ? <button onClick={shareScreen}>{shareRoom ? t('room.stopScreen') : t('room.shareScreen')}</button> : null}
-          <button onClick={() => setChatOpen((open) => !open)}>{t('chat.title')}</button>
+          {sync.isController ? (
+            <Button onClick={() => { setSourceError(false); setSourcePanel('menu') }}>{t('room.changeSource')}</Button>
+          ) : null}
+          <Button onClick={copyLink}>{t('room.copy')}</Button>
+          <Button
+            variant="icon"
+            size="icon"
+            className={`chat-toggle ${chatOpen ? 'is-on' : ''}`}
+            aria-label={t('chat.title')}
+            aria-pressed={chatOpen}
+            onClick={() => setChatOpen((open) => !open)}
+          >
+            <MessageSquare size={16} aria-hidden="true" />
+            {unread > 0 ? (
+              <span className="chat-badge">{unread > 9 ? '9+' : unread}</span>
+            ) : null}
+          </Button>
         </div>
       </header>
-      {shareError ? <div className="error-card compact">{t('error.screenshare')}</div> : null}
-      <div className="room-layout">
+      <div className={`room-layout ${chatOpen ? 'chat-open' : ''}`}>
         <section className="media-column">
           {isScreenRoom ? (
             <ScreenStage
@@ -288,7 +325,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           {sync.waiting !== null && !isScreenRoom ? (
             <WaitingPanel waiting={sync.waiting} members={sync.members} t={t} />
           ) : null}
-          <div ref={remoteTileRef} className="screen-tile" />
           <div className="presence-row">
             {sync.members.map((member) => (
               <span key={member.id} className={`member-chip ${member.id === sync.controllerId ? 'is-controller' : ''}`}>
@@ -307,37 +343,33 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         onChange={(event) => chooseFile(event.target.files?.[0])}
       />
       {sourceError ? <div className="error-card compact" role="alert">{t('room.changeFailed')}</div> : null}
-      {sourcePanel !== null ? (
-        <dialog className="name-dialog torrent-dialog" open aria-labelledby="source-dialog-title" onKeyDown={(event) => {
-          if (event.key === 'Escape') setSourcePanel(null)
-        }}>
-          <div className="dialog-body">
-            <button type="button" className="dialog-close" aria-label={t('home.closeDialog')} onClick={() => setSourcePanel(null)}>
-              <X size={16} />
-            </button>
+      <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
+        {sourcePanel !== null ? (
+          <DialogContent
+            className="torrent-dialog"
+            closeLabel={t('home.closeDialog')}
+            hideTitle={sourcePanel === 'torrent'}
+            title={sourcePanel === 'menu' ? t('room.changeSourceTitle') : t('home.torrentTitle')}
+            description={sourcePanel === 'menu' ? t('room.changeSourceGuide') : undefined}
+          >
             {sourcePanel === 'menu' ? (
-              <>
-                <span className="dialog-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span>
-                <h2 id="source-dialog-title">{t('room.changeSourceTitle')}</h2>
-                <p>{t('room.changeSourceGuide')}</p>
-                <div className="source-options">
-                  <button type="button" onClick={() => { setSourcePanel(null); fileInputRef.current?.click() }}>
-<Upload size={17} aria-hidden="true" />{t('room.sourceFile')}
-                  </button>
-                  <button type="button" onClick={() => setSourcePanel('torrent')}>
-<span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.sourceTorrent')}
-                  </button>
-                  <button type="button" onClick={chooseScreen}>
-<MonitorUp size={17} aria-hidden="true" />{t('room.sourceScreen')}
-                  </button>
-                </div>
-              </>
+              <div className="source-options">
+                <Button onClick={() => { setSourcePanel(null); fileInputRef.current?.click() }}>
+                  <Upload size={17} aria-hidden="true" />{t('room.sourceFile')}
+                </Button>
+                <Button onClick={() => setSourcePanel('torrent')}>
+                  <span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.sourceTorrent')}
+                </Button>
+                <Button onClick={chooseScreen}>
+                  <MonitorUp size={17} aria-hidden="true" />{t('room.sourceScreen')}
+                </Button>
+              </div>
             ) : (
               <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={chooseTorrent} />
             )}
-          </div>
-        </dialog>
-      ) : null}
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </main>
   )
 }

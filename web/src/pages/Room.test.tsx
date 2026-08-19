@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
+import { ToastProvider } from '../ui/Toast'
 import { changeRoomSource } from '../upload'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 
@@ -36,9 +37,11 @@ class FakeWebSocket {
 
 function renderRoom() {
   return render(
-    <MemoryRouter initialEntries={['/room/abc123']}>
-      <Routes><Route path="/room/:id" element={<RoomPage />} /></Routes>
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter initialEntries={['/room/abc123']}>
+        <Routes><Route path="/room/:id" element={<RoomPage />} /></Routes>
+      </MemoryRouter>
+    </ToastProvider>,
   )
 }
 
@@ -192,4 +195,178 @@ describe('RoomPage source swap', () => {
     expect(changeRoomSource).not.toHaveBeenCalled()
     expect(stashScreenStream).not.toHaveBeenCalled()
   })
+})
+
+describe('RoomPage header', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('ss.nickname', 'Giuli')
+    vi.clearAllMocks()
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: 'abc123', fileName: 'movie.mkv', status: 'ready',
+        sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+        audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+        memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
+      }),
+    }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const welcome = (memberId: string) => act(() => {
+    FakeWebSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'welcome', memberId, controllerId: 'm1', capability: 'cap-token',
+        members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }],
+        state: { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 },
+      }),
+    })
+  })
+
+  const chat = (author: string, text: string) => act(() => {
+    FakeWebSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'chat',
+        message: { author, text, at: new Date().toISOString() },
+      }),
+    })
+  })
+
+  async function joinedRoom(memberId = 'm1') {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome(memberId)
+    return await screen.findByRole('button', { name: /copy link|copiar link/i })
+  }
+
+  it('no longer offers screen sharing next to the source switcher', async () => {
+    await joinedRoom()
+
+    // Sharing a screen is what "change video" does; two entry points for it
+    // only made the header longer.
+    expect(screen.queryByRole('button', { name: /share screen|compartilhar tela/i })).not.toBeInTheDocument()
+  })
+
+  it('confirms a copied link with a toast', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    const copy = await joinedRoom()
+
+    fireEvent.click(copy)
+
+    expect(writeText).toHaveBeenCalledWith('http://localhost/room/abc123')
+    expect(await screen.findByText(/link copied|link copiado/i)).toBeInTheDocument()
+    // The button keeps its own label rather than becoming the confirmation.
+    expect(copy).toHaveTextContent(/copy link|copiar link/i)
+  })
+
+  it('counts messages that arrive while the chat is shut', async () => {
+    await joinedRoom()
+    const toggle = screen.getByRole('button', { name: /^chat$/i })
+
+    // The chat starts open, so shut it before anything can go unread.
+    fireEvent.click(toggle)
+    chat('Ana', 'oi')
+    chat('Ana', 'tudo bem?')
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+  })
+
+  it('clears the count when the chat is opened', async () => {
+    await joinedRoom()
+    const toggle = screen.getByRole('button', { name: /^chat$/i })
+    fireEvent.click(toggle)
+    chat('Ana', 'oi')
+    await screen.findByText('1')
+
+    fireEvent.click(toggle)
+
+    await waitFor(() => expect(screen.queryByText('1')).not.toBeInTheDocument())
+  })
+
+  it('gives the chat column back to the player when the chat is shut', async () => {
+    const { container } = renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m1')
+    await screen.findByRole('button', { name: /copy link|copiar link/i })
+
+    const layout = container.querySelector('.room-layout')!
+    expect(layout).toHaveClass('chat-open')
+
+    fireEvent.click(screen.getByRole('button', { name: /^chat$/i }))
+
+    expect(layout).not.toHaveClass('chat-open')
+  })
+
+  it('presents the synced start as a setting that is already on', async () => {
+    await joinedRoom()
+
+    const toggle = screen.getByRole('switch', { name: /force sync|forçar sincronizar/i })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    fireEvent.click(toggle)
+
+    expect(FakeWebSocket.instances[0].send).toHaveBeenCalledWith(
+      JSON.stringify({ type: 'gating', enabled: false }),
+    )
+  })
+
+  it('keeps the sync setting out of a viewer\'s header', async () => {
+    await joinedRoom('m2')
+
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  })
+})
+
+describe('RoomPage waiting screen', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    localStorage.setItem('ss.nickname', 'Giuli')
+    vi.clearAllMocks()
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  const roomBody = (receivedBytes: number) => ({
+    id: 'abc123', fileName: 'movie.mkv', status: 'uploading',
+    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
+    preparation: {
+      sourceBytes: 100 * 1024 * 1024,
+      receivedBytes,
+      previewPhase: 'receiving',
+    },
+  })
+
+  it('keeps reading its own progress when no live update arrives', async () => {
+    // A dropped WebSocket used to freeze this screen on the last figure it
+    // heard, which looks identical to a transfer that died.
+    let received = 10 * 1024 * 1024
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
+      ok: true, status: 200, json: async () => roomBody(received),
+    })))
+
+    renderRoom()
+    expect(await screen.findByText('10.0 MB / 100.0 MB')).toBeInTheDocument()
+
+    received = 40 * 1024 * 1024
+    // No socket frame is delivered: only the poll can move this.
+    await waitFor(() => expect(screen.getByText('40.0 MB / 100.0 MB')).toBeInTheDocument(),
+      { timeout: 6000 })
+  }, 10_000)
 })

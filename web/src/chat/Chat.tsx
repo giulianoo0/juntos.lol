@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { X } from 'lucide-react'
 import type { ChatEntry } from '../types'
+import { Button } from '../ui/Button'
 import type { Translator } from '../i18n/useT'
 
 const mobileMediaQuery = '(max-width: 900px)'
@@ -46,7 +47,12 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
 
   return (
     <aside className={`chat-panel ${mobile ? 'chat-drawer' : 'chat-docked'} ${open ? 'is-open' : ''} ${reducedMotion ? 'reduced-motion' : ''}`}>
-      <header><h2>{t('chat.title')}</h2><button onClick={onClose} aria-label="Close chat"><X size={15} /></button></header>
+      <header>
+        <h2>{t('chat.title')}</h2>
+        <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('chat.close')}>
+          <X size={15} aria-hidden="true" />
+        </Button>
+      </header>
       <div className="chat-messages">
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
           <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ animationDelay: `${Math.min(index * 35, 300)}ms` }}>
@@ -58,7 +64,7 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
       </div>
       <div className="chat-composer sunken">
         <input value={text} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown} placeholder={t('chat.placeholder')} maxLength={2048} />
-        <button onClick={submit}>{t('chat.send')}</button>
+        <Button variant="ghost" onClick={submit}>{t('chat.send')}</Button>
       </div>
     </aside>
   )

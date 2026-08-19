@@ -8,6 +8,7 @@ import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } f
 import type { PlayState, RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { expectedPositionMs } from './position'
+import { useToast } from '../ui/toastContext'
 
 interface PlayerProps {
   room: RoomInfo
@@ -45,6 +46,11 @@ interface BufferedRange {
 }
 
 export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0 }: PlayerProps) {
+  const { toast } = useToast()
+  // Says why a control did nothing, at the moment it is used. The standing
+  // note this replaces sat in the bar for the whole session, explaining
+  // something nobody had tried yet.
+  const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const playRequestedRef = useRef(false)
@@ -331,15 +337,20 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       attemptPlay()
       return
     }
+    // Starting playback stays open to everyone: a viewer whose browser
+    // refused to autoplay has no other way in, and the sync corrects the
+    // position immediately. Stopping it is the controller's alone.
+    if (!isController) {
+      refuseControl()
+      return
+    }
     playRequestedRef.current = false
     video.pause()
-    if (isController) {
-      send('pause', {
-        positionMs: Math.round(video.currentTime * 1000),
-        rate: video.playbackRate,
-      })
-    }
-  }, [attemptPlay, isController, send, videoRef])
+    send('pause', {
+      positionMs: Math.round(video.currentTime * 1000),
+      rate: video.playbackRate,
+    })
+  }, [attemptPlay, isController, refuseControl, send, videoRef])
 
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
@@ -362,14 +373,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const seekBy = useCallback((delta: number) => {
     const video = videoRef.current
     if (!video) return false
-    if (!isController) return false
+    if (!isController) {
+      refuseControl()
+      return false
+    }
     // An event playlist reports no duration until it has grown, so an unknown
     // length must not become a zero ceiling: that would clamp every rewind to
     // a negative position, which the server rejects outright.
     const ceiling = duration > 0 ? duration : Number.POSITIVE_INFINITY
     seek(Math.min(Math.max(video.currentTime + delta, 0), ceiling))
     return true
-  }, [duration, isController, seek, videoRef])
+  }, [duration, isController, refuseControl, seek, videoRef])
 
   const applyVolume = useCallback((value: number) => {
     const video = videoRef.current
@@ -624,9 +638,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           title={`${fullscreenLabel} (F)`}
           onClick={toggleFullscreen}
         >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
-        {!isController ? (
-          <span className="viewer-note">{t('room.viewer')}</span>
-        ) : null}
       </div>
       {room.bitmapSubsSkipped > 0 ? <span className="notice-chip">{t('room.bitmapSkipped')}</span> : null}
     </div>
