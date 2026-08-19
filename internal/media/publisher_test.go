@@ -2,9 +2,11 @@ package media
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -250,4 +252,62 @@ func TestPublisherMovesToANewPrefixAfterASourceSwap(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, published, "/rooms/r1/g1/hls/")
 	require.NotContains(t, published, "/rooms/r1/g0/hls/")
+}
+
+// blockingBucket holds the first upload open so a test can cancel the publish
+// while bytes are still moving, and then reports whether that upload's own
+// context survived the cancellation.
+type blockingBucket struct {
+	started  chan struct{}
+	release  chan struct{}
+	mu       sync.Mutex
+	puts     []string
+	inFlight error
+}
+
+func (b *blockingBucket) Put(ctx context.Context, key string, r io.Reader, _ int64, _, _ string) error {
+	b.mu.Lock()
+	b.puts = append(b.puts, key)
+	first := len(b.puts) == 1
+	b.mu.Unlock()
+	if first {
+		close(b.started)
+		<-b.release
+		b.mu.Lock()
+		b.inFlight = ctx.Err()
+		b.mu.Unlock()
+	}
+	_, err := io.ReadAll(r)
+	return err
+}
+
+func TestPublishLetsAnUploadAlreadyInFlightFinish(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	hlsDir := t.TempDir()
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 3, 3, false)
+	bucket := &blockingBucket{started: make(chan struct{}), release: make(chan struct{})}
+	publisher := NewPublisher(store, bucket, publicBase)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- publisher.Publish(ctx, "r1", hlsDir, previewPublishPatterns) }()
+
+	<-bucket.started
+	// The encode finishing cancels the publishing loop. An upload that is
+	// already streaming must still be allowed to finish: the bucket keeps an
+	// aborted PUT as an object that reads back intact over S3 while the edge
+	// serves it truncated, which costs the room its video and cannot be
+	// repaired by a cache purge.
+	cancel()
+	close(bucket.release)
+	<-done
+
+	bucket.mu.Lock()
+	defer bucket.mu.Unlock()
+	require.NoError(t, bucket.inFlight, "in-flight upload must not observe cancellation")
 }

@@ -34,6 +34,17 @@ const (
 	// bucket. Half a preview segment: the preview is what a viewer waits on.
 	PublishInterval = time.Second
 
+	// uploadTimeout bounds one object upload. It is deliberately generous
+	// because the alternative to a slow upload is an aborted one, and an
+	// aborted PUT is not a no-op: the bucket keeps an object that reads back
+	// intact over the S3 API while the edge serves it truncated, so the room
+	// loses its video and no cache purge brings it back.
+	uploadTimeout = 5 * time.Minute
+	// bookkeepingTimeout bounds the record of what reached the bucket. It
+	// outlives the cancellation that stopped the uploads, or the objects paid
+	// for would be uploaded again by the next pass.
+	bookkeepingTimeout = 10 * time.Second
+
 	// immutableCacheControl is for segments and init files. Their names carry
 	// a sequence number and a new encode writes new names, so an edge copy can
 	// never go stale.
@@ -111,6 +122,15 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 			if _, done := published[object]; done {
 				continue
 			}
+			// Cancellation stops the pass between uploads rather than during
+			// one. Starting another here would only produce an object this
+			// context aborts halfway, and a half-written object is worse than
+			// a missing one: the playlist truncates cleanly around what is
+			// missing, and the pass that follows uploads the rest.
+			if err := ctx.Err(); err != nil {
+				p.recordPublished(ctx, roomID, uploaded)
+				return err
+			}
 			err := p.putObject(ctx, hlsPrefix(roomID, generation)+object,
 				filepath.Join(hlsDir, object), segmentContentType(object), immutableCacheControl)
 			if errors.Is(err, os.ErrNotExist) {
@@ -124,10 +144,7 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 				// Whatever already reached the bucket is recorded before
 				// giving up, so a retry pays for the remaining objects rather
 				// than for all of them again.
-				if markErr := p.store.MarkPublished(ctx, roomID, uploaded...); markErr != nil {
-					slog.WarnContext(ctx, "record published objects after upload failure",
-						"room_id", roomID, "error", markErr)
-				}
+				p.recordPublished(ctx, roomID, uploaded)
 				return err
 			}
 			published[object] = struct{}{}
@@ -243,7 +260,29 @@ func (p *Publisher) putObject(ctx context.Context, key, path, contentType, cache
 	if err != nil {
 		return fmt.Errorf("size %s for upload: %w", filepath.Base(path), err)
 	}
-	return p.bucket.Put(ctx, key, file, info.Size(), contentType, cacheControl)
+	// Detached from the caller's cancellation on purpose. Once bytes are
+	// moving, the cheapest outcome is to let them land: an aborted PUT leaves
+	// the bucket holding an object that passes an S3 read and is served
+	// truncated from the edge, which is indistinguishable from working media
+	// until a viewer's player stalls on it.
+	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
+	defer cancel()
+	return p.bucket.Put(uploadCtx, key, file, info.Size(), contentType, cacheControl)
+}
+
+// recordPublished remembers what reached the bucket. It outlives the
+// cancellation that ended the pass, because a record lost here is paid for
+// again as a re-upload by the next one.
+func (p *Publisher) recordPublished(ctx context.Context, roomID string, uploaded []string) {
+	if len(uploaded) == 0 {
+		return
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bookkeepingTimeout)
+	defer cancel()
+	if err := p.store.MarkPublished(recordCtx, roomID, uploaded...); err != nil {
+		slog.WarnContext(ctx, "record published objects after upload failure",
+			"room_id", roomID, "error", err)
+	}
 }
 
 // dropUploadedSegments reclaims disk for media segments now in the bucket.
