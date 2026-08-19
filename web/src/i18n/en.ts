@@ -26,6 +26,7 @@ export const en: Record<string, string> = {
   'home.historyExpired': 'Expired',
   'home.historyChecking': 'Checking',
   'home.closeHistory': 'Close history',
+  'home.source': 'View the source on GitHub',
   'home.language': 'Language',
   'home.dialogTitle': 'What should we call you?',
   'home.dialogGuide': 'This name is shown to everyone in the room.',

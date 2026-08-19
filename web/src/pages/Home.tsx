@@ -4,6 +4,7 @@ import { History, MonitorUp, Plus, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
+import { BuildInfo } from '../components/BuildInfo'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
@@ -161,9 +162,12 @@ export function Home() {
           <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}><Plus size={15} aria-hidden="true" />{t('home.newRoom')}</button>
           <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(true)}><History size={15} aria-hidden="true" />{t('home.history')}</button>
         </nav>
-        <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
-          <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
-        </button>
+        <div className="header-end">
+          <BuildInfo label={t('home.source')} />
+          <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
+            <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
+          </button>
+        </div>
       </header>
 
       {historyOpen ? (

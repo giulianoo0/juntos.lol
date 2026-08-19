@@ -1,5 +1,10 @@
 FROM node:24-bookworm AS web-build
 
+# The commit the image was built from, shown in the app's header. The build
+# context excludes .git, so it has to be handed in.
+ARG GIT_SHA=dev
+ENV VITE_GIT_SHA=$GIT_SHA
+
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci

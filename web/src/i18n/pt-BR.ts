@@ -26,6 +26,7 @@ export const ptBR: Record<string, string> = {
   'home.historyExpired': 'Expirou',
   'home.historyChecking': 'Verificando',
   'home.closeHistory': 'Fechar histórico',
+  'home.source': 'Ver o código no GitHub',
   'home.language': 'Idioma',
   'home.dialogTitle': 'Como devemos chamar você?',
   'home.dialogGuide': 'Esse nome aparece para todos na sala.',

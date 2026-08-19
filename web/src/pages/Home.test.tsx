@@ -121,3 +121,15 @@ describe('Home', () => {
     expect(destroy).not.toHaveBeenCalled()
   })
 })
+
+describe('build info', () => {
+  it('links the running build back to its source and its commit', () => {
+    render(<MemoryRouter><Home /></MemoryRouter>)
+
+    const repo = screen.getByRole('link', { name: /source on github|código no github/i })
+    expect(repo).toHaveAttribute('href', 'https://github.com/giulianoo0/ss')
+    // A local dev build has no upstream commit to point at, so it shows the
+    // repository alone rather than a link that would 404.
+    expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).not.toBeInTheDocument()
+  })
+})
