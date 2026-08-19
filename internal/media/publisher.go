@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,8 +67,20 @@ func NewPublisher(store *room.Store, bucket objectstore.Store, mediaPublicURL st
 	}
 }
 
-func hlsPrefix(roomID string) string  { return "rooms/" + roomID + "/hls/" }
-func subsPrefix(roomID string) string { return "rooms/" + roomID + "/subs/" }
+// MediaPrefix is where one generation of a room's media lives.
+//
+// The generation is in the path because segment names repeat: swap the source
+// and the next encode writes stream_1_000.m4s again. Those URLs are handed to
+// the edge as immutable for a year, so reusing them would serve the previous
+// video from cache with no way to correct it.
+func MediaPrefix(roomID string, generation int) string {
+	return "rooms/" + roomID + "/g" + strconv.Itoa(generation) + "/"
+}
+
+func hlsPrefix(roomID string, generation int) string { return MediaPrefix(roomID, generation) + "hls/" }
+func subsPrefix(roomID string, generation int) string {
+	return MediaPrefix(roomID, generation) + "subs/"
+}
 
 // Publish runs one pass: upload what the playlists reference, then republish
 // the playlists themselves pointing at the bucket.
@@ -83,6 +96,10 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 	if len(bodies) == 0 {
 		return nil
 	}
+	generation, err := p.generation(ctx, roomID)
+	if err != nil {
+		return err
+	}
 	published, err := p.store.Published(ctx, roomID)
 	if err != nil {
 		return fmt.Errorf("load published objects: %w", err)
@@ -94,7 +111,7 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 			if _, done := published[object]; done {
 				continue
 			}
-			err := p.putObject(ctx, hlsPrefix(roomID)+object,
+			err := p.putObject(ctx, hlsPrefix(roomID, generation)+object,
 				filepath.Join(hlsDir, object), segmentContentType(object), immutableCacheControl)
 			if errors.Is(err, os.ErrNotExist) {
 				// The playlist names it but the muxer has not finished
@@ -125,7 +142,7 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 
 	rendered := make(map[string]string, len(bodies))
 	for name, body := range bodies {
-		if out, ok := p.renderPlaylist(roomID, body, published); ok {
+		if out, ok := p.renderPlaylist(roomID, generation, body, published); ok {
 			rendered[name] = out
 		}
 	}
@@ -179,6 +196,10 @@ func (p *Publisher) Run(ctx context.Context, roomID, hlsDir string, patterns []s
 // built by the client, so they carry a version query string of their own and
 // do not need the published set.
 func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string) error {
+	generation, err := p.generation(ctx, roomID)
+	if err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(subsDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -190,7 +211,7 @@ func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".vtt") {
 			continue
 		}
-		if err := p.putObject(ctx, subsPrefix(roomID)+entry.Name(),
+		if err := p.putObject(ctx, subsPrefix(roomID, generation)+entry.Name(),
 			filepath.Join(subsDir, entry.Name()), "text/vtt; charset=utf-8", subtitleCacheControl); err != nil {
 			return err
 		}
@@ -198,9 +219,15 @@ func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string
 	return nil
 }
 
-// SubtitleURL is where a client fetches one subtitle track.
-func (p *Publisher) SubtitleURL(roomID, name string) string {
-	return p.baseURL + "/" + subsPrefix(roomID) + name
+// generation reads which source the room is currently on. Every object key
+// carries it, so a swap cannot collide with what the previous source left in
+// the bucket or at the edge.
+func (p *Publisher) generation(ctx context.Context, roomID string) (int, error) {
+	storedRoom, err := p.store.Get(ctx, roomID)
+	if err != nil {
+		return 0, fmt.Errorf("load room generation: %w", err)
+	}
+	return storedRoom.MediaGeneration, nil
 }
 
 func (p *Publisher) putObject(ctx context.Context, key, path, contentType, cacheControl string) error {
@@ -241,11 +268,12 @@ func (p *Publisher) dropUploadedSegments(hlsDir string, uploaded []string) {
 // A master playlist is returned unchanged: its URIs name variant playlists,
 // which the application still serves. A media playlist gets bucket URLs and
 // is cut at the last segment the bucket has confirmed.
-func (p *Publisher) renderPlaylist(roomID string, body []byte, published map[string]struct{}) (string, bool) {
+func (p *Publisher) renderPlaylist(roomID string, generation int, body []byte,
+	published map[string]struct{}) (string, bool) {
 	if isMasterPlaylist(body) {
 		return string(body), true
 	}
-	base := p.baseURL + "/" + hlsPrefix(roomID)
+	base := p.baseURL + "/" + hlsPrefix(roomID, generation)
 	lines := strings.Split(strings.TrimSuffix(string(normalizeEventPlaylist(body)), "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	// pending holds tags read since the last emitted segment. They describe

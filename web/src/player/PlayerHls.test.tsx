@@ -99,7 +99,7 @@ const room: RoomInfo = {
   bitmapSubsSkipped: 0,
   memberCount: 1,
   expiresAt: new Date(Date.now() + 60_000).toISOString(),
-  mediaBaseUrl: 'https://media.example.test/rooms/r1',
+  mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
 }
 
 const unplayableMessage = translate('en', 'room.unplayable')

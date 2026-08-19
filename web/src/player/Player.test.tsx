@@ -31,22 +31,35 @@ function playing(video: HTMLVideoElement) {
   Object.defineProperty(video, 'paused', { configurable: true, value: false })
 }
 
+const playingRoom = { playing: true, positionMs: 0, rate: 1, serverTimeMs: Date.now() }
+
 afterEach(() => vi.restoreAllMocks())
 
 describe('Player', () => {
+  it('declares CORS on the media element so cross-origin tracks load', () => {
+    // Subtitle files live on the media host. A browser refuses a cross-origin
+    // text track unless the element itself declares CORS, and the failure is
+    // silent: the tracks are listed and simply never fetched.
+    const { container } = render(
+      <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+
+    expect(container.querySelector('video')?.getAttribute('crossorigin')).toBe('anonymous')
+  })
+
   it('reads subtitles from the bucket the room names', () => {
     const withSubs: RoomInfo = {
       ...room,
       subtitleTracks: [{ index: 0, language: 'por', title: 'Legendas', codec: 'webvtt' }],
       subsVersion: 3,
-      mediaBaseUrl: 'https://media.example.test/rooms/r1',
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
     }
     const { container } = render(
       <Player room={withSubs} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
     )
 
     expect(container.querySelector('track')?.getAttribute('src')).toBe(
-      'https://media.example.test/rooms/r1/subs/sub_0_por.vtt?g=0&s=3',
+      'https://media.example.test/rooms/r1/g0/subs/sub_0_por.vtt?g=0&s=3',
     )
   })
 
@@ -92,14 +105,65 @@ describe('Player', () => {
   })
 
   it('lets a viewer satisfy autoplay locally without changing synchronized state', () => {
+    // The room is already playing and the browser refused to start audio, so
+    // the gesture starts their own element and reports nothing upstream.
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
     const send = vi.fn()
-    render(<Player room={room} isController={false} videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />)
+    render(
+      <Player
+        room={room}
+        isController={false}
+        videoRef={createRef<HTMLVideoElement>()}
+        send={send}
+        t={t}
+        syncState={playingRoom}
+      />,
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Play' }))
 
     expect(play).toHaveBeenCalledOnce()
     expect(send).not.toHaveBeenCalledWith('play', expect.anything())
+  })
+
+  it('refuses a viewer starting playback the room has not started', () => {
+    // Anything else would be a viewer deciding what the room watches, and
+    // would leave them playing alone against a paused room.
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const send = vi.fn()
+    render(
+      <Player
+        room={room}
+        isController={false}
+        videoRef={createRef<HTMLVideoElement>()}
+        send={send}
+        t={t}
+        syncState={{ ...playingRoom, playing: false }}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+
+    expect(play).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('refuses a viewer pausing what the room is watching', () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    render(
+      <Player room={room} isController={false} videoRef={videoRef} send={send} t={t} syncState={playingRoom} />,
+    )
+    playing(videoRef.current!)
+
+    fireEvent.click(videoRef.current!)
+    act(() => void vi.advanceTimersByTime(250))
+
+    expect(pause).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 
   it('does not expose control takeover to viewers', () => {

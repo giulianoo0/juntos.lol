@@ -293,3 +293,27 @@ func TestGatingSettingDefaultsOnAndRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got.GatingEnabled)
 }
+
+func TestSwapSourceClearsThePublishedMediaOfTheOldSource(t *testing.T) {
+	// The next encode writes segments with the same names. Left behind, the
+	// published set would tell the publisher they were already uploaded, and
+	// the bucket would keep serving the previous video.
+	mr := miniredis.RunT(t)
+	store := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &Room{
+		ID: "r1", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": "#EXTM3U\n"}))
+	require.NoError(t, store.MarkPublished(t.Context(), "r1", "stream_1_000.m4s"))
+
+	_, generation, err := store.SwapSource(t.Context(), "r1", "upload", "next.mkv", "uploading", now)
+	require.NoError(t, err)
+	require.Equal(t, 1, generation)
+
+	_, err = store.Playlist(t.Context(), "r1", "master.m3u8")
+	require.ErrorIs(t, err, ErrNotFound)
+	published, err := store.Published(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, published)
+}

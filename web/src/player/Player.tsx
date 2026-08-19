@@ -371,22 +371,33 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   }, [])
   useEffect(() => cancelPendingTap, [cancelPendingTap])
 
-  const togglePlay = useCallback(() => {
+  // togglePlay reports whether it actually changed anything, so a refused
+  // gesture does not flash feedback for something that did not happen.
+  const togglePlay = useCallback((): boolean => {
     const video = videoRef.current
-    if (!video) return
+    if (!video) return false
+
+    if (!isController) {
+      // A viewer's gesture never changes what the room is doing. The one thing
+      // it may do is start their own element when the room is already playing
+      // and the browser refused to autoplay it — catching up, not controlling.
+      // attemptPlay only reports a play upstream for the controller, so this
+      // stays local while still inheriting the retry on canplay.
+      if (video.paused && syncState?.playing) {
+        playRequestedRef.current = true
+        attemptPlay()
+        return true
+      }
+      refuseControl()
+      return false
+    }
+
     if (video.paused) {
       // Calling play inside the gesture preserves browser user activation. A
       // WebSocket round trip first would make browsers reject audible autoplay.
       playRequestedRef.current = true
       attemptPlay()
-      return
-    }
-    // Starting playback stays open to everyone: a viewer whose browser
-    // refused to autoplay has no other way in, and the sync corrects the
-    // position immediately. Stopping it is the controller's alone.
-    if (!isController) {
-      refuseControl()
-      return
+      return true
     }
     playRequestedRef.current = false
     video.pause()
@@ -394,7 +405,8 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       positionMs: Math.round(video.currentTime * 1000),
       rate: video.playbackRate,
     })
-  }, [attemptPlay, isController, refuseControl, send, videoRef])
+    return true
+  }, [attemptPlay, isController, refuseControl, send, syncState, videoRef])
 
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
@@ -473,8 +485,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         case 'k':
         case 'K':
           handled()
-          togglePlay()
-          showFeedback(video?.paused ? <Play size={26} /> : <Pause size={26} />)
+          if (togglePlay()) showFeedback(video?.paused ? <Play size={26} /> : <Pause size={26} />)
           return
         case 'ArrowLeft':
         case 'ArrowRight': {
@@ -570,8 +581,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         cancelPendingTap()
         tapTimerRef.current = setTimeout(() => {
           tapTimerRef.current = null
-          togglePlay()
-          showFeedback(videoRef.current?.paused ? <Play size={26} /> : <Pause size={26} />)
+          if (togglePlay()) {
+            showFeedback(videoRef.current?.paused ? <Play size={26} /> : <Pause size={26} />)
+          }
         }, TAP_TOGGLE_DELAY_MS)
       }}
       onDoubleClick={(event) => {
@@ -592,6 +604,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         ref={videoRef}
         className="video"
         playsInline
+        // Subtitle files live on the media host, and a browser refuses to load
+        // a cross-origin text track unless the media element itself declares
+        // CORS. Without this the tracks are listed and never fetched.
+        crossOrigin="anonymous"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onWaiting={() => setLoading(true)}

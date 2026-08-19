@@ -13,6 +13,7 @@ import (
 	gonanoid "github.com/matoous/go-nanoid/v2"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -142,7 +143,8 @@ func validRoomText(value string, maxBytes int) bool {
 
 // getRoom answers with the room and where its media is served from. The
 // client builds subtitle URLs itself, and those objects live in the bucket
-// rather than on this server.
+// rather than on this server. The base carries the media generation, so a
+// source swap cannot be answered with the previous source's files.
 func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, err := store.Get(c.Request.Context(), c.Param("id"))
@@ -178,7 +180,7 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"memberCount":       len(members),
 			"createdAt":         r.CreatedAt,
 			"expiresAt":         r.ExpiresAt,
-			"mediaBaseUrl":      mediaBaseURL + "/rooms/" + r.ID,
+			"mediaBaseUrl":      strings.TrimSuffix(mediaBaseURL+"/"+media.MediaPrefix(r.ID, r.MediaGeneration), "/"),
 		})
 	}
 }

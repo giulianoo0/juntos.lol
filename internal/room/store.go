@@ -381,7 +381,10 @@ func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackI
 // SwapSource repoints a live room at a new source without disturbing its
 // members, chat or controller. Everything describing the previous media is
 // cleared in one step: the tracks, the error, the browser-subtitle flag, the
-// upload reservation and the playback position. It returns the upload id that
+// upload reservation, the playback position, and the published media of the
+// source being replaced — its playlists and the record of what reached the
+// bucket, which would otherwise make the next encode think its own segments
+// had already been uploaded. It returns the upload id that
 // was reserved before the swap, if any, so the caller can reclaim the bytes of
 // an upload that is still in flight, plus the new media generation.
 //
@@ -414,9 +417,11 @@ redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs',
   'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
+redis.call('DEL', KEYS[4])
+redis.call('DEL', KEYS[5])
 redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
 return {1, previous, generation}
-`, []string{roomKey(id), uploadKey(id), stateKey(id)},
+`, []string{roomKey(id), uploadKey(id), stateKey(id), playlistsKey(id), publishedKey(id)},
 		status, fileName, kind, strconv.FormatInt(now.UnixMilli(), 10)).Slice()
 	if err != nil {
 		return "", 0, fmt.Errorf("swap room source: %w", err)

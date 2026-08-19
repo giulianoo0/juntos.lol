@@ -64,19 +64,19 @@ func TestPublisherUploadsSegmentsAndPublishesThePlaylist(t *testing.T) {
 
 	require.NoError(t, publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
 
-	segment, ok := bucket.Get("rooms/r1/hls/" + segmentName(0))
+	segment, ok := bucket.Get("rooms/r1/g0/hls/" + segmentName(0))
 	require.True(t, ok, "first segment should be in the bucket")
 	require.Equal(t, "seg", string(segment.Body))
 	require.Equal(t, immutableCacheControl, segment.CacheControl)
 
-	init, ok := bucket.Get("rooms/r1/hls/preview_init_0.mp4")
+	init, ok := bucket.Get("rooms/r1/g0/hls/preview_init_0.mp4")
 	require.True(t, ok, "init segment should be in the bucket")
 	require.Equal(t, "video/mp4", init.ContentType)
 
 	published, err := store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
 	require.NoError(t, err)
-	require.Contains(t, published, publicBase+"/rooms/r1/hls/"+segmentName(0))
-	require.Contains(t, published, `#EXT-X-MAP:URI="`+publicBase+`/rooms/r1/hls/preview_init_0.mp4"`)
+	require.Contains(t, published, publicBase+"/rooms/r1/g0/hls/"+segmentName(0))
+	require.Contains(t, published, `#EXT-X-MAP:URI="`+publicBase+`/rooms/r1/g0/hls/preview_init_0.mp4"`)
 	require.Contains(t, published, "#EXT-X-ENDLIST")
 }
 
@@ -165,7 +165,7 @@ func TestPublisherUploadsSubtitles(t *testing.T) {
 
 	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))
 
-	track, ok := bucket.Get("rooms/r1/subs/sub_0_por.vtt")
+	track, ok := bucket.Get("rooms/r1/g0/subs/sub_0_por.vtt")
 	require.True(t, ok)
 	require.Equal(t, "text/vtt; charset=utf-8", track.ContentType)
 	require.Equal(t, subtitleCacheControl, track.CacheControl)
@@ -225,4 +225,29 @@ func TestPublisherRecordsWhatReachedTheBucketBeforeFailing(t *testing.T) {
 	require.Contains(t, published, "preview_init_0.mp4")
 	require.Contains(t, published, segmentName(0))
 	require.NotContains(t, published, segmentName(1))
+}
+
+func TestPublisherMovesToANewPrefixAfterASourceSwap(t *testing.T) {
+	// Segment names repeat across sources, and their URLs are handed to the
+	// edge as immutable for a year. Reusing a key would serve the previous
+	// video from cache, with nothing the application could do to correct it.
+	publisher, bucket, store, hlsDir := newPublisherFixture(t)
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 1, 1, true)
+	require.NoError(t, publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
+	require.Contains(t, bucket.Keys(), "rooms/r1/g0/hls/"+segmentName(0))
+
+	_, generation, err := store.SwapSource(t.Context(), "r1", "upload", "next.mkv", "uploading", time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 1, generation)
+
+	// The next source writes the same names into the same directory.
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 1, 1, true)
+	require.NoError(t, publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
+
+	require.Contains(t, bucket.Keys(), "rooms/r1/g1/hls/"+segmentName(0),
+		"the new source must land on keys of its own")
+	published, err := store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
+	require.NoError(t, err)
+	require.Contains(t, published, "/rooms/r1/g1/hls/")
+	require.NotContains(t, published, "/rooms/r1/g0/hls/")
 }
