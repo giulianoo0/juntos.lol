@@ -103,7 +103,7 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 
 	ticker := time.NewTicker(subtitleSnapshotInterval)
 	defer ticker.Stop()
-	published := 0
+	var published subtitleSnapshot
 	for {
 		select {
 		case <-waitErr:
@@ -121,22 +121,35 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 	}
 }
 
+// subtitleSnapshot remembers what the last publish covered, so a tick that
+// added nothing publishes nothing.
+type subtitleSnapshot struct {
+	tracks int
+	bytes  int64
+}
+
 // publishSubtitleSnapshot announces the tracks that now hold at least one cue.
-// It republishes only when that set grows, because every publish bumps the
-// subtitle version and makes every connected player refetch its tracks.
+// It republishes when that set grows and when an already-published track gained
+// cues: a player only refetches on a version bump, so a snapshot that stopped
+// republishing would freeze every viewer at the cues of the first publish. The
+// tick interval is what bounds how often connected players refetch.
 func (p *Progressive) publishSubtitleSnapshot(ctx, jobCtx context.Context, roomID string,
-	probe *ProbeResult, outputs []string, published *int) {
+	probe *ProbeResult, outputs []string, published *subtitleSnapshot) {
 	tracks := make([]room.TrackInfo, 0, len(outputs))
+	var totalBytes int64
 	for position, output := range outputs {
 		if !hasSubtitleCues(output) {
 			continue
+		}
+		if info, err := os.Stat(output); err == nil {
+			totalBytes += info.Size()
 		}
 		track := probe.Subtitles[position]
 		track.Index = position
 		track.Codec = "webvtt"
 		tracks = append(tracks, track)
 	}
-	if len(tracks) <= *published {
+	if len(tracks) <= published.tracks && totalBytes <= published.bytes {
 		return
 	}
 	// The files reach the bucket before the tracks are announced, so a client
@@ -154,7 +167,7 @@ func (p *Progressive) publishSubtitleSnapshot(ctx, jobCtx context.Context, roomI
 		slog.WarnContext(ctx, "progressive subs: publish failed", "room_id", roomID, "error", err)
 		return
 	}
-	*published = len(tracks)
+	*published = subtitleSnapshot{tracks: len(tracks), bytes: totalBytes}
 	slog.InfoContext(ctx, "progressive subtitles published", "room_id", roomID, "tracks", len(tracks))
 	p.notifyUpdated(roomID)
 }
