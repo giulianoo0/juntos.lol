@@ -211,7 +211,7 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 		return
 	}
 	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewProbing, 0)
-	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe)
+	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, unstreamableAfter, p.probe)
 	if err != nil {
 		if errors.Is(err, ErrContainerUnknown) {
 			// The file cannot be previewed at all, so stop burning an ffprobe
@@ -335,8 +335,9 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 
 // probeGrowingFile retries transient parse failures until enough of the
 // container header has arrived or the upload is canceled/completed.
-func probeGrowingFile(ctx context.Context, path string, retryInterval time.Duration, probe probeFunc) (*ProbeResult, error) {
-	deadline := time.Now().Add(unstreamableAfter)
+func probeGrowingFile(ctx context.Context, path string, retryInterval, layoutCheckAfter time.Duration,
+	probe probeFunc) (*ProbeResult, error) {
+	deadline := time.Now().Add(layoutCheckAfter)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -356,7 +357,7 @@ func probeGrowingFile(ctx context.Context, path string, retryInterval time.Durat
 			// Either it streams and ffprobe simply needs more bytes, or the
 			// layout is still unreadable. Both mean: keep waiting, and ask
 			// again later rather than every half second.
-			deadline = time.Now().Add(unstreamableAfter)
+			deadline = time.Now().Add(layoutCheckAfter)
 		}
 
 		timer := time.NewTimer(retryInterval)
