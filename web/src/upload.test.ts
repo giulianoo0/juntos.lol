@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createRoomAndUpload, createRoomAndUploadTorrent, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
+import { FILE_UNREADABLE, createRoomAndUpload, createRoomAndUploadTorrent, isUnreadableFile, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
 import { convertMp4ToMkv } from './convert'
 import { createMatroskaSubtitleStream, extractAndUploadSubtitles } from './subtitles'
 
@@ -388,5 +388,30 @@ describe('upload registry', () => {
       tracks: [{ language: 'por', title: 'Portuguese', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n' }],
       complete: true,
     })
+  })
+
+  it('refuses a file that is still being written before any room exists', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockReset()
+    // A File whose bytes changed on disk: every read throws, which is exactly
+    // what a browser does for a download still in progress.
+    const file = new File(['partial'], 'still-downloading.mkv', { type: 'video/x-matroska' })
+    Object.defineProperty(file, 'slice', {
+      configurable: true,
+      value: () => ({
+        arrayBuffer: () => Promise.reject(new DOMException('changed on disk', 'NotReadableError')),
+      }),
+    })
+
+    await expect(createRoomAndUpload(file, 'giuli')).rejects.toThrow(FILE_UNREADABLE)
+    // Nothing was created, so no room is left sitting at zero per cent.
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('recognizes the unreadable-file failure however it arrives', () => {
+    expect(isUnreadableFile(new DOMException('x', 'NotReadableError'))).toBe(true)
+    expect(isUnreadableFile(new DOMException('x', 'NotFoundError'))).toBe(true)
+    expect(isUnreadableFile(new Error(FILE_UNREADABLE))).toBe(true)
+    expect(isUnreadableFile(new Error('network down'))).toBe(false)
   })
 })

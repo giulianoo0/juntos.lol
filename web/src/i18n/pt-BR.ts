@@ -91,5 +91,6 @@ export const ptBR: Record<string, string> = {
   'status.buffering': 'Carregando',
   'status.processing': 'Processando',
   'error.room': 'Sala indisponível',
+  'error.fileChanged': 'Esse arquivo ainda está sendo gravado. Espere o download terminar e escolha de novo.',
   'error.screenshare': 'Compartilhamento de tela indisponível.',
 }

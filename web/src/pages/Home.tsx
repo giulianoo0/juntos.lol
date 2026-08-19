@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { History, MonitorUp, Plus, Upload, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
-import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, type UploadProgress } from '../upload'
+import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 
@@ -131,9 +131,11 @@ export function Home() {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(nextHistory))
       setHistory(nextHistory)
       navigate(`/room/${room.roomID}`)
-    } catch {
+    } catch (error) {
       discardPending(media)
-      setError(t('home.failed'))
+      // A file that changed under the picker is not a failed transfer, and
+      // saying "try again" would send someone straight back into it.
+      setError(t(isUnreadableFile(error) ? 'error.fileChanged' : 'home.failed'))
       setStarting(false)
       setProgress(null)
     }

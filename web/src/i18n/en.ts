@@ -91,5 +91,6 @@ export const en: Record<string, string> = {
   'status.buffering': 'Buffering',
   'status.processing': 'Processing',
   'error.room': 'Room unavailable',
+  'error.fileChanged': 'That file is still being written. Wait for the download to finish, then choose it again.',
   'error.screenshare': 'Screen share is unavailable.',
 }

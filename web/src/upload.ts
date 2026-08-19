@@ -111,6 +111,33 @@ export async function changeRoomSource(
   return await response.json() as RoomSource
 }
 
+// The error a file that changed on disk produces, reported separately because
+// the remedy is entirely different from a failed transfer: wait, then pick it
+// again.
+export const FILE_UNREADABLE = 'file-unreadable'
+
+// A picked File is a snapshot of a path, and browsers invalidate it the moment
+// the bytes underneath change. A file that is still downloading changes
+// constantly, so every read of it throws and the upload sends nothing at all.
+// Reading one byte up front turns that into an answer before a room exists,
+// instead of an empty room that never receives anything.
+export function isUnreadableFile(error: unknown): boolean {
+  if (error instanceof DOMException) return error.name === 'NotReadableError' || error.name === 'NotFoundError'
+  return error instanceof Error && error.message === FILE_UNREADABLE
+}
+
+export async function assertReadable(file: File): Promise<void> {
+  // The tail is what moves while a file is being written, so it is the most
+  // telling byte to ask for.
+  const probe = file.size > 0 ? file.slice(file.size - 1, file.size) : file.slice(0, 1)
+  try {
+    await probe.arrayBuffer()
+  } catch (error) {
+    if (isUnreadableFile(error)) throw new Error(FILE_UNREADABLE)
+    throw error
+  }
+}
+
 // MP4s with a trailing moov atom cannot be remuxed progressively on the
 // server, so remux to Matroska locally first (codec copy). On failure the
 // original file is used unchanged; a missing video track rejects.
@@ -171,6 +198,9 @@ export async function createRoomAndUpload(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
+  // Before anything is created, so a file that cannot be read never leaves a
+  // room behind that will sit at zero per cent for ever.
+  await assertReadable(file)
   const uploadFile = await prepareLocalFile(file, onProgress)
   const room = await createRoom(uploadFile.name, nickname)
   uploadFileToRoom(room.id, room.uploadEndpoint, streamStartBytes(room), uploadFile, onProgress)
@@ -208,9 +238,13 @@ export function uploadFileToRoom(
     entry.progress.bytesTotal = total
     updateEntry(entry, uploaded)
   })
-  uppy.on('complete', (result) => finish(result.failed?.length ? 'upload failed' : null))
-  uppy.on('error', (error) => finish(error instanceof Error ? error.message : 'upload failed'))
-  void uppy.upload().catch((error: unknown) => finish(error instanceof Error ? error.message : 'upload failed'))
+  const describe = (error: unknown) => {
+    if (isUnreadableFile(error)) return FILE_UNREADABLE
+    return error instanceof Error ? error.message : 'upload failed'
+  }
+  uppy.on('complete', (result) => finish(result.failed?.length ? describe(result.failed[0]?.error) : null))
+  uppy.on('error', (error) => finish(describe(error)))
+  void uppy.upload().catch((error: unknown) => finish(describe(error)))
 
   // Fire-and-forget: server-side extraction at completion stays the fallback.
   // For a converted file this runs against the fresh MKV; for an unconverted

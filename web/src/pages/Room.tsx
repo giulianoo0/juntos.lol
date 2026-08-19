@@ -21,6 +21,7 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
+  FILE_UNREADABLE,
   changeRoomSource,
   prepareLocalFile,
   subscribeUploadDone,
@@ -114,7 +115,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [shareRoom, setShareRoom] = useState<LiveKitRoom | null>(null)
   const [shareError, setShareError] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
-  const [uploadFailed, setUploadFailed] = useState(false)
+  const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   const toasts = usePresenceToasts(sync.presence)
   const [sourcePanel, setSourcePanel] = useState<'menu' | 'torrent' | null>(null)
@@ -198,10 +199,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // Show this tab's own background upload progress while it is running.
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {
-    setUploadFailed(false)
+    setUploadFailed(null)
     return subscribeUploadDone(room.id, (error) => {
       setUploadProgress(null)
-      if (error) setUploadFailed(true)
+      if (error) setUploadFailed(error)
     })
   }, [room.id, liveRoom.mediaGeneration])
 
@@ -223,7 +224,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }
 
   if (uploadFailed) {
-    return <main className="center-state"><div className="state-card error-card"><h1>{t('room.uploadFailed')}</h1><Link to="/">{t('room.new')}</Link></div></main>
+    return (
+      <main className="center-state"><div className="state-card error-card">
+        <h1>{t('room.uploadFailed')}</h1>
+        {uploadFailed === FILE_UNREADABLE ? <p>{t('error.fileChanged')}</p> : null}
+        <Link to="/">{t('room.new')}</Link>
+      </div></main>
+    )
   }
   if (mediaStatus === 'processing' || mediaStatus === 'uploading') {
     return <main className="center-state"><UploadAvailability progress={uploadProgress} t={t} /></main>
@@ -239,7 +246,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
           {uploadProgress !== null ? <span className="upload-chip">{t('home.uploading')} {uploadProgress.pct}%</span> : null}
-          {uploadFailed ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
+          {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController ? <button onClick={() => { setSourceError(false); setSourcePanel('menu') }}>{t('room.changeSource')}</button> : null}
           <button onClick={copyLink}>{copied ? t('room.copied') : t('room.copy')}</button>
