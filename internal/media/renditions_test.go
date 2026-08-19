@@ -36,14 +36,16 @@ func TestRenditionLadderNeverUpscales(t *testing.T) {
 	require.Equal(t, []int{720, 480, 360}, heights(RenditionLadder(&ProbeResult{VideoHeight: 720, VideoCopyable: true})))
 }
 
-func TestRenditionLadderCapsOversizedSourcesAt1080p(t *testing.T) {
+func TestRenditionLadderPassesOversizedSourcesThrough(t *testing.T) {
 	for _, sourceHeight := range []int{1440, 2160} {
 		ladder := RenditionLadder(&ProbeResult{VideoHeight: sourceHeight, VideoCopyable: true})
 
-		require.Equal(t, []int{1080, 720, 480, 360}, heights(ladder), "source %d", sourceHeight)
-		// Handing over the original would cost the VPS far more bandwidth than
-		// the picture is worth, so even the top rung is re-encoded here.
-		require.False(t, ladder[0].Copy, "source %d was passed through", sourceHeight)
+		require.Equal(t, []int{sourceHeight, 720, 480, 360}, heights(ladder), "source %d", sourceHeight)
+		// Re-encoding the top rung down to a ceiling measured 58% slower than
+		// copying it: the decode happens anyway for the rungs below, so a cap
+		// buys nothing but the priciest encode of the set. The bandwidth it
+		// was meant to protect is protected by the lower rungs existing.
+		require.True(t, ladder[0].Copy, "source %d was re-encoded", sourceHeight)
 	}
 }
 

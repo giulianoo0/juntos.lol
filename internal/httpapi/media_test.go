@@ -170,3 +170,26 @@ func addMediaTestRoom(t *testing.T, store *room.Store, id string) {
 		ID: id, FileName: "movie.mkv", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 }
+
+func TestMediaCacheControlLetsTheEdgeKeepSegments(t *testing.T) {
+	// Segment names carry a sequence number and a re-encode writes new ones,
+	// so an edge holding them forever can never serve a stale one — and every
+	// viewer it serves is one this machine's 650 Mbps does not have to.
+	for _, name := range []string{"stream_1_000.m4s", "init_1.mp4", "preview_stream_1_000000.m4s"} {
+		require.Equal(t, "public, max-age=31536000, immutable",
+			mediaCacheControl(filepath.Ext(name)), name)
+	}
+}
+
+func TestMediaCacheControlNeverHoldsAPlaylist(t *testing.T) {
+	// An event playlist grows with every segment the progressive remux
+	// publishes; a cached one strands the viewer at whatever length it had.
+	require.Equal(t, "no-store", mediaCacheControl(".m3u8"))
+	require.Equal(t, "no-store", mediaCacheControl(".M3U8"))
+}
+
+func TestMediaCacheControlKeepsSubtitlesBriefly(t *testing.T) {
+	// Subtitles are republished with more cues as a download proceeds, but
+	// their URLs carry a version, so a changed track is a changed URL.
+	require.Equal(t, "public, max-age=3600", mediaCacheControl(".vtt"))
+}

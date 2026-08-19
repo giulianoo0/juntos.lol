@@ -75,12 +75,13 @@ func serveMedia(dataDir string, store *room.Store, mediaDir string) gin.HandlerF
 			return
 		}
 
-		if contentType := mediaContentType(filepath.Ext(name)); contentType != "" {
+		extension := filepath.Ext(name)
+		if contentType := mediaContentType(extension); contentType != "" {
 			c.Header("Content-Type", contentType)
 		}
+		c.Header("Cache-Control", mediaCacheControl(extension))
 		// Event playlists grow during the progressive phase; never cache them.
-		if strings.EqualFold(filepath.Ext(name), ".m3u8") {
-			c.Header("Cache-Control", "no-store")
+		if strings.EqualFold(extension, ".m3u8") {
 			playlist, err := io.ReadAll(file)
 			if err != nil {
 				c.Status(http.StatusInternalServerError)
@@ -166,6 +167,29 @@ func openMediaRoot(dataDir, roomID, mediaDir string) (*os.Root, error) {
 func validMediaRoomID(roomID string) bool {
 	return roomID != "." && !strings.ContainsAny(roomID, "*?[]") &&
 		filepath.IsLocal(roomID) && filepath.Base(roomID) == roomID
+}
+
+// mediaCacheControl decides how long each kind of media file may be held.
+//
+// Segments and init files never change once written: their names carry a
+// sequence number, and a new encode writes new names. Letting the edge keep
+// them is what turns the server's own bandwidth from the ceiling on how many
+// people can watch into a detail — every viewer after the first is served
+// without touching this machine.
+//
+// Playlists are the opposite: an event playlist grows with every segment the
+// progressive remux publishes, and a stale one strands a viewer at whatever
+// length it was cached. Subtitles change too, but their URLs carry a version,
+// so a fresh URL is a fresh object.
+func mediaCacheControl(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".m3u8":
+		return "no-store"
+	case ".vtt":
+		return "public, max-age=3600"
+	default:
+		return "public, max-age=31536000, immutable"
+	}
 }
 
 func mediaContentType(ext string) string {
