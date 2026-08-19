@@ -23,12 +23,6 @@ const (
 	// probeRetryInterval lets a partial container header grow before ffprobe
 	// tries it again. Upload progress often arrives in the middle of a PATCH.
 	probeRetryInterval = 500 * time.Millisecond
-	// unstreamableAfter is how long ffprobe is given to make sense of a
-	// growing file before the container layout itself is questioned. A
-	// streamable container answers within the first few attempts; one that
-	// keeps failing is either still tiny or, as with an MP4 whose moov atom
-	// trails the media, never going to answer at all.
-	unstreamableAfter = 15 * time.Second
 	// inputPollInterval is the maximum delay before new upload bytes are fed
 	// to ffmpeg after it reaches the file's temporary EOF.
 	inputPollInterval = 100 * time.Millisecond
@@ -70,6 +64,11 @@ type Progressive struct {
 	queued    map[string]struct{}
 	active    map[string]context.CancelFunc
 	canceled  map[string]struct{}
+	// unpreviewable remembers rooms whose source has no playable prefix.
+	// Upload progress keeps arriving twice a second, and without this the
+	// verdict would be re-reached, re-logged and re-published on every tick
+	// for the whole download.
+	unpreviewable map[string]struct{}
 }
 
 // NewProgressive creates a preview worker pool. onReady fires once per room
@@ -93,6 +92,7 @@ func NewProgressive(workers int, store *room.Store, dataDir string, previewFloor
 		queued:            make(map[string]struct{}),
 		active:            make(map[string]context.CancelFunc),
 		canceled:          make(map[string]struct{}),
+		unpreviewable:     make(map[string]struct{}),
 	}
 }
 
@@ -139,6 +139,10 @@ func (p *Progressive) Submit(roomID, srcPath string, size int64) {
 		p.mu.Unlock()
 		return
 	}
+	if _, exists := p.unpreviewable[roomID]; exists {
+		p.mu.Unlock()
+		return
+	}
 	p.queued[roomID] = struct{}{}
 	select {
 	case <-ctx.Done():
@@ -165,6 +169,9 @@ func (p *Progressive) Cancel(roomID string) {
 	if _, ok := p.queued[roomID]; ok {
 		p.canceled[roomID] = struct{}{}
 	}
+	// The source is being retired, so its verdict goes with it: a replacement
+	// deserves to be judged on its own.
+	delete(p.unpreviewable, roomID)
 }
 
 func (p *Progressive) worker(ctx context.Context) {
@@ -211,7 +218,7 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 		return
 	}
 	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewProbing, 0)
-	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, unstreamableAfter, p.probe)
+	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe)
 	if err != nil {
 		if errors.Is(err, ErrContainerUnknown) {
 			// The file cannot be previewed at all, so stop burning an ffprobe
@@ -220,6 +227,7 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 			// the truth instead of showing a preparing screen that never ends.
 			slog.InfoContext(ctx, "progressive: source has no streamable prefix",
 				"room_id", job.roomID)
+			p.markUnpreviewable(job.roomID)
 			p.setPhase(jobCtx, ctx, job.roomID, room.PreviewUnavailable, 0)
 			return
 		}
@@ -335,9 +343,8 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 
 // probeGrowingFile retries transient parse failures until enough of the
 // container header has arrived or the upload is canceled/completed.
-func probeGrowingFile(ctx context.Context, path string, retryInterval, layoutCheckAfter time.Duration,
+func probeGrowingFile(ctx context.Context, path string, retryInterval time.Duration,
 	probe probeFunc) (*ProbeResult, error) {
-	deadline := time.Now().Add(layoutCheckAfter)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -347,17 +354,11 @@ func probeGrowingFile(ctx context.Context, path string, retryInterval, layoutChe
 			return result, nil
 		}
 		// Retrying forever is right for a header that is still arriving and
-		// wrong for one that will only arrive last. Once the file has had long
-		// enough to answer, ask its box layout which of the two this is.
-		if time.Now().After(deadline) {
-			whole, layoutErr := NeedsWholeFile(path)
-			if layoutErr == nil && whole {
-				return nil, ErrContainerUnknown
-			}
-			// Either it streams and ffprobe simply needs more bytes, or the
-			// layout is still unreadable. Both mean: keep waiting, and ask
-			// again later rather than every half second.
-			deadline = time.Now().Add(layoutCheckAfter)
+		// wrong for one that will only ever arrive last. Which of the two this
+		// is, is written in the first few kilobytes, so ask them rather than
+		// waiting out a timeout that would be arbitrary either way.
+		if whole, layoutErr := NeedsWholeFile(path); layoutErr == nil && whole {
+			return nil, ErrContainerUnknown
 		}
 
 		timer := time.NewTimer(retryInterval)
@@ -459,6 +460,14 @@ func hasNonEmptyMatch(pattern string) bool {
 		}
 	}
 	return false
+}
+
+// markUnpreviewable records that this room's source will never yield a
+// preview, so the verdict is reached once rather than on every progress tick.
+func (p *Progressive) markUnpreviewable(roomID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.unpreviewable[roomID] = struct{}{}
 }
 
 // setPhase records how far a preview has got. It is advisory: a room that

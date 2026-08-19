@@ -13,7 +13,8 @@
 - chat e lista de participantes por sala;
 - seleção de faixas de áudio e legendas de texto;
 - extração de legendas MKV no navegador e fallback de extração com FFmpeg no servidor;
-- legendas de torrent extraídas durante o download, sem esperar o arquivo inteiro, incluindo os arquivos `.srt` e `.ass` que acompanham o vídeo;
+- torrent baixado pelo servidor, não pelo navegador, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
+- tela de espera com a fase da preparação e uma estimativa de quando dá para começar a assistir;
 - torrents com seleção de arquivo e bridge híbrido para Chrome, Dia e Safari;
 - entrada por link pedindo apenas o apelido, com aviso de quem entra e quem sai da sala;
 - compartilhamento de tela com LiveKit;
@@ -30,9 +31,9 @@ flowchart LR
     A --> D["Volume de mídia"]
     A --> F["FFmpeg / ffprobe"]
     F -->|"HLS fMP4 + WebVTT"| D
-    B -->|"magnet e blocos"| T["Torrent bridge"]
+    B -->|"magnet e escolha do arquivo"| A
+    A -->|"stream sequencial"| T["Torrent bridge"]
     T <-->|"DHT + trackers + peers"| P["Swarm BitTorrent"]
-    T -->|"blocos HTTP de até 8 MB"| B
     B <-->|"WebRTC"| L["LiveKit"]
 ```
 
@@ -46,21 +47,27 @@ flowchart LR
 
 Um upload interrompido continua retomável pelo protocolo tus por `UPLOAD_IDLE_MINUTES`. Passado esse tempo sem receber bytes, os dados parciais são descartados e a sala é marcada como falha, em vez de ocupar espaço até o fim do TTL.
 
+Nem toda fonte tem prévia. Um MP4 cujo átomo `moov` fica depois da mídia não tem nenhum prefixo decodificável, então o servidor lê o começo do arquivo, reconhece esse layout e diz isso na tela de espera, em vez de tentar analisar o arquivo a cada meio segundo até o download acabar. A reprodução começa na passagem final, como sempre.
+
+A tela de espera mostra em qual fase a fonte está — recebendo, analisando, gerando o primeiro trecho — e estima quanto falta até dar para assistir, comparando a taxa observada com o tamanho derivado do bitrate que o `ffprobe` mediu. Os números vêm do servidor, então valem para todo mundo na sala e não só para a aba que enviou o arquivo.
+
 Vídeos H.264 e HEVC são copiados quando possível. Outros codecs de vídeo são convertidos para H.264. As faixas de áudio são publicadas como AAC. A prévia usa segmentos de 2 segundos; o VOD final usa segmentos de 6 segundos.
 
 ### Torrents
 
-O navegador não depende de peers WebRTC para abrir ou baixar um torrent. O fluxo principal usa o `torrent-bridge`, um processo Node/WebTorrent isolado que:
+O navegador não depende de peers WebRTC para abrir ou baixar um torrent, e não carrega os bytes. O fluxo principal usa o `torrent-bridge`, um processo Node/WebTorrent isolado que:
 
 1. valida o magnet e mantém somente o info hash e o nome;
 2. descobre metadados e peers por DHT e por uma whitelist de trackers;
 3. devolve a lista de arquivos para o seletor;
-4. prioriza somente o intervalo solicitado do arquivo escolhido;
-5. entrega blocos binários ao navegador por HTTP;
-6. entrega também os arquivos de legenda que acompanham o vídeo, sem alterar a prioridade das peças do vídeo;
-7. reutiliza o mesmo upload tus da aplicação para criar a sala.
+4. seleciona o arquivo escolhido inteiro e entrega um stream sequencial, mantendo prioridade crítica logo à frente do ponto de leitura;
+5. entrega também os arquivos de legenda que acompanham o vídeo, sem alterar a prioridade das peças do vídeo.
 
-O fallback WebTorrent no navegador é usado apenas quando o bridge não está configurado. A velocidade depende da disponibilidade e da distribuição das peças no swarm.
+Depois que o arquivo é escolhido, o navegador entrega a sessão do bridge à API e sai do caminho: a API consome o stream e o envia ao próprio endpoint tus por loopback, reaproveitando a reserva de upload, o início progressivo, a conclusão e a limpeza de uploads abandonados que o upload comum já usa.
+
+Isso importa por dois motivos medidos. Os bytes não atravessam mais a conexão de quem abriu a sala duas vezes, e a perna de subida do navegador era a mais estreita do caminho. E um stream único seleciona todas as peças restantes de uma vez: leituras por intervalo só conseguiam selecionar o intervalo pedido, então entre uma e outra o swarm ficava com dezenas de peers conectados e nada para baixar.
+
+O fallback WebTorrent no navegador é usado apenas quando o bridge não está configurado; nesse caso o navegador volta a fazer o upload. A velocidade depende da disponibilidade e da distribuição das peças no swarm.
 
 ### Sincronização e controle
 
@@ -74,8 +81,7 @@ O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacida
 
 - Texto: ASS/SSA, SubRip, WebVTT e `mov_text` são convertidos para WebVTT.
 - MKV: o navegador tenta extrair legendas de texto enquanto o upload continua.
-- Torrent: os mesmos blocos que estão sendo enviados alimentam o parser Matroska, então as legendas embutidas aparecem durante o download em vez de só no final. Nenhum byte é baixado duas vezes.
-- Arquivos externos: `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo no torrent são lidos inteiros, convertidos para WebVTT e publicados quase imediatamente. O idioma vem do nome do arquivo.
+- Torrent: os arquivos `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo são lidos inteiros pelo servidor, convertidos para WebVTT com FFmpeg e publicados quase imediatamente, sem esperar o vídeo. O idioma vem do nome do arquivo. As legendas embutidas no container saem da passagem final do FFmpeg e são numeradas antes das externas; as duas listas são unidas, então nenhuma das duas some quando o download termina.
 - Fallback: depois do upload, FFmpeg extrai as faixas que ainda não foram fornecidas pelo cliente. Uma extração parcial publica as legendas já disponíveis sem cancelar essa passagem final.
 - Imagem: PGS e VobSub são detectadas, mas não são exibidas; a interface informa quantas foram ignoradas.
 

@@ -19,7 +19,7 @@ func TestProbeGrowingFileRetriesTransientPartialReads(t *testing.T) {
 	attempts := 0
 	want := &ProbeResult{VideoCodec: "h264", VideoCopyable: true}
 
-	got, err := probeGrowingFile(t.Context(), "/tmp/growing.mkv", time.Millisecond, time.Hour,
+	got, err := probeGrowingFile(t.Context(), "/tmp/growing.mkv", time.Millisecond,
 		func(context.Context, string) (*ProbeResult, error) {
 			attempts++
 			if attempts < 3 {
@@ -37,7 +37,7 @@ func TestProbeGrowingFileStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := probeGrowingFile(ctx, "/tmp/growing.mkv", time.Millisecond, time.Hour,
+	_, err := probeGrowingFile(ctx, "/tmp/growing.mkv", time.Millisecond,
 		func(context.Context, string) (*ProbeResult, error) {
 			return nil, errors.New("file ended prematurely")
 		})
@@ -146,7 +146,7 @@ func TestProbeGrowingFileGivesUpOnASourceThatCannotStream(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, data, 0o644))
 
 	attempts := 0
-	_, err := probeGrowingFile(t.Context(), path, time.Millisecond, 0,
+	_, err := probeGrowingFile(t.Context(), path, time.Millisecond,
 		func(context.Context, string) (*ProbeResult, error) {
 			attempts++
 			return nil, errors.New("moov atom not found")
@@ -164,7 +164,7 @@ func TestProbeGrowingFileKeepsWaitingForAStreamableSource(t *testing.T) {
 
 	want := &ProbeResult{VideoCodec: "h264", VideoCopyable: true}
 	attempts := 0
-	got, err := probeGrowingFile(t.Context(), path, time.Millisecond, 0,
+	got, err := probeGrowingFile(t.Context(), path, time.Millisecond,
 		func(context.Context, string) (*ProbeResult, error) {
 			attempts++
 			if attempts < 3 {

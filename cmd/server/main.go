@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -162,7 +161,7 @@ func publishIngestProgress(store *room.Store, hub *syncapi.Hub) func(string, int
 //
 // They are marked incomplete on purpose: the authoritative ffmpeg pass over
 // the finished video still runs and still contributes the tracks muxed into
-// the container itself.
+// the container itself, and the two sets are merged then.
 func publishSideSubtitles(store *room.Store, hub *syncapi.Hub, dataDir string) func(string, []torrent.SideFile) {
 	return func(roomID string, files []torrent.SideFile) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -181,14 +180,10 @@ func publishSideSubtitles(store *room.Store, hub *syncapi.Hub, dataDir string) f
 			return
 		}
 
-		tracks := make([]room.TrackInfo, 0, len(converted))
-		for _, subtitle := range converted {
-			path := filepath.Join(subsDir, fmt.Sprintf("sub_%d_%s.vtt", subtitle.Track.Index, subtitle.Track.Language))
-			if err := os.WriteFile(path, subtitle.VTT, 0o644); err != nil {
-				log.Printf("write torrent subtitle for %s: %v", roomID, err)
-				continue
-			}
-			tracks = append(tracks, subtitle.Track)
+		tracks, err := media.StoreExternalSubtitles(subsDir, converted)
+		if err != nil {
+			log.Printf("store torrent subtitles for %s: %v", roomID, err)
+			return
 		}
 		if len(tracks) == 0 {
 			return

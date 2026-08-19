@@ -396,11 +396,20 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 	} else {
 		slog.InfoContext(ctx, "progressive preview finalized", "room_id", roomID)
 	}
+	subsDir := filepath.Join(outDir, "subs")
 	if skipSubs {
 		return probe.Audio, nil, probe.BitmapSubs, nil
 	}
-	if _, err := ExtractSubtitles(ctx, srcPath, filepath.Join(outDir, "subs"), probe); err != nil {
+	if _, err := ExtractSubtitles(ctx, srcPath, subsDir, probe); err != nil {
 		return nil, nil, 0, err
 	}
-	return probe.Audio, probe.Subtitles, probe.BitmapSubs, nil
+	// Sibling subtitle files published while the source was still arriving sit
+	// after the embedded ones in the final list, and their files are renumbered
+	// to match. Losing them here is not worth failing the remux over.
+	subtitles, err := MergeExternalSubtitles(subsDir, probe.Subtitles)
+	if err != nil {
+		slog.WarnContext(ctx, "merge external subtitles failed", "room_id", roomID, "error", err)
+		subtitles = probe.Subtitles
+	}
+	return probe.Audio, subtitles, probe.BitmapSubs, nil
 }
