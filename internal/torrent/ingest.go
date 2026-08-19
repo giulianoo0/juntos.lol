@@ -49,6 +49,16 @@ type Hooks struct {
 	OnFailed func(roomID string, err error)
 }
 
+// findFile locates one file of a torrent by the path the bridge reported.
+func findFile(files []FileInfo, path string) (FileInfo, error) {
+	for _, file := range files {
+		if file.Path == path {
+			return file, nil
+		}
+	}
+	return FileInfo{}, fmt.Errorf("torrent has no file %q", path)
+}
+
 // SideFile is a small non-video file fetched whole from the torrent.
 type SideFile struct {
 	Name string
@@ -68,6 +78,10 @@ type Ingestor struct {
 	uploadURL string
 	client    *http.Client
 	hooks     Hooks
+
+	// backoff spaces out resumed streams. A field rather than a constant so
+	// tests can exercise the stall path without waiting out real seconds.
+	backoff time.Duration
 
 	mu       sync.Mutex
 	ctx      context.Context
@@ -89,6 +103,7 @@ func NewIngestor(bridge *Bridge, uploadURL string, maxJobs int, isSubtitle func(
 		uploadURL: uploadURL,
 		client:    &http.Client{},
 		hooks:     hooks,
+		backoff:   resumeBackoff,
 		running:   make(map[string]context.CancelFunc),
 		maxJobs:   maxJobs,
 		subtitle:  isSubtitle,
@@ -162,6 +177,20 @@ func (i *Ingestor) finish(roomID string) {
 }
 
 func (i *Ingestor) run(ctx context.Context, job Job) error {
+	// The size arrived from a browser, and the tus upload is created against
+	// it: a wrong one produces an upload that can never complete. The bridge
+	// is the authority on what the torrent actually holds, so ask it.
+	files, err := i.bridge.Files(ctx, job.SessionID)
+	if err != nil {
+		return err
+	}
+	chosen, err := findFile(files, job.Path)
+	if err != nil {
+		return err
+	}
+	if chosen.Size != job.Size {
+		return fmt.Errorf("torrent file %q is %d bytes, not %d", job.Path, chosen.Size, job.Size)
+	}
 	if err := i.bridge.Select(ctx, job.SessionID, job.Path); err != nil {
 		return err
 	}
@@ -176,7 +205,7 @@ func (i *Ingestor) run(ctx context.Context, job Job) error {
 
 	// Subtitles are separate files and separate pieces, so fetching them does
 	// not slow the video down and they can be published straight away.
-	go i.fetchSubtitles(ctx, job)
+	go i.fetchSubtitles(ctx, job, files)
 
 	uploadURL, err := i.createUpload(ctx, job)
 	if err != nil {
@@ -214,7 +243,7 @@ func (i *Ingestor) run(ctx context.Context, job Job) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(resumeBackoff):
+		case <-time.After(i.backoff):
 		}
 	}
 	slog.Info("torrent ingest complete", "room_id", job.RoomID, "bytes", offset)
@@ -326,13 +355,8 @@ func (i *Ingestor) uploadOffset(ctx context.Context, uploadURL string) (int64, e
 // fetchSubtitles pulls the sibling subtitle files and hands them over. It is
 // best effort throughout: the video is what the room is waiting for, and the
 // media pipeline still extracts the tracks muxed into it.
-func (i *Ingestor) fetchSubtitles(ctx context.Context, job Job) {
+func (i *Ingestor) fetchSubtitles(ctx context.Context, job Job, files []FileInfo) {
 	if i.hooks.OnSubtitles == nil || i.subtitle == nil {
-		return
-	}
-	files, err := i.bridge.Files(ctx, job.SessionID)
-	if err != nil {
-		slog.Warn("list torrent files for subtitles failed", "room_id", job.RoomID, "error", err)
 		return
 	}
 	var fetched []SideFile

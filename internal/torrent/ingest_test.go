@@ -81,6 +81,9 @@ type fakeBridge struct {
 	content   []byte
 	files     []FileInfo
 	sideFiles map[string][]byte
+	// serveBytes, when set, caps how much of the file each stream delivers
+	// before ending, standing in for a swarm that cannot supply the next piece.
+	serveBytes *int
 
 	mu       sync.Mutex
 	streams  []int64
@@ -111,11 +114,24 @@ func (b *fakeBridge) handler() http.Handler {
 		b.mu.Lock()
 		b.streams = append(b.streams, start)
 		b.mu.Unlock()
+		end := int64(len(b.content))
+		if b.serveBytes != nil {
+			end = min(start+int64(*b.serveBytes), end)
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(b.content[start:])
+		_, _ = w.Write(b.content[start:end])
 	})
 	mux.HandleFunc("/api/torrent-bridge/files", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"name": "t", "files": b.files})
+		files := b.files
+		if files == nil {
+			// The ingest checks the chosen file against this list, so a test
+			// that does not care about the listing still needs the video in it.
+			files = []FileInfo{
+				{Name: "movie.mkv", Path: "movie.mkv", Size: int64(len(b.content))},
+				{Name: "movie.mkv", Path: "movie/movie.mkv", Size: int64(len(b.content))},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "t", "files": files})
 	})
 	mux.HandleFunc("/api/torrent-bridge/read-file", func(w http.ResponseWriter, r *http.Request) {
 		body := decode(r)
@@ -143,8 +159,10 @@ func newTestIngestor(t *testing.T, bridge *fakeBridge, upload *fakeUpload, hooks
 	uploadServer := httptest.NewServer(upload.handler(t))
 	t.Cleanup(uploadServer.Close)
 
-	return NewIngestor(NewBridge(bridgeServer.URL), uploadServer.URL+"/api/upload/", 2,
+	ingestor := NewIngestor(NewBridge(bridgeServer.URL), uploadServer.URL+"/api/upload/", 2,
 		func(string) bool { return false }, hooks)
+	ingestor.backoff = time.Millisecond
+	return ingestor
 }
 
 func TestIngestMovesTheWholeFile(t *testing.T) {
@@ -186,21 +204,38 @@ func TestIngestResumesFromWhatTheStoreKept(t *testing.T) {
 }
 
 func TestIngestGivesUpWhenNoByteEverLands(t *testing.T) {
-	bridge := &fakeBridge{content: bytes.Repeat([]byte("x"), 1024)}
-	// A store that accepts the bytes but reports no progress makes every
-	// attempt useless, which is the stall this has to escape rather than
-	// retry forever.
-	upload := &fakeUpload{truncateAt: 0}
-	ingestor := newTestIngestor(t, bridge, upload, Hooks{})
+	// A swarm that hands over nothing, every time. Retrying that forever
+	// leaves the room preparing until its TTL runs out, so it has to end.
+	none := 0
+	bridge := &fakeBridge{content: bytes.Repeat([]byte("x"), 1024), serveBytes: &none}
+	ingestor := newTestIngestor(t, bridge, &fakeUpload{}, Hooks{})
 
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	// A size larger than the bridge will ever serve: every stream ends short.
 	err := ingestor.run(ctx, Job{
 		RoomID: "r1", SessionID: "s1", Path: "movie.mkv",
-		FileName: "movie.mkv", Size: 4096,
+		FileName: "movie.mkv", Size: 1024,
 	})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "stalled at 0/1024 bytes")
+	require.Len(t, bridge.streams, resumeAttempts)
+}
+
+func TestIngestKeepsGoingWhileTheSwarmStillDelivers(t *testing.T) {
+	// Each stream ends early but hands over something, which is a slow swarm
+	// rather than a broken one: it must not count against the retry budget.
+	chunk := 100
+	bridge := &fakeBridge{content: bytes.Repeat([]byte("y"), 1000), serveBytes: &chunk}
+	upload := &fakeUpload{}
+	ingestor := newTestIngestor(t, bridge, upload, Hooks{})
+
+	require.NoError(t, ingestor.run(t.Context(), Job{
+		RoomID: "r1", SessionID: "s1", Path: "movie.mkv",
+		FileName: "movie.mkv", Size: 1000,
+	}))
+	require.Len(t, upload.stored, 1000)
+	// Ten partial streams, each resuming exactly where the last one stopped.
+	require.Len(t, bridge.streams, 10)
+	require.Equal(t, int64(900), bridge.streams[9])
 }
 
 func TestIngestPublishesSiblingSubtitles(t *testing.T) {
@@ -288,4 +323,29 @@ func TestResolveLocationHandlesRelativeAnswers(t *testing.T) {
 		resolveLocation("http://h/api/upload/", "x"))
 	require.Equal(t, "http://h/api/upload/x",
 		resolveLocation("http://h/api/upload/", "http://h/api/upload/x"))
+}
+
+func TestIngestRefusesASizeTheTorrentDoesNotHave(t *testing.T) {
+	// The size comes from a browser and the tus upload is created against it,
+	// so a wrong one would produce an upload that can never complete.
+	bridge := &fakeBridge{content: bytes.Repeat([]byte("x"), 512)}
+	ingestor := newTestIngestor(t, bridge, &fakeUpload{}, Hooks{})
+
+	err := ingestor.run(t.Context(), Job{
+		RoomID: "r1", SessionID: "s1", Path: "movie.mkv",
+		FileName: "movie.mkv", Size: 999999,
+	})
+	require.ErrorContains(t, err, "is 512 bytes, not 999999")
+	require.Empty(t, bridge.streams)
+}
+
+func TestIngestRefusesAFileTheTorrentDoesNotHave(t *testing.T) {
+	bridge := &fakeBridge{content: bytes.Repeat([]byte("x"), 512)}
+	ingestor := newTestIngestor(t, bridge, &fakeUpload{}, Hooks{})
+
+	err := ingestor.run(t.Context(), Job{
+		RoomID: "r1", SessionID: "s1", Path: "elsewhere.mkv",
+		FileName: "elsewhere.mkv", Size: 512,
+	})
+	require.ErrorContains(t, err, `no file "elsewhere.mkv"`)
 }

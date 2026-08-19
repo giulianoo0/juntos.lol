@@ -49,7 +49,7 @@ func TestTorrentPlaysBeforeItFinishesDownloading(t *testing.T) {
 
 	// A rate that makes the whole file take several seconds, so "ready before
 	// the last byte" is a real claim and not a race that happened to pass.
-	bridge := newThrottledBridge(content, len(content)/8)
+	bridge := newThrottledBridge(content, len(content)/8, "movie.mkv")
 	bridgeServer := httptest.NewServer(bridge)
 	t.Cleanup(bridgeServer.Close)
 
@@ -100,7 +100,7 @@ func TestTorrentSourceThatCannotBePreviewedSaysSo(t *testing.T) {
 	content, err := os.ReadFile(video)
 	require.NoError(t, err)
 
-	bridge := newThrottledBridge(content, len(content)/10)
+	bridge := newThrottledBridge(content, len(content)/10, "movie.mp4")
 	bridgeServer := httptest.NewServer(bridge)
 	t.Cleanup(bridgeServer.Close)
 
@@ -176,11 +176,17 @@ type throttledBridge struct {
 	sideFiles      map[string][]byte
 }
 
-func newThrottledBridge(content []byte, bytesPerSecond int) *throttledBridge {
+func newThrottledBridge(content []byte, bytesPerSecond int, path string) *throttledBridge {
 	if bytesPerSecond < 1 {
 		bytesPerSecond = 1
 	}
-	return &throttledBridge{content: content, bytesPerSecond: bytesPerSecond}
+	return &throttledBridge{
+		content:        content,
+		bytesPerSecond: bytesPerSecond,
+		// The ingest verifies the chosen file against this listing before it
+		// creates an upload, so a bridge that serves a file has to list it.
+		files: []torrent.FileInfo{{Name: path, Path: path, Size: int64(len(content))}},
+	}
 }
 
 func (b *throttledBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -348,11 +354,9 @@ func TestTorrentKeepsEveryAudioAndSubtitleTrack(t *testing.T) {
 	content, err := os.ReadFile(video)
 	require.NoError(t, err)
 
-	bridge := newThrottledBridge(content, len(content)/12)
-	bridge.files = []torrent.FileInfo{
-		{Name: "movie.mkv", Path: "movie.mkv", Size: info.Size()},
-		{Name: "movie.eng.srt", Path: "Subs/movie.eng.srt", Size: int64(len(sidecarSRT))},
-	}
+	bridge := newThrottledBridge(content, len(content)/12, "movie.mkv")
+	bridge.files = append(bridge.files,
+		torrent.FileInfo{Name: "movie.eng.srt", Path: "Subs/movie.eng.srt", Size: int64(len(sidecarSRT))})
 	bridge.sideFiles = map[string][]byte{"Subs/movie.eng.srt": []byte(sidecarSRT)}
 	bridgeServer := httptest.NewServer(bridge)
 	t.Cleanup(bridgeServer.Close)
