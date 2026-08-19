@@ -32,7 +32,8 @@ func main() {
 	store := room.NewStore(rdb, time.Duration(cfg.RoomTTLHours)*time.Hour)
 
 	ctx := context.Background()
-	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute)
+	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute,
+		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	hub := syncapi.NewHub(store, cfg)
 	defer hub.Close()
 	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, func(roomID string) {

@@ -7,37 +7,39 @@ import (
 )
 
 type Config struct {
-	Port             int
-	DataDir          string
-	WebDir           string
-	RedisURL         string
-	MaxUploadMB      int64
-	StreamStartMB    int64
-	RoomTTLHours     int
-	MaxParticipants  int
-	RoomIdleMinutes  int
-	FFmpegJobs       int
-	LivekitURL       string
-	LivekitAPIKey    string
-	LivekitAPISecret string
-	TorrentBridgeURL string
+	Port              int
+	DataDir           string
+	WebDir            string
+	RedisURL          string
+	MaxUploadMB       int64
+	StreamStartMB     int64
+	RoomTTLHours      int
+	MaxParticipants   int
+	RoomIdleMinutes   int
+	UploadIdleMinutes int
+	FFmpegJobs        int
+	LivekitURL        string
+	LivekitAPIKey     string
+	LivekitAPISecret  string
+	TorrentBridgeURL  string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Port:             8080,
-		DataDir:          "/data",
-		WebDir:           "web/dist",
-		RedisURL:         "redis://localhost:6379",
-		MaxUploadMB:      10240,
-		StreamStartMB:    1,
-		RoomTTLHours:     5,
-		MaxParticipants:  20,
-		RoomIdleMinutes:  10,
-		FFmpegJobs:       2,
-		LivekitURL:       "",
-		LivekitAPIKey:    "",
-		LivekitAPISecret: "",
+		Port:              8080,
+		DataDir:           "/data",
+		WebDir:            "web/dist",
+		RedisURL:          "redis://localhost:6379",
+		MaxUploadMB:       10240,
+		StreamStartMB:     1,
+		RoomTTLHours:      5,
+		MaxParticipants:   20,
+		RoomIdleMinutes:   10,
+		UploadIdleMinutes: 10,
+		FFmpegJobs:        2,
+		LivekitURL:        "",
+		LivekitAPIKey:     "",
+		LivekitAPISecret:  "",
 	}
 
 	var err error
@@ -54,6 +56,9 @@ func Load() (Config, error) {
 		cfg.RedisURL = v
 	}
 	if cfg.MaxUploadMB, err = envInt64("MAX_UPLOAD_MB", cfg.MaxUploadMB); err != nil {
+		return Config{}, err
+	}
+	if cfg.UploadIdleMinutes, err = envInt("UPLOAD_IDLE_MINUTES", cfg.UploadIdleMinutes); err != nil {
 		return Config{}, err
 	}
 	if cfg.StreamStartMB, err = envInt64("STREAM_START_MB", cfg.StreamStartMB); err != nil {

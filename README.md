@@ -44,6 +44,8 @@ flowchart LR
 4. A sala passa para `ready` assim que existe o primeiro segmento HLS completo.
 5. Quando o upload termina, uma segunda passagem produz o HLS VOD definitivo. A prévia continua disponível durante essa troca.
 
+Um upload interrompido continua retomável pelo protocolo tus por `UPLOAD_IDLE_MINUTES`. Passado esse tempo sem receber bytes, os dados parciais são descartados e a sala é marcada como falha, em vez de ocupar espaço até o fim do TTL.
+
 Vídeos H.264 e HEVC são copiados quando possível. Outros codecs de vídeo são convertidos para H.264. As faixas de áudio são publicadas como AAC. A prévia usa segmentos de 2 segundos; o VOD final usa segmentos de 6 segundos.
 
 ### Torrents
@@ -153,6 +155,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `ROOM_TTL_HOURS` | `5` | Vida útil da sala e da mídia. |
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
 | `ROOM_IDLE_MINUTES` | `10` | Tempo para remover o hub WebSocket sem participantes. |
+| `UPLOAD_IDLE_MINUTES` | `10` | Tempo que um upload interrompido continua retomável antes de ser descartado. |
 | `FFMPEG_JOBS` | `2` | Workers simultâneos em cada fila de mídia. |
 | `TORRENT_BRIDGE_URL` | vazio | URL interna do bridge; o Compose usa `http://torrent-bridge:8090`. |
 | `LIVEKIT_URL` | vazio | URL WebSocket entregue aos navegadores, normalmente `wss://...`. |
