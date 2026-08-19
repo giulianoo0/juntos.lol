@@ -117,11 +117,12 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => setAudioTracks(hls.audioTracks))
         hls.on(HlsClass.Events.AUDIO_TRACKS_UPDATED, () => setAudioTracks(hls.audioTracks))
-        // A codec the browser has no decoder for cannot be recovered from, and
-        // retrying it forever is what turned an unsupported file into a black
-        // rectangle with no explanation.
+        // Only an append that actually failed proves the browser has no
+        // decoder. A manifest-level rejection is a prediction made from the
+        // codec string in the playlist, and a wrong string there would turn a
+        // room that plays perfectly well into a dead end, so it is allowed to
+        // proceed and be judged on what the buffer does.
         const undecodable = new Set<string>([
-          ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR,
           ErrorDetails.BUFFER_INCOMPATIBLE_CODECS_ERROR,
           ErrorDetails.BUFFER_ADD_CODEC_ERROR,
         ])

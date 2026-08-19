@@ -7,6 +7,7 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -25,11 +26,11 @@ const maxInitSegmentBytes = 1 << 20
 // hevcCodecString renders the RFC 6381 codec string for the HEVC track in an
 // fMP4 init segment.
 //
-// ffmpeg writes no CODECS attribute at all for HEVC, which leaves hls.js
-// unable to tell what a variant holds: it cannot check the codec against the
-// browser before appending, and its own workaround for engines that mis-report
-// HEVC support never engages. The information is in the init segment either
-// way, so it is read back from there.
+// What ffmpeg puts in the playlist for HEVC depends on its version: some
+// releases omit CODECS entirely, leaving players unable to tell what a variant
+// holds until appending fails, and some write a string browsers reject. The
+// configuration record in the init segment is the same either way, so the
+// codec string is derived from there rather than trusted from the playlist.
 func hevcCodecString(initPath string) (string, error) {
 	data, err := os.ReadFile(initPath)
 	if err != nil {
@@ -86,10 +87,17 @@ func formatHEVCCodec(record []byte) string {
 	return builder.String()
 }
 
-// annotateMasterCodecs fills in the CODECS attribute of every variant that
-// lacks one. A variant with no CODECS is treated by players as "might be
-// anything", so an engine that cannot decode it finds out only once appending
-// fails, far too late to fall back or to say why.
+// codecsAttribute matches the attribute wherever it sits in the variant line.
+var codecsAttribute = regexp.MustCompile(`CODECS="[^"]*"`)
+
+// annotateMasterCodecs writes the CODECS attribute of every variant, replacing
+// whatever was there.
+//
+// Replacing rather than filling in a blank matters: ffmpeg's own rendering of
+// an HEVC codec string varies by version, and at least one release writes a
+// constraint field with an odd number of hex digits, which browsers reject
+// outright. The record read from the init segment is the one authority that
+// does not depend on which ffmpeg built the playlist.
 func annotateMasterCodecs(masterPath, videoCodec string, hasAudio bool) error {
 	data, err := os.ReadFile(masterPath)
 	if err != nil {
@@ -100,14 +108,23 @@ func annotateMasterCodecs(masterPath, videoCodec string, hasAudio bool) error {
 		codecs += "," + aacLCCodec
 	}
 
+	attribute := fmt.Sprintf(`CODECS="%s"`, codecs)
 	lines := strings.Split(string(data), "\n")
 	changed := false
 	for index, line := range lines {
-		if !strings.HasPrefix(line, "#EXT-X-STREAM-INF:") || strings.Contains(line, "CODECS=") {
+		if !strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
 			continue
 		}
-		lines[index] = line + fmt.Sprintf(`,CODECS="%s"`, codecs)
-		changed = true
+		updated := line
+		if codecsAttribute.MatchString(line) {
+			updated = codecsAttribute.ReplaceAllLiteralString(line, attribute)
+		} else {
+			updated = line + "," + attribute
+		}
+		if updated != line {
+			lines[index] = updated
+			changed = true
+		}
 	}
 	if !changed {
 		return nil

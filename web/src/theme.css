@@ -33,7 +33,10 @@ h1, h2, p { margin-top: 0; }
 .drop-zone > span:not(.drop-icon) { margin-bottom: 10px; color: var(--text-faint); font-size: 12px; }.drop-icon { margin-bottom: 10px; color: #c9ccff; }.torrent-button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: rgba(255,255,255,.03); font-size: 13px; }.torrent-button:hover { border-color: rgba(120,127,250,.45); color: var(--text); background: rgba(120,127,250,.08); }.torrent-button svg, .torrent-button .magnet-glyph { color: #b8bcff; flex: 0 0 auto; }
 .magnet-glyph { font-size: 17px; font-weight: 700; line-height: 1; }
 .drop-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; }
-.home-header nav button, .history-list a, .member-chip, .player-controls button, .chat-panel header button { display: inline-flex; align-items: center; }
+.home-header nav button, .member-chip, .chat-panel header button { display: inline-flex; align-items: center; }
+/* Outranks the width/border-radius rules below on specificity, so the round
+   controls have to be centred here or their icons sit against the left edge. */
+.player-controls button { display: inline-flex; align-items: center; justify-content: center; }
 .home-header nav button { gap: 7px; }.member-chip { gap: 5px; }.member-chip svg { color: #c7caff; }
 .history-meta { display: inline-flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .history-status { padding: 3px 9px; border-radius: 999px; font-size: 11px; letter-spacing: .01em; }.history-status.is-live { color: #7fe0a8; background: rgba(72,199,124,.14); }.history-status.is-expired { color: var(--text-faint); background: rgba(255,255,255,.05); }.history-status.is-checking { color: var(--text-faint); background: transparent; }

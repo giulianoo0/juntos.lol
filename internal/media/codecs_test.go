@@ -3,6 +3,7 @@ package media
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -121,19 +122,25 @@ func TestAnnotateMasterCodecsWithoutAudio(t *testing.T) {
 	require.NotContains(t, string(got), "mp4a")
 }
 
-func TestAnnotateMasterCodecsLeavesLabelledVariantsAlone(t *testing.T) {
+func TestAnnotateMasterCodecsReplacesWhatFFmpegWrote(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "master.m3u8")
-	// H.264 output already carries CODECS, and it must not be doubled up.
-	original := "#EXTM3U\n" +
-		`#EXT-X-STREAM-INF:BANDWIDTH=720683,CODECS="avc1.42c00c,mp4a.40.2",AUDIO="group_audio"` + "\nstream_1.m3u8\n"
-	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	// ffmpeg 7.1 labels a copied HEVC track itself, with a constraint field of
+	// an odd digit count that browsers refuse. Ours has to win.
+	require.NoError(t, os.WriteFile(path, []byte("#EXTM3U\n"+
+		`#EXT-X-STREAM-INF:BANDWIDTH=211200,RESOLUTION=1920x1080,CODECS="hvc1.2.4.L120.B01,mp4a.40.2",AUDIO="group_audio"`+
+		"\nstream_1.m3u8\n"), 0o644))
 
-	require.NoError(t, annotateMasterCodecs(path, "hvc1.1.6.L93.B0", true))
+	require.NoError(t, annotateMasterCodecs(path, "hvc1.2.4.L120.90", true))
 
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.Equal(t, original, string(got))
+	require.Contains(t, string(got), `CODECS="hvc1.2.4.L120.90,mp4a.40.2"`)
+	require.NotContains(t, string(got), "B01")
+	// Exactly one attribute survives, and the rest of the line is untouched.
+	require.Equal(t, 1, strings.Count(string(got), "CODECS="))
+	require.Contains(t, string(got), `RESOLUTION=1920x1080`)
+	require.Contains(t, string(got), `AUDIO="group_audio"`)
 }
 
 func TestAnnotateHEVCMasterOnlyTouchesCopiedHEVC(t *testing.T) {
