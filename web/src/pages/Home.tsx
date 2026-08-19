@@ -5,7 +5,6 @@ import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, type UploadProgress } from '../upload'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { BrowserNotice } from '../components/BrowserNotice'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
@@ -162,7 +161,6 @@ export function Home() {
           <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
         </button>
       </header>
-      <BrowserNotice t={t} />
 
       {historyOpen ? (
         <section className="history-panel" aria-labelledby="history-title">

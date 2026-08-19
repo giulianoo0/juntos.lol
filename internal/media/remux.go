@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,6 +77,12 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, streamMap string) {
 	if p.VideoCopyable {
 		args = append(args, "-c:v", "copy")
+		if p.VideoCodec == "hevc" {
+			// ffmpeg labels a copied HEVC track hev1, which Safari's HLS stack
+			// refuses. hvc1 is the same bitstream with its parameter sets in
+			// the sample description instead of in band.
+			args = append(args, "-tag:v", "hvc1")
+		}
 	} else {
 		preset := "veryfast"
 		if progressive {
@@ -143,6 +150,11 @@ func Remux(ctx context.Context, in, outDir string, p *ProbeResult) error {
 	finalMaster := filepath.Join(outDir, "final_master.m3u8")
 	if err := os.Rename(finalMaster, filepath.Join(outDir, "master.m3u8")); err != nil {
 		return fmt.Errorf("publish final HLS master: %w", err)
+	}
+	// Best effort: an unlabelled playlist still plays wherever the codec is
+	// supported, so a failure here must not fail the whole remux.
+	if err := annotateHEVCMaster(outDir, "master.m3u8", "init_*.mp4", p); err != nil {
+		slog.WarnContext(ctx, "annotate HLS codecs failed", "error", err)
 	}
 	return nil
 }

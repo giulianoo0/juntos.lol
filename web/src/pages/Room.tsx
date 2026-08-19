@@ -18,7 +18,6 @@ import {
 } from '../screenshare'
 import type { ChatEntry, PresenceEvent, RoomInfo } from '../types'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { BrowserNotice } from '../components/BrowserNotice'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
@@ -235,7 +234,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   return (
     <main className="room-shell">
-      <BrowserNotice t={t} />
       <PresenceToasts events={toasts} t={t} />
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>

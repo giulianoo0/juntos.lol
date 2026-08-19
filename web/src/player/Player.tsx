@@ -21,6 +21,9 @@ const VOLUME_STEP = 0.05
 // Long enough to read the symbol, short enough that holding an arrow key still
 // feels like scrubbing rather than a stack of notifications.
 const FEEDBACK_MS = 700
+// A media error can be a corrupt append worth retrying, but only a couple of
+// times. Past that the retry is the bug, not the fix.
+const MAX_MEDIA_RECOVERIES = 2
 
 export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const playerRef = useRef<HTMLDivElement>(null)
@@ -39,6 +42,8 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
   const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
+  const [unplayable, setUnplayable] = useState(false)
+  const recoveriesRef = useRef(0)
 
   const revealControls = useCallback((autoHide = true) => {
     if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
@@ -99,7 +104,9 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
     // the browser, hls.js and any proxy that this is different media.
     const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8?g=${room.mediaGeneration}`
     let disposed = false
-    void import('hls.js').then(({ default: HlsClass, ErrorTypes }) => {
+    setUnplayable(false)
+    recoveriesRef.current = 0
+    void import('hls.js').then(({ default: HlsClass, ErrorTypes, ErrorDetails }) => {
       if (disposed) return
       if (HlsClass.isSupported()) {
         // Progressive uploads are EVENT playlists. Native HLS commonly joins
@@ -110,10 +117,35 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => setAudioTracks(hls.audioTracks))
         hls.on(HlsClass.Events.AUDIO_TRACKS_UPDATED, () => setAudioTracks(hls.audioTracks))
+        // A codec the browser has no decoder for cannot be recovered from, and
+        // retrying it forever is what turned an unsupported file into a black
+        // rectangle with no explanation.
+        const undecodable = new Set<string>([
+          ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR,
+          ErrorDetails.BUFFER_INCOMPATIBLE_CODECS_ERROR,
+          ErrorDetails.BUFFER_ADD_CODEC_ERROR,
+        ])
+        const giveUp = () => {
+          hls.destroy()
+          if (hlsRef.current === hls) hlsRef.current = null
+          setUnplayable(true)
+        }
         hls.on(HlsClass.Events.ERROR, (_event, data) => {
           if (!data.fatal) return
-          if (data.type === ErrorTypes.NETWORK_ERROR) hls.startLoad()
-          else if (data.type === ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+          if (undecodable.has(data.details)) {
+            giveUp()
+            return
+          }
+          if (data.type === ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad()
+            return
+          }
+          if (data.type === ErrorTypes.MEDIA_ERROR && recoveriesRef.current < MAX_MEDIA_RECOVERIES) {
+            recoveriesRef.current += 1
+            hls.recoverMediaError()
+            return
+          }
+          giveUp()
         })
         hls.attachMedia(video)
         return
@@ -334,6 +366,7 @@ export function Player({ room, isController, videoRef, send, t }: PlayerProps) {
         ))}
       </video>
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
+      {unplayable ? <div className="player-unplayable" role="alert">{t('room.unplayable')}</div> : null}
       <div className="player-controls raised">
         <button
           aria-label={playLabel}

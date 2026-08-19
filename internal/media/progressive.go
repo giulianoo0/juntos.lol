@@ -276,6 +276,12 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 			if !progressiveOutputReady(hlsDir) {
 				continue
 			}
+			// The preview playlist needs the same codec label as the final
+			// one, or the preview becomes the part that fails silently.
+			if err := annotateHEVCMaster(hlsDir, "master.m3u8", "preview_init_*.mp4", probe); err != nil {
+				slog.WarnContext(ctx, "annotate preview codecs failed",
+					"room_id", job.roomID, "error", err)
+			}
 			if err := p.store.SetStatus(jobCtx, job.roomID, "ready"); err != nil {
 				slog.WarnContext(ctx, "progressive: set ready status failed",
 					"room_id", job.roomID, "error", err)
