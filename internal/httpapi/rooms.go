@@ -171,6 +171,7 @@ func getRoom(store *room.Store) gin.HandlerFunc {
 			"audioTracks":       r.AudioTracks,
 			"subtitleTracks":    r.SubtitleTracks,
 			"bitmapSubsSkipped": r.BitmapSubsSkipped,
+			"preparation":       r.Preparation,
 			"memberCount":       len(members),
 			"createdAt":         r.CreatedAt,
 			"expiresAt":         r.ExpiresAt,

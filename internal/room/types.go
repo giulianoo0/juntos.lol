@@ -71,6 +71,42 @@ type Room struct {
 	SubtitleTracks    []TrackInfo `json:"subtitleTracks"`
 	BitmapSubsSkipped int         `json:"bitmapSubsSkipped"`
 	ClientSubs        bool        `json:"clientSubs,omitempty"`
-	CreatedAt         time.Time   `json:"createdAt"`
-	ExpiresAt         time.Time   `json:"expiresAt"`
+	// Preparation is how far the room is from being playable. It exists so a
+	// viewer waiting on a source is told what is happening and roughly how
+	// long, instead of watching a bar that fills to 100% and then sits there.
+	Preparation Preparation `json:"preparation"`
+	CreatedAt   time.Time   `json:"createdAt"`
+	ExpiresAt   time.Time   `json:"expiresAt"`
+}
+
+// Preview phases a room passes through before it can play. They are ordered:
+// bytes arrive, the container is analysed, the first segment is cut.
+const (
+	// PreviewReceiving means not enough of the source has arrived to analyse.
+	PreviewReceiving = "receiving"
+	// PreviewProbing means ffprobe has not yet made sense of what arrived.
+	PreviewProbing = "probing"
+	// PreviewSegmenting means ffmpeg is cutting the first playable segment.
+	PreviewSegmenting = "segmenting"
+	// PreviewUnavailable means this source cannot be previewed at all and
+	// only becomes playable once the whole file has landed. An MP4 whose moov
+	// atom sits after the media data is the usual reason: nothing can be
+	// decoded until the very end of the file arrives.
+	PreviewUnavailable = "unavailable"
+)
+
+// Preparation is the progress of turning a source into playable media.
+type Preparation struct {
+	// SourceBytes is the size of the incoming file, 0 when unknown.
+	SourceBytes int64 `json:"sourceBytes,omitempty"`
+	// ReceivedBytes is how much of it the server holds.
+	ReceivedBytes int64 `json:"receivedBytes,omitempty"`
+	// PreviewPhase is one of the Preview* constants, empty before the first
+	// byte arrives.
+	PreviewPhase string `json:"previewPhase,omitempty"`
+	// PreviewTargetBytes is how much of the source is expected to be needed
+	// before the first segment can be published, derived from the measured
+	// bitrate. 0 while unknown, and meaningless once the phase is
+	// PreviewUnavailable, where the answer is the whole file.
+	PreviewTargetBytes int64 `json:"previewTargetBytes,omitempty"`
 }

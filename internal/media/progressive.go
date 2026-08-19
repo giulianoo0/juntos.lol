@@ -23,6 +23,12 @@ const (
 	// probeRetryInterval lets a partial container header grow before ffprobe
 	// tries it again. Upload progress often arrives in the middle of a PATCH.
 	probeRetryInterval = 500 * time.Millisecond
+	// unstreamableAfter is how long ffprobe is given to make sense of a
+	// growing file before the container layout itself is questioned. A
+	// streamable container answers within the first few attempts; one that
+	// keeps failing is either still tiny or, as with an MP4 whose moov atom
+	// trails the media, never going to answer at all.
+	unstreamableAfter = 15 * time.Second
 	// inputPollInterval is the maximum delay before new upload bytes are fed
 	// to ffmpeg after it reaches the file's temporary EOF.
 	inputPollInterval = 100 * time.Millisecond
@@ -34,46 +40,59 @@ type probeFunc func(context.Context, string) (*ProbeResult, error)
 type progressiveJob struct {
 	roomID  string
 	srcPath string
+	// size is the upload's declared total, used to turn the probed duration
+	// into "how many bytes before this can play".
+	size int64
 }
 
 // Progressive runs best-effort preview remuxes of still-growing uploads.
 // The final remux started by Queue on upload completion stays authoritative:
 // failures here only leave the room in its current state.
 type Progressive struct {
-	workers  int
-	store    *room.Store
-	dataDir  string
-	onReady  func(roomID string)
-	probe    probeFunc
-	jobs     chan progressiveJob
-	done     chan struct{}
-	start    sync.Once
-	mu       sync.Mutex
-	ctx      context.Context
-	started  bool
-	stopping bool
-	queued   map[string]struct{}
-	active   map[string]context.CancelFunc
-	canceled map[string]struct{}
+	workers int
+	store   *room.Store
+	dataDir string
+	// previewFloorBytes is the smallest sensible preview estimate: the
+	// threshold that started this job in the first place.
+	previewFloorBytes int64
+	onReady           func(roomID string)
+	// onUpdated tells clients the room's preparation metadata moved, without
+	// claiming its media status changed.
+	onUpdated func(roomID string)
+	probe     probeFunc
+	jobs      chan progressiveJob
+	done      chan struct{}
+	start     sync.Once
+	mu        sync.Mutex
+	ctx       context.Context
+	started   bool
+	stopping  bool
+	queued    map[string]struct{}
+	active    map[string]context.CancelFunc
+	canceled  map[string]struct{}
 }
 
 // NewProgressive creates a preview worker pool. onReady fires once per room
-// when its first complete HLS segment is playable.
-func NewProgressive(workers int, store *room.Store, dataDir string, onReady func(roomID string)) *Progressive {
+// when its first complete HLS segment is playable; onUpdated fires whenever
+// the preview phase or its estimate changes.
+func NewProgressive(workers int, store *room.Store, dataDir string, previewFloorBytes int64,
+	onReady, onUpdated func(roomID string)) *Progressive {
 	if workers < 1 {
 		workers = 1
 	}
 	return &Progressive{
-		workers:  workers,
-		store:    store,
-		dataDir:  dataDir,
-		onReady:  onReady,
-		probe:    Probe,
-		jobs:     make(chan progressiveJob, workers),
-		done:     make(chan struct{}),
-		queued:   make(map[string]struct{}),
-		active:   make(map[string]context.CancelFunc),
-		canceled: make(map[string]struct{}),
+		workers:           workers,
+		store:             store,
+		dataDir:           dataDir,
+		previewFloorBytes: previewFloorBytes,
+		onReady:           onReady,
+		onUpdated:         onUpdated,
+		probe:             Probe,
+		jobs:              make(chan progressiveJob, workers),
+		done:              make(chan struct{}),
+		queued:            make(map[string]struct{}),
+		active:            make(map[string]context.CancelFunc),
+		canceled:          make(map[string]struct{}),
 	}
 }
 
@@ -100,7 +119,7 @@ func (p *Progressive) Start(ctx context.Context) {
 
 // Submit enqueues a preview remux for a partial upload. Duplicates and
 // submissions after shutdown return without blocking.
-func (p *Progressive) Submit(roomID, srcPath string) {
+func (p *Progressive) Submit(roomID, srcPath string, size int64) {
 	p.mu.Lock()
 	ctx := p.ctx
 	if !p.started {
@@ -125,7 +144,7 @@ func (p *Progressive) Submit(roomID, srcPath string) {
 	case <-ctx.Done():
 		delete(p.queued, roomID)
 		p.mu.Unlock()
-	case p.jobs <- progressiveJob{roomID: roomID, srcPath: srcPath}:
+	case p.jobs <- progressiveJob{roomID: roomID, srcPath: srcPath, size: size}:
 		p.mu.Unlock()
 	default:
 		delete(p.queued, roomID)
@@ -191,14 +210,27 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 			"room_id", job.roomID, "error", err)
 		return
 	}
+	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewProbing, 0)
 	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe)
 	if err != nil {
+		if errors.Is(err, ErrContainerUnknown) {
+			// The file cannot be previewed at all, so stop burning an ffprobe
+			// every half second on it and say so: the final remux still runs
+			// when the upload lands, and until then the room can tell viewers
+			// the truth instead of showing a preparing screen that never ends.
+			slog.InfoContext(ctx, "progressive: source has no streamable prefix",
+				"room_id", job.roomID)
+			p.setPhase(jobCtx, ctx, job.roomID, room.PreviewUnavailable, 0)
+			return
+		}
 		if !errors.Is(err, context.Canceled) {
 			slog.WarnContext(ctx, "progressive: probe growing upload failed",
 				"room_id", job.roomID, "error", err)
 		}
 		return
 	}
+	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewSegmenting,
+		PreviewTargetBytes(job.size, probe.DurationMs, p.previewFloorBytes))
 	slog.InfoContext(ctx, "progressive preview starting",
 		"room_id", job.roomID,
 		"video_codec", probe.VideoCodec,
@@ -304,6 +336,7 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 // probeGrowingFile retries transient parse failures until enough of the
 // container header has arrived or the upload is canceled/completed.
 func probeGrowingFile(ctx context.Context, path string, retryInterval time.Duration, probe probeFunc) (*ProbeResult, error) {
+	deadline := time.Now().Add(unstreamableAfter)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -311,6 +344,19 @@ func probeGrowingFile(ctx context.Context, path string, retryInterval time.Durat
 		result, err := probe(ctx, path)
 		if err == nil && result != nil && result.VideoCodec != "" {
 			return result, nil
+		}
+		// Retrying forever is right for a header that is still arriving and
+		// wrong for one that will only arrive last. Once the file has had long
+		// enough to answer, ask its box layout which of the two this is.
+		if time.Now().After(deadline) {
+			whole, layoutErr := NeedsWholeFile(path)
+			if layoutErr == nil && whole {
+				return nil, ErrContainerUnknown
+			}
+			// Either it streams and ffprobe simply needs more bytes, or the
+			// layout is still unreadable. Both mean: keep waiting, and ask
+			// again later rather than every half second.
+			deadline = time.Now().Add(unstreamableAfter)
 		}
 
 		timer := time.NewTimer(retryInterval)
@@ -412,6 +458,31 @@ func hasNonEmptyMatch(pattern string) bool {
 		}
 	}
 	return false
+}
+
+// setPhase records how far a preview has got. It is advisory: a room that
+// cannot be told is still being prepared, so a failure here must never stop
+// the remux.
+func (p *Progressive) setPhase(jobCtx, ctx context.Context, roomID, phase string, targetBytes int64) {
+	if err := p.store.SetPreviewPhase(jobCtx, roomID, phase, targetBytes); err != nil {
+		slog.WarnContext(ctx, "progressive: set preview phase failed",
+			"room_id", roomID, "phase", phase, "error", err)
+		return
+	}
+	p.notifyUpdated(roomID)
+}
+
+// notifyUpdated tells connected clients that the room's preparation moved.
+func (p *Progressive) notifyUpdated(roomID string) {
+	if p.onUpdated == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("progressive updated callback panicked", "room_id", roomID, "panic", recovered)
+		}
+	}()
+	p.onUpdated(roomID)
 }
 
 func (p *Progressive) notifyReady(roomID string) {

@@ -105,10 +105,11 @@ function selectFile(id, path) {
   const file = session.entry.torrent.files.find((candidate) => candidate.path === path)
   if (!file || file.length <= 0 || file.length > MAX_FILE_BYTES) throw new Error('invalid file')
   for (const candidate of session.entry.torrent.files) candidate.deselect()
-  // Do not select the whole file here. Each HTTP read creates a critical,
-  // tightly scoped selection for exactly the bytes the browser needs next.
-  // A full-file high-priority selection can consume scarce peers on later
-  // pieces and leave the first playable chunk waiting indefinitely.
+  // Select the whole file at low priority. Reads still raise a critical,
+  // tightly scoped window for the bytes needed next, so the first playable
+  // chunk is never starved; the standing selection is only what keeps peers
+  // busy in between, which is otherwise dead time.
+  file.select(0)
   session.selected = path
   session.lastUsed = Date.now()
   session.entry.lastUsed = Date.now()
@@ -126,6 +127,13 @@ function getSession(id) {
 
 function getStats(id) {
   return torrentStats(getSession(id).entry.torrent)
+}
+
+// The file list of an already-open session. The server-side ingest needs it to
+// find the sibling subtitle files without holding the browser's reply.
+function getFiles(id) {
+  const session = getSession(id)
+  return torrentMetadata(session.entry)
 }
 
 async function readRange(session, file, start, end, event) {
@@ -148,6 +156,22 @@ async function readRange(session, file, start, end, event) {
     elapsedMs: Date.now() - startedAt,
   }))
   return data
+}
+
+// Streams the selected file from `start` to its end over a single response.
+//
+// This is what the server-side ingest uses, and it is the only shape that lets
+// the swarm work ahead: one iterator selects every remaining piece at once and
+// keeps `critical` on the few just past the read pointer. Byte-range reads can
+// only ever select the range they were asked for, so between two of them the
+// swarm has nothing selected and stops downloading entirely.
+function streamSelectedFile(id, start) {
+  const session = getSession(id)
+  if (!session.selected) throw new Error('file not selected')
+  const file = session.entry.torrent.files.find((candidate) => candidate.path === session.selected)
+  if (!file) throw new Error('selected file not found')
+  if (!Number.isSafeInteger(start) || start < 0 || start >= file.length) throw new Error('invalid byte range')
+  return { session, file, stream: file.createReadStream({ start }) }
 }
 
 async function readSelectedFile(id, start, end) {
@@ -201,6 +225,46 @@ function json(response, status, body) {
   response.end(data)
 }
 
+// Pipes a torrent read stream into the response. Length is unknown up front
+// (the stream ends with the file), so the response is chunked and a failure
+// mid-body can only be signalled by destroying the socket: the ingest treats a
+// short body as resumable and continues from the offset it actually stored.
+function streamBinary(response, request, { session, file, stream }, start) {
+  response.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Stream-Length': String(file.length - start),
+  })
+  const startedAt = Date.now()
+  let sent = 0
+  // A stream can run for hours, and the idle sweeper only looks at lastUsed.
+  const keepAlive = setInterval(() => {
+    session.lastUsed = Date.now()
+    session.entry.lastUsed = Date.now()
+  }, 30_000)
+  const finish = (event) => {
+    clearInterval(keepAlive)
+    session.lastUsed = Date.now()
+    session.entry.lastUsed = Date.now()
+    console.log(JSON.stringify({
+      event,
+      hash: session.hash,
+      start,
+      bytes: sent,
+      peers: session.entry.torrent.numPeers,
+      elapsedMs: Date.now() - startedAt,
+    }))
+  }
+  stream.on('data', (chunk) => { sent += chunk.length })
+  stream.on('error', () => { finish('torrent_stream_error'); response.destroy() })
+  stream.on('end', () => finish('torrent_stream_end'))
+  // The consumer going away has to tear the iterator down, or its selection
+  // keeps the swarm downloading a file nobody is reading any more.
+  request.on('close', () => { if (!stream.destroyed) stream.destroy() })
+  stream.pipe(response)
+}
+
 function binary(response, data) {
   const body = Buffer.from(data)
   response.writeHead(200, {
@@ -220,6 +284,10 @@ const server = http.createServer(async (request, response) => {
     if (request.url === '/api/torrent-bridge/open') return json(response, 200, await openTorrent(body.magnet))
     if (request.url === '/api/torrent-bridge/select') return json(response, 200, selectFile(body.id, body.path))
     if (request.url === '/api/torrent-bridge/stats') return json(response, 200, getStats(body.id))
+    if (request.url === '/api/torrent-bridge/files') return json(response, 200, getFiles(body.id))
+    if (request.url === '/api/torrent-bridge/stream') {
+      return streamBinary(response, request, streamSelectedFile(body.id, body.start), body.start)
+    }
     if (request.url === '/api/torrent-bridge/read') return binary(response, await readSelectedFile(body.id, body.start, body.end))
     if (request.url === '/api/torrent-bridge/read-file') return binary(response, await readSideFile(body.id, body.path, body.start, body.end))
     if (request.url === '/api/torrent-bridge/close') {

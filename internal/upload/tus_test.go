@@ -47,7 +47,7 @@ func metadataHeader(meta map[string]string) string {
 
 func TestPreCreateRejectsUnknownRoom(t *testing.T) {
 	s, cfg := testSetup(t)
-	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(string) {}})
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -65,7 +65,7 @@ func TestPreCreateRejectsUnknownRoom(t *testing.T) {
 func TestPreCreateRejectsRoomNotUploading(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "ready")
-	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(string) {}})
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -83,7 +83,7 @@ func TestPreCreateRejectsRoomNotUploading(t *testing.T) {
 func TestPreCreateAcceptsUploadingRoom(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
-	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(string) {}})
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestPreCreateAcceptsUploadingRoom(t *testing.T) {
 func TestPreCreateUsesForwardedHTTPSLocation(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
-	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(string) {}})
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestPreCreateRejectsSecondUploadForRoom(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
 
-	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(string) {}})
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
 		w := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestCompleteUploadMovesFile(t *testing.T) {
 	createRoom(t, s, "room1234", "uploading")
 
 	done := make(chan string, 1)
-	h, err := NewTusHandler(cfg, s, func(roomID string) { done <- roomID }, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(roomID string) { done <- roomID }})
 	require.NoError(t, err)
 	h = http.StripPrefix("/api/upload", h)
 
@@ -198,10 +198,16 @@ func TestUploadProgressKeepsOfferingStreamStart(t *testing.T) {
 	s, cfg := testSetup(t)
 	createRoom(t, s, "room1234", "uploading")
 
-	type streamStart struct{ roomID, srcPath string }
+	type streamStart struct {
+		roomID, srcPath string
+		size            int64
+	}
 	started := make(chan streamStart, 4)
-	h, err := NewTusHandler(cfg, s, nil,
-		func(roomID, srcPath string) { started <- streamStart{roomID, srcPath} }, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{
+		OnStreamStart: func(roomID, srcPath string, size int64) {
+			started <- streamStart{roomID, srcPath, size}
+		},
+	})
 	require.NoError(t, err)
 	h = http.StripPrefix("/api/upload", h)
 
@@ -260,7 +266,7 @@ func TestExpiredRoomRemovesTusArtifactsAndCannotResume(t *testing.T) {
 		ControllerID: "m1", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Second)}
 	require.NoError(t, s.Create(context.Background(), r))
 
-	h, err := NewTusHandler(cfg, s, func(string) {}, nil, nil)
+	h, err := NewTusHandler(cfg, s, Callbacks{OnComplete: func(string) {}})
 	require.NoError(t, err)
 	h = http.StripPrefix("/api/upload", h)
 

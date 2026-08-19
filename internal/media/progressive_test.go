@@ -106,13 +106,13 @@ func TestVideoVariantPlaylistFollowsAudioCount(t *testing.T) {
 }
 
 func TestProgressiveCancelKeepsQueuedJobCanceled(t *testing.T) {
-	p := NewProgressive(1, nil, t.TempDir(), nil)
+	p := NewProgressive(1, nil, t.TempDir(), 1<<20, nil, nil)
 	p.ctx = t.Context()
 	p.started = true
 
-	p.Submit("r1", "/tmp/growing.mkv")
+	p.Submit("r1", "/tmp/growing.mkv", 0)
 	p.Cancel("r1")
-	p.Submit("r1", "/tmp/growing.mkv")
+	p.Submit("r1", "/tmp/growing.mkv", 0)
 
 	require.Len(t, p.jobs, 1)
 	_, ok := p.beginJob(t.Context(), "r1")

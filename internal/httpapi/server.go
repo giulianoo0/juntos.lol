@@ -21,11 +21,19 @@ type ServerOption func(*serverOptions)
 
 type serverOptions struct {
 	sourceHooks SourceHooks
+	ingestor    TorrentIngestor
 }
 
 // WithSourceHooks connects the room source endpoint to the media pipeline.
 func WithSourceHooks(hooks SourceHooks) ServerOption {
 	return func(o *serverOptions) { o.sourceHooks = hooks }
+}
+
+// WithTorrentIngestor enables the endpoint that pulls a torrent file in
+// server-side. Without it, torrent rooms fall back to uploading from the
+// browser.
+func WithTorrentIngestor(ingestor TorrentIngestor) ServerOption {
+	return func(o *serverOptions) { o.ingestor = ingestor }
 }
 
 // NewServer assembles the HTTP engine: the health check plus the room API.
@@ -60,6 +68,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		authorizer = hub
 	}
 	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
+	RegisterTorrentRoute(r.Group("/api"), store, cfg, options.ingestor)
 	registerTorrentBridge(r, cfg.TorrentBridgeURL)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
@@ -80,7 +89,16 @@ func registerTorrentBridge(r *gin.Engine, rawURL string) {
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
 		http.Error(w, `{"error":"torrent bridge unavailable"}`, http.StatusBadGateway)
 	}
-	r.Any("/api/torrent-bridge/*path", gin.WrapH(proxy))
+	r.Any("/api/torrent-bridge/*path", func(c *gin.Context) {
+		// The whole-file stream exists for the server-side ingest, which
+		// reaches the bridge directly. Proxying it would hand anyone an
+		// unmetered pipe for a 10 GB file over a single request.
+		if c.Param("path") == "/stream" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		proxy.ServeHTTP(c.Writer, c.Request)
+	})
 }
 
 func privacyHeaders() gin.HandlerFunc {

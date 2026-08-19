@@ -240,6 +240,20 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	}
 	r.GatingEnabled = fields["gating_disabled"] != "1"
 	r.ClientSubs = fields["client_subs"] == "1"
+	for field, target := range map[string]*int64{
+		"source_bytes":         &r.Preparation.SourceBytes,
+		"received_bytes":       &r.Preparation.ReceivedBytes,
+		"preview_target_bytes": &r.Preparation.PreviewTargetBytes,
+	} {
+		if v := fields[field]; v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("parse %s: %w", field, err)
+			}
+			*target = n
+		}
+	}
+	r.Preparation.PreviewPhase = fields["preview_phase"]
 	if v := fields["created_at"]; v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
@@ -255,6 +269,27 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		r.ExpiresAt = t
 	}
 	return r, nil
+}
+
+// SetIngestProgress records how much of the incoming source has landed. It is
+// written on every upload progress tick, so it deliberately bumps no version
+// and clears no error: it is a measurement, not a state change.
+func (s *Store) SetIngestProgress(ctx context.Context, id string, received, total int64) error {
+	return s.mutateRoom(ctx, id, false,
+		"received_bytes", strconv.FormatInt(received, 10),
+		"source_bytes", strconv.FormatInt(total, 10))
+}
+
+// SetPreviewPhase records which stage of preparation the source is in, and how
+// many bytes the preview is expected to need. A targetBytes of 0 leaves the
+// stored estimate untouched, because the phase can advance before the bitrate
+// is known.
+func (s *Store) SetPreviewPhase(ctx context.Context, id, phase string, targetBytes int64) error {
+	fields := []any{"preview_phase", phase}
+	if targetBytes > 0 {
+		fields = append(fields, "preview_target_bytes", strconv.FormatInt(targetBytes, 10))
+	}
+	return s.mutateRoom(ctx, id, false, fields...)
 }
 
 // SetStatus updates the room status.
@@ -369,7 +404,8 @@ redis.call('HSET', KEYS[1],
   'audio_tracks', 'null',
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
-redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs')
+redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs',
+  'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('PEXPIREAT', KEYS[1], tonumber(expires))

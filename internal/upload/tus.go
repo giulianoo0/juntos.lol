@@ -19,16 +19,28 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
+// Callbacks are the pipeline hooks an upload drives. All are optional.
+type Callbacks struct {
+	// OnComplete fires once the finished upload has been moved into the room
+	// directory as original.{ext}.
+	OnComplete func(roomID string)
+	// OnStreamStart is offered on every progress tick past cfg.StreamStartMB,
+	// so a deduplicating progressive queue can begin, or retry after
+	// backpressure. size is the upload's declared total.
+	OnStreamStart func(roomID, srcPath string, size int64)
+	// OnTerminate fires for an upload abandoned before completion.
+	OnTerminate func(roomID string)
+	// OnProgress reports every progress tick, whoever is sending the bytes.
+	// It is what lets a room show a transfer it is not itself performing:
+	// other viewers, and any viewer at all when the server is the uploader.
+	OnProgress func(roomID string, received, total int64)
+}
+
 // NewTusHandler builds a tusd handler storing in-progress uploads under
 // {DataDir}/tus-incoming. Uploads must carry a roomID metadata entry pointing
-// to an existing room still in "uploading" status. Once an upload crosses
-// cfg.StreamStartMB, onStreamStart(roomID, srcPath) is offered on progress so
-// a deduplicating progressive queue can begin or retry after backpressure.
-// Once an upload completes, the file is moved to
-// {DataDir}/rooms/{roomID}/original.{ext} and onComplete(roomID) fires.
-// Terminated uploads fire onTerminate(roomID) and remove the room directory.
-func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID string),
-	onStreamStart func(roomID, srcPath string), onTerminate func(roomID string)) (http.Handler, error) {
+// to an existing room still in "uploading" status. Once an upload completes,
+// the file is moved to {DataDir}/rooms/{roomID}/original.{ext}.
+func NewTusHandler(cfg config.Config, store *room.Store, callbacks Callbacks) (http.Handler, error) {
 	incoming := filepath.Join(cfg.DataDir, "tus-incoming")
 	if err := os.MkdirAll(incoming, 0o755); err != nil {
 		return nil, err
@@ -85,7 +97,7 @@ func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID 
 				slog.Error("upload: move completed upload", "room", roomID, "err", err)
 				continue
 			}
-			invokeCompleteCallback(onComplete, roomID)
+			invokeCompleteCallback(callbacks.OnComplete, roomID)
 		}
 	}()
 
@@ -96,7 +108,8 @@ func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID 
 			if roomID == "" {
 				continue
 			}
-			// Completion moves the file and fires onComplete; only partial
+			invokeProgressCallback(callbacks.OnProgress, roomID, ev.Upload.Offset, ev.Upload.Size)
+			// Completion moves the file and fires OnComplete; only partial
 			// progress past the threshold starts the preview.
 			if ev.Upload.Offset < threshold || ev.Upload.Offset >= ev.Upload.Size {
 				continue
@@ -105,14 +118,14 @@ func NewTusHandler(cfg config.Config, store *room.Store, onComplete func(roomID 
 			if srcPath == "" {
 				srcPath = filepath.Join(incoming, ev.Upload.ID)
 			}
-			invokeStreamStartCallback(onStreamStart, roomID, srcPath)
+			invokeStreamStartCallback(callbacks.OnStreamStart, roomID, srcPath, ev.Upload.Size)
 		}
 	}()
 
 	go func() {
 		for ev := range handler.TerminatedUploads {
 			roomID := ev.Upload.MetaData["roomID"]
-			invokeTerminateCallback(onTerminate, roomID)
+			invokeTerminateCallback(callbacks.OnTerminate, roomID)
 			if roomID == "" {
 				continue
 			}
@@ -185,7 +198,7 @@ func invokeCompleteCallback(onComplete func(string), roomID string) {
 	onComplete(roomID)
 }
 
-func invokeStreamStartCallback(onStreamStart func(string, string), roomID, srcPath string) {
+func invokeStreamStartCallback(onStreamStart func(string, string, int64), roomID, srcPath string, size int64) {
 	if onStreamStart == nil {
 		return
 	}
@@ -194,7 +207,19 @@ func invokeStreamStartCallback(onStreamStart func(string, string), roomID, srcPa
 			slog.Error("upload: stream start callback panicked", "room", roomID, "panic", recovered)
 		}
 	}()
-	onStreamStart(roomID, srcPath)
+	onStreamStart(roomID, srcPath, size)
+}
+
+func invokeProgressCallback(onProgress func(string, int64, int64), roomID string, received, total int64) {
+	if onProgress == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("upload: progress callback panicked", "room", roomID, "panic", recovered)
+		}
+	}()
+	onProgress(roomID, received, total)
 }
 
 func invokeTerminateCallback(onTerminate func(string), roomID string) {
