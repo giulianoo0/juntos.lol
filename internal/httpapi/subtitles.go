@@ -36,9 +36,24 @@ type clientSubtitleTrack struct {
 // torrent or upload still streaming publishes the cues it already has with
 // complete=false, which keeps the authoritative ffmpeg pass scheduled. A
 // missing field means complete, which is what older clients send.
+// MediaGeneration names the source the tracks were read from. A browser
+// extraction runs for as long as the file is large, so it can outlive the
+// source it started on: the controller swaps the room onto another video and
+// the old extraction lands afterwards. Without this the room would be handed
+// the previous video's subtitles and, because that also marks the room as
+// carrying client subtitles, the server would skip its own extraction and the
+// new video would never get the right ones. A missing field means the client
+// cannot say, which is what older clients send.
 type clientSubtitlesRequest struct {
-	Tracks   []clientSubtitleTrack `json:"tracks"`
-	Complete *bool                 `json:"complete"`
+	Tracks          []clientSubtitleTrack `json:"tracks"`
+	Complete        *bool                 `json:"complete"`
+	MediaGeneration *int                  `json:"mediaGeneration"`
+}
+
+// staleGeneration reports whether these tracks describe a source the room has
+// already replaced.
+func (r clientSubtitlesRequest) staleGeneration(current int) bool {
+	return r.MediaGeneration != nil && *r.MediaGeneration != current
 }
 
 func (r clientSubtitlesRequest) complete() bool {
@@ -91,6 +106,13 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 		}
 		if len(req.Tracks) == 0 || len(req.Tracks) > maxSubtitleTracks {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if req.staleGeneration(storedRoom.MediaGeneration) {
+			slog.InfoContext(c.Request.Context(), "discarded subtitles from a replaced source",
+				"room_id", roomID, "sent_generation", *req.MediaGeneration,
+				"current_generation", storedRoom.MediaGeneration)
+			c.JSON(http.StatusConflict, gin.H{"error": "stale_generation"})
 			return
 		}
 

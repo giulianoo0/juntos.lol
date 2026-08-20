@@ -185,7 +185,7 @@ interface CollectorSource {
   complete: boolean
 }
 
-export function createSubtitleCollector(roomID: string): SubtitleCollector {
+export function createSubtitleCollector(roomID: string, mediaGeneration: number): SubtitleCollector {
   const sources = new Map<string, CollectorSource>()
   const order: string[] = []
   let pending: Promise<void> = Promise.resolve()
@@ -211,8 +211,12 @@ export function createSubtitleCollector(roomID: string): SubtitleCollector {
       const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/subtitles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tracks, complete }),
+        body: JSON.stringify({ tracks, complete, mediaGeneration }),
       })
+      // 409 means the room moved on to another video while this extraction
+      // was still reading the previous one. Nothing to retry: these cues
+      // describe a source nobody is watching any more.
+      if (response.status === 409) return
       if (!response.ok) console.warn(`subtitle upload failed with status ${response.status}`)
     } catch (error) {
       console.error('subtitle upload failed', error)
@@ -245,9 +249,10 @@ export function createSubtitleCollector(roomID: string): SubtitleCollector {
 // Best-effort client-side subtitle extraction for a local file: embedded text
 // tracks are posted while the upload is still running. Never rejects; the
 // server-side extraction at upload completion remains the fallback.
-export async function extractAndUploadSubtitles(file: File, roomID: string): Promise<void> {
+export async function extractAndUploadSubtitles(file: File, roomID: string,
+  mediaGeneration: number): Promise<void> {
   if (!isMatroska(file)) return
-  const collector = createSubtitleCollector(roomID)
+  const collector = createSubtitleCollector(roomID, mediaGeneration)
   collector.register('embedded')
   try {
     collector.publish('embedded', await extractSubtitleTracks(file), true)

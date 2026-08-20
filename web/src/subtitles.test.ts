@@ -62,31 +62,32 @@ describe('extractAndUploadSubtitles', () => {
   })
 
   it('does nothing for non-Matroska files', async () => {
-    await extractAndUploadSubtitles(new File(['video'], 'movie.mp4', { type: 'video/mp4' }), 'room1')
+    await extractAndUploadSubtitles(new File(['video'], 'movie.mp4', { type: 'video/mp4' }), 'room1', 0)
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it('posts all extracted tracks as WebVTT in one request', async () => {
-    await extractAndUploadSubtitles(new File(['video'], 'movie.mkv', { type: 'video/x-matroska' }), 'room1')
+    await extractAndUploadSubtitles(new File(['video'], 'movie.mkv', { type: 'video/x-matroska' }), 'room1', 0)
     expect(fetch).toHaveBeenCalledWith('/api/rooms/room1/subtitles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello\n' }],
         complete: true,
+        mediaGeneration: 0,
       }),
     })
   })
 
   it('resolves silently when the server rejects the tracks', async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 400 } as Response)
-    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1')).resolves.toBeUndefined()
+    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1', 0)).resolves.toBeUndefined()
     expect(console.warn).toHaveBeenCalled()
   })
 
   it('resolves silently when the request itself fails', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('network down'))
-    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1')).resolves.toBeUndefined()
+    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1', 0)).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()
   })
 })
@@ -105,10 +106,22 @@ describe('createSubtitleCollector', () => {
   const body = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
     tracks: Array<{ title: string }>
     complete: boolean
+    mediaGeneration: number
   }
 
+  it('names the source the tracks were read from', async () => {
+    // Extraction outlives the source when the room is swapped mid-read, so
+    // the post has to say which video it describes or the server cannot tell
+    // it apart from one describing the video now playing.
+    const collector = createSubtitleCollector('room1', 2)
+    collector.publish('embedded', [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    expect(body(0).mediaGeneration).toBe(2)
+  })
+
   it('reports incomplete while any registered source is still running', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.register('embedded')
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await collector.flush()
@@ -118,7 +131,7 @@ describe('createSubtitleCollector', () => {
   })
 
   it('posts the union of every source in registration order once all are done', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.register('external')
     collector.register('embedded')
     collector.publish('embedded', [{ language: 'jpn', title: 'Muxed', vtt: 'WEBVTT' }], true)
@@ -131,14 +144,14 @@ describe('createSubtitleCollector', () => {
   })
 
   it('sends nothing while no source has produced a track', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.publish('embedded', [], false)
     await collector.flush()
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it('coalesces progressive updates instead of posting on every publish', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.register('embedded')
     for (let index = 0; index < 5; index += 1) {
       collector.publish('embedded', [{ language: 'eng', title: `cue ${index}`, vtt: 'WEBVTT' }], false)
@@ -151,7 +164,7 @@ describe('createSubtitleCollector', () => {
 
   it('keeps the room usable when a publish request fails', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('offline'))
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await expect(collector.flush()).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()
