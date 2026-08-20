@@ -228,6 +228,15 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		return false
 	}
 	keepReady := storedRoom.Status == "ready" || previewPublished
+	if !keepReady {
+		// The preview announces itself once its last publish lands, which can
+		// happen between the read above and the write below. Re-reading keeps
+		// this job from taking a room that just became watchable back to
+		// "preparing" for the length of the whole encode.
+		if fresh, freshErr := q.store.Get(ctx, roomID); freshErr == nil && fresh.Status == "ready" {
+			keepReady = true
+		}
+	}
 	nextStatus := "processing"
 	if keepReady {
 		nextStatus = "ready"

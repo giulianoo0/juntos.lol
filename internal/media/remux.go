@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/giulianoo0/ss/internal/room"
 )
 
 const ffmpegErrorTailBytes = 2 * 1024
@@ -41,14 +43,17 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*2)")
 	}
 
-	playlistType := "vod"
+	// Both passes grow their playlist as they encode. A vod playlist is only
+	// written once ffmpeg finishes, which leaves everything it produced
+	// unpublishable until then: the room stays pinned to whatever the preview
+	// reached, and for a source that arrived all at once that is seconds.
+	playlistType := "event"
 	segmentTime := "6"
 	segmentPattern := filepath.Join(outDir, "stream_%v_%03d.m4s")
 	playlistPattern := filepath.Join(outDir, "stream_%v.m3u8")
 	initName := "init_%v.mp4"
 	masterName := "final_master.m3u8"
 	if progressive {
-		playlistType = "event"
 		segmentTime = "2"
 		// Keep preview files separate from the authoritative final remux. This
 		// lets the final pass replace master.m3u8 without colliding with files
@@ -86,20 +91,24 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 	videoArgs, videoMap := buildVideoRenditionArgs(ladder, p, progressive)
 	args = append(args, videoArgs...)
 
-	for _, track := range p.Audio {
+	audio := p.Audio
+	if progressive {
+		audio = previewAudio(p)
+	}
+	for _, track := range audio {
 		args = append(args, "-map", "0:a:"+strconv.Itoa(track.Index))
 	}
-	if len(p.Audio) > 0 {
+	if len(audio) > 0 {
 		args = append(args, "-c:a", "aac", "-b:a", "192k")
 	}
 
-	if len(p.Audio) == 0 {
+	if len(audio) == 0 {
 		streamMap = strings.Join(videoMap, " ")
 		return args, streamMap
 	}
 
-	variants := make([]string, 0, len(p.Audio)+len(videoMap))
-	for i, track := range p.Audio {
+	variants := make([]string, 0, len(audio)+len(videoMap))
+	for i, track := range audio {
 		variant := "a:" + strconv.Itoa(i) + ",agroup:audio"
 		if i == 0 {
 			variant += ",default:yes"
@@ -115,6 +124,17 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 		variants = append(variants, video+",agroup:audio")
 	}
 	return args, strings.Join(variants, " ")
+}
+
+// previewAudio is the audio the preview carries: the default track alone. A
+// release with eight dubs would otherwise cost eight AAC encodes and eight
+// segment streams before the room can play at all, and the preview exists to
+// start playback. The remaining dubs arrive with the final ladder.
+func previewAudio(p *ProbeResult) []room.TrackInfo {
+	if len(p.Audio) == 0 {
+		return nil
+	}
+	return p.Audio[:1]
 }
 
 func isSafeLanguage(language string) bool {

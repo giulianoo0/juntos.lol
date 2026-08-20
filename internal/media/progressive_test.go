@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/room"
@@ -68,11 +70,12 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 	require.ErrorIs(t, <-done, context.Canceled)
 }
 
-func TestVideoVariantPlaylistFollowsAudioCount(t *testing.T) {
-	require.Equal(t, "preview_stream_0.m3u8",
-		videoVariantPlaylist("preview_stream", &ProbeResult{}))
-	require.Equal(t, "preview_stream_2.m3u8",
-		videoVariantPlaylist("preview_stream", &ProbeResult{Audio: []room.TrackInfo{{Index: 0}, {Index: 1}}}))
+func TestPreviewVideoVariantPlaylistFollowsThePreviewAudioCount(t *testing.T) {
+	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(&ProbeResult{}))
+	// The preview carries the default track alone, so the video variant sits
+	// right after it however many dubs the release ships.
+	require.Equal(t, "preview_stream_1.m3u8",
+		previewVideoVariantPlaylist(&ProbeResult{Audio: []room.TrackInfo{{Index: 0}, {Index: 1}}}))
 }
 
 func TestProgressiveCancelKeepsQueuedJobCanceled(t *testing.T) {
@@ -145,4 +148,52 @@ func TestProbeGrowingFileKeepsWaitingForAStreamableSource(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Same(t, want, got)
+}
+
+func TestAnnouncePreviewMakesTheRoomReadyAfterTheLastPublish(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	ready := make(chan string, 1)
+	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, func(id string) { ready <- id }, nil)
+	probe := &ProbeResult{VideoCopyable: true, Audio: []room.TrackInfo{{Index: 0}, {Index: 1}}}
+
+	// A source that arrives all at once stops the remux within seconds, and the
+	// publisher's last pass only lands afterwards. Nothing left running would
+	// notice, so the room advertises "preparing" with watchable media already
+	// in the bucket.
+	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{
+		"master.m3u8":           "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\npreview_stream_1.m3u8\n",
+		"preview_stream_1.m3u8": "#EXTM3U\n#EXTINF:2.0,\nseg.m4s\n",
+	}))
+	p.announcePreview(t.Context(), "r1", probe)
+
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
+	select {
+	case id := <-ready:
+		require.Equal(t, "r1", id)
+	case <-time.After(time.Second):
+		t.Fatal("ready callback not fired")
+	}
+}
+
+func TestAnnouncePreviewLeavesARoomWithoutAPlayablePreviewAlone(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, nil, nil)
+
+	p.announcePreview(t.Context(), "r1", &ProbeResult{VideoCopyable: true})
+
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "processing", got.Status)
 }

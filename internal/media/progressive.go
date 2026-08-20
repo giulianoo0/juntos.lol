@@ -259,8 +259,37 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 	go p.extractSubtitles(ctx, jobCtx, job, probe)
 	// Publishing runs alongside the remux for the same reason: a preview that
 	// only reached the bucket at the end would not be a preview.
-	go p.publisher.Run(jobCtx, job.roomID, hlsDir, previewPublishPatterns)
+	publishing := make(chan struct{})
+	go func() {
+		defer close(publishing)
+		p.publisher.Run(jobCtx, job.roomID, hlsDir, previewPublishPatterns)
+	}()
 	p.remux(ctx, jobCtx, job, hlsDir, probe)
+	// The publisher makes one last pass once the remux stops, so on a source
+	// that arrives all at once the preview only becomes reachable here, after
+	// the loop that would have announced it has already exited.
+	<-publishing
+	p.announcePreview(ctx, job.roomID, probe)
+}
+
+// announcePreview makes a room ready once its preview is reachable, for the
+// case where that only happened after the remux ended. A room left unannounced
+// advertises "preparing" for the whole final encode with watchable media
+// already sitting in the bucket.
+func (p *Progressive) announcePreview(ctx context.Context, roomID string, probe *ProbeResult) {
+	if ctx.Err() != nil || !p.previewPlayable(ctx, roomID, probe) {
+		return
+	}
+	storedRoom, err := p.store.Get(ctx, roomID)
+	if err != nil || storedRoom.Status == "ready" {
+		return
+	}
+	if err := p.store.SetStatus(ctx, roomID, "ready"); err != nil {
+		slog.WarnContext(ctx, "progressive: announce preview failed", "room_id", roomID, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "progressive preview ready after final publish", "room_id", roomID)
+	p.notifyReady(roomID)
 }
 
 // remux runs the progressive ffmpeg pass. A blocking stdin feeder follows the
@@ -364,7 +393,7 @@ func (p *Progressive) previewPlayable(ctx context.Context, roomID string, probe 
 	if ready, err := p.store.HasPlaylist(ctx, roomID, "master.m3u8"); err != nil || !ready {
 		return false
 	}
-	playlist, err := p.store.Playlist(ctx, roomID, videoVariantPlaylist("preview_stream", probe))
+	playlist, err := p.store.Playlist(ctx, roomID, previewVideoVariantPlaylist(probe))
 	if err != nil {
 		return false
 	}
@@ -446,11 +475,11 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 	}
 }
 
-// videoVariantPlaylist names the media playlist of the video rendition. The
-// stream map orders audio variants first, so the video variant's index equals
-// the audio track count in every case, including zero.
-func videoVariantPlaylist(prefix string, p *ProbeResult) string {
-	return fmt.Sprintf("%s_%d.m3u8", prefix, len(p.Audio))
+// previewVideoVariantPlaylist names the media playlist of the preview's video
+// rendition. The stream map orders audio variants first, so the video
+// variant's index equals the preview's audio track count, including zero.
+func previewVideoVariantPlaylist(p *ProbeResult) string {
+	return fmt.Sprintf("preview_stream_%d.m3u8", len(previewAudio(p)))
 }
 
 func hasNonEmptyMatch(pattern string) bool {

@@ -92,12 +92,39 @@ func TestBuildProgressiveRemuxArgs(t *testing.T) {
 	require.Contains(t, joined, "/x/hls/preview_stream_%v_%06d.m4s")
 	require.Equal(t, "/x/hls/preview_stream_%v.m3u8", args[len(args)-1])
 
-	vod := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
-	require.Contains(t, vod, "-hls_playlist_type vod")
-	require.Contains(t, vod, "-hls_time 6")
-	require.Contains(t, vod, "-master_pl_name final_master.m3u8")
-	require.NotContains(t, vod, "-re")
-	require.NotContains(t, vod, "event")
+	// The final pass grows its playlist as it encodes. A vod playlist is only
+	// written when ffmpeg finishes, so nothing it produces can be published
+	// until the whole encode lands and the room stays frozen at whatever the
+	// preview reached — for a source that arrived all at once, a few seconds.
+	final := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
+	require.Contains(t, final, "-hls_playlist_type event")
+	require.NotContains(t, final, "-hls_playlist_type vod")
+	require.Contains(t, final, "-hls_time 6")
+	require.Contains(t, final, "-master_pl_name final_master.m3u8")
+	require.NotContains(t, final, "-re")
+}
+
+func TestBuildProgressiveRemuxArgsCarriesOnlyTheDefaultAudioTrack(t *testing.T) {
+	p := &ProbeResult{
+		VideoCopyable: true,
+		Audio: []room.TrackInfo{
+			{Index: 0, Language: "jpn"}, {Index: 1, Language: "eng"}, {Index: 2, Language: "ger"},
+		},
+	}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+	// Every extra dub is another AAC encode and another segment stream before
+	// the room can play at all. The preview exists to start playback; the rest
+	// of the dubs arrive with the final ladder.
+	require.Contains(t, preview, "-map 0:a:0")
+	require.NotContains(t, preview, "-map 0:a:1")
+	require.NotContains(t, preview, "-map 0:a:2")
+	require.Equal(t, "preview_stream_1.m3u8", previewVideoVariantPlaylist(p))
+
+	// The final pass still carries all of them.
+	final := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
+	require.Contains(t, final, "-map 0:a:1")
+	require.Contains(t, final, "-map 0:a:2")
 }
 
 func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
