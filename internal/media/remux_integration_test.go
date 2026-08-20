@@ -96,6 +96,17 @@ func TestProgressiveRemuxIntegration(t *testing.T) {
 	_ = stdin.Close()
 	_ = cmd.Wait()
 	require.Error(t, <-inputDone)
+
+	// One variant, sound included. A separate audio group would double what the
+	// preview writes and uploads, and the source here has both streams.
+	playlists, err := filepath.Glob(filepath.Join(out, "preview_stream_*.m3u8"))
+	require.NoError(t, err)
+	require.Len(t, playlists, 1)
+	require.Equal(t, "preview_stream_0.m3u8", filepath.Base(playlists[0]))
+	master, err := os.ReadFile(filepath.Join(out, "master.m3u8"))
+	require.NoError(t, err)
+	require.NotContains(t, string(master), "EXT-X-MEDIA:TYPE=AUDIO")
+	require.Contains(t, string(master), "mp4a")
 }
 
 func ffmpegWroteAPlayableSet(hlsDir string) bool {

@@ -17,6 +17,15 @@ import (
 
 const ffmpegErrorTailBytes = 2 * 1024
 
+// previewSegmentSeconds is how long one preview segment runs.
+//
+// Every segment is a separate object in the bucket, and a write there is the
+// unit the storage bills and the unit the upload pays a round trip for, so the
+// length of a preview segment sets what a whole movie costs to publish twice.
+// It is still short enough that a viewer waits for a fraction of a segment
+// before the room plays, which is what the preview exists for.
+const previewSegmentSeconds = "4"
+
 // BuildRemuxArgs builds the ffmpeg arguments for an HLS fMP4 output.
 func BuildRemuxArgs(in, outDir string, p *ProbeResult) []string {
 	return buildRemuxArgs(in, outDir, p, false)
@@ -40,7 +49,8 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		// Transcoded previews need a keyframe at each short segment boundary;
 		// otherwise ffmpeg waits for libx264's much longer default GOP before
 		// publishing the first playable segment.
-		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*2)")
+		args = append(args, "-force_key_frames",
+			"expr:gte(t,n_forced*"+previewSegmentSeconds+")")
 	}
 
 	// Both passes grow their playlist as they encode. A vod playlist is only
@@ -54,7 +64,7 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 	initName := "init_%v.mp4"
 	masterName := "final_master.m3u8"
 	if progressive {
-		segmentTime = "2"
+		segmentTime = previewSegmentSeconds
 		// Keep preview files separate from the authoritative final remux. This
 		// lets the final pass replace master.m3u8 without colliding with files
 		// that a connected player may still have open.
@@ -105,6 +115,15 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 	if len(audio) == 0 {
 		streamMap = strings.Join(videoMap, " ")
 		return args, streamMap
+	}
+
+	// The preview muxes its audio into its one video variant instead of giving
+	// it a group of its own. A group is a second stream of segments, so it
+	// doubles what the preview writes to disk and uploads to the bucket, and it
+	// buys nothing: the preview carries a single rendition and a single dub, so
+	// there is no switch for the group to keep open.
+	if progressive {
+		return args, videoMap[0] + ",a:0"
 	}
 
 	variants := make([]string, 0, len(audio)+len(videoMap))

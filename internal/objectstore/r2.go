@@ -44,12 +44,30 @@ func NewR2(cfg R2Config) (*R2, error) {
 	return &R2{client: client, bucket: cfg.Bucket}, nil
 }
 
-func (r *R2) Put(ctx context.Context, key string, reader io.Reader, size int64,
-	contentType, cacheControl string) error {
-	_, err := r.client.PutObject(ctx, r.bucket, key, reader, size, minio.PutObjectOptions{
+// singlePartSize is the size below which an object is written with one
+// request.
+//
+// The client's own default is 16 MiB, and past it an upload becomes
+// CreateMultipartUpload plus one UploadPart per chunk plus
+// CompleteMultipartUpload — every one of them a billed write, and every one of
+// them a round trip to the bucket. Media segments run to tens of megabytes at
+// most, so raising the threshold to something none of them reach makes each
+// one cost the single write it is. Anything genuinely larger still splits,
+// which is what keeps a huge object recoverable.
+const singlePartSize = 128 * 1024 * 1024
+
+func putOptions(contentType, cacheControl string) minio.PutObjectOptions {
+	return minio.PutObjectOptions{
 		ContentType:  contentType,
 		CacheControl: cacheControl,
-	})
+		PartSize:     singlePartSize,
+	}
+}
+
+func (r *R2) Put(ctx context.Context, key string, reader io.Reader, size int64,
+	contentType, cacheControl string) error {
+	_, err := r.client.PutObject(ctx, r.bucket, key, reader, size,
+		putOptions(contentType, cacheControl))
 	if err != nil {
 		return fmt.Errorf("objectstore: put %s: %w", key, err)
 	}

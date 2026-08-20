@@ -82,11 +82,11 @@ func TestBuildProgressiveRemuxArgs(t *testing.T) {
 	joined := strings.Join(args, " ")
 	require.Contains(t, joined, "-i pipe:0")
 	require.NotContains(t, joined, "-re")
-	require.Contains(t, joined, "-hls_time 2")
+	require.Contains(t, joined, "-hls_time 4")
 	require.NotContains(t, joined, "-force_key_frames")
 	require.Contains(t, joined, "-hls_playlist_type event")
 	require.NotContains(t, joined, "-hls_playlist_type vod")
-	require.Contains(t, joined, "-var_stream_map a:0,agroup:audio,default:yes,language:eng")
+	require.Contains(t, joined, "-var_stream_map v:0,a:0")
 	require.Contains(t, joined, "-master_pl_name master.m3u8")
 	require.Contains(t, joined, "-hls_fmp4_init_filename preview_init_%v.mp4")
 	require.Contains(t, joined, "/x/hls/preview_stream_%v_%06d.m4s")
@@ -119,12 +119,42 @@ func TestBuildProgressiveRemuxArgsCarriesOnlyTheDefaultAudioTrack(t *testing.T) 
 	require.Contains(t, preview, "-map 0:a:0")
 	require.NotContains(t, preview, "-map 0:a:1")
 	require.NotContains(t, preview, "-map 0:a:2")
-	require.Equal(t, "preview_stream_1.m3u8", previewVideoVariantPlaylist(p))
+	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(p))
 
 	// The final pass still carries all of them.
 	final := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
 	require.Contains(t, final, "-map 0:a:1")
 	require.Contains(t, final, "-map 0:a:2")
+}
+
+func TestBuildProgressiveRemuxArgsMuxesAudioIntoTheOnlyVariant(t *testing.T) {
+	p := &ProbeResult{
+		VideoCopyable: true,
+		Audio:         []room.TrackInfo{{Index: 0, Language: "eng"}},
+	}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+
+	// An audio group is a second segment stream, so it doubles what the preview
+	// writes and uploads. It buys nothing here: the preview carries one video
+	// rendition and one dub, so there is no switch for the group to survive.
+	require.Contains(t, preview, "-var_stream_map v:0,a:0")
+	require.NotContains(t, preview, "agroup")
+
+	// The final ladder keeps its group: switching picture quality there must
+	// not reopen the audio the viewer chose.
+	final := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
+	require.Contains(t, final, "v:0,agroup:audio")
+}
+
+func TestBuildProgressiveRemuxArgsMapsSilentSourcesAlone(t *testing.T) {
+	p := &ProbeResult{VideoCopyable: true}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+
+	require.Contains(t, preview, "-var_stream_map v:0")
+	require.NotContains(t, preview, "a:0")
+	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(p))
 }
 
 func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
@@ -134,8 +164,11 @@ func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
 
 	require.Contains(t, joined, "-c:v:0 libx264 -preset:v:0 ultrafast -crf:v:0 23")
 	require.NotContains(t, joined, "-preset veryfast")
-	require.Contains(t, joined, `-force_key_frames expr:gte(t,n_forced*2)`)
-	require.Contains(t, joined, "-hls_time 2")
+	// The forced keyframe cadence has to follow the segment length: a segment
+	// cannot start anywhere but a keyframe, so a mismatch makes ffmpeg hold the
+	// first playable segment until libx264's own much longer GOP closes.
+	require.Contains(t, joined, `-force_key_frames expr:gte(t,n_forced*4)`)
+	require.Contains(t, joined, "-hls_time 4")
 
 	vod := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
 	require.Contains(t, vod, "-c:v:0 libx264 -preset:v:0 veryfast -crf:v:0 23")

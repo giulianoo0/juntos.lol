@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -476,10 +475,10 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 }
 
 // previewVideoVariantPlaylist names the media playlist of the preview's video
-// rendition. The stream map orders audio variants first, so the video
-// variant's index equals the preview's audio track count, including zero.
-func previewVideoVariantPlaylist(p *ProbeResult) string {
-	return fmt.Sprintf("preview_stream_%d.m3u8", len(previewAudio(p)))
+// rendition. The preview is a single variant carrying its own audio, so there
+// is only ever one, whether or not the source has sound.
+func previewVideoVariantPlaylist(*ProbeResult) string {
+	return "preview_stream_0.m3u8"
 }
 
 func hasNonEmptyMatch(pattern string) bool {

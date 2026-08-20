@@ -17,9 +17,11 @@ import (
 )
 
 const (
-	// subtitleSnapshotInterval is how often the cues extracted so far are
+	// subtitleSnapshotInterval is how soon the cues extracted so far are first
 	// republished while bytes keep arriving.
 	subtitleSnapshotInterval = 6 * time.Second
+	// maxSubtitleSnapshotInterval is how far apart snapshots grow to be.
+	maxSubtitleSnapshotInterval = 60 * time.Second
 	// cueMarker is what makes a WebVTT file worth publishing: a header alone
 	// gives a viewer an empty track and a subtitle menu that promises nothing.
 	cueMarker = "-->"
@@ -127,24 +129,42 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 	waitErr := make(chan error, 1)
 	go func() { waitErr <- cmd.Wait() }()
 
-	ticker := time.NewTicker(subtitleSnapshotInterval)
-	defer ticker.Stop()
+	interval := nextSubtitleInterval(0)
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	var published subtitleSnapshot
 	for {
 		select {
 		case <-waitErr:
 			stopInput()
 			_ = stdin.Close()
-			// One last look: the final cues land between two ticks more often
-			// than not.
+			// One last look: the final cues land between two snapshots more
+			// often than not.
 			p.wrapUpSubtitles(ctx, jobCtx, job.roomID, generation, probe, outputs, &published)
 			return
 		case <-jobCtx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			p.publishSubtitleSnapshot(ctx, jobCtx, job.roomID, probe, outputs, &published)
+			interval = nextSubtitleInterval(interval)
+			timer.Reset(interval)
 		}
 	}
+}
+
+// nextSubtitleInterval widens the gap between snapshots as an extraction runs
+// on.
+//
+// The first one matters most: until it lands the room has no subtitles at all.
+// Every one after publishes cues further ahead of where anyone is watching, at
+// the price of an upload per track and a republish that sends every connected
+// player back for all of them. Nothing is lost at the end by spacing them out,
+// because the wrap-up publish fires the moment the source stops arriving.
+func nextSubtitleInterval(current time.Duration) time.Duration {
+	if current <= 0 {
+		return subtitleSnapshotInterval
+	}
+	return min(current*2, maxSubtitleSnapshotInterval)
 }
 
 // wrapUpSubtitles publishes the cues that arrived after the last tick.

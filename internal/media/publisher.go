@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,7 +33,9 @@ var (
 
 const (
 	// PublishInterval is how often a running encode pushes new output to the
-	// bucket. Half a preview segment: the preview is what a viewer waits on.
+	// bucket. Well inside one preview segment, so a segment leaves for the
+	// bucket about as soon as the muxer finishes writing it: the preview is
+	// what a viewer waits on.
 	PublishInterval = time.Second
 
 	// uploadTimeout bounds one object upload. It is deliberately generous
@@ -60,6 +63,13 @@ const (
 	// subtitleCacheControl is shorter because progressive extraction rewrites
 	// the same name as it reads further into the file.
 	subtitleCacheControl = "public, max-age=3600"
+
+	// maxRememberedSubtitles bounds the record of which subtitle files already
+	// reached the bucket. The record lives as long as the process, and without
+	// a ceiling it would grow for every room the server ever published.
+	// Forgetting all of it costs one redundant upload per track still being
+	// extracted, which is the cheaper failure.
+	maxRememberedSubtitles = 4096
 )
 
 // Publisher moves a room's encoded output into the bucket and publishes the
@@ -75,14 +85,22 @@ type Publisher struct {
 	baseURL string
 	// interval is how often Run publishes. Tests shorten it.
 	interval time.Duration
+
+	// sentSubtitles digests the subtitle files already in the bucket, keyed by
+	// the object key they landed on. Progressive extraction rewrites every
+	// track's file on every tick whether or not its cues moved, so without this
+	// a track that ran out of dialogue is uploaded again on each one.
+	subsMu        sync.Mutex
+	sentSubtitles map[string][sha256.Size]byte
 }
 
 func NewPublisher(store *room.Store, bucket objectstore.Store, mediaPublicURL string) *Publisher {
 	return &Publisher{
-		store:    store,
-		bucket:   bucket,
-		baseURL:  strings.TrimSuffix(mediaPublicURL, "/"),
-		interval: PublishInterval,
+		store:         store,
+		bucket:        bucket,
+		baseURL:       strings.TrimSuffix(mediaPublicURL, "/"),
+		interval:      PublishInterval,
+		sentSubtitles: make(map[string][sha256.Size]byte),
 	}
 }
 
@@ -283,9 +301,9 @@ func (p *Publisher) Run(ctx context.Context, roomID, hlsDir string, patterns []s
 	}
 }
 
-// PublishSubtitles uploads every WebVTT file in subsDir. Subtitle URLs are
-// built by the client, so they carry a version query string of their own and
-// do not need the published set.
+// PublishSubtitles uploads every WebVTT file in subsDir whose content is not
+// already in the bucket. Subtitle URLs are built by the client, so they carry
+// a version query string of their own and do not need the published set.
 func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string) error {
 	generation, err := p.generation(ctx, roomID)
 	if err != nil {
@@ -302,12 +320,69 @@ func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".vtt") {
 			continue
 		}
-		if err := p.putObject(ctx, subsPrefix(roomID, generation)+entry.Name(),
-			filepath.Join(subsDir, entry.Name()), "text/vtt; charset=utf-8", subtitleCacheControl); err != nil {
+		if err := p.putSubtitle(ctx, subsPrefix(roomID, generation)+entry.Name(),
+			filepath.Join(subsDir, entry.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// putSubtitle uploads one WebVTT file unless the bucket already holds exactly
+// these bytes under this key.
+//
+// The file is read whole rather than streamed: subtitles are kilobytes, and
+// the read is what the digest is taken from anyway.
+func (p *Publisher) putSubtitle(ctx context.Context, key, path string) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return fmt.Errorf("read %s for upload: %w", filepath.Base(path), err)
+	}
+	digest := sha256.Sum256(body)
+	if p.subtitleSent(key, digest) {
+		return nil
+	}
+	// Detached from the caller's cancellation for the same reason a segment
+	// upload is: an aborted PUT leaves an object that reads back intact over
+	// the S3 API and is served truncated from the edge.
+	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
+	defer cancel()
+	if err := p.bucket.Put(uploadCtx, key, bytes.NewReader(body), int64(len(body)),
+		"text/vtt; charset=utf-8", subtitleCacheControl); err != nil {
+		return err
+	}
+	// Recorded only once the bytes are in the bucket, so a failed upload is
+	// retried by the next pass rather than assumed done.
+	p.rememberSubtitle(key, digest)
+	return nil
+}
+
+func (p *Publisher) subtitleSent(key string, digest [sha256.Size]byte) bool {
+	p.subsMu.Lock()
+	defer p.subsMu.Unlock()
+	sent, ok := p.sentSubtitles[key]
+	return ok && sent == digest
+}
+
+func (p *Publisher) rememberSubtitle(key string, digest [sha256.Size]byte) {
+	p.subsMu.Lock()
+	defer p.subsMu.Unlock()
+	if p.sentSubtitles == nil {
+		p.sentSubtitles = make(map[string][sha256.Size]byte)
+	}
+	if len(p.sentSubtitles) >= maxRememberedSubtitles {
+		clear(p.sentSubtitles)
+	}
+	p.sentSubtitles[key] = digest
+}
+
+func (p *Publisher) rememberedSubtitles() int {
+	p.subsMu.Lock()
+	defer p.subsMu.Unlock()
+	return len(p.sentSubtitles)
 }
 
 // generation reads which source the room is currently on. Every object key

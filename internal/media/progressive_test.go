@@ -70,11 +70,12 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 	require.ErrorIs(t, <-done, context.Canceled)
 }
 
-func TestPreviewVideoVariantPlaylistFollowsThePreviewAudioCount(t *testing.T) {
+func TestPreviewVideoVariantPlaylistIsTheOnlyVariant(t *testing.T) {
+	// The preview muxes its audio into its single video variant, so the
+	// playlist to watch for playable video is the same one whether or not the
+	// release ships sound, and however many dubs it ships.
 	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(&ProbeResult{}))
-	// The preview carries the default track alone, so the video variant sits
-	// right after it however many dubs the release ships.
-	require.Equal(t, "preview_stream_1.m3u8",
+	require.Equal(t, "preview_stream_0.m3u8",
 		previewVideoVariantPlaylist(&ProbeResult{Audio: []room.TrackInfo{{Index: 0}, {Index: 1}}}))
 }
 
@@ -166,8 +167,8 @@ func TestAnnouncePreviewMakesTheRoomReadyAfterTheLastPublish(t *testing.T) {
 	// notice, so the room advertises "preparing" with watchable media already
 	// in the bucket.
 	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{
-		"master.m3u8":           "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\npreview_stream_1.m3u8\n",
-		"preview_stream_1.m3u8": "#EXTM3U\n#EXTINF:2.0,\nseg.m4s\n",
+		"master.m3u8":           "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\npreview_stream_0.m3u8\n",
+		"preview_stream_0.m3u8": "#EXTM3U\n#EXTINF:4.0,\nseg.m4s\n",
 	}))
 	p.announcePreview(t.Context(), "r1", probe)
 

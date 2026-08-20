@@ -155,6 +155,19 @@ func TestPublishSubtitleSnapshotRepublishesWhenCuesGrow(t *testing.T) {
 	require.Contains(t, string(object.Body), "later")
 }
 
+func TestSubtitleSnapshotsSpaceOutAsTheExtractionRunsOn(t *testing.T) {
+	// The first snapshot is what makes a room's subtitles exist at all, so it
+	// comes quickly. Each one after that publishes cues further ahead of where
+	// anyone is watching, and costs a republish that sends every connected
+	// player back for every track. The wrap-up publish covers the ending
+	// whatever the interval reached, so widening it delays nothing at the end.
+	require.Equal(t, 6*time.Second, nextSubtitleInterval(0))
+	require.Equal(t, 12*time.Second, nextSubtitleInterval(6*time.Second))
+	require.Equal(t, 48*time.Second, nextSubtitleInterval(24*time.Second))
+	require.Equal(t, maxSubtitleSnapshotInterval, nextSubtitleInterval(48*time.Second))
+	require.Equal(t, maxSubtitleSnapshotInterval, nextSubtitleInterval(time.Hour))
+}
+
 func TestSubtitleWrapUpSurvivesTheJobContextDying(t *testing.T) {
 	mr := miniredis.RunT(t)
 	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)

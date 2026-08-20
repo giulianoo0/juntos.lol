@@ -19,13 +19,14 @@ type FakeObject struct {
 type Fake struct {
 	mu      sync.Mutex
 	objects map[string]FakeObject
+	puts    map[string]int
 	// FailOn makes Put fail for keys it reports true for, which is how the
 	// no-fallback contract gets tested: a failed upload must fail the job.
 	FailOn func(key string) bool
 }
 
 func NewFake() *Fake {
-	return &Fake{objects: make(map[string]FakeObject)}
+	return &Fake{objects: make(map[string]FakeObject), puts: make(map[string]int)}
 }
 
 func (f *Fake) Put(_ context.Context, key string, reader io.Reader, _ int64,
@@ -43,7 +44,17 @@ func (f *Fake) Put(_ context.Context, key string, reader io.Reader, _ int64,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.objects[key] = FakeObject{Body: body, ContentType: contentType, CacheControl: cacheControl}
+	f.puts[key]++
 	return nil
+}
+
+// Puts reports how many times a key was written. Every write is one billed
+// operation against the real bucket, so a test can hold the pipeline to
+// uploading only what changed.
+func (f *Fake) Puts(key string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.puts[key]
 }
 
 // SetFailOn changes the refusal predicate. It exists so a test can flip the
