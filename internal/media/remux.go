@@ -77,7 +77,7 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		"-f", "hls",
 		"-hls_time", segmentTime,
 		"-hls_segment_type", "fmp4",
-		"-hls_fmp4_init_filename", initName,
+		"-hls_fmp4_init_filename", initSegmentName(initName, streamMap),
 		"-hls_playlist_type", playlistType,
 		"-hls_flags", "independent_segments+temp_file",
 		"-hls_segment_filename", segmentPattern,
@@ -85,6 +85,22 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		"-master_pl_name", masterName,
 		playlistPattern,
 	)
+}
+
+// initSegmentName resolves the %v in an init filename that ffmpeg will not
+// resolve itself.
+//
+// ffmpeg expands %v in the segment filename and the playlist name always, but
+// in the init filename only when the output carries more than one variant.
+// With a single one it writes a file called literally "init_%v.mp4" and points
+// EXT-X-MAP at that name, which no player can fetch — the room then loads
+// forever rather than failing outright, because a missing init segment is
+// indistinguishable from one that has not been written yet.
+func initSegmentName(pattern, streamMap string) string {
+	if len(strings.Fields(streamMap)) > 1 {
+		return pattern
+	}
+	return strings.Replace(pattern, "%v", "0", 1)
 }
 
 // buildStreamMapping returns the -map/-c arguments and the -var_stream_map

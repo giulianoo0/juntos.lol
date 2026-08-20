@@ -88,7 +88,7 @@ func TestBuildProgressiveRemuxArgs(t *testing.T) {
 	require.NotContains(t, joined, "-hls_playlist_type vod")
 	require.Contains(t, joined, "-var_stream_map v:0,a:0")
 	require.Contains(t, joined, "-master_pl_name master.m3u8")
-	require.Contains(t, joined, "-hls_fmp4_init_filename preview_init_%v.mp4")
+	require.Contains(t, joined, "-hls_fmp4_init_filename preview_init_0.mp4")
 	require.Contains(t, joined, "/x/hls/preview_stream_%v_%06d.m4s")
 	require.Equal(t, "/x/hls/preview_stream_%v.m3u8", args[len(args)-1])
 
@@ -145,6 +145,32 @@ func TestBuildProgressiveRemuxArgsMuxesAudioIntoTheOnlyVariant(t *testing.T) {
 	// not reopen the audio the viewer chose.
 	final := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
 	require.Contains(t, final, "v:0,agroup:audio")
+}
+
+func TestBuildRemuxArgsNamesTheInitSegmentAVariantAtATime(t *testing.T) {
+	// ffmpeg only expands %v in the init filename when the output carries more
+	// than one variant. With a single one it writes a file called literally
+	// "preview_init_%v.mp4", the playlist points EXT-X-MAP at that name, and
+	// nothing decodes: the player fetches an init segment that is not there
+	// and waits forever.
+	single := &ProbeResult{VideoCopyable: true, Audio: []room.TrackInfo{{Index: 0}}}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", single), " ")
+
+	require.Contains(t, preview, "-hls_fmp4_init_filename preview_init_0.mp4")
+	require.NotContains(t, preview, "preview_init_%v.mp4")
+
+	// A ladder with an audio group has several, so the placeholder is expanded
+	// by ffmpeg and has to stay.
+	ladder := &ProbeResult{VideoCopyable: true, VideoHeight: 1080, Audio: []room.TrackInfo{{Index: 0}}}
+	final := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", ladder), " ")
+	require.Contains(t, final, "-hls_fmp4_init_filename init_%v.mp4")
+
+	// A final pass can end up with one variant too: a source small enough for
+	// no lower rung, with no audio to group.
+	lone := &ProbeResult{VideoCopyable: true, VideoHeight: 360}
+	loneFinal := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", lone), " ")
+	require.Contains(t, loneFinal, "-hls_fmp4_init_filename init_0.mp4")
 }
 
 func TestBuildProgressiveRemuxArgsMapsSilentSourcesAlone(t *testing.T) {

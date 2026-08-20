@@ -103,6 +103,15 @@ func TestProgressiveRemuxIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, playlists, 1)
 	require.Equal(t, "preview_stream_0.m3u8", filepath.Base(playlists[0]))
+
+	// ffmpeg leaves %v unexpanded in the init filename when it writes a single
+	// variant, and a glob for preview_init_*.mp4 happily matches the literal
+	// name it produces. Only the exact name proves a player can fetch it.
+	require.FileExists(t, filepath.Join(out, "preview_init_0.mp4"))
+	variant, err := os.ReadFile(playlists[0])
+	require.NoError(t, err)
+	require.Contains(t, string(variant), `#EXT-X-MAP:URI="preview_init_0.mp4"`)
+	require.NotContains(t, string(variant), "%v")
 	master, err := os.ReadFile(filepath.Join(out, "master.m3u8"))
 	require.NoError(t, err)
 	require.NotContains(t, string(master), "EXT-X-MEDIA:TYPE=AUDIO")
