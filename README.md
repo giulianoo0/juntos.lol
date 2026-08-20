@@ -160,7 +160,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `STREAM_START_MB` | `1` | Quantidade recebida antes de iniciar a prévia progressiva. |
 | `ROOM_TTL_HOURS` | `5` | Vida útil da sala e da mídia. |
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
-| `ROOM_IDLE_MINUTES` | `10` | Tempo para remover o hub WebSocket sem participantes. |
+| `ROOM_IDLE_SECONDS` | `90` | Tempo sem participantes até a sala ser recolhida: registro no Redis, diretório em disco e mídia no bucket. |
 | `UPLOAD_IDLE_MINUTES` | `10` | Tempo que um upload interrompido continua retomável antes de ser descartado. |
 | `FFMPEG_JOBS` | `2` | Workers simultâneos em cada fila de mídia. |
 | `TORRENT_BRIDGE_URL` | vazio | URL interna do bridge; o Compose usa `http://torrent-bridge:8090`. |

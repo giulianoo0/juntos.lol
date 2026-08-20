@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -35,7 +36,11 @@ const (
 )
 
 type Hub struct {
-	store       *room.Store
+	store *room.Store
+	// bucket is where a reclaimed room's media is given back. The bucket's own
+	// lifecycle rule is the backstop; this is what returns the storage as soon
+	// as the room stops existing.
+	bucket      room.MediaStore
 	cfg         config.Config
 	upgrader    websocket.Upgrader
 	idleAfter   time.Duration
@@ -89,19 +94,21 @@ type clientInbound struct {
 	message Inbound
 }
 
-// NewHub creates a WebSocket hub backed by the room store.
-func NewHub(store *room.Store, cfg config.Config) *Hub {
+// NewHub creates a WebSocket hub backed by the room store and the bucket its
+// media lives in.
+func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 	if cfg.MaxParticipants < 1 {
 		cfg.MaxParticipants = 1
 	}
-	if cfg.RoomIdleMinutes < 1 {
-		cfg.RoomIdleMinutes = 1
+	if cfg.RoomIdleSeconds < 1 {
+		cfg.RoomIdleSeconds = 1
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Hub{
 		store:         store,
+		bucket:        bucket,
 		cfg:           cfg,
-		idleAfter:     time.Duration(cfg.RoomIdleMinutes) * time.Minute,
+		idleAfter:     time.Duration(cfg.RoomIdleSeconds) * time.Second,
 		gateTimeout:   GateMaxWait,
 		stallCooldown: stallRegateCooldown,
 		rooms:         make(map[string]*roomConn),
@@ -624,6 +631,16 @@ func (r *roomConn) cleanupIdle() {
 		return
 	}
 	fileErr := os.RemoveAll(filepath.Join(r.hub.cfg.DataDir, "rooms", r.id))
+	// The published media goes with the room. Nothing can reach it once the
+	// room is gone — the playlists naming it are part of the room record — so
+	// leaving it for the bucket's own rule only pays for storage nobody can
+	// watch. Removed before the room record, which is the only thing that
+	// still names these objects.
+	mediaErr := r.hub.removeMedia(ctx, r.id)
+	if mediaErr != nil {
+		slog.ErrorContext(ctx, "idle room media cleanup failed", "room_id", r.id, "error", mediaErr)
+		return
+	}
 	storeErr := r.hub.store.Delete(ctx, r.id)
 	if err := errors.Join(fileErr, storeErr); err != nil {
 		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", r.id, "error", err)
@@ -635,6 +652,14 @@ func (r *roomConn) cleanupIdle() {
 	// it is.
 	slog.InfoContext(ctx, "idle room reclaimed",
 		"room_id", r.id, "idle_for", r.hub.idleAfter)
+}
+
+// removeMedia gives a room's published objects back to the bucket.
+func (h *Hub) removeMedia(ctx context.Context, roomID string) error {
+	if h.bucket == nil {
+		return nil
+	}
+	return h.bucket.RemovePrefix(ctx, objectstore.RoomPrefix(roomID))
 }
 
 func writeHandshakeError(conn *websocket.Conn, code string) {

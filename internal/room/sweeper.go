@@ -9,15 +9,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/giulianoo0/ss/internal/objectstore"
 )
 
-// StartSweeper ticks every interval and removes expired rooms from disk and
-// Redis until ctx is cancelled. This guarantees nothing outlives the room TTL.
-//
-// Encoded media is not its concern: segments live in the bucket, and the
-// bucket's own lifecycle rule expires them. What is left here is the Redis
-// record, the room directory and uploads that stalled without finishing.
-func StartSweeper(ctx context.Context, store *Store, dataDir string, interval, uploadIdle time.Duration) {
+// MediaStore is the part of the bucket a sweep needs: the ability to give a
+// finished room's objects back.
+type MediaStore interface {
+	RemovePrefix(ctx context.Context, prefix string) error
+}
+
+// StartSweeper ticks every interval and removes expired rooms from disk, Redis
+// and the bucket until ctx is cancelled. This guarantees nothing outlives the
+// room TTL.
+func StartSweeper(ctx context.Context, store *Store, dataDir string, bucket MediaStore,
+	interval, uploadIdle time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -25,15 +31,21 @@ func StartSweeper(ctx context.Context, store *Store, dataDir string, interval, u
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			SweepOnce(ctx, store, dataDir)
+			SweepOnce(ctx, store, dataDir, bucket)
 			SweepStaleUploads(ctx, store, dataDir, uploadIdle)
 		}
 	}
 }
 
 // SweepOnce removes expired room data, including the corresponding tus upload
-// bytes and metadata. Delete already ZREMs rooms:by_expiry.
-func SweepOnce(ctx context.Context, store *Store, dataDir string) {
+// bytes and metadata and the media the room published. Delete already ZREMs
+// rooms:by_expiry.
+//
+// The bucket's lifecycle rule remains the backstop, but it is measured from
+// when each object was written, so media left here outlives the room that
+// owned it by most of a lifecycle window while nothing can reach it: the
+// playlists naming it went with the room.
+func SweepOnce(ctx context.Context, store *Store, dataDir string, bucket MediaStore) {
 	ids, err := store.ExpiredIDs(ctx, time.Now())
 	if err != nil {
 		slog.Error("sweeper: list expired rooms", "err", err)
@@ -60,6 +72,13 @@ func SweepOnce(ctx context.Context, store *Store, dataDir string) {
 			slog.Error("sweeper: remove room dir", "room", id, "err", err)
 			continue
 		}
+		// Before the room record goes: it is the only thing that still names
+		// these objects, so dropping it first would strand them until the
+		// bucket's own rule caught up.
+		if err := removeRoomMedia(ctx, bucket, id); err != nil {
+			slog.Error("sweeper: remove room media", "room", id, "err", err)
+			continue
+		}
 		if err := store.Delete(ctx, id); err != nil {
 			slog.Error("sweeper: delete room", "room", id, "err", err)
 			continue
@@ -74,7 +93,7 @@ func SweepOnce(ctx context.Context, store *Store, dataDir string) {
 
 // sweepOnce is retained for the package-local tests introduced with Task 3.
 func sweepOnce(ctx context.Context, store *Store, dataDir string) {
-	SweepOnce(ctx, store, dataDir)
+	SweepOnce(ctx, store, dataDir, nil)
 }
 
 // tusInfo is the part of the sidecar tusd writes next to an upload that
@@ -147,4 +166,12 @@ func uploadRoomID(infoPath string) string {
 		return ""
 	}
 	return info.MetaData["roomID"]
+}
+
+// removeRoomMedia gives a room's published objects back to the bucket.
+func removeRoomMedia(ctx context.Context, bucket MediaStore, id string) error {
+	if bucket == nil {
+		return nil
+	}
+	return bucket.RemovePrefix(ctx, objectstore.RoomPrefix(id))
 }

@@ -11,7 +11,7 @@ import (
 // mediaLifecycleHours mirrors the bucket's own expiry rule. It is duplicated
 // here on purpose: the application cannot read the rule, and a room outliving
 // its media is worth refusing to boot over.
-const mediaLifecycleHours = 24
+const mediaLifecycleHours = 5
 
 type Config struct {
 	Port              int
@@ -22,7 +22,7 @@ type Config struct {
 	StreamStartMB     int64
 	RoomTTLHours      int
 	MaxParticipants   int
-	RoomIdleMinutes   int
+	RoomIdleSeconds   int
 	UploadIdleMinutes int
 	FFmpegJobs        int
 	LivekitURL        string
@@ -48,7 +48,7 @@ func Load() (Config, error) {
 		StreamStartMB:     1,
 		RoomTTLHours:      5,
 		MaxParticipants:   20,
-		RoomIdleMinutes:   10,
+		RoomIdleSeconds:   90,
 		UploadIdleMinutes: 10,
 		FFmpegJobs:        2,
 		LivekitURL:        "",
@@ -84,7 +84,7 @@ func Load() (Config, error) {
 	if cfg.MaxParticipants, err = envInt("MAX_PARTICIPANTS", cfg.MaxParticipants); err != nil {
 		return Config{}, err
 	}
-	if cfg.RoomIdleMinutes, err = envInt("ROOM_IDLE_MINUTES", cfg.RoomIdleMinutes); err != nil {
+	if cfg.RoomIdleSeconds, err = envInt("ROOM_IDLE_SECONDS", cfg.RoomIdleSeconds); err != nil {
 		return Config{}, err
 	}
 	if cfg.FFmpegJobs, err = envInt("FFMPEG_JOBS", cfg.FFmpegJobs); err != nil {
@@ -128,9 +128,10 @@ func (c Config) validateMedia() error {
 		slices.Sort(missing)
 		return fmt.Errorf("config: media storage needs %s", strings.Join(missing, ", "))
 	}
-	// The bucket lifecycle reclaims media a day after it is written, so a
-	// longer room TTL would outlive its own video.
-	if c.RoomTTLHours >= mediaLifecycleHours {
+	// A room must not outlive its own video. Equal windows are fine: media is
+	// only ever written after the room exists and the room's expiry is never
+	// extended, so every object's own window ends after the room's does.
+	if c.RoomTTLHours > mediaLifecycleHours {
 		return fmt.Errorf("config: ROOM_TTL_HOURS=%d outlives the %dh media lifecycle",
 			c.RoomTTLHours, mediaLifecycleHours)
 	}

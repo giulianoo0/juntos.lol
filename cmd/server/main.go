@@ -47,9 +47,9 @@ func main() {
 	publisher := media.NewPublisher(store, bucket, cfg.MediaPublicURL)
 
 	ctx := context.Background()
-	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute,
+	go room.StartSweeper(ctx, store, cfg.DataDir, bucket, time.Minute,
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
-	hub := syncapi.NewHub(store, cfg)
+	hub := syncapi.NewHub(store, cfg, bucket)
 	defer hub.Close()
 	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(roomID string) {
 		hub.NotifyStatus(roomID, "ready")

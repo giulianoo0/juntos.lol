@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -45,6 +46,23 @@ func (f *Fake) Put(_ context.Context, key string, reader io.Reader, _ int64,
 	defer f.mu.Unlock()
 	f.objects[key] = FakeObject{Body: body, ContentType: contentType, CacheControl: cacheControl}
 	f.puts[key]++
+	return nil
+}
+
+func (f *Fake) RemovePrefix(_ context.Context, prefix string) error {
+	if prefix == "" {
+		return ErrEmptyPrefix
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.FailOn != nil && f.FailOn(prefix) {
+		return fmt.Errorf("objectstore: fake refused to remove %s", prefix)
+	}
+	for key := range f.objects {
+		if strings.HasPrefix(key, prefix) {
+			delete(f.objects, key)
+		}
+	}
 	return nil
 }
 

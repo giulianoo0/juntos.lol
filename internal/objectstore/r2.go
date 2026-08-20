@@ -73,3 +73,49 @@ func (r *R2) Put(ctx context.Context, key string, reader io.Reader, size int64,
 	}
 	return nil
 }
+
+// RemovePrefix deletes every object under prefix.
+//
+// Listing is a billed write operation and deleting is free, so the cost of
+// this is one request per thousand objects — nothing against the storage a
+// finished room would otherwise hold until the bucket's own lifecycle rule
+// caught up with it.
+func (r *R2) RemovePrefix(ctx context.Context, prefix string) error {
+	if prefix == "" {
+		return ErrEmptyPrefix
+	}
+	listed := r.client.ListObjects(ctx, r.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+	// A failed listing must not read as an empty one: the deletes would report
+	// success having removed only what was listed before the error.
+	var listErr error
+	keys := make(chan minio.ObjectInfo)
+	go func() {
+		defer close(keys)
+		for object := range listed {
+			if object.Err != nil {
+				listErr = object.Err
+				return
+			}
+			select {
+			case keys <- object:
+			case <-ctx.Done():
+				listErr = ctx.Err()
+				return
+			}
+		}
+	}()
+	for failure := range r.client.RemoveObjects(ctx, r.bucket, keys, minio.RemoveObjectsOptions{}) {
+		if failure.Err != nil {
+			return fmt.Errorf("objectstore: remove %s: %w", failure.ObjectName, failure.Err)
+		}
+	}
+	// Safe to read unsynchronized: the goroutine closes keys before returning,
+	// and RemoveObjects only closes its own channel once keys is drained.
+	if listErr != nil {
+		return fmt.Errorf("objectstore: list %s: %w", prefix, listErr)
+	}
+	return nil
+}

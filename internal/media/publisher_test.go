@@ -176,6 +176,8 @@ func (b *countingBucket) Put(_ context.Context, _ string, r io.Reader, _ int64, 
 	return err
 }
 
+func (b *countingBucket) RemovePrefix(context.Context, string) error { return nil }
+
 func TestPublisherUploadsSegmentsConcurrently(t *testing.T) {
 	mr := miniredis.RunT(t)
 	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
@@ -382,6 +384,8 @@ func (b *blockingBucket) Put(ctx context.Context, key string, r io.Reader, _ int
 	_, err := io.ReadAll(r)
 	return err
 }
+
+func (b *blockingBucket) RemovePrefix(context.Context, string) error { return nil }
 
 func TestPublishLetsAnUploadAlreadyInFlightFinish(t *testing.T) {
 	mr := miniredis.RunT(t)
