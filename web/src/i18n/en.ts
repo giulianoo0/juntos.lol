@@ -114,4 +114,13 @@ export const en: Record<string, string> = {
   'status.processing': 'Processing',
   'error.room': 'Room unavailable',
   'error.fileChanged': 'That file is still being written. Wait for the download to finish, then choose it again.',
+  'codec.title': 'This browser cannot play everything',
+  'codec.guide': 'Videos in these formats will not start here. Everything else plays normally.',
+  'codec.supported': 'Plays',
+  'codec.unsupported': 'Will not play',
+  'codec.h264Use': 'Almost every video, and anything converted here',
+  'codec.hevcUse': 'Common in high-quality and anime releases',
+  'codec.av1Use': 'Newer releases and re-encodes',
+  'codec.advice': 'Safari plays HEVC. Recent Chrome and Edge play AV1.',
+  'codec.dismiss': 'Got it',
 }

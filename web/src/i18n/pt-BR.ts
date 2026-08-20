@@ -114,4 +114,13 @@ export const ptBR: Record<string, string> = {
   'status.processing': 'Processando',
   'error.room': 'Sala indisponível',
   'error.fileChanged': 'Esse arquivo ainda está sendo gravado. Espere o download terminar e escolha de novo.',
+  'codec.title': 'Este navegador não reproduz tudo',
+  'codec.guide': 'Vídeos nestes formatos não vão abrir aqui. O resto reproduz normalmente.',
+  'codec.supported': 'Reproduz',
+  'codec.unsupported': 'Não reproduz',
+  'codec.h264Use': 'Quase todo vídeo, e tudo que for convertido aqui',
+  'codec.hevcUse': 'Comum em releases de alta qualidade e animes',
+  'codec.av1Use': 'Releases mais novos e recodificações',
+  'codec.advice': 'O Safari reproduz HEVC. Chrome e Edge recentes reproduzem AV1.',
+  'codec.dismiss': 'Entendi',
 }
