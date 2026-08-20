@@ -4,6 +4,11 @@ services:
       context: .
       args:
         GIT_SHA: ${GIT_SHA:-dev}
+    # Without a policy here the host coming back up leaves the site off the
+    # air: Docker restarts and starts only the containers that carry one, so a
+    # reboot took down everything except the bridge. unless-stopped rather than
+    # always, so a deliberate stop during a deploy is still respected.
+    restart: unless-stopped
     ports:
       - "${APP_BIND:-127.0.0.1:8099}:8080"
     environment:
@@ -51,10 +56,12 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: redis-server --maxmemory-policy volatile-ttl
 
   livekit:
     image: livekit/livekit-server:latest
+    restart: unless-stopped
     # For production, set LIVEKIT_ARGS=--config /etc/livekit.yaml and add the
     # configuration through a Compose override (kept outside version control).
     command: ${LIVEKIT_ARGS:---dev}
