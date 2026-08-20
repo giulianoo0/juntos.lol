@@ -157,9 +157,41 @@ function formatVttTime(ms: number): string {
   return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}.${String(millis).padStart(3, '0')}`
 }
 
+// cleanCueText rewrites an ASS dialogue line as VTT cue text. Italic and bold
+// overrides become the <i>/<b> tags WebVTT can carry — the same mapping the
+// server-side ffmpeg extraction produces — and every other override (colors,
+// positioning, karaoke) has no VTT equivalent and is dropped.
 function cleanCueText(text: string): string {
-  return text
-    .replace(/\{[^}]*\}/g, '')
+  const open: Array<'i' | 'b'> = []
+  const active = { i: false, b: false }
+  let out = ''
+  let last = 0
+  for (const block of text.matchAll(/\{([^}]*)\}/g)) {
+    out += text.slice(last, block.index)
+    last = block.index + block[0].length
+    for (const flag of block[1].matchAll(/\\(i|b)(\d+)/g)) {
+      const style = flag[1] as 'i' | 'b'
+      const on = flag[2] !== '0'
+      if (on === active[style]) continue
+      active[style] = on
+      if (on) {
+        open.push(style)
+        out += `<${style}>`
+        continue
+      }
+      // VTT ignores an end tag that is not the innermost one, so closing a
+      // style closes everything above it and reopens what should survive.
+      const depth = open.lastIndexOf(style)
+      for (let index = open.length - 1; index >= depth; index -= 1) out += `</${open[index]}>`
+      for (const kept of open.splice(depth).slice(1)) {
+        open.push(kept)
+        out += `<${kept}>`
+      }
+    }
+  }
+  out += text.slice(last)
+  for (let index = open.length - 1; index >= 0; index -= 1) out += `</${open[index]}>`
+  return out
     .replace(/\\N/g, '\n')
     .trim()
 }

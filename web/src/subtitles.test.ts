@@ -18,9 +18,29 @@ describe('toWebVTT', () => {
     )
   })
 
-  it('strips ASS override tags and turns \\N into newlines', () => {
+  it('turns ASS italic overrides into VTT italic tags and \\N into newlines', () => {
     const vtt = toWebVTT([{ text: '{\\i1}Hello{\\i0}\\N{\\an8}world', time: 0, duration: 1_000 }])
-    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\nHello\nworld\n')
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\n<i>Hello</i>\nworld\n')
+  })
+
+  it('turns ASS bold overrides into VTT bold tags', () => {
+    const vtt = toWebVTT([{ text: '{\\b1}loud{\\b0} quiet', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<b>loud</b> quiet')
+  })
+
+  it('reads style flags out of a block that mixes them with other overrides', () => {
+    const vtt = toWebVTT([{ text: '{\\i1\\pos(20,30)}floating sign', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<i>floating sign</i>')
+  })
+
+  it('closes styles left open at the end of the cue', () => {
+    const vtt = toWebVTT([{ text: '{\\i1}a thought{\\b1}, emphasized', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<i>a thought<b>, emphasized</b></i>')
+  })
+
+  it('ignores a close for a style that was never opened', () => {
+    const vtt = toWebVTT([{ text: '{\\i0}plain words', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\nplain words\n')
   })
 
   it('clamps negative timings to zero', () => {
