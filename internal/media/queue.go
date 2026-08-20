@@ -334,6 +334,17 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 	return true
 }
 
+// Busy reports whether the room has a job waiting or running. The room's own
+// status does not answer this: a room is ready from the moment its preview
+// plays, and stays ready for the whole of the final encode.
+func (q *Queue) Busy(roomID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	_, queued := q.queued[roomID]
+	_, active := q.active[roomID]
+	return queued || active
+}
+
 func (q *Queue) beginJob(roomID string) {
 	q.mu.Lock()
 	delete(q.queued, roomID)

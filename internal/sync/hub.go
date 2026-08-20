@@ -50,7 +50,11 @@ type Hub struct {
 	// out the real interval.
 	stallCooldown time.Duration
 
-	mu           stdsync.Mutex
+	mu stdsync.Mutex
+	// mediaWork is the pipeline asked whether a room still has an encode in
+	// flight. Set once at startup; the queue that answers it cannot exist
+	// before the hub, because its completion callbacks report back into one.
+	mediaWork    MediaWork
 	rooms        map[string]*roomConn
 	capabilities map[string]map[string]string
 	closed       bool
@@ -96,6 +100,27 @@ type clientInbound struct {
 
 // NewHub creates a WebSocket hub backed by the room store and the bucket its
 // media lives in.
+// MediaWork reports whether a room still has pipeline work that reclaiming it
+// would destroy — a queued or running remux.
+type MediaWork interface {
+	Busy(roomID string) bool
+}
+
+// SetMediaWork names the pipeline whose in-flight jobs keep an idle room
+// alive. Called once during startup, before the hub serves anything.
+func (h *Hub) SetMediaWork(work MediaWork) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.mediaWork = work
+}
+
+func (h *Hub) mediaBusy(roomID string) bool {
+	h.mu.Lock()
+	work := h.mediaWork
+	h.mu.Unlock()
+	return work != nil && work.Busy(roomID)
+}
+
 func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 	if cfg.MaxParticipants < 1 {
 		cfg.MaxParticipants = 1
@@ -610,6 +635,28 @@ func (r *roomConn) send(target *client, event Outbound) {
 	}
 }
 
+// unfinishedWork names what an idle room still has running, or "" when
+// reclaiming it destroys nothing.
+//
+// Status is not enough on its own. The progressive preview publishes a
+// playable segment seconds after the first megabyte and flips the room to
+// ready there, which is the whole point of it — but the source goes on
+// arriving for minutes after that, and the final ladder goes on encoding for
+// longer still. Reclaiming on status alone deletes the room directory out from
+// under a live ffmpeg, which dies renaming its output, and lands a finished
+// upload in a room that no longer exists.
+func unfinishedWork(r *room.Room, mediaBusy bool) string {
+	switch {
+	case r.Status == "uploading" || r.Status == "processing":
+		return "upload in progress"
+	case r.Preparation.SourceBytes > 0 && r.Preparation.ReceivedBytes < r.Preparation.SourceBytes:
+		return "source still arriving"
+	case mediaBusy:
+		return "media pipeline running"
+	}
+	return ""
+}
+
 func (r *roomConn) cleanupIdle() {
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
@@ -621,13 +668,15 @@ func (r *roomConn) cleanupIdle() {
 		slog.ErrorContext(ctx, "load idle room before cleanup failed", "room_id", r.id, "error", err)
 		return
 	}
-	if storedRoom.Status == "uploading" || storedRoom.Status == "processing" {
-		// A large or slow upload can legitimately outlive the websocket idle
-		// window. Keep its persisted room and files so tus progress can continue
-		// producing the first segment. A later connection gets fresh ownership.
+	if reason := unfinishedWork(storedRoom, r.hub.mediaBusy(r.id)); reason != "" {
+		// Work that outlives the websocket idle window keeps its persisted room
+		// and files: tus can go on producing segments, and a running remux can
+		// go on writing into a directory that still exists. A later connection
+		// gets fresh ownership.
 		if err := r.hub.store.SetController(ctx, r.id, ""); err != nil {
 			slog.ErrorContext(ctx, "clear controller for idle active upload failed", "room_id", r.id, "error", err)
 		}
+		slog.InfoContext(ctx, "idle room kept", "room_id", r.id, "reason", reason)
 		return
 	}
 	fileErr := os.RemoveAll(filepath.Join(r.hub.cfg.DataDir, "rooms", r.id))

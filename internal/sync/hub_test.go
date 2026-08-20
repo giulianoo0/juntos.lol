@@ -196,6 +196,76 @@ func TestHubIdleCleanupKeepsTheMediaOfAnActiveUpload(t *testing.T) {
 	require.Len(t, bucket.Keys(), 1)
 }
 
+// The preview makes a room playable seconds after the first megabyte, so a
+// room reads "ready" for most of the time its source is still arriving and for
+// all of the time the final ladder is being encoded. Status alone therefore
+// says nothing about whether reclaiming it would destroy work in flight.
+func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
+	tests := []struct {
+		name      string
+		received  int64
+		total     int64
+		mediaBusy bool
+	}{
+		{name: "source still arriving", received: 500, total: 1000},
+		{name: "final remux running", received: 1000, total: 1000, mediaBusy: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
+			hub.idleAfter = 20 * time.Millisecond
+			hub.SetMediaWork(fakeMediaWork{busy: tt.mediaBusy})
+			bucket := hub.bucket.(*objectstore.Fake)
+			require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
+			require.NoError(t, store.SetIngestProgress(t.Context(), "r1", tt.received, tt.total))
+			require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/preview_stream_0_000000.m4s",
+				strings.NewReader("x"), 1, "", ""))
+			roomDir := filepath.Join(hub.cfg.DataDir, "rooms", "r1")
+			require.NoError(t, os.MkdirAll(roomDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(roomDir, "partial"), []byte("x"), 0o644))
+			client := dialHubWS(t, server)
+			helloHubClient(t, client, "host", 1)
+			require.NoError(t, client.Close())
+
+			require.Eventually(t, func() bool {
+				hub.mu.Lock()
+				defer hub.mu.Unlock()
+				return hub.rooms["r1"] == nil
+			}, time.Second, 10*time.Millisecond)
+
+			// The room outlives the connection, and so does everything the work
+			// still running needs: its directory, and what it already published.
+			_, err := store.Get(t.Context(), "r1")
+			require.NoError(t, err)
+			require.FileExists(t, filepath.Join(roomDir, "partial"))
+			require.Len(t, bucket.Keys(), 1)
+		})
+	}
+}
+
+// The counterpart: with the transfer landed and the pipeline idle there is
+// nothing left to protect, and the room goes as it always did.
+func TestHubIdleCleanupReclaimsARoomWhoseWorkIsDone(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
+	hub.idleAfter = 20 * time.Millisecond
+	hub.SetMediaWork(fakeMediaWork{busy: false})
+	require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
+	require.NoError(t, store.SetIngestProgress(t.Context(), "r1", 1000, 1000))
+	client := dialHubWS(t, server)
+	helloHubClient(t, client, "host", 1)
+	require.NoError(t, client.Close())
+
+	require.Eventually(t, func() bool {
+		_, err := store.Get(t.Context(), "r1")
+		return errors.Is(err, room.ErrNotFound)
+	}, time.Second, 10*time.Millisecond)
+}
+
+type fakeMediaWork struct{ busy bool }
+
+func (f fakeMediaWork) Busy(string) bool { return f.busy }
+
 func TestHubIdleCleanupPreservesActiveUpload(t *testing.T) {
 	for _, status := range []string{"uploading", "processing"} {
 		t.Run(status, func(t *testing.T) {
