@@ -138,14 +138,59 @@ func TestPublisherLeavesTheMasterPointingAtVariantPlaylists(t *testing.T) {
 
 func TestPublisherFailsWhenTheBucketRefusesASegment(t *testing.T) {
 	publisher, bucket, store, hlsDir := newPublisherFixture(t)
-	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 2, 2, true)
-	bucket.SetFailOn(func(key string) bool { return strings.HasSuffix(key, segmentName(1)) })
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 3, 3, true)
+	bucket.SetFailOn(func(key string) bool { return strings.HasSuffix(key, segmentName(2)) })
 
 	err := publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"})
 
 	require.Error(t, err, "media has no disk fallback, so a refused upload must fail the job")
-	_, err = store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
-	require.ErrorIs(t, err, room.ErrNotFound)
+	// What did reach the bucket is still worth serving. A viewer plays it and
+	// waits for the rest, which is what keeps a room moving while a long
+	// backlog uploads instead of showing nothing until all of it lands.
+	published, err := store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
+	require.NoError(t, err)
+	require.Contains(t, published, segmentName(0))
+	require.NotContains(t, published, segmentName(2))
+	require.NotContains(t, published, "#EXT-X-ENDLIST", "a cut playlist must not claim to be finished")
+}
+
+// countingBucket records how many uploads were ever in flight at once.
+type countingBucket struct {
+	mu       sync.Mutex
+	inFlight int
+	peak     int
+}
+
+func (b *countingBucket) Put(_ context.Context, _ string, r io.Reader, _ int64, _, _ string) error {
+	b.mu.Lock()
+	b.inFlight++
+	b.peak = max(b.peak, b.inFlight)
+	b.mu.Unlock()
+	_, err := io.ReadAll(r)
+	time.Sleep(10 * time.Millisecond)
+	b.mu.Lock()
+	b.inFlight--
+	b.mu.Unlock()
+	return err
+}
+
+func TestPublisherUploadsSegmentsConcurrently(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	hlsDir := t.TempDir()
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 9, 9, false)
+	bucket := &countingBucket{}
+
+	require.NoError(t, NewPublisher(store, bucket, publicBase).
+		Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
+
+	// One object at a time is what left a room frozen while thousands of
+	// segments queued behind the one being uploaded.
+	require.Greater(t, bucket.peak, 1, "uploads must overlap")
 }
 
 func TestPublisherSkipsObjectsAlreadyInTheBucket(t *testing.T) {

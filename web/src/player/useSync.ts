@@ -110,7 +110,22 @@ export function useSync(
   useEffect(() => {
     const video = videoRef.current
     const onWaiting = () => { bufferingRef.current = true; setBuffering(true) }
-    const onCanPlay = () => { bufferingRef.current = false; setBuffering(false) }
+    const onCanPlay = () => {
+      bufferingRef.current = false
+      setBuffering(false)
+      // A playlist that is still growing carries no ENDLIST, so hls.js reads it
+      // as live and recovers a stall by seeking to the newest segment, which
+      // throws the viewer to the end of whatever has been published so far.
+      // Drift is only ever corrected while not buffering, so this is the first
+      // moment the room's own position can be put back.
+      const media = videoRef.current
+      if (!media) return
+      setState((current) => {
+        const expected = expectedPositionMs(current, Date.now() + offsetRef.current)
+        if (needsResync(media.currentTime * 1000, expected)) media.currentTime = expected / 1000
+        return current
+      })
+    }
     video?.addEventListener('waiting', onWaiting)
     video?.addEventListener('canplay', onCanPlay)
 

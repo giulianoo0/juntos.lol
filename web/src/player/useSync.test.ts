@@ -45,6 +45,28 @@ describe('useSync', () => {
     unmount()
   })
 
+  it('pulls a recovered player back to the room position when buffering ends', () => {
+    const video = document.createElement('video')
+    Object.defineProperty(video, 'paused', { value: false, configurable: true })
+    video.play = vi.fn().mockResolvedValue(undefined)
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    act(() => socket.receive({ type: 'state', state: { playing: false, positionMs: 475_000, rate: 1, serverTimeMs: 100_000 } }))
+
+    // A playlist that is still growing has no ENDLIST, so hls.js treats it as
+    // live and recovers a stall by seeking to the newest segment. The viewer
+    // is thrown to the end of what has been published; the room's own position
+    // is the one that counts.
+    act(() => video.dispatchEvent(new Event('waiting')))
+    video.currentTime = 1401
+    act(() => video.dispatchEvent(new Event('canplay')))
+
+    expect(video.currentTime).toBe(475)
+    unmount()
+  })
+
   it('sends the nickname only in the websocket hello frame, never in the URL', () => {
     const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
     const { unmount } = renderHook(() => useSync('r1', 'private name', videoRef))

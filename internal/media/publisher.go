@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/giulianoo0/ss/internal/objectstore"
@@ -40,6 +41,13 @@ const (
 	// intact over the S3 API while the edge serves it truncated, so the room
 	// loses its video and no cache purge brings it back.
 	uploadTimeout = 5 * time.Minute
+	// uploadConcurrency is how many objects are sent to the bucket at once.
+	uploadConcurrency = 8
+	// publishBatchSize is how many objects land between two republishes of the
+	// playlists. Small enough that a viewer sees the edge move while a backlog
+	// drains, large enough that the bookkeeping stays a rounding error.
+	publishBatchSize = 32
+
 	// bookkeepingTimeout bounds the record of what reached the bucket. It
 	// outlives the cancellation that stopped the uploads, or the objects paid
 	// for would be uploaded again by the next pass.
@@ -116,57 +124,123 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 		return fmt.Errorf("load published objects: %w", err)
 	}
 
-	var uploaded []string
-	for _, name := range sortedKeys(bodies) {
+	names := sortedKeys(bodies)
+	// Objects are queued in playlist order, so the playable edge of the
+	// playlist a viewer is currently watching moves before anything else.
+	var pending []string
+	for _, name := range names {
 		for _, object := range playlistObjects(bodies[name]) {
 			if _, done := published[object]; done {
 				continue
 			}
-			// Cancellation stops the pass between uploads rather than during
-			// one. Starting another here would only produce an object this
-			// context aborts halfway, and a half-written object is worse than
-			// a missing one: the playlist truncates cleanly around what is
-			// missing, and the pass that follows uploads the rest.
-			if err := ctx.Err(); err != nil {
-				p.recordPublished(ctx, roomID, uploaded)
-				return err
-			}
-			err := p.putObject(ctx, hlsPrefix(roomID, generation)+object,
-				filepath.Join(hlsDir, object), segmentContentType(object), immutableCacheControl)
-			if errors.Is(err, os.ErrNotExist) {
-				// The playlist names it but the muxer has not finished
-				// renaming it into place. Leaving it unpublished makes the
-				// rendered playlist stop here, which is the whole point of
-				// truncation; the next pass picks it up.
-				continue
-			}
-			if err != nil {
-				// Whatever already reached the bucket is recorded before
-				// giving up, so a retry pays for the remaining objects rather
-				// than for all of them again.
-				p.recordPublished(ctx, roomID, uploaded)
-				return err
-			}
-			published[object] = struct{}{}
-			uploaded = append(uploaded, object)
+			pending = append(pending, object)
 		}
 	}
-	// Recording before rendering is what makes truncation honest: a playlist
-	// may only name an object this set already vouches for.
-	if err := p.store.MarkPublished(ctx, roomID, uploaded...); err != nil {
-		return fmt.Errorf("record published objects: %w", err)
-	}
 
+	var uploadErr error
+	for len(pending) > 0 && uploadErr == nil {
+		// Cancellation stops the pass between batches rather than during one:
+		// an upload already streaming is left to finish, because a half-written
+		// object reads back intact over the S3 API while the edge serves it
+		// truncated, and no cache purge repairs that.
+		if err := ctx.Err(); err != nil {
+			uploadErr = err
+			break
+		}
+		batch := pending[:min(publishBatchSize, len(pending))]
+		pending = pending[len(batch):]
+
+		landed, err := p.uploadBatch(ctx, roomID, generation, hlsDir, batch)
+		uploadErr = err
+		for _, object := range landed {
+			published[object] = struct{}{}
+		}
+		if len(landed) == 0 {
+			continue
+		}
+		// Recording and rendering after every batch is what makes the playable
+		// edge advance during a pass instead of only at the end of one. A room
+		// with thousands of segments queued would otherwise show nothing for as
+		// long as the whole backlog takes.
+		if err := p.commit(ctx, roomID, generation, bodies, names, published, landed); err != nil {
+			return err
+		}
+		p.dropUploadedSegments(hlsDir, landed)
+	}
+	if uploadErr != nil {
+		return uploadErr
+	}
+	// The playlists themselves grow even when every object they name is
+	// already in the bucket, so the last word on what they cover is published
+	// whether or not this pass moved any bytes.
+	return p.commit(ctx, roomID, generation, bodies, names, published, nil)
+}
+
+// uploadBatch sends a batch of objects to the bucket at once and reports which
+// of them landed. Uploading one at a time made the publisher the slowest part
+// of the pipeline by a wide margin: an encode writing thirty segments a second
+// queued all of them behind whichever single object was in flight.
+func (p *Publisher) uploadBatch(ctx context.Context, roomID string, generation int,
+	hlsDir string, objects []string) ([]string, error) {
+	var (
+		mu       sync.Mutex
+		landed   []string
+		firstErr error
+	)
+	slots := make(chan struct{}, uploadConcurrency)
+	var wg sync.WaitGroup
+	for _, object := range objects {
+		wg.Add(1)
+		go func(object string) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			err := p.putObject(ctx, hlsPrefix(roomID, generation)+object,
+				filepath.Join(hlsDir, object), segmentContentType(object), immutableCacheControl)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				// The playlist names it but the muxer has not finished renaming
+				// it into place. Leaving it unpublished makes the rendered
+				// playlist stop here, which is the whole point of truncation;
+				// the next pass picks it up.
+			case err != nil:
+				if firstErr == nil {
+					firstErr = err
+				}
+			default:
+				landed = append(landed, object)
+			}
+		}(object)
+	}
+	wg.Wait()
+	return landed, firstErr
+}
+
+// commit records what reached the bucket and republishes the playlists around
+// it. Recording before rendering is what makes truncation honest: a playlist
+// may only name an object this set already vouches for.
+func (p *Publisher) commit(ctx context.Context, roomID string, generation int,
+	bodies map[string][]byte, names []string, published map[string]struct{}, landed []string) error {
+	// Bookkeeping outlives the cancellation that ended the pass, because a
+	// record lost here is paid for again as a re-upload by the next one.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bookkeepingTimeout)
+	defer cancel()
+	if len(landed) > 0 {
+		if err := p.store.MarkPublished(commitCtx, roomID, landed...); err != nil {
+			return fmt.Errorf("record published objects: %w", err)
+		}
+	}
 	rendered := make(map[string]string, len(bodies))
-	for name, body := range bodies {
-		if out, ok := p.renderPlaylist(roomID, generation, body, published); ok {
+	for _, name := range names {
+		if out, ok := p.renderPlaylist(roomID, generation, bodies[name], published); ok {
 			rendered[name] = out
 		}
 	}
-	if err := p.store.SetPlaylists(ctx, roomID, rendered); err != nil {
+	if err := p.store.SetPlaylists(commitCtx, roomID, rendered); err != nil {
 		return fmt.Errorf("publish playlists: %w", err)
 	}
-	p.dropUploadedSegments(hlsDir, uploaded)
 	return nil
 }
 
@@ -268,21 +342,6 @@ func (p *Publisher) putObject(ctx context.Context, key, path, contentType, cache
 	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
 	defer cancel()
 	return p.bucket.Put(uploadCtx, key, file, info.Size(), contentType, cacheControl)
-}
-
-// recordPublished remembers what reached the bucket. It outlives the
-// cancellation that ended the pass, because a record lost here is paid for
-// again as a re-upload by the next one.
-func (p *Publisher) recordPublished(ctx context.Context, roomID string, uploaded []string) {
-	if len(uploaded) == 0 {
-		return
-	}
-	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bookkeepingTimeout)
-	defer cancel()
-	if err := p.store.MarkPublished(recordCtx, roomID, uploaded...); err != nil {
-		slog.WarnContext(ctx, "record published objects after upload failure",
-			"room_id", roomID, "error", err)
-	}
 }
 
 // dropUploadedSegments reclaims disk for media segments now in the bucket.
