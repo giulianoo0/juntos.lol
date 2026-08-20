@@ -378,9 +378,10 @@ describe('Player', () => {
     expect(requestFullscreen).not.toHaveBeenCalled()
   })
 
-  it('leaves the arrow keys to the scrubber while it has focus', () => {
-    // The slider changes its own value with the arrows; seeking on top of that
-    // would move the video twice for one key press.
+  it('seeks five seconds with an arrow even while the scrubber has focus', () => {
+    // Clicking the scrubber leaves it focused, and its native arrow step is
+    // one second. The room shortcut must not lose to the control it sits on:
+    // its preventDefault is what stops the slider from also stepping.
     const send = vi.fn()
     const { container } = render(
       <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />,
@@ -390,7 +391,21 @@ describe('Player', () => {
     scrubber.focus()
     fireEvent.keyDown(scrubber, { key: 'ArrowRight' })
 
-    expect(send).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 5000 })
+  })
+
+  it('leaves the arrow keys to the volume slider while it has focus', () => {
+    // Unlike the scrubber, the slider's own arrow step is the volume control.
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(
+      <Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    const slider = container.querySelector('input.volume-range')! as HTMLInputElement
+
+    slider.focus()
+    fireEvent.keyDown(slider, { key: 'ArrowDown' })
+
+    expect(videoRef.current!.volume).toBe(1)
   })
 
   it('leaves the space bar to controls outside the player', () => {

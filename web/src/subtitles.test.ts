@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseAssHeader } from './assvtt'
 import { createSubtitleCollector, extractAndUploadSubtitles, toWebVTT, type SubtitleCue } from './subtitles'
 
 describe('toWebVTT', () => {
@@ -41,6 +42,35 @@ describe('toWebVTT', () => {
   it('ignores a close for a style that was never opened', () => {
     const vtt = toWebVTT([{ text: '{\\i0}plain words', time: 0, duration: 1_000 }])
     expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\nplain words\n')
+  })
+
+  it('carries ASS placement and color when the track brought its header', () => {
+    const header = [
+      '[Script Info]',
+      'PlayResX: 1280',
+      'PlayResY: 720',
+      '[V4+ Styles]',
+      'Format: Name, PrimaryColour, Bold, Italic, Alignment',
+      'Style: Signs,&H0000FFFF,0,0,8',
+    ].join('\n')
+    const vtt = toWebVTT(
+      [{ text: 'placa no alto', time: 0, duration: 1_000, style: 'Signs' }],
+      parseAssHeader(header),
+    )
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:5%\n<c.yellow>placa no alto</c>\n')
+  })
+
+  it('skips cues that are only a drawing', () => {
+    const header = '[V4+ Styles]\nFormat: Name, Alignment\nStyle: Default,2'
+    const vtt = toWebVTT(
+      [
+        { text: '{\\p1}m 0 0 l 10 0{\\p0}', time: 0, duration: 1_000, style: 'Default' },
+        { text: 'fala', time: 2_000, duration: 1_000, style: 'Default' },
+      ],
+      parseAssHeader(header),
+    )
+    expect(vtt).not.toContain('m 0 0')
+    expect(vtt).toContain('fala')
   })
 
   it('clamps negative timings to zero', () => {

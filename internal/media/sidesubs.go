@@ -177,6 +177,15 @@ func ConvertSideSubtitles(ctx context.Context, workDir string, files map[string]
 
 func convertOneSideSubtitle(ctx context.Context, workDir, name string, data []byte) ([]byte, error) {
 	extension := strings.ToLower(filepath.Ext(name))
+	// A styled script goes through the same converter as the muxed tracks, so
+	// its placement and color survive instead of being flattened by ffmpeg.
+	if extension == ".ass" || extension == ".ssa" {
+		vtt := ConvertASSToVTT(decodeSubtitleBytes(data))
+		if len(vtt) == 0 {
+			return nil, fmt.Errorf("convert %s: empty output", name)
+		}
+		return vtt, nil
+	}
 	// The name comes from a torrent, so it never reaches the filesystem: a
 	// fixed scratch name carries only the extension ffmpeg needs to pick a
 	// demuxer.

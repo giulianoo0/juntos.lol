@@ -53,7 +53,7 @@ func main() {
 	defer hub.Close()
 	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(roomID string) {
 		hub.NotifyStatus(roomID, "ready")
-	})
+	}, hub.NotifyRoomUpdated)
 	queue.Start(ctx)
 	if err := queue.Recover(ctx); err != nil {
 		log.Printf("recover interrupted media jobs: %v", err)

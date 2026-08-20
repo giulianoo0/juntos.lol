@@ -781,7 +781,10 @@ function focusOwnsKey(target: EventTarget | null, key: string): boolean {
     case 'INPUT':
       // A range slider is a control; every other input takes typing.
       if ((target as HTMLInputElement).type !== 'range') return true
-      return !insidePlayer || isArrowKey(key)
+      // The volume slider keeps its arrows. The scrubber does not: its native
+      // step is one second, and a focused scrubber must not shrink the room's
+      // five-second seek — the shortcut's preventDefault stops the double move.
+      return !insidePlayer || (isArrowKey(key) && !target.closest('.seek-control'))
     case 'SELECT':
     case 'OPTION':
       // Space is how a picker opens, so it keeps that one too.

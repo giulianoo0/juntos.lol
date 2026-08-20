@@ -1,4 +1,5 @@
 import parserBundleUrl from 'matroska-subtitles/dist/matroska-subtitles.min.js?url'
+import { convertAssCue, parseAssHeader, type AssTrackInfo } from './assvtt'
 import type { VttTrack } from './subtitleFormats'
 
 const SLICE_BYTES = 8 * 1024 * 1024
@@ -10,6 +11,8 @@ export interface SubtitleCue {
   text: string
   time: number
   duration: number
+  /** ASS style name, present on cues of ass/ssa tracks. */
+  style?: string
 }
 
 interface ExtractedTrack {
@@ -17,6 +20,8 @@ interface ExtractedTrack {
   language: string
   title: string
   cues: SubtitleCue[]
+  /** Parsed ASS header for ass/ssa tracks, null for plain-text ones. */
+  ass: AssTrackInfo | null
 }
 
 // Types for the self-contained browser bundle of matroska-subtitles, which is
@@ -27,6 +32,8 @@ interface MatroskaTrackInfo {
   language?: string
   name?: string
   type: string
+  /** The track's CodecPrivate: for ass/ssa, the script info and style table. */
+  header?: string
 }
 
 interface MatroskaSubtitleParser {
@@ -98,11 +105,13 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   parser.once('tracks', (list) => {
     for (const track of list) {
       if (tracks.has(track.number)) continue
+      const styled = track.type === 'ass' || track.type === 'ssa'
       tracks.set(track.number, {
         number: track.number,
         language: track.language ?? 'und',
         title: track.name ?? '',
         cues: [],
+        ass: styled && track.header ? parseAssHeader(track.header) : null,
       })
       order.push(track.number)
     }
@@ -115,7 +124,7 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   const collect = (requireCues: boolean): VttTrack[] => order
     .map((number) => tracks.get(number))
     .filter((track): track is ExtractedTrack => track !== undefined && (!requireCues || track.cues.length > 0))
-    .map((track) => ({ language: track.language, title: track.title, vtt: toWebVTT(track.cues) }))
+    .map((track) => ({ language: track.language, title: track.title, vtt: toWebVTT(track.cues, track.ass) }))
 
   return {
     write: (chunk) => parser.write(chunk),
@@ -138,11 +147,18 @@ async function extractSubtitleTracks(file: File): Promise<VttTrack[]> {
   return await stream.finish()
 }
 
-export function toWebVTT(cues: SubtitleCue[]): string {
+export function toWebVTT(cues: SubtitleCue[], ass: AssTrackInfo | null = null): string {
   const sorted = [...cues].sort((a, b) => a.time - b.time)
   const lines = ['WEBVTT', '']
   for (const cue of sorted) {
-    lines.push(`${formatVttTime(cue.time)} --> ${formatVttTime(cue.time + cue.duration)}`, cleanCueText(cue.text), '')
+    const converted = ass
+      ? convertAssCue(ass, cue.style, cue.text)
+      : { settings: '', text: cleanCueText(cue.text) }
+    // A cue with nothing renderable left — a vector drawing, a bare override —
+    // would show viewers an empty box.
+    if (converted.text === '') continue
+    const settings = converted.settings === '' ? '' : ` ${converted.settings}`
+    lines.push(`${formatVttTime(cue.time)} --> ${formatVttTime(cue.time + cue.duration)}${settings}`, converted.text, '')
   }
   return lines.join('\n')
 }

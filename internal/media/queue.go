@@ -37,6 +37,9 @@ type Queue struct {
 	dataDir   string
 	publisher *Publisher
 	onReady   func(roomID string)
+	// onUpdated says the room's metadata moved without claiming its media
+	// status changed — the signal clients refetch subtitle versions on.
+	onUpdated func(roomID string)
 	pipeline  Pipeline
 	jobs      chan string
 	done      chan struct{}
@@ -51,12 +54,12 @@ type Queue struct {
 
 // NewQueue creates a queue backed by the real ffmpeg pipeline.
 func NewQueue(workers int, store *room.Store, dataDir string, publisher *Publisher,
-	onReady func(roomID string)) *Queue {
-	return newQueue(workers, store, dataDir, publisher, onReady, realPipeline{})
+	onReady, onUpdated func(roomID string)) *Queue {
+	return newQueue(workers, store, dataDir, publisher, onReady, onUpdated, realPipeline{})
 }
 
 func newQueue(workers int, store *room.Store, dataDir string, publisher *Publisher,
-	onReady func(string), pipeline Pipeline) *Queue {
+	onReady, onUpdated func(string), pipeline Pipeline) *Queue {
 	if workers < 1 {
 		workers = 1
 	}
@@ -66,6 +69,7 @@ func newQueue(workers int, store *room.Store, dataDir string, publisher *Publish
 		dataDir:   dataDir,
 		publisher: publisher,
 		onReady:   onReady,
+		onUpdated: onUpdated,
 		pipeline:  pipeline,
 		jobs:      make(chan string, workers),
 		done:      make(chan struct{}),
@@ -277,12 +281,10 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		}
 		return false
 	}
-	if err := q.publisher.Publish(ctx, roomID, hlsDir, finalPublishPatterns); err != nil {
-		if ctx.Err() == nil {
-			q.fail(ctx, roomID, fmt.Errorf("publish final media: %w", err))
-		}
-		return false
-	}
+	// Subtitles go out before the media: they are kilobytes where the media is
+	// gigabytes, and the room is at its oldest cues exactly now — a viewer who
+	// outran the last progressive snapshot is watching the ending without them.
+	// The announce below is what makes connected players refetch.
 	if err := q.publisher.PublishSubtitles(ctx, roomID, filepath.Join(roomDir, "subs")); err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("publish subtitles: %w", err))
@@ -297,6 +299,13 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 	if err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("store media tracks: %w", err))
+		}
+		return false
+	}
+	q.notifyUpdated(roomID)
+	if err := q.publisher.Publish(ctx, roomID, hlsDir, finalPublishPatterns); err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("publish final media: %w", err))
 		}
 		return false
 	}
@@ -372,6 +381,13 @@ func (q *Queue) fail(ctx context.Context, roomID string, err error) {
 			"store_error", storeErr,
 		)
 	}
+}
+
+func (q *Queue) notifyUpdated(roomID string) {
+	if q.onUpdated == nil {
+		return
+	}
+	q.onUpdated(roomID)
 }
 
 func (q *Queue) notifyReady(roomID string) {

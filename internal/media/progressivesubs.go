@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/giulianoo0/ss/internal/room"
@@ -22,6 +23,8 @@ const (
 	// cueMarker is what makes a WebVTT file worth publishing: a header alone
 	// gives a viewer an empty track and a subtitle menu that promises nothing.
 	cueMarker = "-->"
+	// subtitleWrapUpTimeout bounds the one publish that outlives its job.
+	subtitleWrapUpTimeout = 30 * time.Second
 )
 
 // buildProgressiveSubtitleArgs extracts every text subtitle track of a growing
@@ -34,10 +37,18 @@ func buildProgressiveSubtitleArgs(in, subsDir string, p *ProbeResult) ([]string,
 	args := []string{"-hide_banner", "-loglevel", "error", "-y", "-flush_packets", "1", "-i", in}
 	outputs := make([]string, 0, len(p.Subtitles))
 	for position, track := range p.Subtitles {
-		output := filepath.Join(subsDir, publishedSubtitleName(position, track.Language))
+		name := publishedSubtitleName(position, track.Language)
+		codec := "webvtt"
+		// A styled track grows as the script whose placement and color the
+		// snapshot conversion keeps; ffmpeg's webvtt encoder would drop them.
+		if _, styled := styledSubtitleCodecs[track.Codec]; styled {
+			codec = "ass"
+			name = strings.TrimSuffix(name, ".vtt") + ".ass"
+		}
+		output := filepath.Join(subsDir, name)
 		args = append(args,
 			"-map", "0:s:"+strconv.Itoa(track.Index),
-			"-c:s", "webvtt",
+			"-c:s", codec,
 			"-flush_packets", "1",
 			output)
 		outputs = append(outputs, output)
@@ -61,6 +72,16 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 	if clientSubs, err := p.store.HasClientSubs(jobCtx, job.roomID); err != nil || clientSubs {
 		return
 	}
+	// The generation this extraction reads. The wrap-up publish compares it
+	// against the room again, because the job context it outlives dies for two
+	// reasons it must tell apart: the source finishing, and the source being
+	// replaced.
+	stored, err := p.store.Get(jobCtx, job.roomID)
+	if err != nil {
+		slog.WarnContext(ctx, "progressive subs: read room failed", "room_id", job.roomID, "error", err)
+		return
+	}
+	generation := stored.MediaGeneration
 
 	subsDir := filepath.Join(p.dataDir, "rooms", job.roomID, "subs")
 	if err := os.MkdirAll(subsDir, 0o755); err != nil {
@@ -111,7 +132,7 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 			_ = stdin.Close()
 			// One last look: the final cues land between two ticks more often
 			// than not.
-			p.publishSubtitleSnapshot(ctx, jobCtx, job.roomID, probe, outputs, &published)
+			p.wrapUpSubtitles(ctx, jobCtx, job.roomID, generation, probe, outputs, &published)
 			return
 		case <-jobCtx.Done():
 			return
@@ -119,6 +140,26 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 			p.publishSubtitleSnapshot(ctx, jobCtx, job.roomID, probe, outputs, &published)
 		}
 	}
+}
+
+// wrapUpSubtitles publishes the cues that arrived after the last tick.
+//
+// The job context is routinely already dead here: the final remux cancels the
+// progressive job the moment the source finishes arriving, which is exactly
+// when the last cues land on disk. Dying with it would hold the ending back
+// until the final pass republishes everything, long after the room got there.
+// So the publish detaches — bounded, and only for a room still on the source
+// this extraction was reading, because the same cancellation also fires when
+// the source is replaced and these cues describe a video nobody is watching.
+func (p *Progressive) wrapUpSubtitles(ctx, jobCtx context.Context, roomID string, generation int,
+	probe *ProbeResult, outputs []string, published *subtitleSnapshot) {
+	wrapCtx, cancel := context.WithTimeout(context.WithoutCancel(jobCtx), subtitleWrapUpTimeout)
+	defer cancel()
+	stored, err := p.store.Get(wrapCtx, roomID)
+	if err != nil || stored.MediaGeneration != generation {
+		return
+	}
+	p.publishSubtitleSnapshot(ctx, wrapCtx, roomID, probe, outputs, published)
 }
 
 // subtitleSnapshot remembers what the last publish covered, so a tick that
@@ -139,6 +180,11 @@ func (p *Progressive) publishSubtitleSnapshot(ctx, jobCtx context.Context, roomI
 	var totalBytes int64
 	for position, output := range outputs {
 		if !hasSubtitleCues(output) {
+			continue
+		}
+		// A styled track grows as an ASS script; each snapshot rewrites the
+		// VTT the players fetch. The script stays — ffmpeg keeps appending.
+		if isStyledSubtitle(output) && !snapshotStyledSubtitle(output) {
 			continue
 		}
 		if info, err := os.Stat(output); err == nil {
@@ -172,8 +218,8 @@ func (p *Progressive) publishSubtitleSnapshot(ctx, jobCtx context.Context, roomI
 	p.notifyUpdated(roomID)
 }
 
-// hasSubtitleCues reports whether a WebVTT file holds anything a viewer could
-// read. ffmpeg writes the header the moment the file is created, so its
+// hasSubtitleCues reports whether a subtitle file holds anything a viewer
+// could read. ffmpeg writes the header the moment the file is created, so its
 // existence proves nothing.
 func hasSubtitleCues(path string) bool {
 	file, err := os.Open(path)
@@ -181,12 +227,31 @@ func hasSubtitleCues(path string) bool {
 		return false
 	}
 	defer file.Close()
-	// A cue timestamp appears within the first cue block, and the header above
-	// it is a handful of bytes.
-	buffer := make([]byte, 4096)
+	marker := []byte(cueMarker)
+	if isStyledSubtitle(path) {
+		marker = []byte("Dialogue:")
+	}
+	// A WebVTT header is a handful of bytes; an ASS style table can run to a
+	// few kilobytes before the first dialogue line.
+	buffer := make([]byte, 64*1024)
 	n, err := file.Read(buffer)
 	if n <= 0 || (err != nil && !errors.Is(err, io.EOF)) {
 		return false
 	}
-	return bytes.Contains(buffer[:n], []byte(cueMarker))
+	return bytes.Contains(buffer[:n], marker)
+}
+
+// snapshotStyledSubtitle converts the cues a growing ASS script holds so far
+// into its published VTT sibling.
+func snapshotStyledSubtitle(assPath string) bool {
+	data, err := os.ReadFile(assPath)
+	if err != nil {
+		return false
+	}
+	vtt := ConvertASSToVTT(data)
+	if len(vtt) == 0 {
+		return false
+	}
+	vttPath := strings.TrimSuffix(assPath, filepath.Ext(assPath)) + ".vtt"
+	return os.WriteFile(vttPath, vtt, 0o644) == nil
 }

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/giulianoo0/ss/internal/room"
 )
@@ -60,10 +61,47 @@ func extractSubtitles(ctx context.Context, binary, in, outDir string, p *ProbeRe
 			}
 			continue
 		}
+		if isStyledSubtitle(output) {
+			converted, err := convertStyledSubtitle(output)
+			if err != nil {
+				slog.WarnContext(ctx, "styled subtitle conversion failed",
+					"track_index", track.Index, "error", err)
+				continue
+			}
+			output = converted
+		}
 		paths = append(paths, output)
 	}
 
 	return paths, nil
+}
+
+// styledSubtitleCodecs are the script formats whose placement and color the
+// conversion keeps. ffmpeg's webvtt encoder drops both, so these tracks are
+// extracted as ASS and converted by this package instead.
+var styledSubtitleCodecs = map[string]struct{}{"ass": {}, "ssa": {}}
+
+func isStyledSubtitle(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".ass")
+}
+
+// convertStyledSubtitle rewrites an extracted ASS script as the WebVTT file
+// the room publishes, and removes the script so nothing else picks it up.
+func convertStyledSubtitle(assPath string) (string, error) {
+	data, err := os.ReadFile(assPath)
+	removeErr := os.Remove(assPath)
+	if err != nil {
+		return "", errors.Join(fmt.Errorf("read extracted subtitle: %w", err), removeErr)
+	}
+	vtt := ConvertASSToVTT(data)
+	if len(vtt) == 0 {
+		return "", errors.Join(fmt.Errorf("subtitle script %q holds no renderable cue", filepath.Base(assPath)), removeErr)
+	}
+	vttPath := strings.TrimSuffix(assPath, filepath.Ext(assPath)) + ".vtt"
+	if err := os.WriteFile(vttPath, vtt, 0o644); err != nil {
+		return "", errors.Join(fmt.Errorf("write converted subtitle: %w", err), removeErr)
+	}
+	return vttPath, removeErr
 }
 
 func removePartialSubtitle(path string) error {
@@ -78,12 +116,16 @@ func buildSubtitleCommand(in, outDir string, position int, track room.TrackInfo)
 	if !isSafeLanguage(language) {
 		language = "und"
 	}
-	output := filepath.Join(outDir, "sub_"+strconv.Itoa(position)+"_"+language+".vtt")
+	codec, extension := "webvtt", ".vtt"
+	if _, styled := styledSubtitleCodecs[track.Codec]; styled {
+		codec, extension = "ass", ".ass"
+	}
+	output := filepath.Join(outDir, "sub_"+strconv.Itoa(position)+"_"+language+extension)
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-y",
 		"-i", in,
 		"-map", "0:s:" + strconv.Itoa(track.Index),
-		"-c:s", "webvtt",
+		"-c:s", codec,
 		output,
 	}
 	return args, output
