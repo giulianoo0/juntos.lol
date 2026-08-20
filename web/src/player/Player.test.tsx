@@ -63,6 +63,65 @@ describe('Player', () => {
     )
   })
 
+  it('names each subtitle file by the track it belongs to, not its place in the menu', () => {
+    // A progressive extraction only announces the tracks that hold a cue so
+    // far, so the list arrives with gaps: a forced track carries nothing until
+    // the first foreign sign appears on screen. The published file is named
+    // after the track's real position, so reading the menu position instead
+    // fetches somebody else's language, or a file that is not there yet.
+    const sparse: RoomInfo = {
+      ...room,
+      subtitleTracks: [
+        { index: 1, language: 'eng', title: '', codec: 'webvtt' },
+        { index: 3, language: 'ara', title: 'Saudi Arabia', codec: 'webvtt' },
+      ],
+      subsVersion: 2,
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    const { container } = render(
+      <Player room={sparse} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+
+    const sources = [...container.querySelectorAll('track')].map((node) => node.getAttribute('src'))
+    expect(sources).toEqual([
+      'https://media.example.test/rooms/r1/g0/subs/sub_1_eng.vtt?g=0&s=2',
+      'https://media.example.test/rooms/r1/g0/subs/sub_3_ara.vtt?g=0&s=2',
+    ])
+  })
+
+  it('keeps the chosen subtitle on its own track as the menu fills in', () => {
+    // The announced list grows while the extraction runs: forced tracks join it
+    // once they hold a cue, and every one of them lands ahead of the languages
+    // that were already there. A choice remembered as a menu position therefore
+    // slides onto a different language mid-episode.
+    const sparse: RoomInfo = {
+      ...room,
+      subtitleTracks: [
+        { index: 1, language: 'eng', title: 'English', codec: 'webvtt' },
+        { index: 3, language: 'por', title: 'Portugues', codec: 'webvtt' },
+      ],
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    const { rerender } = render(
+      <Player room={sparse} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+    const select = screen.getByRole('combobox', { name: 'Subtitles' })
+    fireEvent.change(select, { target: { value: '3' } })
+    expect((select as HTMLSelectElement).selectedOptions[0].textContent).toBe('Portugues')
+
+    const full: RoomInfo = {
+      ...sparse,
+      subtitleTracks: [
+        { index: 0, language: 'eng', title: 'Forced', codec: 'webvtt' },
+        ...(sparse.subtitleTracks ?? []),
+        { index: 2, language: 'ara', title: 'Arabic', codec: 'webvtt' },
+      ],
+    }
+    rerender(<Player room={full} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+
+    expect((select as HTMLSelectElement).selectedOptions[0].textContent).toBe('Portugues')
+  })
+
   it('offers no subtitles at all when the room names no bucket', () => {
     // This server stopped serving subtitle files, so a track without a base
     // would be one the browser can never load.

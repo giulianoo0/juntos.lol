@@ -57,6 +57,11 @@ interface BufferedRange {
 // Without a base there is nowhere to point: this server no longer serves
 // subtitle files. The caller renders no tracks at all rather than offering
 // ones that cannot load.
+// index is the track's own position in the source, not its place in the menu.
+// A progressive extraction announces only the tracks that already hold a cue,
+// so the list arrives with gaps — a forced track has nothing in it until the
+// first foreign sign appears — while each published file keeps the name of the
+// track it came from.
 function subtitleSource(room: RoomInfo, index: number, language: string): string {
   const version = `?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
@@ -338,14 +343,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // a media republish remounting hls.js, and any per-browser mode reset that
   // comes with a <track> src change. Only the first subtitleCount text tracks
   // belong to this component; hls.js may append its own after them.
-  const subtitleCount = (room.subtitleTracks ?? []).length
+  // The selection is remembered as the track's own index rather than its place
+  // in the menu, because the menu grows: a progressive extraction announces a
+  // track once it holds its first cue, and a forced track joining late lands
+  // ahead of languages already listed. A remembered position would slide onto
+  // one of them mid-episode.
+  const subtitleTracks = room.subtitleTracks ?? []
+  const subtitleCount = subtitleTracks.length
   useEffect(() => {
-    const tracks = videoRef.current?.textTracks
-    if (!tracks) return
-    for (let index = 0; index < Math.min(tracks.length, subtitleCount); index += 1) {
-      tracks[index].mode = index === subtitle ? 'showing' : subtitle === -1 ? 'disabled' : 'hidden'
+    const textTracks = videoRef.current?.textTracks
+    if (!textTracks) return
+    for (let position = 0; position < Math.min(textTracks.length, subtitleCount); position += 1) {
+      const chosen = subtitleTracks[position]?.index === subtitle
+      textTracks[position].mode = chosen ? 'showing' : subtitle === -1 ? 'disabled' : 'hidden'
     }
-  }, [subtitle, subtitleCount, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
+  }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
 
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
@@ -643,16 +655,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           setBufferedRanges(readBufferedRanges(event.currentTarget))
         }}
       >
-        {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track, index) => (
+        {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track) => (
           <track
             // The versions are in the key on purpose: browsers do not reliably
             // refetch a <track> whose src attribute merely changed, so a grown
             // subtitle file only reaches the viewer as a fresh element.
             key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.subsVersion ?? 0}`}
             kind="subtitles"
-            src={subtitleSource(room, index, track.language)}
+            src={subtitleSource(room, track.index, track.language)}
             srcLang={track.language || 'und'}
-            label={track.title || track.language || `Subtitle ${index + 1}`}
+            label={track.title || track.language || `Subtitle ${track.index + 1}`}
           />
         ))}
       </video>
@@ -731,7 +743,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           <label>{t('room.subtitles')}
             <select value={subtitle} onChange={(event) => setSubtitle(Number(event.target.value))}>
               <option value={-1}>{t('room.off')}</option>
-              {(room.subtitleTracks ?? []).map((track, index) => <option key={track.index} value={index}>{track.title || track.language || index + 1}</option>)}
+              {subtitleTracks.map((track) => <option key={track.index} value={track.index}>{track.title || track.language || track.index + 1}</option>)}
             </select>
           </label>
         ) : null}
