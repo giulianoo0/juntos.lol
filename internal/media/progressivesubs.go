@@ -39,17 +39,22 @@ func buildProgressiveSubtitleArgs(in, subsDir string, p *ProbeResult) ([]string,
 	for position, track := range p.Subtitles {
 		name := publishedSubtitleName(position, track.Language)
 		codec := "webvtt"
-		// A styled track grows as the script whose placement and color the
-		// snapshot conversion keeps; ffmpeg's webvtt encoder would drop them.
+		// Every track grows as a work file the snapshot converts into the
+		// published .vtt: a styled one as the script whose placement and color
+		// the conversion keeps, a plain one so its dialogue can be positioned.
 		if _, styled := styledSubtitleCodecs[track.Codec]; styled {
 			codec = "ass"
 			name = strings.TrimSuffix(name, ".vtt") + ".ass"
+		} else {
+			name += ".src"
 		}
 		output := filepath.Join(subsDir, name)
 		args = append(args,
 			"-map", "0:s:"+strconv.Itoa(track.Index),
 			"-c:s", codec,
 			"-flush_packets", "1",
+			// The work extension is not a name ffmpeg picks a muxer from.
+			"-f", codec,
 			output)
 		outputs = append(outputs, output)
 	}
@@ -182,9 +187,9 @@ func (p *Progressive) publishSubtitleSnapshot(ctx, jobCtx context.Context, roomI
 		if !hasSubtitleCues(output) {
 			continue
 		}
-		// A styled track grows as an ASS script; each snapshot rewrites the
-		// VTT the players fetch. The script stays — ffmpeg keeps appending.
-		if isStyledSubtitle(output) && !snapshotStyledSubtitle(output) {
+		// Each snapshot rewrites the VTT the players fetch from the growing
+		// work file, which stays — ffmpeg keeps appending to it.
+		if !snapshotSubtitleWorkFile(output) {
 			continue
 		}
 		if info, err := os.Stat(output); err == nil {
@@ -241,17 +246,25 @@ func hasSubtitleCues(path string) bool {
 	return bytes.Contains(buffer[:n], marker)
 }
 
-// snapshotStyledSubtitle converts the cues a growing ASS script holds so far
-// into its published VTT sibling.
-func snapshotStyledSubtitle(assPath string) bool {
-	data, err := os.ReadFile(assPath)
+// snapshotSubtitleWorkFile converts the cues a growing work file holds so far
+// into the published VTT next to it: an ASS script through the full styled
+// conversion, a plain .vtt.src through dialogue positioning.
+func snapshotSubtitleWorkFile(workPath string) bool {
+	data, err := os.ReadFile(workPath)
 	if err != nil {
 		return false
 	}
-	vtt := ConvertASSToVTT(data)
+	var vtt []byte
+	var published string
+	if isStyledSubtitle(workPath) {
+		vtt = ConvertASSToVTT(data)
+		published = strings.TrimSuffix(workPath, filepath.Ext(workPath)) + ".vtt"
+	} else {
+		vtt = positionDialogueCues(data)
+		published = strings.TrimSuffix(workPath, ".src")
+	}
 	if len(vtt) == 0 {
 		return false
 	}
-	vttPath := strings.TrimSuffix(assPath, filepath.Ext(assPath)) + ".vtt"
-	return os.WriteFile(vttPath, vtt, 0o644) == nil
+	return os.WriteFile(published, vtt, 0o644) == nil
 }

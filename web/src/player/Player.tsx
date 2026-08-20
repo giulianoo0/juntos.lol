@@ -242,7 +242,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         if (stripCodecs) config.pLoader = codecStrippingLoader(HlsClass)
         const hls = new HlsClass(config)
         hlsRef.current = hls
-        hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
+        // MEDIA_ATTACHED fires again on every recoverMediaError re-attach, and
+        // the recovery already resumes loading at the pre-error position by
+        // itself. Reloading the source there would restart playback from the
+        // configured start position — the flash to 0:00 viewers reported when
+        // a seek outside the buffer stalled into a recovery.
+        let sourceLoaded = false
+        hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
+          if (sourceLoaded) return
+          sourceLoaded = true
+          hls.loadSource(source)
+        })
         const readLevels = () => setLevels(hls.levels.map(
           ({ height, bitrate }) => ({ height, bitrate })))
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => {

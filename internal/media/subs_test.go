@@ -94,6 +94,18 @@ func TestConvertStyledSubtitleRefusesAnEmptyScript(t *testing.T) {
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
+func TestPositionSubtitleFileLiftsDialogueInPlace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub_0_eng.vtt")
+	require.NoError(t, os.WriteFile(path,
+		[]byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nfala\n"), 0o644))
+
+	require.NoError(t, positionSubtitleFile(path))
+
+	vtt, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(vtt), "00:00:01.000 --> 00:00:02.000 line:-3\nfala")
+}
+
 func TestExtractSubtitlesReturnsProcessStartError(t *testing.T) {
 	p := &ProbeResult{Subtitles: []room.TrackInfo{{Index: 0, Language: "eng"}}}
 

@@ -299,3 +299,43 @@ function positiveNumber(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10)
   return parsed > 0 ? parsed : fallback
 }
+
+// Dialogue sits two cue lines off the frame's bottom edge — roughly 100px on
+// a 1080p picture, scaling with the player — clearing the control bar. A
+// second simultaneous dialogue goes to the top with the same spacing, the way
+// double-speaker lines are conventionally set. Snap-line units anchor the
+// box's edge, so the spacing holds for one-line and two-line cues alike.
+const BOTTOM_DIALOGUE = 'line:-3'
+const TOP_DIALOGUE = 'line:2'
+
+/**
+ * Positions the cues of a finished WebVTT document that carry no settings of
+ * their own. Cues a script placed explicitly (signs) are left untouched, so
+ * running this twice changes nothing.
+ */
+export function positionDialogueCues(vtt: string): string {
+  const lines = vtt.split('\n')
+  let lastBottomEnd = -1
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const arrow = line.indexOf('-->')
+    if (arrow < 0) continue
+    const start = parseVttStamp(line.slice(0, arrow).trim())
+    const [endStamp, ...settings] = line.slice(arrow + 3).trim().split(/\s+/)
+    const end = parseVttStamp(endStamp ?? '')
+    if (start === null || end === null || settings.length > 0) continue
+    if (start < lastBottomEnd) {
+      lines[index] = `${line} ${TOP_DIALOGUE}`
+    } else {
+      lastBottomEnd = end
+      lines[index] = `${line} ${BOTTOM_DIALOGUE}`
+    }
+  }
+  return lines.join('\n')
+}
+
+function parseVttStamp(stamp: string): number | null {
+  const match = /^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$/.exec(stamp)
+  if (!match) return null
+  return ((Number(match[1] ?? 0) * 60 + Number(match[2])) * 60 + Number(match[3])) * 1000 + Number(match[4])
+}

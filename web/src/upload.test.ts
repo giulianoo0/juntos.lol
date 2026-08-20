@@ -385,7 +385,7 @@ describe('upload registry', () => {
     expect(createMatroskaSubtitleStream).not.toHaveBeenCalled()
     expect(subtitleFakes.published.at(-1)).toEqual({
       source: 'external',
-      tracks: [{ language: 'por', title: 'Portuguese', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n' }],
+      tracks: [{ language: 'por', title: 'Portuguese', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000 line:-3\nOi\n' }],
       complete: true,
     })
   })

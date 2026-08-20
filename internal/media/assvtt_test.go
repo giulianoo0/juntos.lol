@@ -35,13 +35,13 @@ func TestConvertASSToVTTKeepsPlacementAndColor(t *testing.T) {
 	vtt := string(ConvertASSToVTT([]byte(doc)))
 
 	require.True(t, strings.HasPrefix(vtt, "WEBVTT\n"))
-	require.Contains(t, vtt, "00:00:01.000 --> 00:00:02.500\nUma fala, comum\n")
+	require.Contains(t, vtt, "00:00:01.000 --> 00:00:02.500 line:-3\nUma fala, comum\n")
 	// The sign keeps its script-frame position and its quantized color.
 	require.Contains(t, vtt, "00:00:03.000 --> 00:00:04.000 line:10% position:50%\n<c.yellow>Ateliê</c>\n")
 	// The style's italic is the baseline; \i0 leaves it and \r comes back.
-	require.Contains(t, vtt, "00:00:05.000 --> 00:00:06.000\ndito <i>pensado</i>\n")
+	require.Contains(t, vtt, "00:00:05.000 --> 00:00:06.000 line:-3\ndito <i>pensado</i>\n")
 	require.Contains(t, vtt, "00:00:07.000 --> 00:00:08.000 line:5%\nno topo\nsegunda\n")
-	require.Contains(t, vtt, "00:00:09.000 --> 00:00:10.000\n<c.red>sangue</c> e água\n")
+	require.Contains(t, vtt, "00:00:09.000 --> 00:00:10.000 line:-3\n<c.red>sangue</c> e água\n")
 	// A bottom-row \pos names the text's bottom edge; the box's top edge is
 	// lifted a nominal text height because Chromium rejects the alignment
 	// suffix that would say this properly.
@@ -82,4 +82,20 @@ func TestConvertASSToVTTSortsCuesAndSkipsATruncatedTail(t *testing.T) {
 
 func TestConvertASSToVTTReturnsNothingWithoutCues(t *testing.T) {
 	require.Empty(t, ConvertASSToVTT([]byte("[Script Info]\nTitle: vazio\n")))
+}
+
+func TestPositionDialogueCues(t *testing.T) {
+	vtt := "WEBVTT\n\n" +
+		// ffmpeg writes short stamps below one hour.
+		"00:01.000 --> 00:04.000\nprimeira\n\n" +
+		"00:00:02.000 --> 00:00:05.000\nsegunda\n\n" +
+		"00:00:07.000 --> 00:00:08.000 line:5%\nplaca\n"
+
+	out := string(positionDialogueCues([]byte(vtt)))
+
+	// Default dialogue is lifted off the bottom edge; the second simultaneous
+	// dialogue goes to the top; a cue the script placed itself stays put.
+	require.Contains(t, out, "00:01.000 --> 00:04.000 line:-3\nprimeira")
+	require.Contains(t, out, "00:00:02.000 --> 00:00:05.000 line:2\nsegunda")
+	require.Contains(t, out, "00:00:07.000 --> 00:00:08.000 line:5%\nplaca")
 }

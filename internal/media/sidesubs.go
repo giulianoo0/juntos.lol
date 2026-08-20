@@ -214,7 +214,7 @@ func convertOneSideSubtitle(ctx context.Context, workDir, name string, data []by
 	if len(vtt) == 0 {
 		return nil, fmt.Errorf("convert %s: empty output", name)
 	}
-	return vtt, nil
+	return positionDialogueCues(vtt), nil
 }
 
 // decodeSubtitleBytes normalizes text that claims no encoding. Subtitle files

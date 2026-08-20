@@ -69,6 +69,9 @@ func extractSubtitles(ctx context.Context, binary, in, outDir string, p *ProbeRe
 				continue
 			}
 			output = converted
+		} else if err := positionSubtitleFile(output); err != nil {
+			slog.WarnContext(ctx, "position subtitle failed",
+				"track_index", track.Index, "error", err)
 		}
 		paths = append(paths, output)
 	}
@@ -102,6 +105,19 @@ func convertStyledSubtitle(assPath string) (string, error) {
 		return "", errors.Join(fmt.Errorf("write converted subtitle: %w", err), removeErr)
 	}
 	return vttPath, removeErr
+}
+
+// positionSubtitleFile rewrites a converted WebVTT file with its dialogue
+// cues positioned. Best effort: an unpositioned track still renders.
+func positionSubtitleFile(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read subtitle: %w", err)
+	}
+	if err := os.WriteFile(path, positionDialogueCues(data), 0o644); err != nil {
+		return fmt.Errorf("write positioned subtitle: %w", err)
+	}
+	return nil
 }
 
 func removePartialSubtitle(path string) error {

@@ -1,4 +1,4 @@
-import { convertAssCue, parseAssHeader } from './assvtt'
+import { convertAssCue, parseAssHeader, positionDialogueCues } from './assvtt'
 
 // Converters for the subtitle files that ship next to the video inside a
 // torrent. Releases commonly carry SubRip or ASS/SSA in a "Subs" folder
@@ -117,7 +117,7 @@ export function convertSubtitleFile(path: string, data: ArrayBuffer): VttTrack |
   else if (extension === 'srt') vtt = srtToWebVTT(text)
   else if (extension === 'sub') vtt = text.includes('-->') ? srtToWebVTT(text) : null
   if (!vtt) return null
-  return { ...subtitleIdentity(path), vtt }
+  return { ...subtitleIdentity(path), vtt: positionDialogueCues(vtt) }
 }
 
 function normalizeWebVTT(text: string): string {

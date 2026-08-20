@@ -1,5 +1,5 @@
 import parserBundleUrl from 'matroska-subtitles/dist/matroska-subtitles.min.js?url'
-import { convertAssCue, parseAssHeader, type AssTrackInfo } from './assvtt'
+import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
 import type { VttTrack } from './subtitleFormats'
 
 const SLICE_BYTES = 8 * 1024 * 1024
@@ -160,7 +160,7 @@ export function toWebVTT(cues: SubtitleCue[], ass: AssTrackInfo | null = null): 
     const settings = converted.settings === '' ? '' : ` ${converted.settings}`
     lines.push(`${formatVttTime(cue.time)} --> ${formatVttTime(cue.time + cue.duration)}${settings}`, converted.text, '')
   }
-  return lines.join('\n')
+  return positionDialogueCues(lines.join('\n'))
 }
 
 function formatVttTime(ms: number): string {

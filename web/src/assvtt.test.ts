@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { convertAssCue, parseAssHeader } from './assvtt'
+import { convertAssCue, parseAssHeader, positionDialogueCues } from './assvtt'
 
 // A header the way Matroska CodecPrivate carries it: script info and the
 // style table, no events.
@@ -117,5 +117,40 @@ describe('convertAssCue', () => {
       settings: 'line:5%',
       text: '<c.yellow>aviso</c>',
     })
+  })
+})
+
+describe('positionDialogueCues', () => {
+  it('lifts default dialogue off the bottom edge and leaves positioned cues alone', () => {
+    const vtt = 'WEBVTT\n\n00:01.000 --> 00:02.000\nfala\n\n00:05.000 --> 00:06.000 line:5%\nplaca\n'
+
+    const out = positionDialogueCues(vtt)
+
+    expect(out).toContain('00:01.000 --> 00:02.000 line:-3\nfala')
+    expect(out).toContain('00:05.000 --> 00:06.000 line:5%\nplaca')
+  })
+
+  it('sends the second simultaneous dialogue to the top of the frame', () => {
+    const vtt = 'WEBVTT\n\n00:01.000 --> 00:04.000\nprimeira\n\n00:02.000 --> 00:05.000\nsegunda\n'
+
+    const out = positionDialogueCues(vtt)
+
+    expect(out).toContain('00:01.000 --> 00:04.000 line:-3\nprimeira')
+    expect(out).toContain('00:02.000 --> 00:05.000 line:2\nsegunda')
+  })
+
+  it('returns to the bottom once the earlier dialogue has ended', () => {
+    const vtt = 'WEBVTT\n\n00:01.000 --> 00:02.000\numa\n\n00:03.000 --> 00:04.000\noutra\n'
+
+    const out = positionDialogueCues(vtt)
+
+    expect(out).toContain('00:01.000 --> 00:02.000 line:-3\numa')
+    expect(out).toContain('00:03.000 --> 00:04.000 line:-3\noutra')
+  })
+
+  it('reads the hour-bearing stamps our own converters write', () => {
+    const out = positionDialogueCues('WEBVTT\n\n01:02:03.000 --> 01:02:04.000\ntarde\n')
+
+    expect(out).toContain('01:02:03.000 --> 01:02:04.000 line:-3\ntarde')
   })
 })

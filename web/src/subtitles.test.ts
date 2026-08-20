@@ -11,17 +11,17 @@ describe('toWebVTT', () => {
     expect(toWebVTT(cues)).toBe(
       'WEBVTT\n' +
       '\n' +
-      '00:00:01.000 --> 00:00:04.000\n' +
+      '00:00:01.000 --> 00:00:04.000 line:-3\n' +
       'First\n' +
       '\n' +
-      '01:02:03.456 --> 01:02:04.956\n' +
+      '01:02:03.456 --> 01:02:04.956 line:-3\n' +
       'Second\n',
     )
   })
 
   it('turns ASS italic overrides into VTT italic tags and \\N into newlines', () => {
     const vtt = toWebVTT([{ text: '{\\i1}Hello{\\i0}\\N{\\an8}world', time: 0, duration: 1_000 }])
-    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\n<i>Hello</i>\nworld\n')
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:-3\n<i>Hello</i>\nworld\n')
   })
 
   it('turns ASS bold overrides into VTT bold tags', () => {
@@ -41,7 +41,16 @@ describe('toWebVTT', () => {
 
   it('ignores a close for a style that was never opened', () => {
     const vtt = toWebVTT([{ text: '{\\i0}plain words', time: 0, duration: 1_000 }])
-    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\nplain words\n')
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:-3\nplain words\n')
+  })
+
+  it('sends the second simultaneous dialogue to the top of the frame', () => {
+    const vtt = toWebVTT([
+      { text: 'primeira', time: 0, duration: 3_000 },
+      { text: 'segunda', time: 1_000, duration: 3_000 },
+    ])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:03.000 line:-3\nprimeira\n')
+    expect(vtt).toContain('00:00:01.000 --> 00:00:04.000 line:2\nsegunda\n')
   })
 
   it('carries ASS placement and color when the track brought its header', () => {
@@ -122,7 +131,7 @@ describe('extractAndUploadSubtitles', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello\n' }],
+        tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000 line:-3\nHello\n' }],
         complete: true,
         mediaGeneration: 0,
       }),

@@ -129,7 +129,7 @@ describe('convertSubtitleFile', () => {
     expect(track).toEqual({
       language: 'por',
       title: 'Portuguese',
-      vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n',
+      vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000 line:-3\nOi\n',
     })
   })
 
@@ -139,6 +139,16 @@ describe('convertSubtitleFile', () => {
 
   it('re-emits an existing WebVTT file with a single header', () => {
     const track = convertSubtitleFile('a.eng.vtt', bytes('WEBVTT - from a muxer\n\n00:00:01.000 --> 00:00:02.000\nHi\n'))
-    expect(track?.vtt).toBe('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHi\n')
+    expect(track?.vtt).toBe('WEBVTT\n\n00:00:01.000 --> 00:00:02.000 line:-3\nHi\n')
+  })
+})
+
+describe('convertSubtitleFile positioning', () => {
+  it('lifts sidecar dialogue and sends the second simultaneous line to the top', () => {
+    const srt = '1\n00:00:01,000 --> 00:00:04,000\nprimeira\n\n2\n00:00:02,000 --> 00:00:05,000\nsegunda\n'
+    const track = convertSubtitleFile('Subs/movie.eng.srt', new TextEncoder().encode(srt).buffer as ArrayBuffer)
+
+    expect(track?.vtt).toContain('00:00:01.000 --> 00:00:04.000 line:-3\nprimeira')
+    expect(track?.vtt).toContain('00:00:02.000 --> 00:00:05.000 line:2\nsegunda')
   })
 })

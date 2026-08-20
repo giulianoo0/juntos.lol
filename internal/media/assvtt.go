@@ -134,7 +134,63 @@ func ConvertASSToVTT(data []byte) []byte {
 		}
 		out.WriteString("\n" + entry.text + "\n")
 	}
-	return []byte(out.String())
+	return positionDialogueCues([]byte(out.String()))
+}
+
+// Dialogue sits two cue lines off the frame's bottom edge — roughly 100px on
+// a 1080p picture, scaling with the player — clearing the control bar. A
+// second simultaneous dialogue goes to the top with the same spacing, the way
+// double-speaker lines are conventionally set. Snap-line units anchor the
+// box's edge, so the spacing holds for one-line and two-line cues alike.
+const (
+	bottomDialogueSetting = "line:-3"
+	topDialogueSetting    = "line:2"
+)
+
+var vttTimingStamp = regexp.MustCompile(`^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$`)
+
+// positionDialogueCues positions the cues of a finished WebVTT document that
+// carry no settings of their own. Cues a script placed explicitly (signs) are
+// left untouched, so running this twice changes nothing.
+func positionDialogueCues(vtt []byte) []byte {
+	lines := strings.Split(string(vtt), "\n")
+	lastBottomEnd := -1
+	for index, line := range lines {
+		arrow := strings.Index(line, "-->")
+		if arrow < 0 {
+			continue
+		}
+		start, startOK := parseVttStampMs(strings.TrimSpace(line[:arrow]))
+		endStamp, settings, _ := strings.Cut(strings.TrimSpace(line[arrow+3:]), " ")
+		end, endOK := parseVttStampMs(endStamp)
+		if !startOK || !endOK || settings != "" {
+			continue
+		}
+		if start < lastBottomEnd {
+			lines[index] = line + " " + topDialogueSetting
+		} else {
+			lastBottomEnd = end
+			lines[index] = line + " " + bottomDialogueSetting
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+// parseVttStampMs reads both stamp forms WebVTT allows: HH:MM:SS.mmm from our
+// own converters and the short MM:SS.mmm ffmpeg writes below one hour.
+func parseVttStampMs(stamp string) (int, bool) {
+	match := vttTimingStamp.FindStringSubmatch(stamp)
+	if match == nil {
+		return 0, false
+	}
+	hours := 0
+	if match[1] != "" {
+		hours, _ = strconv.Atoi(match[1])
+	}
+	minutes, _ := strconv.Atoi(match[2])
+	seconds, _ := strconv.Atoi(match[3])
+	millis, _ := strconv.Atoi(match[4])
+	return ((hours*60+minutes)*60+seconds)*1000 + millis, true
 }
 
 // parseAssDocument reads the script info and style sections — the same

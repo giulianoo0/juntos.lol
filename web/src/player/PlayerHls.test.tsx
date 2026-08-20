@@ -35,6 +35,7 @@ vi.mock('hls.js', () => {
     audioTracks: unknown[] = []
     destroyed = false
     loadedSource: string | null = null
+    loadSourceCalls = 0
     startLoadCalls = 0
     recoverCalls = 0
     constructor(config: Record<string, unknown>) {
@@ -47,7 +48,7 @@ vi.mock('hls.js', () => {
     emit(event: string, data: Record<string, unknown>) {
       for (const handler of this.handlers.get(event) ?? []) handler(event, data)
     }
-    loadSource(url: string) { this.loadedSource = url }
+    loadSource(url: string) { this.loadedSource = url; this.loadSourceCalls += 1 }
     attachMedia() { this.emit(FakeHls.Events.MEDIA_ATTACHED, {}) }
     startLoad() { this.startLoadCalls += 1 }
     recoverMediaError() { this.recoverCalls += 1 }
@@ -75,6 +76,8 @@ interface FakeHlsInstance {
   levels: Array<{ videoCodec?: string; audioCodec?: string }>
   destroyed: boolean
   loadedSource: string | null
+  loadSourceCalls: number
+  recoverCalls: number
   emit: (event: string, data: Record<string, unknown>) => void
 }
 
@@ -120,6 +123,21 @@ describe('Player HLS lifecycle', () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+
+  it('does not reload the source when the media re-attaches after a recovery', async () => {
+    // hls.js's recoverMediaError re-attaches the media and resumes loading at
+    // the pre-error position itself. Reloading the source on that second
+    // MEDIA_ATTACHED resets playback to the configured start position, which
+    // viewers saw as a jump to 0:00 before the sync dragged them back.
+    const { hls } = await renderPlayer()
+    const instance = hls.instances[0]
+
+    act(() => instance.emit('hlsError', { fatal: true, type: 'mediaError', details: 'bufferStalledError' }))
+    act(() => instance.emit('hlsMediaAttached', {}))
+
+    expect(instance.recoverCalls).toBe(1)
+    expect(instance.loadSourceCalls).toBe(1)
   })
 
   it('declares the room unplayable when hls.js drops the only video rendition', async () => {
