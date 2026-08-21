@@ -16,6 +16,7 @@ import (
 	tusd "github.com/tus/tusd/v2/pkg/handler"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -46,6 +47,7 @@ func NewTusHandler(cfg config.Config, store *room.Store, callbacks Callbacks) (h
 		return nil, err
 	}
 
+	received := newReceivedBytes()
 	fs := filestore.New(incoming)
 	composer := tusd.NewStoreComposer()
 	fs.UseIn(composer)
@@ -83,6 +85,7 @@ func NewTusHandler(cfg config.Config, store *room.Store, callbacks Callbacks) (h
 				return tusd.HTTPResponse{}, tusd.FileInfoChanges{},
 					tusd.NewError("ERR_UPLOAD_REJECTED", "room is not accepting uploads", http.StatusForbidden)
 			}
+			metrics.UploadsInFlight.Inc()
 			return tusd.HTTPResponse{}, tusd.FileInfoChanges{ID: uploadID}, nil
 		},
 	})
@@ -93,6 +96,9 @@ func NewTusHandler(cfg config.Config, store *room.Store, callbacks Callbacks) (h
 	go func() {
 		for ev := range handler.CompleteUploads {
 			roomID := ev.Upload.MetaData["roomID"]
+			metrics.UploadBytesReceived.Add(float64(received.settle(ev.Upload.ID, ev.Upload.Size)))
+			metrics.UploadsInFlight.Dec()
+			metrics.Uploads.WithLabelValues(metrics.UploadCompleted).Inc()
 			if err := moveCompleted(cfg, store, roomID, ev.Upload.Storage[filestore.StorageKeyPath]); err != nil {
 				slog.Error("upload: move completed upload", "room", roomID, "err", err)
 				continue
@@ -105,6 +111,7 @@ func NewTusHandler(cfg config.Config, store *room.Store, callbacks Callbacks) (h
 		threshold := cfg.StreamStartMB << 20
 		for ev := range handler.UploadProgress {
 			roomID := ev.Upload.MetaData["roomID"]
+			metrics.UploadBytesReceived.Add(float64(received.advance(ev.Upload.ID, ev.Upload.Offset)))
 			if roomID == "" {
 				continue
 			}
@@ -125,6 +132,12 @@ func NewTusHandler(cfg config.Config, store *room.Store, callbacks Callbacks) (h
 	go func() {
 		for ev := range handler.TerminatedUploads {
 			roomID := ev.Upload.MetaData["roomID"]
+			// The bytes an abandoned upload did receive were still received,
+			// so they are counted before the account is closed; what is lost
+			// is the file, not the bandwidth that paid for it.
+			metrics.UploadBytesReceived.Add(float64(received.settle(ev.Upload.ID, ev.Upload.Offset)))
+			metrics.UploadsInFlight.Dec()
+			metrics.Uploads.WithLabelValues(metrics.UploadTerminated).Inc()
 			invokeTerminateCallback(callbacks.OnTerminate, roomID)
 			if roomID == "" {
 				continue

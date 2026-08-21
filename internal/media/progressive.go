@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -65,6 +66,11 @@ type Progressive struct {
 	queued    map[string]struct{}
 	active    map[string]context.CancelFunc
 	canceled  map[string]struct{}
+	// previewStarted is when each accepted job was submitted, which is the
+	// moment the wait a viewer actually feels begins: the upload has just
+	// crossed the threshold and the waiting screen is up. It is consumed by
+	// the announcement that ends that wait.
+	previewStarted map[string]time.Time
 	// unpreviewable remembers rooms whose source has no playable prefix.
 	// Upload progress keeps arriving twice a second, and without this the
 	// verdict would be re-reached, re-logged and re-published on every tick
@@ -94,6 +100,7 @@ func NewProgressive(workers int, store *room.Store, dataDir string, publisher *P
 		queued:            make(map[string]struct{}),
 		active:            make(map[string]context.CancelFunc),
 		canceled:          make(map[string]struct{}),
+		previewStarted:    make(map[string]time.Time),
 		unpreviewable:     make(map[string]struct{}),
 	}
 }
@@ -151,10 +158,13 @@ func (p *Progressive) Submit(roomID, srcPath string, size int64) {
 		delete(p.queued, roomID)
 		p.mu.Unlock()
 	case p.jobs <- progressiveJob{roomID: roomID, srcPath: srcPath, size: size}:
+		p.previewStarted[roomID] = time.Now()
 		p.mu.Unlock()
+		metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelinePreview).Inc()
 	default:
 		delete(p.queued, roomID)
 		p.mu.Unlock()
+		metrics.FFmpegJobs.WithLabelValues(metrics.PipelinePreview, metrics.JobRejected).Inc()
 		slog.WarnContext(ctx, "progressive queue full", "room_id", roomID)
 	}
 }
@@ -186,7 +196,11 @@ func (p *Progressive) worker(ctx context.Context) {
 			if !ok {
 				continue
 			}
-			p.process(ctx, jobCtx, job)
+			started := time.Now()
+			outcome := p.process(ctx, jobCtx, job)
+			metrics.FFmpegJobs.WithLabelValues(metrics.PipelinePreview, outcome).Inc()
+			metrics.FFmpegJobDuration.WithLabelValues(metrics.PipelinePreview, outcome).
+				Observe(time.Since(started).Seconds())
 			p.finishJob(job.roomID)
 		}
 	}
@@ -196,28 +210,46 @@ func (p *Progressive) worker(ctx context.Context) {
 // should run (a canceled queued job is dropped).
 func (p *Progressive) beginJob(ctx context.Context, roomID string) (context.Context, bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	delete(p.queued, roomID)
 	if _, ok := p.canceled[roomID]; ok {
 		delete(p.canceled, roomID)
+		delete(p.previewStarted, roomID)
+		p.mu.Unlock()
+		metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelinePreview).Dec()
+		metrics.FFmpegJobs.WithLabelValues(metrics.PipelinePreview, metrics.JobCanceled).Inc()
 		return nil, false
 	}
 	jobCtx, cancel := context.WithCancel(ctx)
 	p.active[roomID] = cancel
+	p.mu.Unlock()
+	metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelinePreview).Dec()
+	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelinePreview).Inc()
 	return jobCtx, true
 }
 
 func (p *Progressive) finishJob(roomID string) {
 	p.mu.Lock()
 	delete(p.active, roomID)
+	// A job that ended without the room ever becoming playable leaves its
+	// start time behind, and the map would otherwise hold one per room the
+	// server ever previewed.
+	delete(p.previewStarted, roomID)
 	p.mu.Unlock()
+	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelinePreview).Dec()
 }
 
-func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
+// process runs one preview job and reports how it ended.
+//
+// The outcome is returned rather than inferred by the caller because most of
+// the ways this stops are not failures: a source with no decodable prefix is
+// a verdict, and a job cut short by a source swap is a cancellation. Counting
+// either as a failure would put a permanent red line on a dashboard that
+// nobody can act on, which is the fastest way to teach people to ignore it.
+func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) string {
 	if err := p.store.SetStatus(jobCtx, job.roomID, "processing"); err != nil {
 		slog.WarnContext(ctx, "progressive: set processing status failed",
 			"room_id", job.roomID, "error", err)
-		return
+		return outcomeFor(jobCtx, metrics.JobFailed)
 	}
 	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewProbing, 0)
 	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe)
@@ -231,16 +263,19 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 				"room_id", job.roomID)
 			p.markUnpreviewable(job.roomID)
 			p.setPhase(jobCtx, ctx, job.roomID, room.PreviewUnavailable, 0)
-			return
+			// Not a failure: the source is simply one the final remux has to
+			// handle on its own, and it said so instead of retrying forever.
+			return metrics.JobSucceeded
 		}
 		if !errors.Is(err, context.Canceled) {
 			slog.WarnContext(ctx, "progressive: probe growing upload failed",
 				"room_id", job.roomID, "error", err)
 		}
-		return
+		return outcomeFor(jobCtx, metrics.JobFailed)
 	}
 	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewSegmenting,
 		PreviewTargetBytes(job.size, probe.DurationMs, p.previewFloorBytes))
+	metrics.VideoHandling.WithLabelValues(metrics.PipelinePreview, videoHandling(probe)).Inc()
 	slog.InfoContext(ctx, "progressive preview starting",
 		"room_id", job.roomID,
 		"video_codec", probe.VideoCodec,
@@ -251,7 +286,7 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 	if err := os.MkdirAll(hlsDir, 0o755); err != nil {
 		slog.WarnContext(ctx, "progressive: create HLS directory failed",
 			"room_id", job.roomID, "error", err)
-		return
+		return outcomeFor(jobCtx, metrics.JobFailed)
 	}
 	// Subtitles run alongside the video rather than after it: a viewer who can
 	// already watch the first minutes should be able to read them too.
@@ -269,6 +304,18 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) {
 	// the loop that would have announced it has already exited.
 	<-publishing
 	p.announcePreview(ctx, job.roomID, probe)
+	return outcomeFor(jobCtx, metrics.JobSucceeded)
+}
+
+// outcomeFor reports a cancelled job as cancelled whatever else went wrong on
+// the way out. A source swap tears down the store writes, the ffmpeg process
+// and the publisher all at once, and every one of them then reports an error
+// that is really just the shutdown arriving.
+func outcomeFor(jobCtx context.Context, outcome string) string {
+	if jobCtx.Err() != nil {
+		return metrics.JobCanceled
+	}
+	return outcome
 }
 
 // announcePreview makes a room ready once its preview is reachable, for the
@@ -528,6 +575,7 @@ func (p *Progressive) notifyUpdated(roomID string) {
 }
 
 func (p *Progressive) notifyReady(roomID string) {
+	p.recordPreviewReady(roomID)
 	if p.onReady == nil {
 		return
 	}
@@ -537,4 +585,21 @@ func (p *Progressive) notifyReady(roomID string) {
 		}
 	}()
 	p.onReady(roomID)
+}
+
+// recordPreviewReady closes out the wait a viewer felt: from the upload
+// crossing the threshold that started this job to the room being playable.
+//
+// The start time is consumed, not merely read. A room is announced ready at
+// most once per job, but the two places that can announce it are reached by
+// different paths — one while the remux is still running, one after it has
+// stopped — and a job that took both would otherwise be measured twice.
+func (p *Progressive) recordPreviewReady(roomID string) {
+	p.mu.Lock()
+	started, ok := p.previewStarted[roomID]
+	delete(p.previewStarted, roomID)
+	p.mu.Unlock()
+	if ok {
+		metrics.PreviewReadyDuration.Observe(time.Since(started).Seconds())
+	}
 }

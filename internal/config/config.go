@@ -14,7 +14,12 @@ import (
 const mediaLifecycleHours = 5
 
 type Config struct {
-	Port              int
+	Port int
+	// MetricsPort is where the Prometheus endpoint listens. It is a second
+	// listener rather than a route on the main one because the application is
+	// published to the host and this is not: nothing outside the Compose
+	// network ever reaches it. 0 turns the endpoint off entirely.
+	MetricsPort       int
 	DataDir           string
 	WebDir            string
 	RedisURL          string
@@ -41,6 +46,7 @@ type Config struct {
 func Load() (Config, error) {
 	cfg := Config{
 		Port:              8080,
+		MetricsPort:       9090,
 		DataDir:           "/data",
 		WebDir:            "web/dist",
 		RedisURL:          "redis://localhost:6379",
@@ -58,6 +64,9 @@ func Load() (Config, error) {
 
 	var err error
 	if cfg.Port, err = envInt("PORT", cfg.Port); err != nil {
+		return Config{}, err
+	}
+	if cfg.MetricsPort, err = envInt("METRICS_PORT", cfg.MetricsPort); err != nil {
 		return Config{}, err
 	}
 	if v := os.Getenv("DATA_DIR"); v != "" {
@@ -89,6 +98,12 @@ func Load() (Config, error) {
 	}
 	if cfg.FFmpegJobs, err = envInt("FFMPEG_JOBS", cfg.FFmpegJobs); err != nil {
 		return Config{}, err
+	}
+	// Sharing a port would put the metrics endpoint on the listener that is
+	// published to the host, which is the one thing its own listener exists
+	// to avoid.
+	if cfg.MetricsPort != 0 && cfg.MetricsPort == cfg.Port {
+		return Config{}, fmt.Errorf("config: METRICS_PORT=%d is the application's own port", cfg.MetricsPort)
 	}
 	cfg.LivekitURL = os.Getenv("LIVEKIT_URL")
 	cfg.LivekitAPIKey = os.Getenv("LIVEKIT_API_KEY")

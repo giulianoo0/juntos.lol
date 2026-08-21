@@ -14,6 +14,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/media"
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -96,6 +97,7 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
+		metrics.RoomsCreated.WithLabelValues(kind).Inc()
 
 		c.JSON(http.StatusCreated, gin.H{
 			"id":               id,

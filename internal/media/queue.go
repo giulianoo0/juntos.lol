@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -165,10 +166,12 @@ func (q *Queue) Submit(roomID string) {
 		return
 	case q.jobs <- roomID:
 		q.mu.Unlock()
+		metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelineFinal).Inc()
 		return
 	default:
 		delete(q.queued, roomID)
 		q.mu.Unlock()
+		metrics.FFmpegJobs.WithLabelValues(metrics.PipelineFinal, metrics.JobRejected).Inc()
 		q.rejectFull(ctx, roomID)
 	}
 }
@@ -189,15 +192,24 @@ func (q *Queue) worker(ctx context.Context) {
 			return
 		case roomID := <-q.jobs:
 			q.beginJob(roomID)
+			started := time.Now()
 			if ctx.Err() != nil {
 				q.markCanceled(ctx, roomID)
+				q.recordJob(metrics.JobCanceled, started)
 				q.finishJob(roomID)
 				return
 			}
 			completed := q.process(ctx, roomID)
-			if !completed && ctx.Err() != nil {
+			outcome := metrics.JobSucceeded
+			switch {
+			case completed:
+			case ctx.Err() != nil:
+				outcome = metrics.JobCanceled
 				q.markCanceled(ctx, roomID)
+			default:
+				outcome = metrics.JobFailed
 			}
+			q.recordJob(outcome, started)
 			q.finishJob(roomID)
 		}
 	}
@@ -350,12 +362,24 @@ func (q *Queue) beginJob(roomID string) {
 	delete(q.queued, roomID)
 	q.active[roomID] = struct{}{}
 	q.mu.Unlock()
+	metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelineFinal).Dec()
+	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelineFinal).Inc()
 }
 
 func (q *Queue) finishJob(roomID string) {
 	q.mu.Lock()
 	delete(q.active, roomID)
 	q.mu.Unlock()
+	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelineFinal).Dec()
+}
+
+// recordJob closes a job out on the counter and the histogram together, so a
+// dashboard can never show a throughput one of them agrees with and the other
+// does not.
+func (q *Queue) recordJob(outcome string, started time.Time) {
+	metrics.FFmpegJobs.WithLabelValues(metrics.PipelineFinal, outcome).Inc()
+	metrics.FFmpegJobDuration.WithLabelValues(metrics.PipelineFinal, outcome).
+		Observe(time.Since(started).Seconds())
 }
 
 func (q *Queue) stopAndDrain() []string {
@@ -368,6 +392,8 @@ func (q *Queue) stopAndDrain() []string {
 		select {
 		case roomID := <-q.jobs:
 			delete(q.queued, roomID)
+			metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelineFinal).Dec()
+			metrics.FFmpegJobs.WithLabelValues(metrics.PipelineFinal, metrics.JobCanceled).Inc()
 			roomIDs = append(roomIDs, roomID)
 		default:
 			return roomIDs
@@ -456,6 +482,7 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	metrics.VideoHandling.WithLabelValues(metrics.PipelineFinal, videoHandling(probe)).Inc()
 	slog.InfoContext(ctx, "final remux starting",
 		"room_id", roomID,
 		"video_codec", probe.VideoCodec,
@@ -492,4 +519,15 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 		subtitles = probe.Subtitles
 	}
 	return probe.Audio, subtitles, probe.BitmapSubs, nil
+}
+
+// videoHandling says whether a job will copy the video track or re-encode it.
+// The two differ by more than an order of magnitude in what they cost the
+// machine, so the ratio between them predicts the CPU bill better than the
+// number of jobs ever could.
+func videoHandling(probe *ProbeResult) string {
+	if probe != nil && probe.VideoCopyable {
+		return metrics.VideoCopied
+	}
+	return metrics.VideoTranscoded
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
@@ -189,6 +190,8 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
+	metrics.WebsocketConnections.Inc()
+	defer metrics.WebsocketConnections.Dec()
 	conn.SetReadLimit(maxWSMessageBytes)
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return
@@ -303,6 +306,10 @@ func (r *roomConn) run() {
 	defer r.hub.removeRoom(r.id, r)
 	defer r.dropGate()
 	defer func() {
+		// A shutdown closes the room out from under whoever is still in it,
+		// so the gauge is settled here rather than left counting members of a
+		// room that no longer exists.
+		metrics.ParticipantsConnected.Sub(float64(len(r.clients)))
 		for _, connected := range r.clients {
 			close(connected.send)
 		}
@@ -357,6 +364,7 @@ func (r *roomConn) run() {
 
 func (r *roomConn) handleJoin(request joinRequest) {
 	if len(r.clients) >= r.hub.cfg.MaxParticipants {
+		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "room_full"
 		return
 	}
@@ -365,6 +373,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	request.client.id = memberID
 	capabilityBytes := make([]byte, 32)
 	if _, err := rand.Read(capabilityBytes); err != nil {
+		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -375,6 +384,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	defer cancel()
 	if err := r.hub.store.AddMember(ctx, r.id, request.client.member); err != nil {
 		slog.ErrorContext(ctx, "add websocket member failed", "room_id", r.id, "member_id", memberID, "error", err)
+		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -382,6 +392,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket state failed", "room_id", r.id, "error", err)
 		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -392,6 +403,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket chat failed", "room_id", r.id, "error", err)
 		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -399,6 +411,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		if err := r.hub.store.SetController(ctx, r.id, memberID); err != nil {
 			slog.ErrorContext(ctx, "set initial websocket controller failed", "room_id", r.id, "error", err)
 			_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+			metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 			request.result <- "internal_error"
 			return
 		}
@@ -413,20 +426,26 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.hub.mu.Unlock()
 	members := r.members()
 	gating := r.gating
-	request.client.send <- Outbound{
+	// Through send rather than straight into the channel, so the frames a
+	// join produces are counted like every other frame the room emits. The
+	// buffer is untouched and 64 deep at this point, so nothing can be
+	// dropped here that would not have blocked before.
+	r.send(request.client, Outbound{
 		Type: "welcome", MemberID: memberID, State: &state, ControllerID: r.controllerID,
 		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
 		Capability: request.client.capability, Gating: &gating,
-	}
-	request.client.send <- Outbound{
+	})
+	r.send(request.client, Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
-	}
+	})
 	r.broadcastExcept(request.client, Outbound{
 		Type: "members", ControllerID: r.controllerID, Members: members,
 	})
 	// A mid-wait joiner is counted in the quorum but never restarts the clock:
 	// it only gets the pending roster so its client starts reporting.
 	r.broadcastWaiting()
+	metrics.ParticipantJoins.WithLabelValues(metrics.JoinAccepted).Inc()
+	metrics.ParticipantsConnected.Inc()
 	request.result <- ""
 }
 
@@ -435,6 +454,8 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 		return
 	}
 	delete(r.clients, disconnected.id)
+	metrics.ParticipantsConnected.Dec()
+	metrics.ParticipantLeaves.Inc()
 	// Being ignored is a decision about a person in this room right now. If
 	// they come back — usually after fixing whatever was wrong — they rejoin
 	// as a full member rather than silently still excluded.
@@ -475,6 +496,7 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 
 func (r *roomConn) handleInbound(event clientInbound) {
 	message := event.message
+	metrics.WebsocketMessages.WithLabelValues("in", inboundLabel(message.Type)).Inc()
 	switch message.Type {
 	case "heartbeat":
 		r.send(event.client, Outbound{
@@ -628,6 +650,9 @@ func (r *roomConn) broadcastExcept(excluded *client, event Outbound) {
 }
 
 func (r *roomConn) send(target *client, event Outbound) {
+	// Outbound types are this package's own constants, so unlike the inbound
+	// ones they need no clamping.
+	metrics.WebsocketMessages.WithLabelValues("out", event.Type).Inc()
 	select {
 	case target.send <- event:
 	default:
@@ -699,6 +724,7 @@ func (r *roomConn) cleanupIdle() {
 	// go without a word. Its link then answers room_not_found with nothing
 	// anywhere saying why, which reads like data loss rather than the cleanup
 	// it is.
+	metrics.RoomsReclaimed.WithLabelValues(metrics.ReclaimIdle).Inc()
 	slog.InfoContext(ctx, "idle room reclaimed",
 		"room_id", r.id, "idle_for", r.hub.idleAfter)
 }
@@ -732,6 +758,22 @@ func sameHostnameOrigin(request *http.Request) bool {
 		requestHost = strings.Trim(requestHost[:colon], "[]")
 	}
 	return strings.EqualFold(parsed.Hostname(), requestHost)
+}
+
+// inboundLabel folds a client-supplied message type onto the closed set this
+// package actually handles.
+//
+// The type arrives over the wire from a browser, and using it as a label value
+// unchecked would let anyone mint an unbounded number of time series by
+// sending nonsense — the metrics endpoint would grow until it, rather than the
+// video, became the expensive part of the server.
+func inboundLabel(messageType string) string {
+	switch messageType {
+	case "hello", "heartbeat", "ready", "gating", "ignore", "chat",
+		"play", "pause", "seek", "rate":
+		return messageType
+	}
+	return "other"
 }
 
 func validRoomID(id string) bool {

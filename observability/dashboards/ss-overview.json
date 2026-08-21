@@ -1,0 +1,1948 @@
+{
+  "uid": "ss-overview",
+  "title": "ss.giuli.dev",
+  "description": "Salas, participantes, banda, fila do FFmpeg e custo do R2. Versionado em observability/dashboards/ss-overview.json; edições feitas na interface são sobrescritas no próximo push.",
+  "tags": [
+    "ss"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 0,
+  "refresh": "30s",
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROM",
+        "label": "Métricas",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Salas e participantes",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Salas ativas",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Amostrado do Redis a cada 15 s. Uma sala existe enquanto o registro dela existir.",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_rooms_active",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Assistindo agora",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Participantes conectados, somando todas as salas.",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_participants_connected",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Uploads em andamento",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Uploads tus criados e ainda não concluídos nem abandonados.",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_uploads_in_flight",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Torrents baixando",
+      "id": 5,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Ingests de torrent rodando no servidor.",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_torrent_ingests_active",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Peers",
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Soma dos peers de todos os ingests em andamento. Zero com download ativo é um swarm sem seeders.",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_torrent_peers",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Conexões WebSocket",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_websocket_connections",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Salas por estado",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Um acúmulo em processing é fila; um acúmulo em error é fonte.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (state) (ss_rooms_by_state)",
+          "legendFormat": "{{state}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Salas criadas e recolhidas por hora",
+      "id": 9,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "idle é a sala que todo mundo deixou; expired é o sweeper no fim do TTL.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(rate(ss_rooms_created_total[15m])) * 3600",
+          "legendFormat": "criadas",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (reason) (rate(ss_rooms_reclaimed_total[15m])) * 3600",
+          "legendFormat": "recolhidas: {{reason}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Participantes simultâneos",
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "A linha de pico é o que dimensiona MAX_PARTICIPANTS e a máquina.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "ss_participants_connected",
+          "legendFormat": "participantes",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Entradas e saídas por hora",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "outcome=rejected inclui sala cheia.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (outcome) (rate(ss_participant_joins_total[15m])) * 3600",
+          "legendFormat": "entradas: {{outcome}}",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "rate(ss_participant_leaves_total[15m]) * 3600",
+          "legendFormat": "saídas",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Banda",
+      "collapsed": false,
+      "id": 12,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Entrada",
+      "id": 13,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "rate() sobre contadores. A aplicação nunca calcula taxa: ela só conta bytes.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(rate(ss_upload_bytes_received_total[5m]))",
+          "legendFormat": "upload do navegador",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(rate(ss_torrent_bytes_downloaded_total[5m]))",
+          "legendFormat": "torrent",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Saida",
+      "id": 14,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Segmentos e legendas saem do edge do bucket e não passam por esta máquina: o que aparece aqui é o que a aplicação serve mais o que ela envia ao R2.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(rate(ss_http_response_bytes_total[5m]))",
+          "legendFormat": "HTTP (playlists e frontend)",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(rate(ss_objectstore_bytes_written_total[5m]))",
+          "legendFormat": "escrita no R2",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Fila do FFmpeg",
+      "collapsed": false,
+      "id": 15,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Fila e workers ocupados",
+      "id": 16,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "rodando encostado em FFMPEG_JOBS com fila crescendo é saturação.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (pipeline) (ss_ffmpeg_jobs_queued)",
+          "legendFormat": "fila: {{pipeline}}",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (pipeline) (ss_ffmpeg_jobs_running)",
+          "legendFormat": "rodando: {{pipeline}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Jobs por hora e desfecho",
+      "id": 17,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "rejected é a fila recusando por estar cheia.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (pipeline, outcome) (rate(ss_ffmpeg_jobs_total[30m])) * 3600",
+          "legendFormat": "{{pipeline}} / {{outcome}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Duração dos jobs (p50 e p90)",
+      "id": 18,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, pipeline) (rate(ss_ffmpeg_job_duration_seconds_bucket[30m])))",
+          "legendFormat": "p50 {{pipeline}}",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, pipeline) (rate(ss_ffmpeg_job_duration_seconds_bucket[30m])))",
+          "legendFormat": "p90 {{pipeline}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Até a prévia ficar pronta (p50 e p90)",
+      "id": 19,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Do momento em que o upload cruza STREAM_START_MB até a sala poder tocar. É a espera que o espectador sente.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ss_media_preview_ready_seconds_bucket[30m])))",
+          "legendFormat": "p50",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(ss_media_preview_ready_seconds_bucket[30m])))",
+          "legendFormat": "p90",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cópia contra transcode",
+      "id": 20,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Transcode custa mais de uma ordem de grandeza a mais de CPU que cópia. A proporção entre os dois prevê a carga da máquina melhor que o número de jobs.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (mode) (rate(ss_media_video_handling_total[1h])) * 3600",
+          "legendFormat": "{{mode}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "R2 (o que gera custo)",
+      "collapsed": false,
+      "id": 21,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Class A no mês",
+      "id": 22,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Escritas, listagens e cada parte de um multipart. USD 4,50 por milhão, arredondado para cima até o próximo milhão.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 49
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(increase(ss_objectstore_operations_total{class=\"class_a\"}[$__range]))",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "timeFrom": "now/M"
+    },
+    {
+      "type": "stat",
+      "title": "Class B no mês",
+      "id": 23,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Leituras e metadados. USD 0,36 por milhão.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 49
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(increase(ss_objectstore_operations_total{class=\"class_b\"}[$__range]))",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "timeFrom": "now/M"
+    },
+    {
+      "type": "stat",
+      "title": "Operações gratuitas no mês",
+      "id": 24,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "DeleteObject e AbortMultipartUpload. Recolher uma sala é de graça; listar para saber o que apagar não é.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 49
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(increase(ss_objectstore_operations_total{class=\"free\"}[$__range]))",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "timeFrom": "now/M"
+    },
+    {
+      "type": "stat",
+      "title": "Custo estimado de operações no mês",
+      "id": 25,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Só operações. Armazenamento é cobrado à parte e a saída do R2 é gratuita.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 49
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum(increase(ss_objectstore_operations_total{class=\"class_a\"}[$__range])) * 4.5 / 1000000 + sum(increase(ss_objectstore_operations_total{class=\"class_b\"}[$__range])) * 0.36 / 1000000",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "timeFrom": "now/M"
+    },
+    {
+      "type": "timeseries",
+      "title": "Operações por segundo, por classe",
+      "id": 26,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 54
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (class) (rate(ss_objectstore_operations_total[5m]))",
+          "legendFormat": "{{class}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Operações por segundo, por tipo",
+      "id": 27,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "UploadPart aparecendo aqui quer dizer que algum objeto passou do limite de parte única e virou várias escritas cobradas.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 54
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (operation) (rate(ss_objectstore_operations_total[5m]))",
+          "legendFormat": "{{operation}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Falhas e latência do bucket",
+      "id": 28,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "transport é o bucket não respondendo; status é o bucket recusando.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 54
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (kind) (rate(ss_objectstore_errors_total[5m]))",
+          "legendFormat": "erros: {{kind}}",
+          "editorMode": "code",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ss_objectstore_operation_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 (s)",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "HTTP e WebSocket",
+      "collapsed": false,
+      "id": 29,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 62
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Requisições por segundo, por rota",
+      "id": 30,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (route) (rate(ss_http_requests_total[5m]))",
+          "legendFormat": "{{route}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Respostas 5xx por segundo",
+      "id": 31,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "Qualquer linha visível aqui merece uma olhada no log.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (route) (rate(ss_http_requests_total{status=~\"5..\"}[5m]))",
+          "legendFormat": "{{route}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latência p95 por rota",
+      "id": 32,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "O WebSocket fica de fora: é uma requisição que dura o filme inteiro.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 63
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(ss_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{route}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mensagens WebSocket por segundo",
+      "id": 33,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 71
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (direction) (rate(ss_websocket_messages_total[5m]))",
+          "legendFormat": "{{direction}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mensagens recebidas por tipo",
+      "id": 34,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROM}"
+      },
+      "description": "heartbeat e ready dominam por construção.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 71
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROM}"
+          },
+          "expr": "sum by (type) (rate(ss_websocket_messages_total{direction=\"in\"}[5m]))",
+          "legendFormat": "{{type}}",
+          "editorMode": "code",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 12,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

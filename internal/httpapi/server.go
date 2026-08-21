@@ -56,6 +56,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if err := r.SetTrustedProxies(nil); err != nil {
 		panic("configure trusted proxies: " + err.Error())
 	}
+	r.Use(requestMetrics())
 	r.Use(privacyHeaders())
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})

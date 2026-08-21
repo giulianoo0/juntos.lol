@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -70,6 +71,11 @@ func servePlaylist(store *room.Store) gin.HandlerFunc {
 			return
 		}
 
+		// Counted separately from the route's response bytes so the figure
+		// survives the playlists ever moving behind another route. It is also
+		// all the media this process serves: segments and subtitles are
+		// fetched from the bucket's edge and never cross this machine.
+		metrics.MediaBytesServed.WithLabelValues("playlist").Add(float64(len(playlist)))
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
 		// An event playlist grows with every segment the preview publishes,
 		// and a cached one strands a viewer at whatever length it had.

@@ -11,8 +11,14 @@ services:
     restart: unless-stopped
     ports:
       - "${APP_BIND:-127.0.0.1:8099}:8080"
+    # The metrics endpoint is exposed to the Compose network and published to
+    # nowhere: the collector below is the only thing that reaches it, and the
+    # TLS proxy in front of the site never sees it at all.
+    expose:
+      - "9090"
     environment:
       REDIS_URL: redis://redis:6379
+      METRICS_PORT: "9090"
       DATA_DIR: /data
       WEB_DIR: /web
       GIN_MODE: release
@@ -54,6 +60,35 @@ services:
     networks:
       - torrent-edge
 
+  # Scrapes the application and forwards the series to Grafana Cloud. There is
+  # deliberately no Prometheus and no Grafana here: the stack in Grafana Cloud
+  # is where the series are stored and drawn.
+  alloy:
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL}
+      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER}
+      GRAFANA_CLOUD_PROM_TOKEN: ${GRAFANA_CLOUD_PROM_TOKEN}
+      SS_METRICS_TARGET: app:9090
+      SS_INSTANCE: ${SS_INSTANCE:-ss.giuli.dev}
+      SS_ENV: ${SS_ENV:-production}
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ss-alloy-data:/var/lib/alloy/data
+    # Alloy's own diagnostic UI. It listens on all interfaces inside the
+    # container because otherwise it is unreachable from outside it, and is
+    # published to loopback only, like everything else here.
+    ports:
+      - "${ALLOY_BIND:-127.0.0.1:12345}:12345"
+    depends_on:
+      - app
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -73,6 +108,9 @@ services:
 volumes:
   ss-data:
   ss-torrent-cache:
+  # The collector's write-ahead log, so a restart does not drop the samples it
+  # had scraped but not yet shipped.
+  ss-alloy-data:
 
 networks:
   torrent-edge:

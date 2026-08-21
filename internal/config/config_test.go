@@ -85,3 +85,48 @@ func TestLoadTrimsTheMediaOrigin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://media.example.test", cfg.MediaPublicURL)
 }
+
+func TestLoadDefaultsTheMetricsEndpointToItsOwnPort(t *testing.T) {
+	// The application's listener is published to the host; this one is not,
+	// which is the whole reason it is a second listener.
+	setMediaEnv(t)
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, 9090, cfg.MetricsPort)
+	require.NotEqual(t, cfg.Port, cfg.MetricsPort)
+}
+
+func TestLoadRefusesANonNumericMetricsPort(t *testing.T) {
+	// Falling back silently would leave the endpoint on a port nobody is
+	// scraping, and a dashboard with no data reads exactly like an idle site.
+	setMediaEnv(t)
+	t.Setenv("METRICS_PORT", "nove-mil-e-noventa")
+
+	_, err := Load()
+
+	require.ErrorContains(t, err, "METRICS_PORT")
+}
+
+func TestLoadRefusesToShareTheApplicationPortWithMetrics(t *testing.T) {
+	// Sharing it would publish the metrics endpoint through the same bind the
+	// TLS proxy sits in front of.
+	setMediaEnv(t)
+	t.Setenv("PORT", "8080")
+	t.Setenv("METRICS_PORT", "8080")
+
+	_, err := Load()
+
+	require.ErrorContains(t, err, "METRICS_PORT")
+}
+
+func TestLoadAllowsTurningTheMetricsEndpointOff(t *testing.T) {
+	setMediaEnv(t)
+	t.Setenv("METRICS_PORT", "0")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.MetricsPort)
+}

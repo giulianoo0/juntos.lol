@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/objectstore"
 )
 
@@ -83,6 +84,7 @@ func SweepOnce(ctx context.Context, store *Store, dataDir string, bucket MediaSt
 			slog.Error("sweeper: delete room", "room", id, "err", err)
 			continue
 		}
+		metrics.RoomsReclaimed.WithLabelValues(metrics.ReclaimExpired).Inc()
 		// Removing a room is the one thing here that a viewer notices
 		// immediately and cannot undo, and it used to happen in silence: a
 		// room that vanished left nothing behind saying it was the sweeper

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/giulianoo0/ss/internal/metrics"
 )
 
 const (
@@ -21,6 +23,11 @@ const (
 	resumeAttempts = 5
 	// resumeBackoff spaces out those retries.
 	resumeBackoff = 3 * time.Second
+	// peerPollInterval is how often a running ingest asks the bridge how many
+	// peers it is talking to. Slow enough to be free, fast enough that a
+	// swarm that empties out shows up on a graph while the download is still
+	// the thing anyone is looking at.
+	peerPollInterval = 10 * time.Second
 	// tusVersion is the only protocol version the server speaks.
 	tusVersion = "1.0.0"
 )
@@ -83,10 +90,14 @@ type Ingestor struct {
 	// tests can exercise the stall path without waiting out real seconds.
 	backoff time.Duration
 
-	mu       sync.Mutex
-	ctx      context.Context
-	started  bool
-	running  map[string]context.CancelFunc
+	mu      sync.Mutex
+	ctx     context.Context
+	started bool
+	running map[string]context.CancelFunc
+	// peers is the swarm each running ingest last reported. It is summed into
+	// one gauge rather than exported per room: a room id is unbounded, and
+	// what is worth watching is whether there are peers at all.
+	peers    map[string]int
 	maxJobs  int
 	subtitle func(name string) bool
 }
@@ -105,6 +116,7 @@ func NewIngestor(bridge *Bridge, uploadURL string, maxJobs int, isSubtitle func(
 		hooks:     hooks,
 		backoff:   resumeBackoff,
 		running:   make(map[string]context.CancelFunc),
+		peers:     make(map[string]int),
 		maxJobs:   maxJobs,
 		subtitle:  isSubtitle,
 	}
@@ -143,17 +155,24 @@ func (i *Ingestor) Submit(job Job) error {
 	i.running[job.RoomID] = cancel
 	i.mu.Unlock()
 
+	metrics.TorrentIngestsActive.Inc()
 	go func() {
 		defer i.finish(job.RoomID)
-		if err := i.run(jobCtx, job); err != nil {
-			if jobCtx.Err() != nil {
-				slog.Info("torrent ingest stopped", "room_id", job.RoomID)
-				return
-			}
-			slog.Error("torrent ingest failed", "room_id", job.RoomID, "error", err)
-			if i.hooks.OnFailed != nil {
-				i.hooks.OnFailed(job.RoomID, err)
-			}
+		defer metrics.TorrentIngestsActive.Dec()
+		err := i.run(jobCtx, job)
+		if err == nil {
+			metrics.TorrentIngests.WithLabelValues(metrics.IngestCompleted).Inc()
+			return
+		}
+		if jobCtx.Err() != nil {
+			metrics.TorrentIngests.WithLabelValues(metrics.IngestCanceled).Inc()
+			slog.Info("torrent ingest stopped", "room_id", job.RoomID)
+			return
+		}
+		metrics.TorrentIngests.WithLabelValues(metrics.IngestFailed).Inc()
+		slog.Error("torrent ingest failed", "room_id", job.RoomID, "error", err)
+		if i.hooks.OnFailed != nil {
+			i.hooks.OnFailed(job.RoomID, err)
 		}
 	}()
 	return nil
@@ -173,7 +192,50 @@ func (i *Ingestor) Cancel(roomID string) {
 func (i *Ingestor) finish(roomID string) {
 	i.mu.Lock()
 	delete(i.running, roomID)
+	delete(i.peers, roomID)
+	total := i.totalPeersLocked()
 	i.mu.Unlock()
+	metrics.TorrentPeers.Set(float64(total))
+}
+
+// setPeers records one session's swarm and republishes the total.
+func (i *Ingestor) setPeers(roomID string, count int) {
+	i.mu.Lock()
+	if _, running := i.running[roomID]; !running {
+		i.mu.Unlock()
+		return
+	}
+	i.peers[roomID] = count
+	total := i.totalPeersLocked()
+	i.mu.Unlock()
+	metrics.TorrentPeers.Set(float64(total))
+}
+
+func (i *Ingestor) totalPeersLocked() int {
+	total := 0
+	for _, count := range i.peers {
+		total += count
+	}
+	return total
+}
+
+// watchPeers keeps the swarm gauge current for as long as the ingest runs.
+// It is best effort throughout: a bridge that will not answer a stats call is
+// not a reason to stop a download that is working.
+func (i *Ingestor) watchPeers(ctx context.Context, job Job) {
+	ticker := time.NewTicker(peerPollInterval)
+	defer ticker.Stop()
+	for {
+		stats, err := i.bridge.Stats(ctx, job.SessionID)
+		if err == nil {
+			i.setPeers(job.RoomID, stats.Peers)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (i *Ingestor) run(ctx context.Context, job Job) error {
@@ -206,6 +268,7 @@ func (i *Ingestor) run(ctx context.Context, job Job) error {
 	// Subtitles are separate files and separate pieces, so fetching them does
 	// not slow the video down and they can be published straight away.
 	go i.fetchSubtitles(ctx, job, files)
+	go i.watchPeers(ctx, job)
 
 	uploadURL, err := i.createUpload(ctx, job)
 	if err != nil {
@@ -216,6 +279,13 @@ func (i *Ingestor) run(ctx context.Context, job Job) error {
 	offset := int64(0)
 	for attempt := 0; offset < job.Size; {
 		written, err := i.pump(ctx, job, uploadURL, offset)
+		if written > 0 {
+			// Taken from what the upload confirmed it stored rather than from
+			// what the bridge handed over, so a stream that broke mid-flight
+			// contributes the bytes that landed and not the ones that were in
+			// the air when it did.
+			metrics.TorrentBytesDownloaded.Add(float64(written))
+		}
 		offset += written
 		if offset >= job.Size {
 			break
