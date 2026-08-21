@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { History, MonitorUp, Upload } from 'lucide-react'
+import { Compass, History, MonitorUp, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
@@ -11,9 +11,10 @@ import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { CatalogBrowser } from '../catalog/CatalogBrowser'
+import { ProgressiveBlur } from '../catalog/ProgressiveBlur'
 import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
 import { openCatalogStream } from '../catalog/openStream'
-import { nowPlayingFromPick, nowPlayingKey } from '../catalog/NextEpisode'
+import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
@@ -246,11 +247,20 @@ export function Home() {
   return (
     <main className="home-shell catalog-shell">
       <header className="home-header">
+        <ProgressiveBlur />
         <a className="home-wordmark" href="/">ss.giuli.dev</a>
+        {/* Labels collapse to their icons on a phone, where three of them plus
+            the wordmark and the language will not fit on one line. */}
         <nav aria-label={t('home.navigation')}>
-          <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}>{t('catalog.tab')}</button>
-          <button onClick={() => setManualOpen('menu')}><Upload size={15} aria-hidden="true" />{t('home.uploadManually')}</button>
-          <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(true)}><History size={15} aria-hidden="true" />{t('home.history')}</button>
+          <button className={!historyOpen ? 'is-active' : ''} aria-label={t('catalog.tab')} onClick={() => setHistoryOpen(false)}>
+            <Compass size={15} aria-hidden="true" /><span className="nav-label">{t('catalog.tab')}</span>
+          </button>
+          <button aria-label={t('home.uploadManually')} onClick={() => setManualOpen('menu')}>
+            <Upload size={15} aria-hidden="true" /><span className="nav-label">{t('home.uploadManually')}</span>
+          </button>
+          <button className={historyOpen ? 'is-active' : ''} aria-label={t('home.history')} onClick={() => setHistoryOpen(true)}>
+            <History size={15} aria-hidden="true" /><span className="nav-label">{t('home.history')}</span>
+          </button>
         </nav>
         <div className="header-end">
           <BuildInfo label={t('home.source')} />

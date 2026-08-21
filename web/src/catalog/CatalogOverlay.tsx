@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { CatalogBrowser } from './CatalogBrowser'
+import { ProgressiveBlur } from './ProgressiveBlur'
 import { MetaDetails, type DetailsMode, type TitlePick } from './MetaDetails'
 import type { TitleOpen } from './PosterCard'
 
@@ -62,6 +63,7 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
       transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
     >
       <header className="catalog-overlay-head">
+        <ProgressiveBlur />
         <h1>{t('catalog.tab')}</h1>
         <button type="button" className="dialog-close" aria-label={t('details.close')} onClick={onClose}>
           <X size={16} aria-hidden="true" />
