@@ -47,19 +47,53 @@ describe('checkFetchUrl', () => {
     expect(deny('https://93.184.216.34/x', ['93.184.216.34'])).toBe('private-host')
   })
 
-  it('refuses a trailing dot, which is the same host to DNS and a different string here', () => {
-    expect(deny('https://torrentio.strem.fun./x')).toBe('host-not-declared')
+  it('refuses the application own host on any port, not just the default one', () => {
+    // origin carries the port and the allowlist does not. Comparing origins
+    // would leave every other port on our own machine reachable.
+    expect(deny('https://ss.giuli.dev:8443/api/rooms', ['ss.giuli.dev'])).toBe('self-origin')
+    expect(deny('https://ss.giuli.dev:443/api/rooms', ['ss.giuli.dev'])).toBe('self-origin')
   })
 
-  it('is not fooled by case, since a declared host is stored lowercase', () => {
-    expect(checkFetchUrl('https://TORRENTIO.STREM.FUN/x', hosts, self).ok).toBe(true)
+  it('treats a trailing dot as the same host it is to DNS', () => {
+    expect(deny('https://ss.giuli.dev./api/rooms', ['ss.giuli.dev'])).toBe('self-origin')
+    expect(deny('https://localhost./x', ['localhost'])).toBe('private-host')
+    // And the benign half: the declared host spelled the other way is allowed.
+    expect(checkFetchUrl('https://torrentio.strem.fun./x', hosts, self).ok).toBe(true)
   })
 
-  it('refuses credentials embedded in the url', () => {
-    // https://torrentio.strem.fun@evil.com/ reads as the declared host and
-    // resolves to evil.com. The URL parser gets this right, and this test is
-    // here so a future rewrite that parses by hand cannot get it wrong.
+  it('refuses every spelling of a literal address', () => {
+    // The URL parser canonicalises all of these to 127.0.0.1 or 0.0.0.0
+    // before the regex sees them. The test is here so that a rewrite which
+    // parses by hand cannot quietly lose that.
+    for (const url of [
+      'https://0x7f.0.0.1/', 'https://2130706433/', 'https://127.1/',
+      'https://0177.0.0.1/', 'https://0/', 'https://[::ffff:127.0.0.1]/',
+      'https://0xc0.0xa8.0.1/',
+    ]) {
+      expect(deny(url, ['x.y'])).toBe('private-host')
+    }
+  })
+
+  it('is not fooled by case in the origin it is told to protect', () => {
+    expect(checkFetchUrl('https://ss.giuli.dev/api', ['ss.giuli.dev'], 'HTTPS://SS.GIULI.DEV')).toEqual({
+      ok: false, reason: 'self-origin',
+    })
+  })
+
+  it('refuses a host that only looks like the declared one because of userinfo', () => {
     expect(deny('https://torrentio.strem.fun@evil.com/x')).toBe('host-not-declared')
+  })
+
+  it('strips credentials before handing the url over', () => {
+    // The page performs this fetch, and a userinfo pair becomes an
+    // Authorization header the plugin was never granted.
+    const result = checkFetchUrl('https://user:pass@torrentio.strem.fun/x', hosts, self)
+    expect(result.ok && result.url.href).toBe('https://torrentio.strem.fun/x')
+  })
+
+  it('fails closed when it cannot tell what its own origin is', () => {
+    const result = checkFetchUrl('https://torrentio.strem.fun/x', hosts, 'not an origin')
+    expect(result).toEqual({ ok: false, reason: 'self-origin' })
   })
 
   it('refuses a value that is not a URL at all', () => {

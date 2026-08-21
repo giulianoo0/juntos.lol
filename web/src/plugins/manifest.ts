@@ -26,13 +26,56 @@ const MAX_NAME = 64
 const MAX_VERSION = 32
 const MAX_HOSTS = 16
 const MAX_HOST_LENGTH = 253
+const MAX_LABEL_LENGTH = 63
 const MAX_UPDATE_URL = 512
 
+// Control characters, including the bidirectional overrides. `name` and
+// `version` exist only to be shown next to the hosts a plugin is asking for,
+// and a name that can reorder the text around it is a name that can lie about
+// what is being approved.
+const CONTROL = /\p{C}/u
+
 function text(value: unknown, field: string, max: number): string {
-  if (typeof value !== 'string' || value.trim() === '' || value.length > max) {
+  if (typeof value !== 'string') throw new Error(`plugin manifest: ${field} is missing or invalid`)
+  const trimmed = value.trim()
+  if (trimmed === '' || trimmed.length > max || CONTROL.test(trimmed)) {
     throw new Error(`plugin manifest: ${field} is missing or invalid`)
   }
-  return value.trim()
+  return trimmed
+}
+
+/**
+ * One host, in the exact spelling the policy will compare against.
+ *
+ * The policy matches `new URL(...).hostname` by equality, so anything the URL
+ * parser would rewrite is a host that can never match — approved, displayed,
+ * stored, and permanently dead. `127.1` and `1.2.3.04` are that; they are
+ * rejected here rather than left to fail in silence later.
+ *
+ * An address is rejected outright, spelled however. The spec says a plugin
+ * never reaches a literal address, and this is the layer where a literal
+ * would otherwise be written into the approved hosts and shown on the consent
+ * screen as though it were a name.
+ */
+function hostname(value: unknown): string {
+  const invalid = () => new Error('plugin manifest: hosts must be bare hostnames')
+  if (typeof value !== 'string' || value.length > MAX_HOST_LENGTH) throw invalid()
+  const host = value.toLowerCase()
+  if (!HOST_PATTERN.test(host)) throw invalid()
+  if (host.split('.').some((label) => label.length > MAX_LABEL_LENGTH)) throw invalid()
+  // A final label of only digits is the URL parser's own rule for "this is an
+  // IPv4 address", which catches 1.2.3.4 and 0x7f.0x1 alike.
+  if (/^\d+$/.test(host.slice(host.lastIndexOf('.') + 1))) {
+    throw new Error('plugin manifest: hosts must be names, not addresses')
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(`https://${host}`)
+  } catch {
+    throw invalid()
+  }
+  if (parsed.hostname !== host) throw invalid()
+  return host
 }
 
 export function parseManifest(value: unknown): PluginManifest {
@@ -45,17 +88,22 @@ export function parseManifest(value: unknown): PluginManifest {
   const name = text(raw.name, 'name', MAX_NAME)
   const version = text(raw.version, 'version', MAX_VERSION)
 
-  if (!Array.isArray(raw.hosts) || raw.hosts.length === 0 || raw.hosts.length > MAX_HOSTS) {
+  // Read once. A manifest is an object third-party code built, and re-reading
+  // `raw.hosts` invites a getter that answers differently each time.
+  const declared: unknown = raw.hosts
+  if (!Array.isArray(declared) || declared.length === 0) {
     throw new Error('plugin manifest: hosts must be a non-empty list')
   }
-  const hosts = raw.hosts.map((host) => {
-    // 253 is the longest a hostname can legally be. Without a ceiling here,
-    // hosts is the one field with no length limit at all.
-    if (typeof host !== 'string' || host.length > MAX_HOST_LENGTH || !HOST_PATTERN.test(host.toLowerCase())) {
-      throw new Error('plugin manifest: hosts must be bare hostnames')
-    }
-    return host.toLowerCase()
-  })
+  if (declared.length > MAX_HOSTS) {
+    throw new Error(`plugin manifest: hosts must have at most ${MAX_HOSTS} entries`)
+  }
+  // By index rather than `.map`: map skips the holes of a sparse array, and
+  // it resolves `map` on the object itself, which need not be the real one.
+  const hosts: string[] = []
+  for (let index = 0; index < declared.length; index += 1) {
+    const host = hostname(declared[index])
+    if (!hosts.includes(host)) hosts.push(host)
+  }
 
   let updateUrl: string | null = null
   if (raw.updateUrl !== undefined && raw.updateUrl !== null) {
@@ -67,7 +115,17 @@ export function parseManifest(value: unknown): PluginManifest {
       throw new Error('plugin manifest: updateUrl is not a URL')
     }
     if (parsed.protocol !== 'https:') throw new Error('plugin manifest: updateUrl must be https')
-    updateUrl = candidate
+    // Credentials here would be sent on every automatic update, unattended,
+    // for as long as the plugin is installed.
+    if (parsed.username || parsed.password) {
+      throw new Error('plugin manifest: updateUrl must not carry credentials')
+    }
+    // This string becomes the plugin's identity — the registry key is a hash
+    // of it, and an update declaring a different one is refused. Two spellings
+    // of the same repository must not become two plugins, and must not make a
+    // legitimate update look like a redirect.
+    parsed.hash = ''
+    updateUrl = parsed.href.replace(/\/+$/, '')
   }
 
   return { id, name, version, hosts, updateUrl }

@@ -16,8 +16,18 @@ export type FetchDecision =
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/
 const PRIVATE_NAMES = new Set(['localhost'])
 
-function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase()
+/**
+ * One spelling per host, so every check below compares the same thing.
+ *
+ * The trailing dot is the case that matters: `ss.giuli.dev.` is the same host
+ * to DNS and a different string to everything here. Without this, it slips
+ * past the self-origin check, and `localhost.` slips past isPrivateHostname.
+ */
+function normalizeHost(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, '')
+}
+
+function isPrivateHostname(host: string): boolean {
   if (PRIVATE_NAMES.has(host) || host.endsWith('.localhost')) return true
   // URL keeps IPv6 in brackets, which no hostname ever has.
   if (host.startsWith('[')) return true
@@ -40,9 +50,30 @@ export function checkFetchUrl(raw: string, hosts: string[], selfOrigin: string):
   } catch {
     return { ok: false, reason: 'invalid' }
   }
+  // A selfOrigin that cannot be read must not become "this is not our origin".
+  let self: URL
+  try {
+    self = new URL(selfOrigin)
+  } catch {
+    return { ok: false, reason: 'self-origin' }
+  }
+
   if (url.protocol !== 'https:') return { ok: false, reason: 'scheme' }
-  if (url.origin === selfOrigin) return { ok: false, reason: 'self-origin' }
-  if (isPrivateHostname(url.hostname)) return { ok: false, reason: 'private-host' }
-  if (!hosts.includes(url.hostname.toLowerCase())) return { ok: false, reason: 'host-not-declared' }
+
+  const host = normalizeHost(url.hostname)
+  // Compared by hostname rather than by origin. `origin` carries the port, and
+  // a different port on the same host is still the application's own machine —
+  // which is also a free port scanner for whatever else is bound there.
+  if (host === normalizeHost(self.hostname)) return { ok: false, reason: 'self-origin' }
+  if (isPrivateHostname(host)) return { ok: false, reason: 'private-host' }
+  // Exact equality against a list parseManifest has already lowercased and
+  // shape-checked. If that ever stops being true, this fails closed.
+  if (!hosts.includes(host)) return { ok: false, reason: 'host-not-declared' }
+
+  // No free Authorization: Basic for the declared host. The page performs this
+  // request, and credentials in the URL are capability the policy never meant
+  // to hand over.
+  url.username = ''
+  url.password = ''
   return { ok: true, url }
 }
