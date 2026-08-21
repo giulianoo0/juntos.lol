@@ -1,0 +1,115 @@
+import type { PluginManifest } from './manifest'
+
+/** Where a plugin came from, and whether it has a home to update from. */
+export type PluginOrigin =
+  | { kind: 'file'; fileName: string; updateUrl: string | null }
+  | { kind: 'git'; updateUrl: string; commit: string }
+
+/**
+ * A newer version held back because it wants hosts the install never
+ * approved. It sits here until the person says yes.
+ */
+export interface PendingUpdate {
+  source: string
+  sha256: string
+  manifest: PluginManifest
+  commit: string
+  newHosts: string[]
+}
+
+export interface InstalledPlugin {
+  /**
+   * The registry key: a hash of the origin, never `manifest.id`.
+   *
+   * Keyed by what the manifest calls itself, installing any repository that
+   * declared `id: 'torrentio'` would silently overwrite the installed
+   * Torrentio — its origin, its approved hosts and its code.
+   */
+  id: string
+  manifest: PluginManifest
+  source: string
+  sha256: string
+  origin: PluginOrigin
+  /** Hosts agreed to at install. The policy uses these, not the manifest's. */
+  approvedHosts: string[]
+  enabled: boolean
+  pendingUpdate: PendingUpdate | null
+  installedAt: number
+}
+
+const DB_NAME = 'ss-plugins'
+const DB_VERSION = 1
+const STORE = 'plugins'
+
+let connection: Promise<IDBDatabase> | null = null
+
+function open(): Promise<IDBDatabase> {
+  if (connection) return connection
+  connection = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE)) {
+        request.result.createObjectStore(STORE, { keyPath: 'id' })
+      }
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('plugin registry failed to open'))
+  })
+  return connection
+}
+
+function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+  return open().then((db) => new Promise<T>((resolve, reject) => {
+    const transaction = db.transaction(STORE, mode)
+    const request = work(transaction.objectStore(STORE))
+    let result: T
+    request.onsuccess = () => { result = request.result }
+    // Resolved on the transaction rather than the request: a write is not
+    // stored until it commits, and a commit can still fail after the request
+    // reported success.
+    transaction.oncomplete = () => resolve(result)
+    transaction.onabort = transaction.onerror = () =>
+      reject(transaction.error ?? request.error ?? new Error('plugin registry request failed'))
+  }))
+}
+
+export function listPlugins(): Promise<InstalledPlugin[]> {
+  return run<InstalledPlugin[]>('readonly', (store) => store.getAll() as IDBRequest<InstalledPlugin[]>)
+}
+
+export function getPlugin(id: string): Promise<InstalledPlugin | null> {
+  return run<InstalledPlugin | undefined>('readonly', (store) => store.get(id) as IDBRequest<InstalledPlugin | undefined>)
+    .then((value) => value ?? null)
+}
+
+export function putPlugin(plugin: InstalledPlugin): Promise<void> {
+  return run('readwrite', (store) => store.put(plugin) as IDBRequest<IDBValidKey>).then(() => undefined)
+}
+
+export function deletePlugin(id: string): Promise<void> {
+  return run('readwrite', (store) => store.delete(id) as IDBRequest<undefined>).then(() => undefined)
+}
+
+/**
+ * A plugin's identity: where it came from, never what it calls itself.
+ *
+ * Locked at install and never rewritten, which is what makes an update unable
+ * to redirect its own update channel — the `known_hosts` argument.
+ *
+ * Deliberately excludes the commit and a file's later-learned `updateUrl`:
+ * both change over the life of one plugin, and an identity that changes is
+ * not an identity.
+ */
+export function originKey(origin: PluginOrigin): string {
+  return origin.kind === 'git' ? `git:${origin.updateUrl}` : `file:${origin.fileName}`
+}
+
+export function originId(origin: PluginOrigin): Promise<string> {
+  return sha256Hex(originKey(origin))
+}
+
+/** Identifies a version of a plugin's code, for display and for comparison. */
+export async function sha256Hex(source: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}

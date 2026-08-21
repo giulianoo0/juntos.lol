@@ -1,4 +1,6 @@
 import '@testing-library/jest-dom/vitest'
+// jsdom has no IndexedDB, and the plugin registry lives in one.
+import 'fake-indexeddb/auto'
 import { cleanup } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'
 

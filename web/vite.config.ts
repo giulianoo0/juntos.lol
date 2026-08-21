@@ -16,7 +16,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
+    setupFiles: ['./test-setup/node-crypto.ts', './src/test/setup.ts'],
     css: true,
     environmentOptions: { jsdom: { url: 'http://localhost/' } },
   },
