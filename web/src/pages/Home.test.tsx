@@ -7,6 +7,18 @@ import { openTorrent } from '../torrent'
 
 vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn(), createRoomAndUploadTorrent: vi.fn() }))
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
+// The board would otherwise fetch Cinemeta over the real network.
+vi.mock('../catalog/cinemeta', () => ({
+  fetchCatalog: vi.fn().mockResolvedValue([]),
+  searchCatalog: vi.fn().mockResolvedValue([]),
+  fetchMeta: vi.fn().mockResolvedValue(null),
+}))
+
+// The drop-zone lives behind the manual-upload dialog now: menu, then panel.
+function openFilePanel() {
+  fireEvent.click(screen.getByRole('button', { name: /manual upload|upload manualmente/i }))
+  fireEvent.click(screen.getByRole('button', { name: /upload a file|enviar um arquivo/i }))
+}
 
 describe('Home', () => {
   beforeEach(() => {
@@ -16,14 +28,15 @@ describe('Home', () => {
     vi.mocked(createRoomAndUploadTorrent).mockResolvedValue({ roomID: 'torrent-room', nickname: 'giuli' })
   })
 
-  it('renders the headline and starts upload after file selection', async () => {
+  it('renders the catalog board and starts upload after file selection', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
+    expect(screen.getByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
+    openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.change(screen.getByLabelText(/your name|seu nome/i), { target: { value: 'giuli' } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
     await waitFor(() => expect(createRoomAndUpload).toHaveBeenCalledOnce())
-    expect(screen.getByRole('heading', { name: /start a watch room|crie uma sala/i })).toBeInTheDocument()
     const history = JSON.parse(localStorage.getItem('ss.room-history.v1') ?? '[]') as Array<Record<string, unknown>>
     expect(history[0]).toMatchObject({ fileName: 'movie.mkv', id: 'room1234' })
     expect(history[0]).not.toHaveProperty('nickname')
@@ -31,6 +44,7 @@ describe('Home', () => {
 
   it('rejects a file over the limit without network work', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
+    openFilePanel()
     const file = new File(['x'], 'huge.mkv')
     Object.defineProperty(file, 'size', { value: MAX_UPLOAD_BYTES + 1 })
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
@@ -42,6 +56,7 @@ describe('Home', () => {
   it('uses the server-generated name when the name is blank', async () => {
     vi.mocked(createRoomAndUpload).mockResolvedValue({ roomID: 'room1234', nickname: 'Guest-abc123' })
     render(<MemoryRouter><Home /></MemoryRouter>)
+    openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
@@ -57,6 +72,7 @@ describe('Home', () => {
       return new Promise(() => undefined) // conversion still running
     })
     render(<MemoryRouter><Home /></MemoryRouter>)
+    openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mp4', { type: 'video/mp4' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
@@ -78,6 +94,7 @@ describe('Home', () => {
         </Routes>
       </MemoryRouter>,
     )
+    openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
@@ -101,6 +118,7 @@ describe('Home', () => {
     })
 
     render(<MemoryRouter><Home /></MemoryRouter>)
+    openFilePanel()
     fireEvent.click(screen.getByRole('button', { name: /open torrent|abrir torrent/i }))
     fireEvent.change(screen.getByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
     fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))

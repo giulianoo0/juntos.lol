@@ -208,3 +208,112 @@ h1, h2, p { margin-top: 0; }
 .waiting-row.is-ignored { opacity: .55; }
 .waiting-state { display: inline-flex; align-items: center; gap: 8px; }
 .waiting-state .ui-button { padding: 3px 8px; font-size: 11px; }
+
+/* --- catalog ----------------------------------------------------------- */
+/* The board replaces the centred hero: full width, top-aligned, with the
+   fixed header's height cleared. */
+.catalog-shell { display: block; padding: 96px clamp(16px, 4vw, 54px) 40px; }
+.catalog-shell .history-panel { margin: 0 auto; }
+.catalog-stage { max-width: 1240px; margin: 0 auto; }
+.catalog-stage .progress-wrap, .catalog-stage .error-card { max-width: 560px; margin-left: auto; margin-right: auto; }
+.catalog-starting { margin-top: 18px; text-align: center; color: var(--text-dim); font-size: 13px; }
+.catalog-browser.is-compact { max-width: none; }
+.catalog-search { display: flex; align-items: center; gap: 10px; width: min(560px, 100%); margin: 0 auto 30px; padding: 0 16px; border-radius: 999px; color: var(--text-dim); }
+.catalog-search input { flex: 1; min-width: 0; padding: 13px 0; background: transparent; border: 0; outline: 0; }
+.catalog-search input::-webkit-search-cancel-button { display: none; }
+.catalog-search-clear { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; color: var(--text-dim); background: rgba(255,255,255,.06); }
+.catalog-row { margin-bottom: 30px; }
+.catalog-row h2 { margin: 0 0 12px; font-size: 17px; letter-spacing: -.02em; }
+.catalog-strip { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(118px, 13vw, 164px); gap: 14px; overflow-x: auto; padding: 6px 2px 14px; scrollbar-width: thin; }
+.catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 18px 14px; padding: 4px 2px; }
+.catalog-empty { padding: 18px 2px; }
+.catalog-retry { padding: 2px 8px; border: 0; border-radius: 999px; color: #b8bcff; background: rgba(120,127,250,.12); font-size: 12px; }
+
+/* One poster. The hover lift is CSS-only and pointer-gated: this card is
+   seen far too often to earn real animation. */
+.poster-card { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
+.poster-art { position: relative; display: grid; place-items: center; aspect-ratio: 2 / 3; width: 100%; overflow: hidden; border-radius: 14px; background: var(--card); color: var(--text-faint); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 8px 26px rgba(0,0,0,.32); transition: transform 150ms var(--ease), box-shadow 150ms var(--ease); }
+.poster-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (hover: hover) and (pointer: fine) {
+  .poster-card:hover .poster-art { transform: translateY(-3px) scale(1.03); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 16px 40px rgba(0,0,0,.42), 0 0 0 1px rgba(120,127,250,.35); }
+}
+.poster-card:focus-visible { outline: none; }
+.poster-card:focus-visible .poster-art { outline: 2px solid color-mix(in srgb, var(--primary) 72%, white); outline-offset: 2px; }
+.poster-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 550; }
+.poster-year { color: var(--text-faint); font-size: 11px; }
+.poster-skeleton { aspect-ratio: 2 / 3; border-radius: 14px; background: linear-gradient(110deg, var(--card) 40%, var(--card-hover) 50%, var(--card) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+@keyframes skeleton-sweep { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .poster-skeleton { animation: none; } }
+
+/* --- title details ------------------------------------------------------ */
+/* The panel that morphs out of a poster. Its resting geometry lives here in
+   CSS; the morph borrows it, then hands it back. */
+.details-layer { position: fixed; inset: 0; z-index: 55; }
+.details-backdrop { position: absolute; inset: 0; background: rgba(4,5,8,.78); backdrop-filter: blur(3px); }
+.details-panel { position: absolute; inset: 0; margin: auto; width: min(880px, calc(100vw - 28px)); height: min(86dvh, 780px); overflow: hidden auto; border-radius: 26px; background: #12141d; outline: none; }
+.details-hero { position: sticky; top: 0; height: 300px; margin-bottom: -230px; background-size: cover; background-position: center 20%; }
+.details-hero-poster { width: 100%; height: 100%; object-fit: cover; filter: blur(30px) brightness(.7); transform: scale(1.1); }
+.details-hero-scrim { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(18,20,29,.1), rgba(18,20,29,.86) 72%, #12141d); }
+.details-content { position: relative; padding: 0 clamp(20px, 5vw, 44px) 34px; }
+.details-close { position: sticky; top: 14px; float: right; margin-right: -8px; z-index: 3; background: rgba(7,8,12,.6); backdrop-filter: blur(10px); }
+.details-content h2 { margin: 0 0 10px; font-size: clamp(26px, 4vw, 38px); line-height: 1.05; letter-spacing: -.04em; text-shadow: 0 2px 18px rgba(0,0,0,.55); }
+.details-meta-line { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 14px; color: var(--text-dim); font-size: 13px; }
+.details-rating { display: inline-flex; align-items: center; gap: 4px; color: #f6cf65; }
+.details-description { max-width: 62ch; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
+.details-cast { margin-bottom: 8px; color: var(--text-faint); font-size: 12px; }
+.details-episodes { margin-top: 18px; }
+.details-season-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.details-season-row label { color: var(--text-dim); font-size: 12px; }
+.details-season-row select { padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-control); background: var(--well); }
+.details-episode-list { display: grid; gap: 6px; max-height: 250px; overflow: auto; padding-right: 4px; }
+.details-episode-list button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 13px; border: 0; border-radius: 13px; background: rgba(255,255,255,.04); text-align: left; }
+.details-episode-list button:hover { background: rgba(255,255,255,.07); }
+.details-episode-list button.is-selected { background: var(--primary-soft); box-shadow: 0 0 0 1px rgba(120,127,250,.5); }
+.episode-number { flex: 0 0 auto; min-width: 24px; color: #b8bcff; font-size: 12px; font-variant-numeric: tabular-nums; }
+.episode-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.details-request { margin-top: 22px; display: grid; justify-items: start; gap: 10px; }
+.details-request .primary-button { display: inline-flex; align-items: center; gap: 8px; }
+.details-streams { margin-top: 22px; }
+.details-streams-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.details-streams h3 { margin: 0; font-size: 15px; }
+.stream-filters { display: flex; gap: 8px; }
+.stream-filters select { max-width: 190px; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--r-control); background: var(--well); font-size: 12px; }
+.details-streams-loading { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 13px; }
+.details-spin { animation: torrent-spin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .details-spin { animation-duration: 2s; } }
+.stream-list { display: grid; gap: 7px; }
+.stream-list > button { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 12px; width: 100%; padding: 11px 14px; border: 0; border-radius: 13px; background: rgba(255,255,255,.04); text-align: left; }
+.stream-list > button:hover { background: rgba(120,127,250,.13); }
+.stream-quality { flex: 0 0 auto; padding: 3px 8px; border-radius: 999px; background: rgba(120,127,250,.14); color: #c7caff; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.stream-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-dim); }
+.stream-facts { display: inline-flex; gap: 10px; color: var(--text-faint); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* --- in-room catalog overlay ------------------------------------------- */
+.catalog-overlay { position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column; background: rgba(7,8,12,.94); backdrop-filter: blur(20px) saturate(120%); }
+.catalog-overlay-head { display: flex; align-items: center; justify-content: space-between; padding: 18px clamp(16px, 4vw, 44px) 4px; }
+.catalog-overlay-head h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
+.catalog-overlay-head .dialog-close { position: static; }
+.catalog-overlay-body { flex: 1; min-height: 0; overflow: auto; padding: 12px clamp(16px, 4vw, 44px) 30px; }
+
+/* A viewer's ask, floating over the player until someone acts on it. */
+.request-stack { position: fixed; left: 20px; bottom: 20px; z-index: 48; display: flex; flex-direction: column; gap: 10px; width: min(340px, calc(100vw - 40px)); }
+.request-card { position: relative; display: flex; gap: 12px; padding: 12px 34px 12px 12px; border-radius: 18px; background: var(--glass); border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(22px) saturate(130%); animation: toast-enter var(--t-open) var(--ease) both; }
+@media (prefers-reduced-motion: reduce) { .request-card { animation: none; } }
+.request-card img { flex: 0 0 auto; width: 44px; height: 66px; object-fit: cover; border-radius: 8px; }
+.request-copy { min-width: 0; display: grid; align-content: center; gap: 7px; }
+.request-copy p { margin: 0; font-size: 13px; line-height: 1.4; }
+.request-copy strong { color: #c7caff; }
+.request-open { justify-self: start; padding: 5px 11px; border: 0; border-radius: 999px; background: var(--primary); color: white; font-size: 12px; font-weight: 600; }
+.request-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
+
+/* The manual-upload dialog reuses the drop-zone at a size that fits a modal. */
+.upload-dialog { width: min(560px, calc(100vw - 32px)); }
+.dialog-drop { min-height: 260px; padding: 24px; border-radius: 22px; }
+
+@media (max-width: 620px) {
+  .catalog-shell { padding: 84px 12px 24px; }
+  .details-panel { width: 100vw; height: 100dvh; max-height: none; border-radius: 0; }
+  .details-hero { height: 220px; margin-bottom: -160px; }
+  .catalog-strip { grid-auto-columns: 118px; }
+  .request-stack { left: 12px; bottom: 12px; }
+}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { History, MonitorUp, Plus, Upload } from 'lucide-react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { History, MonitorUp, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
@@ -9,6 +9,11 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import { CatalogBrowser } from '../catalog/CatalogBrowser'
+import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
+import { openCatalogStream } from '../catalog/openStream'
+import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
+import type { TitleOpen } from '../catalog/PosterCard'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 const HISTORY_KEY = 'ss.room-history.v1'
@@ -25,6 +30,15 @@ type PendingMedia =
   // The screen is granted before the room exists, so the pending pick carries
   // the live stream through the nickname step.
   | { kind: 'screen'; stream: MediaStream }
+  // A catalog pick: the torrent only opens after the nickname is confirmed.
+  | { kind: 'stream'; pick: TitlePick }
+
+// The morph origin travels through router state, which must be serializable —
+// a live DOMRect is not.
+interface TitleLocationState {
+  meta?: CatalogMeta
+  rect?: { top: number; left: number; width: number; height: number }
+}
 
 function readHistory(): RoomHistoryEntry[] {
   try {
@@ -44,9 +58,15 @@ function readHistory(): RoomHistoryEntry[] {
   }
 }
 
+function isMetaType(value: string | undefined): value is MetaType {
+  return value === 'movie' || value === 'series'
+}
+
 export function Home() {
   const t = useT()
   const navigate = useNavigate()
+  const params = useParams<{ type?: string; id?: string }>()
+  const location = useLocation()
   const inputRef = useRef<HTMLInputElement>(null)
   const [nickname, setNickname] = useState(() => localStorage.getItem('ss.nickname') ?? '')
   const [dragging, setDragging] = useState(false)
@@ -57,8 +77,21 @@ export function Home() {
   const [history, setHistory] = useState<RoomHistoryEntry[]>(readHistory)
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
+  const [manualOpen, setManualOpen] = useState<false | 'menu' | 'file'>(false)
   const [torrentOpen, setTorrentOpen] = useState(false)
   const [historyStatus, setHistoryStatus] = useState<Record<string, 'checking' | 'live' | 'expired'>>({})
+
+  // The details panel is URL-driven: /title/:type/:id renders it over the
+  // board, so every title is deep-linkable. A click also stashes the poster's
+  // rect (and full meta) in router state, which the morph grows out of; a
+  // direct visit has neither and fades in instead.
+  const state = (location.state ?? {}) as TitleLocationState
+  const detailsOpen: TitleOpen | null = isMetaType(params.type) && params.id
+    ? {
+      meta: state.meta?.id === params.id ? state.meta : { id: params.id, type: params.type, name: state.meta?.name ?? '', poster: '', releaseInfo: '' },
+      rect: state.rect ? new DOMRect(state.rect.left, state.rect.top, state.rect.width, state.rect.height) : undefined,
+    }
+    : null
 
   // A room outlives its history entry by only a few hours, so the entry alone
   // says nothing about whether the link still works. Ask the server.
@@ -86,6 +119,7 @@ export function Home() {
   // The picker has to open inside this click, and before any room is created:
   // closing it then leaves nothing behind.
   const startScreenRoom = () => {
+    setManualOpen(false)
     void requestScreenStream().then((stream) => {
       setError('')
       setDraftNickname(nickname)
@@ -107,8 +141,26 @@ export function Home() {
       return
     }
     setError('')
+    setManualOpen(false)
     setDraftNickname(nickname)
     setPendingMedia({ kind: 'local', file })
+  }
+
+  const openTitle = (open: TitleOpen) => {
+    const rect = open.rect
+      ? { top: open.rect.top, left: open.rect.left, width: open.rect.width, height: open.rect.height }
+      : undefined
+    navigate(`/title/${open.meta.type}/${encodeURIComponent(open.meta.id)}`, { state: { meta: open.meta, rect } })
+  }
+
+  const closeTitle = () => {
+    navigate('/', { state: null })
+  }
+
+  const pickStream = (pick: TitlePick) => {
+    setError('')
+    setDraftNickname(nickname)
+    setPendingMedia({ kind: 'stream', pick })
   }
 
   const startUpload = async () => {
@@ -119,16 +171,31 @@ export function Home() {
     try {
       // Resolves once the room exists and the upload has started; MP4s are
       // converted to MKV first, which is what the preparing state covers.
-      const room = media.kind === 'local'
-        ? await createRoomAndUpload(media.file, draftNickname.trim(), setProgress)
-        : media.kind === 'torrent'
-          ? await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
-          : await createScreenRoom(draftNickname.trim())
+      let room
+      let fileName = ''
+      if (media.kind === 'local') {
+        room = await createRoomAndUpload(media.file, draftNickname.trim(), setProgress)
+        fileName = media.file.name
+      } else if (media.kind === 'torrent') {
+        room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
+        fileName = media.file.name
+      } else if (media.kind === 'stream') {
+        // Opening the torrent is part of the start: peers and metadata first,
+        // then the room, so a dead stream never leaves an empty room behind.
+        setProgress({ phase: 'converting', pct: 0 })
+        const opened = await openCatalogStream(media.pick.stream)
+        setProgress(null)
+        room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
+        fileName = media.pick.displayName
+      } else {
+        room = await createScreenRoom(draftNickname.trim())
+        fileName = t('room.screenLabel')
+      }
       if (media.kind === 'screen') stashScreenStream(room.roomID, media.stream)
       setNickname(room.nickname)
       localStorage.setItem('ss.nickname', room.nickname)
       const nextHistory = [
-        { id: room.roomID, fileName: media.kind === 'screen' ? t('room.screenLabel') : media.file.name, createdAt: Date.now() },
+        { id: room.roomID, fileName, createdAt: Date.now() },
         ...history.filter((entry) => entry.id !== room.roomID),
       ].slice(0, 12)
       localStorage.setItem(HISTORY_KEY, JSON.stringify(nextHistory))
@@ -155,11 +222,12 @@ export function Home() {
   }
 
   return (
-    <main className="home-shell">
+    <main className="home-shell catalog-shell">
       <header className="home-header">
         <a className="home-wordmark" href="/">ss.giuli.dev</a>
         <nav aria-label={t('home.navigation')}>
-          <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}><Plus size={15} aria-hidden="true" />{t('home.newRoom')}</button>
+          <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}>{t('catalog.tab')}</button>
+          <button onClick={() => setManualOpen('menu')}><Upload size={15} aria-hidden="true" />{t('home.uploadManually')}</button>
           <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(true)}><History size={15} aria-hidden="true" />{t('home.history')}</button>
         </nav>
         <div className="header-end">
@@ -192,41 +260,71 @@ export function Home() {
           ) : <p className="empty-copy">{t('home.noHistory')}</p>}
         </section>
       ) : (
-      <section className="home-stage">
-        <div className="home-intro">
-          <h1>{t('home.title')}</h1>
-          <p>{t('home.guide')}</p>
-        </div>
-        <div
-          className={`drop-zone ${dragging ? 'is-dragging' : ''}`}
-          onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
-          <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
-          <strong>{t('home.drop')}</strong>
-          <span>{t('home.dropHint')}</span>
-          <div className="drop-actions">
-            <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
-            <button className="torrent-button" onClick={() => setTorrentOpen(true)}>
-              <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
-            </button>
-            <button className="torrent-button" onClick={startScreenRoom}>
-              <MonitorUp size={16} aria-hidden="true" />{t('home.shareScreen')}
-            </button>
-          </div>
-        </div>
-        {progress?.phase === 'converting' ? (
-          <div className="progress-wrap" aria-label={t('home.preparing')}>
-            <div className="progress-copy"><span>{t('home.preparing')}</span><span>{progress.pct}%</span></div>
-            <div className="progress-track"><span style={{ width: `${progress.pct}%` }} /></div>
-          </div>
-        ) : null}
-        {error ? <div className="error-card" role="alert">{error}</div> : null}
-      </section>
+        <section className="catalog-stage">
+          <CatalogBrowser onOpenTitle={openTitle} />
+          {progress?.phase === 'converting' ? (
+            <div className="progress-wrap" aria-label={t('home.preparing')}>
+              <div className="progress-copy"><span>{t('home.preparing')}</span><span>{progress.pct}%</span></div>
+              <div className="progress-track"><span style={{ width: `${progress.pct}%` }} /></div>
+            </div>
+          ) : null}
+          {starting && !progress ? <p className="catalog-starting">{t('catalog.opening')}</p> : null}
+          {error ? <div className="error-card" role="alert">{error}</div> : null}
+        </section>
       )}
+
+      {detailsOpen ? (
+        <MetaDetails
+          key={`${detailsOpen.meta.type}:${detailsOpen.meta.id}`}
+          open={detailsOpen}
+          mode="create"
+          onClose={closeTitle}
+          onPickStream={pickStream}
+        />
+      ) : null}
+
+      <Dialog open={manualOpen !== false} onOpenChange={(open) => { if (!open) setManualOpen(false) }}>
+        {manualOpen !== false ? (
+          <DialogContent
+            className={manualOpen === 'file' ? 'upload-dialog' : ''}
+            closeLabel={t('home.closeDialog')}
+            title={t('home.uploadManually')}
+            description={manualOpen === 'menu' ? t('home.uploadGuide') : t('home.dropHint')}
+          >
+            {manualOpen === 'menu' ? (
+              <div className="source-options">
+                <button onClick={() => setManualOpen('file')}>
+                  <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
+                </button>
+                <button onClick={startScreenRoom}>
+                  <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
+                </button>
+              </div>
+            ) : (
+              <div
+                className={`drop-zone dialog-drop ${dragging ? 'is-dragging' : ''}`}
+                onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+              >
+                <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
+                <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
+                <strong>{t('home.drop')}</strong>
+                <span>{t('home.dropHint')}</span>
+                <div className="drop-actions">
+                  <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
+                  <button className="torrent-button" onClick={() => { setManualOpen(false); setTorrentOpen(true) }}>
+                    <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+                  </button>
+                </div>
+                {error ? <div className="error-card" role="alert">{error}</div> : null}
+              </div>
+            )}
+          </DialogContent>
+        ) : null}
+      </Dialog>
+
       <Dialog open={torrentOpen} onOpenChange={setTorrentOpen}>
         {torrentOpen ? (
           <DialogContent
@@ -243,6 +341,7 @@ export function Home() {
           </DialogContent>
         ) : null}
       </Dialog>
+
       <Dialog
         open={pendingMedia !== null}
         onOpenChange={(open) => {
@@ -257,7 +356,11 @@ export function Home() {
             title={t('home.dialogTitle')}
             description={t('home.dialogGuide')}
           >
-            <span className="dialog-file">{pendingMedia.kind === 'screen' ? t('home.screenDialog') : pendingMedia.file.name}</span>
+            <span className="dialog-file">
+              {pendingMedia.kind === 'screen' ? t('home.screenDialog')
+                : pendingMedia.kind === 'stream' ? pendingMedia.pick.displayName
+                  : pendingMedia.file.name}
+            </span>
             <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
               <label htmlFor="nickname">{t('home.nickname')}</label>
               <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />

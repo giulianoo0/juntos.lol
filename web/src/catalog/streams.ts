@@ -15,14 +15,21 @@ const TRACKERS = [
   'wss://tracker.openwebtorrent.com',
 ]
 
+export type StreamResolution = '2160p' | '1080p' | '720p' | 'sd'
+
 export interface CatalogStream {
   // First line of the addon's name field, e.g. "Torrentio 1080p".
   quality: string
-  // The release name, cleaned of the stats line.
+  resolution: StreamResolution
+  // The release name, cleaned of the stats and language lines.
   label: string
   seeders: number | null
   size: string
   source: string
+  // Flag emojis for the languages the release carries — Torrentio lists a
+  // flag whether the language comes as audio or as subtitles, which is
+  // exactly what the language filter wants.
+  languages: string[]
   infoHash: string
   fileName: string
 }
@@ -34,22 +41,45 @@ export interface StreamTarget {
   episode?: number
 }
 
+const FLAG_PATTERN = /\p{Regional_Indicator}\p{Regional_Indicator}/gu
+// `test` on a global regex advances lastIndex between calls; detection needs
+// its own stateless copy.
+const FLAG_TEST = /\p{Regional_Indicator}\p{Regional_Indicator}/u
+// Release-name markers for Brazilian dubbed/dual audio; those releases often
+// skip the flag line, and the language filter must still find them.
+const PT_BR_MARKERS = /dublado|dual[\s.]?(audio|áudio)?|nacional|dublagem/i
+
 // Torrentio packs the release name plus a stats line ("👤 12 💾 1.4 GB ⚙️ x")
-// into `title`, newline-separated. Pull the stats out so the list can render
-// them as fields instead of emoji soup.
-export function parseStreamTitle(title: string): { label: string; seeders: number | null; size: string; source: string } {
+// and sometimes a language line ("Multi Subs / 🇧🇷 / 🇪🇸") into `title`,
+// newline-separated. Pull those apart so the list can render fields and
+// filters instead of emoji soup.
+export function parseStreamTitle(title: string): { label: string; seeders: number | null; size: string; source: string; languages: string[] } {
   const lines = title.split('\n')
   const statsLine = lines.find((line) => line.includes('👤') || line.includes('💾')) ?? ''
+  const languageLines = lines.filter((line) => line !== statsLine && FLAG_TEST.test(line))
   const seeders = /👤\s*(\d+)/.exec(statsLine)
   const size = /💾\s*([\d.,]+\s*[KMGT]?B)/.exec(statsLine)
   const source = /⚙️\s*(.+?)\s*$/.exec(statsLine)
-  const label = lines.filter((line) => line !== statsLine && line.trim() !== '').join(' ')
+  const label = lines.filter((line) => line !== statsLine && !languageLines.includes(line) && line.trim() !== '').join(' ')
+  const languages = [...new Set(languageLines.flatMap((line) => line.match(FLAG_PATTERN) ?? []))]
+  if (PT_BR_MARKERS.test(label) && !languages.includes('🇧🇷')) languages.push('🇧🇷')
   return {
     label,
     seeders: seeders ? Number(seeders[1]) : null,
     size: size ? size[1] : '',
     source: source ? source[1] : '',
+    languages,
   }
+}
+
+// The resolution bucket comes from the addon's own quality tag, falling back
+// to the release name.
+export function streamResolution(quality: string, label: string): StreamResolution {
+  const haystack = `${quality} ${label}`.toLowerCase()
+  if (/\b(2160p|4k)\b/.test(haystack)) return '2160p'
+  if (/\b1080p\b/.test(haystack)) return '1080p'
+  if (/\b720p\b/.test(haystack)) return '720p'
+  return 'sd'
 }
 
 export function parseStreams(payload: unknown): CatalogStream[] {
@@ -66,12 +96,15 @@ export function parseStreams(payload: unknown): CatalogStream[] {
       ? stream.behaviorHints as Record<string, unknown>
       : {}
     const parsed = parseStreamTitle(title)
+    const quality = typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : ''
     result.push({
-      quality: typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : '',
+      quality,
+      resolution: streamResolution(quality, parsed.label),
       label: parsed.label,
       seeders: parsed.seeders,
       size: parsed.size,
       source: parsed.source,
+      languages: parsed.languages,
       infoHash: stream.infoHash.toLowerCase(),
       fileName: typeof hints.filename === 'string' ? hints.filename : '',
     })
