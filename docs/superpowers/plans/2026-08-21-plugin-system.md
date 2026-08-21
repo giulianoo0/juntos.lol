@@ -82,7 +82,7 @@ describe('parseManifest', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/manifest.test.ts`
+Run: `cd web && npm run test -- src/plugins/manifest.test.ts`
 Expected: FAIL — `Failed to resolve import "./manifest"`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -163,7 +163,7 @@ export function parseManifest(value: unknown): PluginManifest {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plugins/manifest.test.ts`
+Run: `cd web && npm run test -- src/plugins/manifest.test.ts`
 Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
@@ -239,7 +239,7 @@ describe('checkFetchUrl', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/policy.test.ts`
+Run: `cd web && npm run test -- src/plugins/policy.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -291,7 +291,7 @@ export function checkFetchUrl(raw: string, hosts: string[], selfOrigin: string):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plugins/policy.test.ts`
+Run: `cd web && npm run test -- src/plugins/policy.test.ts`
 Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
@@ -461,7 +461,7 @@ describe('runPlugin', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/runtime.test.ts`
+Run: `cd web && npm run test -- src/plugins/runtime.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -616,7 +616,7 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plugins/runtime.test.ts`
+Run: `cd web && npm run test -- src/plugins/runtime.test.ts`
 Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
@@ -1041,7 +1041,7 @@ describe('sha256Hex', () => {
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/store.test.ts`
+Run: `cd web && npm run test -- src/plugins/store.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 4: Write minimal implementation**
@@ -1155,7 +1155,7 @@ export async function sha256Hex(source: string): Promise<string> {
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plugins/store.test.ts`
+Run: `cd web && npm run test -- src/plugins/store.test.ts`
 Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Commit**
@@ -1259,7 +1259,7 @@ describe('buildInstall', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/install.test.ts`
+Run: `cd web && npm run test -- src/plugins/install.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1306,7 +1306,19 @@ export async function readManifestFromSource(source: string): Promise<PluginMani
 /** Importing a module and reading one object is not a 15-second job. */
 const MANIFEST_TIMEOUT_MS = 5_000
 
-export function gitSourceUrls(repoUrl: string): { rawUrl: string; commitApi: string } {
+/**
+ * The one spelling of a repository address that gets stored.
+ *
+ * The registry key is a hash of this, and an update is refused when it does
+ * not match what the manifest declares — so a value that varies with how
+ * someone typed it breaks updating outright.
+ */
+export function canonicalRepoUrl(repoUrl: string): string {
+  const { owner, repo } = repoParts(repoUrl)
+  return `https://github.com/${owner}/${repo}`
+}
+
+function repoParts(repoUrl: string): { owner: string; repo: string } {
   let url: URL
   try {
     url = new URL(repoUrl)
@@ -1314,10 +1326,16 @@ export function gitSourceUrls(repoUrl: string): { rawUrl: string; commitApi: str
     throw new Error('plugin source: not a URL')
   }
   if (url.protocol !== 'https:') throw new Error('plugin source: must be https')
-  if (url.hostname !== 'github.com') throw new Error('plugin source: only github repositories are supported')
+  if (url.hostname.toLowerCase().replace(/\.+$/, '') !== 'github.com') {
+    throw new Error('plugin source: only github repositories are supported')
+  }
   const parts = url.pathname.replace(/\.git\/?$/, '').split('/').filter(Boolean)
   if (parts.length < 2) throw new Error('plugin source: not a repository path')
-  const [owner, repo] = parts
+  return { owner: parts[0], repo: parts[1] }
+}
+
+export function gitSourceUrls(repoUrl: string): { rawUrl: string; commitApi: string } {
+  const { owner, repo } = repoParts(repoUrl)
   return {
     // HEAD rather than a branch name: a repository that renamed its default
     // branch keeps working, and a plugin installed today keeps updating.
@@ -1374,7 +1392,7 @@ export async function buildInstall(source: string, origin: PluginOrigin, deps: I
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plugins/install.test.ts`
+Run: `cd web && npm run test -- src/plugins/install.test.ts`
 Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
@@ -1520,7 +1538,7 @@ describe('approvePendingUpdate', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/update.test.ts`
+Run: `cd web && npm run test -- src/plugins/update.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1640,7 +1658,7 @@ export async function updateAll(deps: UpdateDeps = {}): Promise<Record<string, U
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plugins/update.test.ts && npx tsc -b`
+Run: `cd web && npm run test -- src/plugins/update.test.ts && npx tsc -b`
 Expected: PASS, 11 testes, e `tsc` limpo.
 
 - [ ] **Step 5: Commit**
@@ -1664,7 +1682,7 @@ git commit -m "feat: update plugins from their locked origin, holding new hosts 
 - Consumes: nada novo.
 - Produces:
   - `type StreamLocation = { kind: 'torrent'; infoHash: string; fileIdx: number | null; fileName: string } | { kind: 'url'; url: string }`
-  - `CatalogStream` perde `infoHash`, `fileName` e `fileIdx` do topo e ganha `location: StreamLocation` e `pluginId: string`.
+  - `CatalogStream` perde `infoHash`, `fileName` e `fileIdx` do topo e ganha `location: StreamLocation`, `pluginId: string` e `pluginName: string`. O `pluginId` é a chave do registro, que em produção é um SHA-256 de 64 caracteres — opaco de propósito, e inútil para dizer a alguém de onde veio uma fonte ruim. O `pluginName` é o que a interface mostra.
   - `buildMagnet(location: Extract<StreamLocation, { kind: 'torrent' }>, label: string): string`
   - `streamKey(stream: CatalogStream): string`
 
@@ -1680,9 +1698,11 @@ describe('parseStreams', () => {
         name: 'Torrentio\n1080p', title: 'Movie.1080p\n👤 9 💾 2 GB ⚙️ X',
         infoHash: 'A'.repeat(40), fileIdx: 3, behaviorHints: { filename: 'Movie.mkv' },
       }],
-    }, 'torrentio')
+    }, 'sha-of-origin', 'Torrentio')
     expect(stream.location).toEqual({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx: 3, fileName: 'Movie.mkv' })
-    expect(stream.pluginId).toBe('torrentio')
+    // The id is the opaque registry key; the name is what a person reads.
+    expect(stream.pluginId).toBe('sha-of-origin')
+    expect(stream.pluginName).toBe('Torrentio')
     expect(stream.resolution).toBe('1080p')
   })
 
@@ -1716,7 +1736,7 @@ describe('buildMagnet', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/catalog/streams.test.ts`
+Run: `cd web && npm run test -- src/catalog/streams.test.ts`
 Expected: FAIL — `parseStreams` recebe dois argumentos e `stream.location` não existe.
 
 - [ ] **Step 3: Write the implementation**
@@ -1742,7 +1762,10 @@ export interface CatalogStream {
   languages: string[]
   location: StreamLocation
   /** Which plugin produced this, so a bad source can be traced to its author. */
+  /** The registry key of the plugin that produced this. Opaque. */
   pluginId: string
+  /** What that plugin calls itself, which is what a person can act on. */
+  pluginName: string
 }
 
 function readLocation(stream: Record<string, unknown>): StreamLocation | null {
@@ -1771,7 +1794,7 @@ function readLocation(stream: Record<string, unknown>): StreamLocation | null {
   return null
 }
 
-export function parseStreams(payload: unknown, pluginId: string): CatalogStream[] {
+export function parseStreams(payload: unknown, pluginId: string, pluginName = ''): CatalogStream[] {
   if (typeof payload !== 'object' || payload === null) return []
   const streams = (payload as { streams?: unknown }).streams
   if (!Array.isArray(streams)) return []
@@ -1789,6 +1812,7 @@ export function parseStreams(payload: unknown, pluginId: string): CatalogStream[
       ...parsed,
       location,
       pluginId,
+      pluginName,
     })
   }
   return result
@@ -1841,8 +1865,8 @@ Em `web/src/catalog/MetaDetails.tsx`, linha 504, troque a chave por `key={`${str
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd web && npx vitest run src/catalog/streams.test.ts && npx tsc -b`
-Run: `cd web && npx vitest run && npx tsc -b && npx oxlint src`
+Run: `cd web && npm run test -- src/catalog/streams.test.ts && npx tsc -b`
+Run: `cd web && npm run test -- && npx tsc -b && npx oxlint src`
 Expected: verde. `MetaDetails.tsx` continua compilando porque `fetchStreams` continua existindo e a linha 504 agora usa `streamKey`.
 
 - [ ] **Step 5: Commit**
@@ -1926,7 +1950,7 @@ describe('resolveStreams', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/resolve.test.ts`
+Run: `cd web && npm run test -- src/plugins/resolve.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1971,7 +1995,7 @@ export async function resolveStreams(target: StreamTarget, deps: ResolveDeps = {
   if (enabled.length === 0) return { kind: 'no-plugins' }
 
   const settled = await Promise.allSettled(enabled.map(async (plugin) => (
-    parseStreams({ streams: await run(plugin, target) }, plugin.id)
+    parseStreams({ streams: await run(plugin, target) }, plugin.id, plugin.manifest.name)
   )))
   const streams = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
   return { kind: 'streams', streams }
@@ -1982,7 +2006,19 @@ Note que `run` devolve o array cru do plugin e `parseStreams` espera `{ streams 
 
 - [ ] **Step 4: Wire MetaDetails and delete the hardcoded addon**
 
-Primeiro, em `web/src/catalog/streams.ts`, apague a constante `ADDON_BASE` e a função `fetchStreams` inteiras, junto com o comentário do topo que fala do addon. Agora existe um chamador melhor, e um endereço de addon embutido é exatamente o que este sistema substitui. `MetaDetails.tsx` é o único importador de `fetchStreams`, e os passos abaixo o reescrevem.
+Primeiro, em `web/src/catalog/streams.ts`, apague a constante `ADDON_BASE` e a função `fetchStreams` inteiras, junto com o comentário do topo que fala do addon.
+
+`fetchStreams` tem **dois** importadores, não um: `MetaDetails.tsx` e `web/src/catalog/useNextEpisode.ts:3`, que o chama na linha 71 para sugerir o próximo episódio. Confira com `grep -rn fetchStreams web/src` antes de apagar. O segundo vira:
+
+```ts
+// web/src/catalog/useNextEpisode.ts — no lugar da chamada da linha 71
+const resolved = await resolveStreams({ type: 'series', id: now.metaId, season: next.season, episode: next.episode })
+// Sem plugin instalado não há o que sugerir, e é o mesmo silêncio de não
+// achar fonte: o convite para instalar mora na tela de detalhes, não aqui.
+const streams = resolved.kind === 'streams' ? resolved.streams : []
+```
+
+Ele consome `CatalogStream.resolution`, que a Task 8 não mexeu, então nada mais muda ali. Acrescente `useNextEpisode.ts` aos `Files` desta task e ao `git add` do commit.
 
 Depois, em `web/src/catalog/MetaDetails.tsx`:
 
@@ -2065,7 +2101,7 @@ Run: `cd web && npm run test && npx tsc -b && npm run lint`
 Expected: tudo verde, exceto o que a Task 12 vai consertar em `Home.tsx`/`Room.tsx` (chamada de `openCatalogStream` sem o estreitamento de tipo). Se `tsc` reclamar disso, aplique já o estreitamento mínimo:
 
 ```tsx
-if (pick.stream.location.kind !== 'torrent') throw new Error('url sources arrive in task 12')
+if (pick.stream.location.kind !== 'torrent') throw new Error('url sources arrive in task 14')
 const opened = await openCatalogStream(pick.stream as Parameters<typeof openCatalogStream>[0])
 ```
 
@@ -2216,7 +2252,7 @@ As asserções em português acima funcionam sem configuração: sem chave no `l
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plugins/PluginsPanel.test.tsx`
+Run: `cd web && npm run test -- src/plugins/PluginsPanel.test.tsx`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write the component**
@@ -2280,8 +2316,15 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
     setBusy(true)
     setError(null)
     try {
-      const { source, commit } = await fetchGitPlugin(repoUrl.trim())
-      await read(source, { kind: 'git', updateUrl: repoUrl.trim(), commit })
+      const address = canonicalRepoUrl(repoUrl.trim())
+      const { source, commit } = await fetchGitPlugin(address)
+      // Canonical, not what was pasted. `parseManifest` normalises the
+      // manifest's own updateUrl, and `updatePlugin` compares the two by
+      // string: pasting the url with a trailing slash or a `.git` suffix
+      // would make every legitimate update look like a redirected origin and
+      // be refused for ever. It is also what keeps two spellings of one
+      // repository from becoming two installed plugins.
+      await read(source, { kind: 'git', updateUrl: address, commit })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       setBusy(false)
@@ -2702,11 +2745,28 @@ func TestSafeClientRefusesANameThatResolvesToLoopback(t *testing.T) {
 	}
 }
 
-// And the other half: a name that resolves somewhere public is dialled.
-// Without this, a guard that refuses everything would pass the test above.
-func TestSafeClientAllowsAPublicAddress(t *testing.T) {
-	if err := CheckAddr("tcp4", "93.184.216.34:443"); err != nil {
-		t.Fatalf("public address refused by the dialer's gate: %v", err)
+// The other half, and it has to go through a real client: without it, a guard
+// that refused every address would pass the test above and look correct.
+// httptest has no public address to offer, so the dialer's gate is swapped
+// for a permissive one — what is under test here is that SafeClient dials at
+// all, not what it refuses.
+func TestSafeClientDialsWhenTheGateAllows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "reached")
+	}))
+	defer server.Close()
+
+	client := SafeClient(5 * time.Second)
+	client.Transport.(*http.Transport).DialContext = (&net.Dialer{}).DialContext
+
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("dial refused with a permissive gate: %v", err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if string(body) != "reached" {
+		t.Fatalf("body = %q, want \"reached\"", body)
 	}
 }
 ```
@@ -2768,6 +2828,11 @@ func CheckURL(raw string) (*url.URL, error) {
 	if ip := net.ParseIP(host); ip != nil && !isPublic(ip) {
 		return nil, ErrPrivateAddress
 	}
+	// Credentials would be replayed on every redirect hop, to hosts the
+	// plugin picked. A public media file never needs them.
+	if parsed.User != nil {
+		return nil, fmt.Errorf("%w: credentials are not accepted", ErrBadURL)
+	}
 	return parsed, nil
 }
 
@@ -2794,9 +2859,13 @@ var blocked = func() []*net.IPNet {
 		"192.0.2.0/24",   // documentation
 		"198.51.100.0/24",
 		"203.0.113.0/24",
+		"0.0.0.0/8",      // "this network" — only the exact address is IsUnspecified
+		"192.88.99.0/24", // deprecated 6to4 relay anycast
 		"64:ff9b::/96",   // NAT64 — embeds an IPv4 address, private ones included
 		"64:ff9b:1::/48", // local-use NAT64
 		"2002::/16",      // 6to4, same problem
+		"2001::/32",      // Teredo, also embeds IPv4
+		"fec0::/10",      // deprecated IPv6 site-local
 	}
 	nets := make([]*net.IPNet, 0, len(ranges))
 	for _, entry := range ranges {
@@ -2870,6 +2939,9 @@ const ResponseHeaderTimeout = 30 * time.Second
 // nothing at all. Control runs once per connection, after the resolver and
 // before connect, with the actual IP. It also closes the window between
 // checking a name and connecting to it, which is what DNS rebinding lives in.
+// The `timeout` parameter is a loaded gun: any value other than zero is a
+// ceiling on reading the entire body, which kills long transfers. It is there
+// for short requests — probes, metadata — and the ingest passes zero.
 func SafeClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   10 * time.Second,
@@ -3104,8 +3176,52 @@ func TestIngestRefusesAnHTMLErrorPage(t *testing.T) {
 
 func TestIngestRefusesAPrivateURL(t *testing.T) {
 	ingestor := NewIngestor("http://example.invalid/uploads", 1, 1<<30, Hooks{})
-	if err := ingestor.Submit(Job{RoomID: "r1", URL: "http://127.0.0.1/movie.mkv", FileName: "m.mkv", Size: 10}); err == nil {
-		t.Fatal("expected a private url to be refused at submit")
+	// https, so the scheme check is not what refuses it: CheckURL tests scheme
+	// before address, and http here would pass for the wrong reason.
+	err := ingestor.Submit(Job{RoomID: "r1", URL: "https://127.0.0.1/movie.mkv", FileName: "m.mkv", Size: 10})
+	if !errors.Is(err, ErrPrivateAddress) {
+		t.Fatalf("err = %v, want ErrPrivateAddress", err)
+	}
+}
+
+// The failure this catches is the quiet one: an announced size smaller than
+// the file, a chunked response with no Content-Length to check it against,
+// and a job that reports success with a cut film in the room.
+func TestIngestRefusesASourceLongerThanAnnounced(t *testing.T) {
+	payload := strings.Repeat("video-bytes", 512)
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "video/x-matroska")
+		// No Content-Length: chunked, which is what makes this slip through.
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer source.Close()
+
+	var received strings.Builder
+	var mu sync.Mutex
+	tus := fakeTus(t, &received, &mu)
+	defer tus.Close()
+
+	done := make(chan error, 1)
+	ingestor := NewIngestor(tus.URL+"/uploads", 1, 1<<30, Hooks{
+		OnFailed: func(_ string, err error) { done <- err },
+		OnDone:   func(string) { done <- nil },
+	})
+	ingestor.client = &http.Client{Timeout: 10 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ingestor.Start(ctx)
+
+	// Half the real size.
+	if err := ingestor.Submit(Job{RoomID: "r4", URL: source.URL + "/m.mkv", FileName: "m.mkv", Size: int64(len(payload) / 2)}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrTooLarge) {
+			t.Fatalf("err = %v, want ErrTooLarge — a short file was accepted as complete", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ingest did not finish")
 	}
 }
 ```
@@ -3120,7 +3236,8 @@ Expected: FAIL — `NewIngestor`, `Job` e `Hooks` não existem.
 Este é `internal/torrent/ingest.go` com outra fonte de bytes. O que muda em relação ao arquivo de referência, e por quê:
 
 - O `client` sai de `SafeClient(0)` e é um campo substituível, porque `httptest` serve em loopback e a guarda recusa loopback. A guarda tem os testes dela na Task 12; este teste é sobre a bomba.
-- Um `Content-Type` que não seja de vídeo derruba o job. Seguir um redirect até uma página de erro em HTML e gravá-la como se fosse um filme é pior do que falhar.
+- Um `Content-Type` que não seja de vídeo derruba o job. Seguir um redirect até uma página de erro em HTML e gravá-la como se fosse um filme é pior do que falhar. Ele é conferido também em `probeSize`, que roda **antes** de `createUpload` — do contrário a página de HTML já consumiu a reserva de upload da sala antes de o job morrer.
+- Um corpo **maior** que `Job.Size` derruba o job em vez de ser cortado nele. É o caminho que mais dói, e o `exactReader` existe só para ele.
 - Um `Content-Length` que estoure `Job.Size` derruba o job antes de qualquer byte ser gravado: o tamanho anunciado é o que a sala reservou no tus, e um upload com o comprimento errado nunca completa.
 - Um `200` quando pedimos `Range` a partir de um offset maior que zero derruba o job. O servidor está mandando o arquivo do começo; aceitar isso grava bytes duplicados no meio do arquivo.
 - Não há métricas. As do torrent são específicas dele (`TorrentPeers`, `TorrentIngests`), e inventar um espelho delas aqui é escopo que ninguém pediu — `slog` cobre o que precisa ser visto.
@@ -3445,15 +3562,38 @@ func (i *Ingestor) fetch(ctx context.Context, job Job, offset int64) (io.ReadClo
 		return nil, fmt.Errorf("%w: %d bytes from offset %d, room reserved %d",
 			ErrTooLarge, response.ContentLength, offset, job.Size)
 	}
-	// The limit is the belt to the Content-Length braces above: a chunked
-	// response announces nothing, and the store must not receive more than the
-	// upload was created for.
-	return readCloser{Reader: io.LimitReader(response.Body, job.Size-offset), Closer: response.Body}, nil
+	// One byte wider than the room reserved, on purpose. A chunked response
+	// announces no length, so the Content-Length check above cannot fire;
+	// cutting the body at the announced size would produce a complete PATCH,
+	// an OnDone, and a truncated film in the room with no error anywhere. An
+	// announced size smaller than the truth is not hypothetical — it is what
+	// a stale Plex library, or a plugin that guessed, hands over.
+	return readCloser{
+		Reader: &exactReader{inner: io.LimitReader(response.Body, job.Size-offset+1), limit: job.Size - offset},
+		Closer: response.Body,
+	}, nil
 }
 
 type readCloser struct {
 	io.Reader
 	io.Closer
+}
+
+// exactReader fails rather than truncating. It is handed one byte more than
+// the room reserved; if that byte arrives, the source is longer than it said.
+type exactReader struct {
+	inner io.Reader
+	limit int64
+	read  int64
+}
+
+func (r *exactReader) Read(p []byte) (int, error) {
+	n, err := r.inner.Read(p)
+	r.read += int64(n)
+	if r.read > r.limit {
+		return n - int(r.read-r.limit), fmt.Errorf("%w: source is longer than the announced %d bytes", ErrTooLarge, r.limit)
+	}
+	return n, err
 }
 
 // videoContentType accepts what a media file is actually served as. Some
@@ -3926,7 +4066,7 @@ describe('startUrlTransfer', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/upload.test.ts`
+Run: `cd web && npm run test -- src/upload.test.ts`
 Expected: FAIL — `startUrlTransfer` não existe.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -4015,7 +4155,7 @@ Nenhum `mediaGeneration` aqui, e isso é deliberado. O caminho de torrent precis
 - [ ] **Step 5: Run the suite and commit**
 
 Run: `cd web && npm run test && npx tsc -b && npm run lint`
-Expected: verde, sem o `throw new Error('url sources arrive in task 12')` da Task 9 em lugar nenhum.
+Expected: verde, sem o `throw new Error('url sources arrive in task 14')` da Task 9 em lugar nenhum.
 
 ```bash
 git add web/src/upload.ts web/src/upload.test.ts web/src/pages/Home.tsx web/src/pages/Room.tsx
@@ -4389,7 +4529,7 @@ describe('the token', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plex/account.test.ts`
+Run: `cd web && npm run test -- src/plex/account.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -4528,8 +4668,8 @@ export function clearToken(): Promise<void> {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd web && npx vitest run src/plex/account.test.ts`
-Expected: PASS, 9 tests.
+Run: `cd web && npm run test -- src/plex/account.test.ts`
+Expected: PASS, 8 tests.
 
 `crypto.randomUUID` existe no jsdom pelo polyfill de `webcrypto` que a Task 5 acrescentou ao `setup.ts`. Se falhar aqui, é porque a Task 5 não foi feita.
 
@@ -4621,7 +4761,7 @@ describe('pickConnection', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plex/server.test.ts`
+Run: `cd web && npm run test -- src/plex/server.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write discovery**
@@ -4679,15 +4819,17 @@ export async function listServers(token: string, deps: PlexDeps = {}): Promise<P
  * carries a wildcard cert. It is the only reason a page on ss.giuli.dev can
  * talk to a box on someone's home network at all.
  */
-export async function pickConnection(server: PlexServer, token: string, deps: PlexDeps = {}): Promise<PlexConnection> {
+export async function pickConnection(server: PlexServer, _token: string, deps: PlexDeps = {}): Promise<PlexConnection> {
   const request = deps.fetch ?? globalThis.fetch.bind(globalThis)
-  const headers = { ...await plexHeaders(), 'X-Plex-Token': token }
 
   const reachable = await Promise.all(server.connections.map(async (connection) => {
     const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS)
     try {
-      const response = await request(`${connection.uri}/identity`, { headers, signal: abort.signal })
+      // No custom headers on the probe. `/identity` needs no token, and any
+      // X-Plex-* header would trigger a CORS preflight — doubling the latency
+      // of every probe and eating into the four seconds each one gets.
+      const response = await request(`${connection.uri}/identity`, { signal: abort.signal })
       return response.ok ? connection : null
     } catch {
       // A LAN address from outside the LAN, or a router refusing a DNS answer
@@ -4811,6 +4953,9 @@ export async function listSections(base: string, token: string, deps: PlexDeps =
 export async function searchLibrary(
   base: string, token: string, query: string, deps: PlexDeps = {},
 ): Promise<Pick<PlexItem, 'ratingKey' | 'title' | 'year' | 'type'>[]> {
+  // `/search` is the legacy endpoint. Current servers also expose
+  // `/hubs/search`, whose answer is MediaContainer.Hub[] rather than
+  // Metadata[]. `/search` still answers; noted as debt, not fixed here.
   const body = await get(base, token, `/search?query=${encodeURIComponent(query)}`, deps)
   return metadata(body)
     .filter((entry) => typeof entry.type === 'string' && PLAYABLE.has(entry.type))
@@ -4843,11 +4988,14 @@ export async function itemDetails(base: string, token: string, ratingKey: string
 /**
  * The original file, not a transcode.
  *
- * `download=1` is what asks for direct play, and it is also where this fails
- * for some accounts: Plex only serves the original file to a user with
+ * `download=1` marks the response as a download, and it is what triggers the
+ * permission check — Plex only serves the original file to a user with
  * "Allow Downloads" enabled. A 403 here means that setting, not a bad token,
- * and the interface has to say so — otherwise it reads as a login problem
- * and the person re-pairs for ever.
+ * and the interface has to say so; otherwise it reads as a login problem and
+ * the person re-pairs for ever.
+ *
+ * (Direct play works without `download=1` too. What the parameter buys is the
+ * original bytes rather than whatever the server would transcode.)
  */
 export function partUrl(base: string, partKey: string, token: string): string {
   return `${base}${partKey}?download=1&X-Plex-Token=${encodeURIComponent(token)}`
@@ -4856,7 +5004,7 @@ export function partUrl(base: string, partKey: string, token: string): string {
 
 - [ ] **Step 6: Run tests and commit**
 
-Run: `cd web && npx vitest run src/plex/ && npx tsc -b && npx oxlint src`
+Run: `cd web && npm run test -- src/plex/ && npx tsc -b && npx oxlint src`
 Expected: PASS.
 
 ```bash
@@ -4883,10 +5031,10 @@ Se venceu a de LAN, a VPS não alcança `192.168.x.x`, e não vai passar a alcan
 **Interfaces:**
 - Consumes: `startUrlTransfer`/`createRoomAndIngestUrl` (Task 14), `partUrl`/`PlexItem` (Task 18).
 - Produces:
-  - `interface ChunkSource { name: string; size: number; subtitleFiles: SubtitleFile[]; read(at: number, end: number): Promise<ArrayBuffer>; destroy(): void }`
-  - `startRemoteTransfer(roomID, uploadEndpoint, startBytes, mediaGeneration, source: ChunkSource, onProgress?)`
+  - `interface ChunkSource { name: string; size: number; subtitleFiles: TorrentSideFile[]; read(at: number, end: number): Promise<ArrayBuffer>; destroy(): void }` — `TorrentSideFile` vem de `web/src/torrent.ts:70` e já tem a forma certa
+  - `startRemoteTransfer(...)` — o antigo `uploadTorrentToRoom`, generalizado. `startTorrentTransfer` **permanece**, `async`, com o hand-off para o servidor intacto
   - `rangeSource(url: string, name: string, size: number): ChunkSource`
-  - `openPlexItem(connection: PlexConnection, item: PlexItem, token: string): PlexOpen` onde `PlexOpen = { kind: 'server-pull'; url: string; fileName: string; size: number } | { kind: 'browser-pump'; source: ChunkSource; fileName: string }`
+  - `openPlexItem(connection: PlexConnection, item: PlexItem, token: string): PlexOpen` onde `PlexOpen = { kind: 'server-pull'; url: string; fileName: string; size: number } | { kind: 'browser-pump'; source: ChunkSource; fileName: string; size: number }`
 
 - [ ] **Step 1: Write the failing test for the decision**
 
@@ -4930,7 +5078,7 @@ describe('openPlexItem', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plex/open.test.ts`
+Run: `cd web && npm run test -- src/plex/open.test.ts`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write the failing test for the ranged source**
@@ -4986,34 +5134,35 @@ export interface ChunkSource {
   name: string
   size: number
   /** Sibling subtitle files, if the source has any. */
-  subtitleFiles: { name: string; read(): Promise<ArrayBuffer> }[]
+  subtitleFiles: TorrentSideFile[]
   /** Inclusive on both ends, like an HTTP Range. */
   read(at: number, end: number): Promise<ArrayBuffer>
   destroy(): void
 }
 ```
 
-2. Renomeie `startTorrentTransfer` para `startRemoteTransfer` e troque a assinatura de `source: { file, session }` para `source: ChunkSource`. Dentro do corpo, `file.size` vira `source.size`, `file.name` vira `source.name`, `file.read(at, end)` vira `source.read(at, end)`, `session.destroy` vira `source.destroy`, `session.subtitleFiles` vira `source.subtitleFiles`, e `isMatroska(file)` passa a olhar `source.name`. **Nada mais muda** — o laço de `PATCH`, o prefetch de um slot, o coletor de legendas e o `DELETE` de limpeza ficam idênticos.
+2. **`startTorrentTransfer` não é a bomba — não mexa nele.** Leia `web/src/upload.ts:298` antes de qualquer coisa: ele é `async`, e a primeira linha do corpo é `if (await handOverToServer(roomID, source)) return`. Ou seja, ele é o despachante que tenta entregar a sessão do bridge ao servidor e só bombeia pelo navegador quando não dá. Generalizá-lo levaria o hand-off para dentro do caminho genérico — onde uma `ChunkSource` do Plex não tem sessão de bridge nenhuma para entregar — e o adaptador chamaria o caminho genérico direto, **eliminando o hand-off e fazendo todo torrent voltar a ser bombeado pelo navegador**. Uma regressão de desempenho grande, causada por uma tarefa que dizia não mudar comportamento.
 
-3. Devolva `startTorrentTransfer` como um adaptador fino, para que Home e Room não mudem:
+   Quem generaliza é **`uploadTorrentToRoom`** (`upload.ts:315`), que é a bomba de verdade. Renomeie-o para `startRemoteTransfer` e troque `source: TorrentUploadSource` por `source: ChunkSource`. Dentro do corpo, `file.size` vira `source.size`, `file.name` vira `source.name`, `file.read(at, end)` vira `source.read(at, end)`, `session.destroy` vira `source.destroy`, `session.subtitleFiles` vira `source.subtitleFiles`, e `isMatroska(file)` passa a olhar `source.name`. **Nada mais muda** — o laço de `PATCH`, o prefetch de um slot, o coletor de legendas e o `DELETE` de limpeza ficam idênticos.
+
+3. `startTorrentTransfer` continua existindo com a mesma assinatura e o mesmo `async`; só a última linha muda, de `uploadTorrentToRoom(...)` para o adaptador:
 
 ```ts
-export function startTorrentTransfer(
-  roomID: string, uploadEndpoint: string, startBytes: number, mediaGeneration: number,
-  source: { file: TorrentFile; session: TorrentSession }, onProgress?: (progress: UploadProgress) => void,
-): void {
+// upload.ts — o corpo de startTorrentTransfer, que segue Promise<void>
+  if (await handOverToServer(roomID, source)) return
   const { file, session } = source
   startRemoteTransfer(roomID, uploadEndpoint, startBytes, mediaGeneration, {
     name: file.name,
     size: file.size,
-    subtitleFiles: session.subtitleFiles.map((entry) => ({ name: entry.name, read: () => entry.read() })),
+    // TorrentSideFile is already { name, path, size, read() }, which is wider
+    // than ChunkSource needs and assignable to it. No mapping.
+    subtitleFiles: session.subtitleFiles,
     read: (at, end) => file.read(at, end),
     destroy: () => session.destroy(),
   }, onProgress)
-}
 ```
 
-Leia os tipos reais de `TorrentFile`/`TorrentSession` no arquivo antes de escrever isto; use os nomes que estiverem lá. Se `subtitleFiles` já tiver a forma `{ name, read }`, passe a lista direto em vez de mapear.
+Os tipos reais são `TorrentVideoFile`, `TorrentSession` e `TorrentSideFile` (`web/src/torrent.ts:55` e `:70`), agrupados em `TorrentUploadSource` (`upload.ts:61`). Não existe `TorrentFile`.
 
 4. Acrescente a fonte de URL:
 
@@ -5171,7 +5320,7 @@ describe('PlexSection', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd web && npx vitest run src/plex/PlexSection.test.tsx`
+Run: `cd web && npm run test -- src/plex/PlexSection.test.tsx`
 Expected: FAIL — módulo não encontrado.
 
 - [ ] **Step 3: Write the component**
@@ -5236,6 +5385,22 @@ Três coisas que precisam estar certas e não são óbvias:
   'plex.noDownloads': 'O Plex recusou o arquivo original. Habilite "Allow Downloads" para este usuário nas configurações do servidor.',
 ```
 
+`web/src/i18n/en.ts` — escreva as onze, não deixe para depois; uma chave ausente num dos dois arquivos é falha declarada nas Global Constraints:
+
+```ts
+  'plex.title': 'Plex',
+  'plex.connect': 'Connect Plex account',
+  'plex.disconnect': 'Disconnect',
+  'plex.approve': 'Approve in Plex',
+  'plex.code': 'Approve this code in Plex:',
+  'plex.finding': 'Looking for the server…',
+  'plex.unreachable': 'No Plex server answered. If it is on your network, check that your router does not block DNS answers that point at local addresses.',
+  'plex.search': 'Search the library',
+  'plex.viaLan': 'Over the local network — keep this tab open until the transfer finishes.',
+  'plex.viaInternet': 'Over the internet — the server fetches it on its own, you can close the tab.',
+  'plex.noDownloads': 'Plex refused the original file. Enable "Allow Downloads" for this user in the server settings.',
+```
+
 - [ ] **Step 5: Mount it**
 
 Em `web/src/plugins/PluginsPanel.tsx`, na etapa `list`, acima da lista de plugins:
@@ -5296,7 +5461,9 @@ git commit -m "feat: play a title from a plex server"
 
 ## Notas de revisão
 
-Três coisas que quem executar vai encontrar e que estão aqui de propósito:
+Cinco coisas que quem executar precisa saber antes de começar:
+
+0. **Rode os testes com `npm run test`, nunca `npx vitest`.** Neste ambiente o `npx` resolve uma instalação diferente da do projeto e roda fora do jsdom; doze testes "falham" com `window is not defined` por motivo nenhum.
 
 1. **A Task 8 deixa `fetchStreams` e `ADDON_BASE` vivos de propósito.** Eles só morrem na Task 9. Se você chegar na Task 9 e encontrá-los já removidos, alguém quebrou a Task 8 pela metade.
 2. **`web/src/plugins/worker.ts` (Task 4) não tem teste automatizado.** jsdom não tem `Worker`. A verificação é manual, os quatro casos do passo 5 são o teste, e os dois últimos — a fuga pelo protótipo e o worker aninhado — são a razão de a task existir na forma em que está. Não pule pensando que a suíte cobre.
