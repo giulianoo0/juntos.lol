@@ -30,10 +30,11 @@ const MOCK_FILES: Array<{ name: string; size: number }> = [
   { name: 'Frieren.NCED01.1080p.mkv', size: 94_100_000 },
 ]
 
-function mockVideoFile({ name, size }: { name: string; size: number }): TorrentVideoFile {
+function mockVideoFile({ name, size }: { name: string; size: number }, index = 0): TorrentVideoFile {
   return {
     name,
     path: `Frieren [Mock Release]/${name}`,
+    index,
     size,
     type: 'video/x-matroska',
     progress: 0,

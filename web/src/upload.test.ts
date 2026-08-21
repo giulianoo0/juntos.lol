@@ -238,7 +238,7 @@ describe('upload registry', () => {
     const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
     const destroy = vi.fn()
     const result = await createRoomAndUploadTorrent({
-      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
       session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy },
     }, 'giuli')
     const done = new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
@@ -271,7 +271,7 @@ describe('upload registry', () => {
 
     const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
     const result = await createRoomAndUploadTorrent({
-      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
       session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy: vi.fn() },
     }, 'giuli')
     const done = new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
@@ -304,7 +304,7 @@ describe('upload registry', () => {
 
     const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
     const result = await createRoomAndUploadTorrent({
-      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
       session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy: vi.fn() },
     }, 'giuli')
     await new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
@@ -334,7 +334,7 @@ describe('upload registry', () => {
 
     const read = vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1))
     const result = await createRoomAndUploadTorrent({
-      file: { name: 'episode.mkv', path: 'show/episode.mkv', size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
+      file: { name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: 6, type: 'video/x-matroska', progress: 0, downloaded: 0, read },
       session: { name: 'show', files: [], subtitleFiles: [], stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }), select: vi.fn(), destroy: vi.fn() },
     }, 'giuli')
     await new Promise<string | null>((resolve) => subscribeUploadDone(result.roomID, resolve))
@@ -366,7 +366,7 @@ describe('upload registry', () => {
     const srt = new TextEncoder().encode('1\n00:00:01,000 --> 00:00:02,000\nOi\n')
     const subtitleRead = vi.fn().mockResolvedValue(srt.buffer)
     const result = await createRoomAndUploadTorrent({
-      file: { name: 'episode.mp4', path: 'show/episode.mp4', size: 4, type: 'video/mp4', progress: 0, downloaded: 0, read: vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1)) },
+      file: { name: 'episode.mp4', path: 'show/episode.mp4', index: 0, size: 4, type: 'video/mp4', progress: 0, downloaded: 0, read: vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1)) },
       session: {
         name: 'show',
         files: [],
@@ -418,7 +418,7 @@ describe('upload registry', () => {
 
 describe('torrent handover', () => {
   const file = {
-    name: 'episode.mkv', path: 'show/episode.mkv', size: 6,
+    name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: 6,
     type: 'video/x-matroska', progress: 0, downloaded: 0,
     read: vi.fn(async (start: number, end: number) => new ArrayBuffer(end - start + 1)),
   }

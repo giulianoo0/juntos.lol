@@ -34,6 +34,22 @@ export interface PresenceEvent {
   at: string
 }
 
+// A catalog title a viewer asked the controller to switch the room to. The
+// server relays it with `from` filled in; `id` is client-side, for React keys
+// and dismissal.
+export interface TitleRequest {
+  id: number
+  memberId: string
+  from: string
+  metaId: string
+  metaType: 'movie' | 'series'
+  name: string
+  poster: string
+  season?: number
+  episode?: number
+  at: string
+}
+
 // One member's buffering picture while the room waits for a gated start.
 export interface MemberReadiness {
   memberId: string

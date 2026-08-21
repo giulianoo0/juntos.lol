@@ -4,7 +4,7 @@ import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
-import { Check, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload } from 'lucide-react'
+import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -23,7 +23,12 @@ import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
 import { playJoinChime } from '../ui/chime'
-import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting } from '../types'
+import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
+import { CatalogOverlay, type OverlayFocus } from '../catalog/CatalogOverlay'
+import { openCatalogStream } from '../catalog/openStream'
+import type { TitlePick } from '../catalog/MetaDetails'
+import { NextEpisodeCard } from '../catalog/NextEpisode'
+import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
@@ -195,6 +200,20 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isScreenRoom = liveRoom.sourceKind === 'screen'
+  // The in-room catalog. Everyone browses their own copy; `catalogFocus` is
+  // how the host lands straight on a requested title's episode.
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
+  const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
+  // What this tab believes the room is playing (catalog picks only). Kept in
+  // localStorage so a reload does not lose the next-episode chain.
+  const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(nowPlayingKey(room.id)) ?? 'null') as NowPlaying | null
+    } catch {
+      return null
+    }
+  })
   // The room is still waiting on something, or it is not. Running the last of
   // those states through the same step machine is what lets the panel dissolve
   // before the picture arrives, instead of the two cutting over each other.
@@ -230,6 +249,29 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     void swapSource(async () => {
       const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
       await startTorrentTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, { file, session })
+    })
+  }
+
+  // A catalog pick swaps the room's source through the torrent path: open the
+  // addon's torrent, point the room at it, start the transfer.
+  const chooseCatalogStream = (pick: TitlePick) => {
+    setCatalogOpen(false)
+    setCatalogFocus(null)
+    const playing = nowPlayingFromPick(pick)
+    setNowPlaying(playing)
+    try {
+      if (playing) localStorage.setItem(nowPlayingKey(room.id), JSON.stringify(playing))
+      else localStorage.removeItem(nowPlayingKey(room.id))
+    } catch { /* private mode: the chain just will not survive a reload */ }
+    void swapSource(async () => {
+      const opened = await openCatalogStream(pick.stream)
+      try {
+        const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
+        await startTorrentTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, opened)
+      } catch (error) {
+        opened.session.destroy()
+        throw error
+      }
     })
   }
 
@@ -335,6 +377,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })
   }, [room.id, liveRoom.mediaGeneration])
 
+  // Only the controller can actually swap the source, so only it counts down.
+  const nextEpisode = useNextEpisode(
+    nowPlaying,
+    videoRef,
+    sync.isController && !isScreenRoom && mediaStatus === 'ready',
+    chooseCatalogStream,
+  )
+
   const copyLink = async () => {
     // The clipboard is refused outright on an insecure origin and can be
     // denied on a secure one. Confirming a copy that did not happen is worse
@@ -371,6 +421,18 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     )
   }
 
+  const visibleRequests = sync.titleRequests.filter((request) => !dismissedRequests.includes(request.id)).slice(-3)
+
+  // The host lands straight on the asked-for title, episode included.
+  const openRequestedTitle = (request: TitleRequest) => {
+    setCatalogFocus({
+      open: { meta: { id: request.metaId, type: request.metaType, name: request.name, poster: request.poster, releaseInfo: '' } },
+      season: request.season,
+      episode: request.episode,
+    })
+    setCatalogOpen(true)
+  }
+
   return (
     <main className="room-shell room-enter">
       <header className="room-header">
@@ -394,6 +456,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               {t('room.gating')}
             </Button>
           ) : null}
+          <Button onClick={() => { setCatalogFocus(null); setCatalogOpen(true) }}>
+            <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
+          </Button>
           {sync.isController ? (
             <IconButton
               icon={<Replace size={16} />}
@@ -444,18 +509,32 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               t={t}
               syncState={sync.state}
               serverOffsetMs={sync.serverOffsetMs}
+              // Inside the wrap, so both survive fullscreen.
+              overlay={
+                <>
+                  {sync.waiting !== null ? (
+                    <WaitingPanel
+                      waiting={sync.waiting}
+                      members={sync.members}
+                      isController={sync.isController}
+                      selfId={sync.memberId}
+                      onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
+                      t={t}
+                    />
+                  ) : null}
+                  {nextEpisode.pending && nowPlaying ? (
+                    <NextEpisodeCard
+                      video={nextEpisode.pending.video}
+                      poster={nowPlaying.poster}
+                      seconds={nextEpisode.seconds}
+                      onPlayNow={nextEpisode.playNow}
+                      onDismiss={nextEpisode.dismiss}
+                    />
+                  ) : null}
+                </>
+              }
             />
           )}
-          {sync.waiting !== null && !isScreenRoom ? (
-            <WaitingPanel
-              waiting={sync.waiting}
-              members={sync.members}
-              isController={sync.isController}
-              selfId={sync.memberId}
-              onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
-              t={t}
-            />
-          ) : null}
           <div className="presence-row">
             {sync.members.map((member) => (
               <span key={member.id} className={`member-chip ${member.id === sync.controllerId ? 'is-controller' : ''}`}>
@@ -474,6 +553,55 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         onChange={(event) => chooseFile(event.target.files?.[0])}
       />
       {sourceError ? <div className="error-card compact" role="alert">{t('room.changeFailed')}</div> : null}
+      {visibleRequests.length > 0 ? (
+        <div className="request-stack" aria-live="polite">
+          {visibleRequests.map((request) => (
+            <div key={request.id} className="request-card raised">
+              {request.poster ? <img src={request.poster} alt="" /> : null}
+              <div className="request-copy">
+                <p><strong>{request.from}</strong> {t('request.asked')} <strong>{request.name}</strong>
+                  {request.season != null && request.episode != null && (request.season > 0 || request.episode > 0)
+                    ? ` · S${String(request.season).padStart(2, '0')}E${String(request.episode).padStart(2, '0')}`
+                    : ''}
+                </p>
+                {sync.isController ? (
+                  <button type="button" className="request-open" onClick={() => openRequestedTitle(request)}>
+                    {t('request.viewSources')}
+                  </button>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                className="dialog-close request-dismiss"
+                aria-label={t('request.dismiss')}
+                onClick={() => setDismissedRequests((current) => [...current, request.id])}
+              >
+                <X size={13} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {catalogOpen ? (
+        <CatalogOverlay
+          mode={sync.isController ? 'host' : 'viewer'}
+          focus={catalogFocus}
+          onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
+          onPickStream={chooseCatalogStream}
+          onRequestTitle={(open, episode) => {
+            sync.send('titleRequest', {
+              title: {
+                metaId: open.meta.id,
+                metaType: open.meta.type,
+                name: open.meta.name,
+                poster: open.meta.poster,
+                season: episode.season,
+                episode: episode.episode,
+              },
+            })
+          }}
+        />
+      ) : null}
       <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
         {sourcePanel !== null ? (
           <DialogContent

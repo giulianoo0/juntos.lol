@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { ChatMessage, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting } from '../types'
+import type { ChatMessage, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, TitleRequest } from '../types'
 import { expectedPositionMs, needsResync } from './position'
 
 // Presence is a rolling log: the room header shows the newest entries and the
@@ -29,6 +29,15 @@ interface Outbound {
   readiness?: MemberReadiness[]
   targetMs?: number
   gating?: boolean
+  title?: {
+    metaId: string
+    metaType: 'movie' | 'series'
+    name: string
+    poster?: string
+    season?: number
+    episode?: number
+    from?: string
+  }
 }
 
 interface SyncResult {
@@ -47,8 +56,13 @@ interface SyncResult {
   capability: string
   waiting: RoomWaiting | null
   gatingEnabled: boolean
+  titleRequests: TitleRequest[]
   send: (type: string, payload?: Record<string, unknown>) => void
 }
+
+// The request log is a rolling inbox, like presence: old asks age out of
+// memory rather than accumulating for the room's lifetime.
+const TITLE_REQUEST_LIMIT = 20
 
 const initialState: PlayState = { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 }
 
@@ -81,6 +95,8 @@ export function useSync(
   const [capability, setCapability] = useState('')
   const [waiting, setWaiting] = useState<RoomWaiting | null>(null)
   const [gatingEnabled, setGatingEnabled] = useState(true)
+  const [titleRequests, setTitleRequests] = useState<TitleRequest[]>([])
+  const titleSeqRef = useRef(0)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}) => {
     const socket = socketRef.current
@@ -221,6 +237,24 @@ export function useSync(
         case 'roomUpdated':
           setRoomVersion((version) => version + 1)
           break
+        case 'titleRequest': {
+          const title = message.title
+          if (!title) break
+          const request: TitleRequest = {
+            id: (titleSeqRef.current += 1),
+            memberId: message.memberId ?? '',
+            from: title.from ?? '',
+            metaId: title.metaId,
+            metaType: title.metaType,
+            name: title.name,
+            poster: title.poster ?? '',
+            season: title.season,
+            episode: title.episode,
+            at: new Date(Date.now() + offsetRef.current).toISOString(),
+          }
+          setTitleRequests((current) => [...current, request].slice(-TITLE_REQUEST_LIMIT))
+          break
+        }
       }
     }
 
@@ -272,6 +306,7 @@ export function useSync(
     capability,
     waiting,
     gatingEnabled,
+    titleRequests,
     send,
   }
 }

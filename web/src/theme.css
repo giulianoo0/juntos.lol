@@ -190,7 +190,7 @@ h1, h2, p { margin-top: 0; }
 .live-button { flex: 0 0 auto; padding: 5px 10px; border: 0; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: #f6cf65; background: rgba(246,207,101,.13); }
 .live-button.is-live { color: #7ee2a8; background: rgba(126,226,168,.13); cursor: default; }
 .media-column { position: relative; }
-.waiting-panel { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); z-index: 12; display: flex; flex-direction: column; gap: 6px; min-width: 220px; padding: 13px 16px; border-radius: 16px; background: rgba(7,8,12,.86); backdrop-filter: blur(14px) saturate(130%); font-size: 13px; }
+.waiting-panel { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); z-index: 12; display: flex; flex-direction: column; gap: 6px; min-width: 220px; padding: 13px 16px; border-radius: 16px; background: rgba(11,12,18,.62); backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 14px 40px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.08); font-size: 13px; }
 .waiting-panel strong { font-size: 12px; color: var(--text-dim); font-weight: 500; }
 .waiting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: #f6cf65; }
 .waiting-row.is-ready { color: #7ee2a8; }
@@ -212,8 +212,8 @@ h1, h2, p { margin-top: 0; }
 /* --- dialog ------------------------------------------------------------ */
 /* Radix owns focus, Escape and the scroll lock; these rules only dress it,
    and give the open and close their motion. */
-.ui-dialog-overlay { position: fixed; inset: 0; z-index: 49; background: rgba(0,0,0,.72); backdrop-filter: blur(2px); animation: overlay-in var(--t-open) var(--ease); }
-.ui-dialog { position: fixed; top: 50%; left: 50%; z-index: 50; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; transform: translate(-50%, -50%); border-radius: 26px; color: var(--text); background: #171923; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; animation: dialog-in var(--t-open) var(--ease); }
+.ui-dialog-overlay { position: fixed; inset: 0; z-index: 57; background: rgba(0,0,0,.72); backdrop-filter: blur(2px); animation: overlay-in var(--t-open) var(--ease); }
+.ui-dialog { position: fixed; top: 50%; left: 50%; z-index: 58; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; transform: translate(-50%, -50%); border-radius: 26px; color: var(--text); background: #171923; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; animation: dialog-in var(--t-open) var(--ease); }
 .ui-dialog.torrent-dialog { width: min(580px, calc(100vw - 32px)); }
 .ui-dialog-body { position: relative; padding: 26px; }
 .ui-dialog-title { margin: 0 0 8px; font-size: 25px; font-weight: 700; letter-spacing: -.035em; }
@@ -357,8 +357,8 @@ h1, h2, p { margin-top: 0; }
 /* The blur is what sells the swap: without it the eye reads two panels
    trading places, with it one panel reforms. Carried by whatever is doing the
    swapping, so a step nested inside another one dissolves the same way. */
-.morph-fade { opacity: 1; filter: blur(0); transform: none; transition: opacity var(--t-open) var(--ease), filter var(--t-open) var(--ease), transform var(--t-open) var(--ease); }
-.morph-fade[data-morphing='true'] { opacity: 0; filter: blur(8px); transform: scale(1.02); transition-duration: 90ms; }
+.morph-fade { opacity: 1; filter: blur(0); transform: none; transition: opacity 180ms var(--ease), filter 180ms var(--ease), transform 180ms var(--ease); }
+.morph-fade[data-morphing='true'] { opacity: 0; filter: blur(8px); transform: scale(1.02); transition-duration: 110ms; }
 .morph-pane { min-width: 0; }
 /* The panel never grows past the window. Everything above the list keeps its
    height and the list takes what is left, so a season pack scrolls inside the
@@ -485,3 +485,307 @@ h1, h2, p { margin-top: 0; }
   .source-row[data-step='drop'] { flex-wrap: wrap; }
   .source-row:not([data-step='drop']) .morph-pane { padding: 14px; }
 }
+/* --- catalog ----------------------------------------------------------- */
+/* The board replaces the centred hero: full width, top-aligned, with the
+   fixed header's height cleared. */
+.catalog-shell { display: block; padding: 104px clamp(16px, 4vw, 54px) 40px; }
+
+.catalog-shell .history-panel { margin: 0 auto; }
+.catalog-stage { max-width: 1240px; margin: 0 auto; }
+.catalog-stage .progress-wrap, .catalog-stage .error-card { max-width: 560px; margin-left: auto; margin-right: auto; }
+.catalog-starting { margin-top: 18px; text-align: center; color: var(--text-dim); font-size: 13px; }
+.catalog-browser.is-compact { max-width: none; }
+.catalog-search { position: fixed; bottom: 22px; left: 50%; translate: -50% 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100vw - 32px)); height: 52px; padding: 0 18px; color: var(--text); background: rgba(11,12,18,.62); border: 0; backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 18px 50px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.08); }
+.catalog-search input::placeholder { color: rgba(255,255,255,.55); }
+.catalog-search.is-collapsed { left: auto; right: 22px; translate: 0 0; width: 52px; padding: 0; cursor: pointer; color: var(--text); }
+.catalog-search[data-hidden] { pointer-events: none; }
+.catalog-search input { flex: 1; min-width: 0; padding: 13px 0; background: transparent; border: 0; outline: 0; }
+.catalog-search input::-webkit-search-cancel-button { display: none; }
+.catalog-search-clear { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; color: var(--text-dim); background: rgba(255,255,255,.06); }
+.catalog-browser { padding-bottom: 96px; }
+.catalog-row { margin-bottom: 30px; }
+.catalog-row h2 { margin: 0 0 12px; font-size: 17px; letter-spacing: -.02em; }
+.catalog-strip { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(118px, 13vw, 164px); gap: 14px; overflow-x: auto; padding: 6px 2px 14px; scrollbar-width: thin; }
+.carousel { position: relative; }
+.carousel-viewport { overflow: hidden; padding: 6px 2px 14px; }
+.carousel-track { display: flex; gap: 14px; }
+.carousel-track > * { flex: 0 0 clamp(118px, 13vw, 164px); min-width: 0; }
+.details-episode-carousel .carousel-viewport { padding: 4px 2px 12px; }
+.details-episode-carousel .carousel-track { gap: 12px; }
+.details-episode-carousel .carousel-track > * { flex: 0 0 clamp(220px, 26vw, 300px); }
+.carousel-arrow { position: absolute; top: 50%; transform: translateY(-70%); z-index: 4; display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 0; border-radius: 50%; color: white; background: transparent; filter: drop-shadow(0 2px 10px rgba(0,0,0,.95)); opacity: .85; transition: opacity 150ms var(--ease), transform 150ms var(--ease); }
+.carousel-arrow--prev { left: -10px; }
+.carousel-arrow--next { right: -10px; }
+.carousel-arrow:hover:not(:disabled) { background: transparent; border-color: transparent; opacity: 1; transform: translateY(-70%) scale(1.12); }
+.carousel-arrow:active:not(:disabled) { transform: translateY(-70%) scale(1); }
+.carousel-viewport { mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); }
+.carousel[data-can-prev] .carousel-viewport { --fade-l: 52px; }
+.carousel[data-can-next] .carousel-viewport { --fade-r: 52px; }
+.catalog-empty { padding: 18px 2px; }
+.catalog-retry { padding: 2px 8px; border: 0; border-radius: 999px; color: #b8bcff; background: rgba(120,127,250,.12); font-size: 12px; }
+
+/* One poster. The hover lift is CSS-only and pointer-gated: this card is
+   seen far too often to earn real animation. */
+.poster-card { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
+.poster-art { position: relative; display: grid; place-items: center; aspect-ratio: 2 / 3; width: 100%; overflow: hidden; border-radius: 14px; background: var(--card); color: var(--text-faint); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 8px 26px rgba(0,0,0,.32); transition: transform 150ms var(--ease), box-shadow 150ms var(--ease); }
+.poster-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (hover: hover) and (pointer: fine) {
+  .poster-card:hover .poster-art { transform: translateY(-3px) scale(1.03); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 16px 40px rgba(0,0,0,.42), 0 0 0 1px rgba(120,127,250,.35); }
+}
+.poster-card:focus-visible { outline: none; }
+.poster-card:focus-visible .poster-art { outline: 2px solid color-mix(in srgb, var(--primary) 72%, white); outline-offset: 2px; }
+.poster-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 550; }
+.poster-year { color: var(--text-faint); font-size: 11px; }
+.poster-skeleton { aspect-ratio: 2 / 3; border-radius: 14px; background: linear-gradient(110deg, var(--card) 40%, var(--card-hover) 50%, var(--card) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+@keyframes skeleton-sweep { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .poster-skeleton { animation: none; } }
+
+/* --- title details ------------------------------------------------------ */
+/* The panel that morphs out of a poster. Its resting geometry lives here in
+   CSS; the morph borrows it, then hands it back. */
+.details-layer { position: fixed; inset: 0; z-index: 55; }
+.details-backdrop { position: absolute; inset: 0; background: rgba(4,5,8,.78); backdrop-filter: blur(3px); }
+.details-panel { position: absolute; inset: 0; margin: auto; width: 90svw; height: 90svh; overflow: hidden auto; border-radius: 26px; background: #12141d; outline: none; }
+.details-hero { position: sticky; top: 0; height: 300px; margin-bottom: -230px; background-size: cover; background-position: center 20%; filter: blur(var(--hero-blur, 0px)); will-change: filter; }
+.details-hero-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+.details-hero-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(30px) brightness(.7); transform: scale(1.1); }
+.details-hero-scrim { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(18,20,29,.1), rgba(18,20,29,.86) 72%, #12141d); }
+.details-content { position: relative; padding: 0 clamp(20px, 5vw, 44px) 34px; }
+.details-close { position: sticky; top: 0; float: right; margin: -6px -10px 0 0; z-index: 3; background: transparent; color: var(--text); filter: drop-shadow(0 1px 6px rgba(0,0,0,.9)); }
+.details-close:hover { background: rgba(255,255,255,.08); }
+.details-content h2 { margin: 0 0 10px; font-size: clamp(26px, 4vw, 38px); line-height: 1.05; letter-spacing: -.04em; text-shadow: 0 2px 18px rgba(0,0,0,.55); }
+.details-meta-line { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 14px; color: var(--text-dim); font-size: 13px; }
+.details-rating { display: inline-flex; align-items: center; gap: 4px; color: #f6cf65; }
+.details-description { max-width: 62ch; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
+.details-cast { margin-bottom: 8px; color: var(--text-faint); font-size: 12px; }
+.details-episodes { margin-top: 18px; }
+.details-season-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.season-tabs { display: flex; gap: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.season-tabs button { position: relative; flex: 0 0 auto; padding: 12px 26px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font-size: 15px; white-space: nowrap; }
+.season-tabs button:hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--text); }
+.season-tabs button.is-active { color: #0a0b10; font-weight: 650; }
+.season-pill { position: absolute; inset: 0; border-radius: 999px; background: white; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.season-tab-label { position: relative; z-index: 1; }
+.details-season-label { color: var(--text-dim); font-size: 12px; }
+
+.episode-card { position: relative; flex: 0 0 clamp(220px, 26vw, 300px); aspect-ratio: 1 / 1.02; overflow: hidden; padding: 0; border: 0; border-radius: 20px; background: var(--card); text-align: left; transition: transform 150ms var(--ease), box-shadow 150ms var(--ease); }
+@media (hover: hover) and (pointer: fine) { .episode-card:hover { transform: translateY(-2px); } }
+.episode-card.is-selected { box-shadow: 0 0 0 2px var(--primary); }
+.episode-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.episode-scrim { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(6,7,11,0) 30%, rgba(6,7,11,.72) 62%, rgba(6,7,11,.95)); }
+.episode-body { position: absolute; inset: auto 0 0 0; display: grid; gap: 3px; padding: 14px 15px 13px; }
+.episode-kicker { color: rgba(255,255,255,.66); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.episode-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; letter-spacing: -.01em; }
+.episode-overview { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: rgba(255,255,255,.72); font-size: 12px; line-height: 1.45; }
+.episode-foot { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; color: rgba(255,255,255,.6); font-size: 11.5px; }
+.episode-foot svg { fill: currentColor; }
+.details-request { margin-top: 22px; display: grid; justify-items: start; gap: 10px; }
+.details-request .primary-button { display: inline-flex; align-items: center; gap: 8px; }
+.details-streams { margin-top: 22px; }
+.details-back { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 14px; padding: 6px 12px 6px 8px; border: 0; border-radius: 999px; background: rgba(255,255,255,.06); color: var(--text-dim); font-size: 12.5px; }
+.details-back:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.1); }
+.details-request .details-back { margin-top: 22px; }
+.details-streams-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.details-streams h3 { margin: 0; font-size: 15px; }
+.stream-filters { display: flex; gap: 8px; }
+.stream-skeleton { height: 42px; border-radius: 13px; background: linear-gradient(110deg, rgba(255,255,255,.04) 40%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.04) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .stream-skeleton { animation: none; } }
+.stream-list { display: grid; gap: 8px; }
+.stream-list > button { display: grid; gap: 7px; width: 100%; padding: 12px 15px; border: 0; border-radius: 14px; background: rgba(255,255,255,.04); text-align: left; }
+.stream-list > button:hover { background: rgba(120,127,250,.13); }
+.stream-label { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12.5px; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.stream-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.stream-quality { padding: 3px 8px; border-radius: 999px; background: rgba(120,127,250,.14); color: #c7caff; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.stream-langs { letter-spacing: 2px; }
+.stream-source { margin-left: auto; color: var(--text-dim); }
+
+/* --- in-room catalog overlay ------------------------------------------- */
+.catalog-overlay { position: fixed; inset: 0; z-index: 45; background: rgba(7,8,12,.94); backdrop-filter: blur(20px) saturate(120%); }
+.catalog-overlay-head { position: absolute; inset: 0 0 auto; z-index: 5; display: flex; align-items: center; justify-content: space-between; padding: 16px clamp(16px, 4vw, 44px) 22px; }
+.catalog-overlay-head h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
+.catalog-overlay-head .dialog-close { position: static; }
+.catalog-overlay-body { height: 100%; overflow: auto; padding: 74px clamp(16px, 4vw, 44px) 30px; }
+
+/* A viewer's ask, floating over the player until someone acts on it. */
+.request-stack { position: fixed; left: 20px; bottom: 20px; z-index: 48; display: flex; flex-direction: column; gap: 10px; width: min(340px, calc(100vw - 40px)); }
+.request-card { position: relative; display: flex; gap: 12px; padding: 12px 34px 12px 12px; border-radius: 18px; background: var(--glass); border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(22px) saturate(130%); animation: toast-enter var(--t-open) var(--ease) both; }
+@media (prefers-reduced-motion: reduce) { .request-card { animation: none; } }
+.request-card img { flex: 0 0 auto; width: 44px; height: 66px; object-fit: cover; border-radius: 8px; }
+.request-copy { min-width: 0; display: grid; align-content: center; gap: 7px; }
+.request-copy p { margin: 0; font-size: 13px; line-height: 1.4; }
+.request-copy strong { color: #c7caff; }
+.request-open { justify-self: start; padding: 5px 11px; border: 0; border-radius: 999px; background: var(--primary); color: white; font-size: 12px; font-weight: 600; }
+.request-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
+
+/* The manual-upload dialog reuses the drop-zone at a size that fits a modal. */
+.upload-dialog { width: min(560px, calc(100vw - 32px)); }
+.dialog-drop { min-height: 260px; padding: 24px; border-radius: 22px; }
+
+@media (max-width: 620px) {
+  .catalog-shell { padding: 84px 12px 24px; }
+  .details-panel { width: 100svw; height: 100svh; border-radius: 0; }
+  .details-hero { height: 220px; margin-bottom: -160px; }
+  .catalog-strip { grid-auto-columns: 118px; }
+  .request-stack { left: 12px; bottom: 84px; }
+}
+
+/* --- catalog dropdowns -------------------------------------------------- */
+/* Player-settings-style morph: one surface that IS the pill when shut and
+   grows into the options panel when open. The hidden spacer keeps the row's
+   layout; the surface floats and resizes over it. */
+.dropdown { position: relative; }
+.dropdown-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 7px 12px; border: 0; background: transparent; font-size: 12.5px; white-space: nowrap; }
+.dropdown-spacer { visibility: hidden; border: 1px solid transparent; }
+.dropdown-trigger svg { flex: 0 0 auto; color: var(--text-dim); transition: transform 150ms var(--ease); }
+.dropdown-trigger svg.is-open { transform: rotate(180deg); }
+.dropdown-value { display: inline-flex; align-items: center; gap: 7px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-surface { position: absolute; top: 0; left: 0; z-index: 8; min-width: 100%; width: max-content; overflow: hidden; border: 1px solid var(--border); background: rgba(26,28,40,.97); backdrop-filter: blur(18px) saturate(130%); }
+.dropdown.is-open .dropdown-surface { z-index: 9; min-width: max(100%, 230px); box-shadow: 0 22px 60px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.07); }
+.dropdown-menu { max-height: 280px; overflow: auto; margin: 0; padding: 4px 6px 6px; list-style: none; }
+.dropdown-menu button { display: flex; align-items: center; justify-content: space-between; gap: 18px; width: 100%; padding: 8px 11px; border: 0; border-radius: 10px; background: transparent; text-align: left; font-size: 12.5px; white-space: nowrap; }
+.dropdown-menu button:hover { background: rgba(255,255,255,.06); }
+.dropdown-menu button.is-selected { background: var(--primary-soft); color: #c7caff; }
+.dropdown-option-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dropdown-option-detail { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.dropdown--end .dropdown-surface { left: auto; right: 0; }
+@media (max-width: 620px) { .catalog-search { bottom: 14px; } }
+
+/* Pictures never pop in: a colour placeholder fills the slot until the
+   bytes are decoded, then the photo fades over it. */
+.fade-frame { display: block; width: 100%; height: 100%; overflow: hidden; }
+.fade-frame > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fade-img { opacity: 0; transition: opacity 300ms var(--ease); }
+.fade-img.is-loaded { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .fade-img { transition-duration: .01ms; } }
+
+/* --- next episode ------------------------------------------------------- */
+/* Floating bottom-right inside the player wrap, so fullscreen keeps it. */
+.next-episode-card { position: absolute; right: 18px; bottom: 84px; z-index: 12; display: flex; gap: 12px; width: min(340px, calc(100% - 36px)); padding: 12px 30px 12px 12px; border-radius: 18px; background: rgba(11,12,18,.62); backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 16px 44px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); }
+.next-episode-art { flex: 0 0 auto; width: 96px; height: 58px; border-radius: 10px; overflow: hidden; }
+.next-episode-copy { min-width: 0; display: grid; gap: 3px; align-content: center; }
+.next-episode-kicker { color: var(--text-faint); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.next-episode-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.next-episode-count { color: var(--text-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.next-episode-play { justify-self: start; display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; padding: 5px 11px; border: 0; border-radius: 999px; background: var(--primary); color: white; font-size: 11.5px; font-weight: 600; }
+.next-episode-play svg { fill: currentColor; }
+.next-episode-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
+
+/* --- starting overlay --------------------------------------------------- */
+.starting-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(6,7,11,.88); backdrop-filter: blur(10px); }
+.starting-card { display: grid; justify-items: center; gap: 10px; padding: 24px; text-align: center; }
+.starting-card h2 { margin: 8px 0 0; font-size: 22px; letter-spacing: -.03em; }
+.starting-file { margin: 0; max-width: min(480px, 80vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
+.starting-phase { margin: 0; color: var(--text-faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* --- slow-connection skeletons ------------------------------------------ */
+.details-skeleton { display: grid; gap: 10px; margin-top: 16px; }
+.text-skeleton { height: 13px; border-radius: 7px; background: linear-gradient(110deg, rgba(255,255,255,.05) 40%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.05) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+.details-skeleton-episodes { display: flex; gap: 12px; margin-top: 10px; overflow: hidden; }
+.episode-skeleton { flex: 0 0 clamp(220px, 26vw, 300px); aspect-ratio: 1 / 1.02; border-radius: 20px; background: linear-gradient(110deg, var(--card) 40%, var(--card-hover) 50%, var(--card) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .text-skeleton, .episode-skeleton { animation: none; } }
+
+/* Phone header: the nav collapses to bare icons and the build link steps
+   aside, so the wordmark and the language never overlap it. */
+@media (max-width: 620px) {
+  .catalog-shell .home-header { height: 60px; grid-template-columns: 1fr auto 1fr; gap: 6px; padding: 0 10px; }
+  .catalog-shell .home-header nav { min-width: 0; justify-content: center; gap: 2px; }
+  .catalog-shell .home-header nav button { padding: 8px 10px; }
+  .catalog-shell .home-header nav button::after { display: none; }
+  .catalog-shell .home-header .nav-label { display: none; }
+  .catalog-shell .home-header .build-info { display: none; }
+  .catalog-shell .home-wordmark { font-size: 13px; }
+  .catalog-shell { padding-top: 82px; }
+  .details-content { padding-bottom: 24px; }
+  .next-episode-card { right: 10px; bottom: 74px; }
+}
+
+/* --- progressive blur --------------------------------------------------- */
+/* Stacked backdrop layers whose blur radius doubles each step while its mask
+   ends higher up: the blur builds along an ease-out ramp instead of a single
+   masked slab, which is what removes the hard glass edge. The tint over it
+   follows an ease-in curve for the same reason. Generated values — see
+   ProgressiveBlur.tsx. */
+.catalog-shell .home-header { background: transparent; }
+/* The ramp runs past the header's own box, so it finishes in clear air. */
+.progressive-blur { position: absolute; inset: 0 0 -60% 0; z-index: -1; pointer-events: none; }
+.progressive-blur span { position: absolute; inset: 0; display: block; }
+.progressive-blur span:nth-child(1) { backdrop-filter: blur(0.9px); -webkit-backdrop-filter: blur(0.9px); mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); }
+.progressive-blur span:nth-child(2) { backdrop-filter: blur(1.8px); -webkit-backdrop-filter: blur(1.8px); mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); }
+.progressive-blur span:nth-child(3) { backdrop-filter: blur(3.6px); -webkit-backdrop-filter: blur(3.6px); mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); }
+.progressive-blur span:nth-child(4) { backdrop-filter: blur(7.2px); -webkit-backdrop-filter: blur(7.2px); mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); }
+.progressive-blur span:nth-child(5) { backdrop-filter: blur(14.4px); -webkit-backdrop-filter: blur(14.4px); mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); }
+
+/* --- catalog header ----------------------------------------------------- */
+/* Identity and language on the left, the way in for your own media on the
+   right, hard against the edge. Nothing in the middle: the catalog is the
+   page, and the header should not compete with it. */
+/* Full width so the blur ramp spans the window, but its contents sit on the
+   same 1240px column the board does, so the wordmark lines up with the first
+   poster. */
+.catalog-shell .home-header { grid-template-columns: auto 1fr auto; padding-inline: max(clamp(16px, 4vw, 54px), calc((100% - 1240px) / 2)); }
+.header-start { display: inline-flex; align-items: center; gap: 12px; }
+.header-start .header-language { padding: 6px 9px; border-radius: 999px; }
+.home-header .header-upload { padding: 9px 16px; border: 0; border-radius: 999px; color: white; background: var(--primary); font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(120,127,250,.24), inset 0 1px rgba(255,255,255,.2); }
+.home-header .header-upload:hover:not(:disabled) { background: #8e94ff; color: white; }
+.home-header .header-upload svg { color: currentColor; }
+
+/* --- the catalog arriving ---------------------------------------------- */
+/* Same entrance as the landing it replaced: everything comes in out of focus
+   and settles, dealt top to bottom, so the board reads as arriving rather
+   than being switched on. */
+.catalog-search { animation: home-rise 620ms var(--ease) 320ms backwards; }
+.catalog-row { animation: home-rise 640ms var(--ease) backwards; }
+.catalog-row:nth-of-type(1) { animation-delay: 150ms; }
+.catalog-row:nth-of-type(2) { animation-delay: 230ms; }
+.catalog-row:nth-of-type(3) { animation-delay: 310ms; }
+.catalog-row:nth-of-type(4) { animation-delay: 390ms; }
+.catalog-row:nth-of-type(5) { animation-delay: 470ms; }
+@media (prefers-reduced-motion: reduce) {
+  .catalog-search, .catalog-row { animation: none; }
+}
+
+/* --- manual upload panel ------------------------------------------------ */
+/* The dialog is only the scrim and the position; the panel itself is the
+   surface, so it can travel between the sizes its steps need. A modal has no
+   control to grow out of, so it arrives as a fade through blur — and from
+   there every step change is the same box reforming, in both axes. */
+.ui-dialog.upload-dialog { width: auto; background: transparent; box-shadow: none; overflow: visible; animation: modal-bloom var(--t-open) var(--ease); }
+.ui-dialog.upload-dialog[data-state='closed'] { animation: modal-bloom-out var(--t-close) var(--ease); }
+@keyframes modal-bloom { from { opacity: 0; filter: blur(12px); } }
+@keyframes modal-bloom-out { to { opacity: 0; filter: blur(8px); } }
+@media (prefers-reduced-motion: reduce) {
+  .ui-dialog.upload-dialog, .ui-dialog.upload-dialog[data-state='closed'] { animation: none; }
+}
+.upload-dialog .ui-dialog-body { padding: 0; }
+/* Intrinsic width: the box has to be free to size to each step for the morph
+   to have two real numbers to travel between. */
+/* The surface belongs to the box, not to the pane: the pane is what
+   dissolves between steps, and a background on it would take the whole panel
+   with it instead of only its contents. */
+.upload-morph { width: fit-content; max-width: calc(100vw - 32px); padding: 22px; border-radius: 26px; background: #171923; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; }
+/* No scrolling here: a scrollbar appearing inside the pane would resize the
+   contents the size hook is watching, and the two would chase each other.
+   Long lists carry their own scroller (see .torrent-files). */
+.upload-morph .morph-pane { width: 100%; max-height: calc(100dvh - 150px); display: flex; flex-direction: column; min-height: 0; }
+.upload-morph .morph-step { width: min(var(--step-w), calc(100vw - 76px)); }
+.upload-morph .morph-step[data-step='menu'] { --step-w: 400px; }
+.upload-morph .morph-step[data-step='file'] { --step-w: 500px; }
+.upload-morph .morph-step[data-step='magnet'] { --step-w: 560px; }
+.upload-morph .source-options { margin-top: 16px; }
+.upload-morph .dialog-drop { min-height: 210px; margin-top: 12px; }
+.upload-morph .stage-title { margin: 0; font-size: 22px; letter-spacing: -.03em; }
+.upload-morph .stage-description { margin: 6px 0 0; color: var(--text-dim); font-size: 13.5px; }
+.upload-morph .morph-head { display: flex; align-items: center; gap: 10px; }
+
+/* Bare options: the panel is the surface, so each way in is a line of text
+   with an icon, not a box inside a box. */
+.upload-morph .source-options button { border: 0; background: transparent; padding: 12px 10px; }
+.upload-morph .source-options button:hover:not(:disabled) { background: rgba(255,255,255,.05); border-color: transparent; }
+
+/* The whole zone is the control: no button inside it competing for the click. */
+.upload-morph .dialog-drop { width: 100%; display: grid; place-items: center; align-content: center; gap: 8px; cursor: pointer; text-align: center; }
+.upload-morph .dialog-drop strong { font-size: 15px; }
+.upload-morph .dialog-drop > span { margin: 0; color: var(--text-faint); font-size: 12px; }
+.upload-morph .dialog-drop .drop-icon { margin: 0; }
+.upload-morph .morph-head { margin-bottom: 4px; }

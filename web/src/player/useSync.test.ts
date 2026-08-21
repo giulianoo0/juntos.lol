@@ -216,4 +216,25 @@ describe('useSync', () => {
     expect(result.current.presence).toEqual([])
     unmount()
   })
+
+  it('collects relayed title requests as a rolling inbox', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+
+    act(() => socket.receive({
+      type: 'titleRequest',
+      memberId: 'm2',
+      title: { metaId: 'tt0903747', metaType: 'series', name: 'Breaking Bad', poster: 'p', season: 1, episode: 2, from: 'guest' },
+    }))
+    expect(result.current.titleRequests).toHaveLength(1)
+    expect(result.current.titleRequests[0]).toMatchObject({
+      memberId: 'm2', from: 'guest', metaId: 'tt0903747', metaType: 'series',
+      name: 'Breaking Bad', poster: 'p', season: 1, episode: 2,
+    })
+    // A frame without a title payload is ignored rather than rendered empty.
+    act(() => socket.receive({ type: 'titleRequest', memberId: 'm2' }))
+    expect(result.current.titleRequests).toHaveLength(1)
+    unmount()
+  })
 })

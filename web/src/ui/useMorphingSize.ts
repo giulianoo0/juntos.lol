@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 
-/** Matches --ease-move: something travelling on screen eases at both ends. */
-const EASE_MOVE = 'cubic-bezier(.77, 0, .175, 1)'
-const DEFAULT_DURATION_MS = 320
+/** Leaves at once and settles: a box that eased in as well read as lag. */
+const EASE_MOVE = 'cubic-bezier(.23, 1, .32, 1)'
+const DEFAULT_DURATION_MS = 260
 
 type Size = { width: number; height: number }
 type Axis = 'both' | 'width'

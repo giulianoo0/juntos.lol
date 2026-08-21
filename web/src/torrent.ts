@@ -55,6 +55,9 @@ function loadWebTorrent(): Promise<WebTorrentConstructor> {
 export interface TorrentVideoFile {
   name: string
   path: string
+  // Position in the torrent's own file list, before any filtering or sorting.
+  // Stream addons address files by this index.
+  index: number
   size: number
   type: string
   progress: number
@@ -170,10 +173,12 @@ export async function openTorrent(
         timer = window.setInterval(() => onStats?.(getStats()), 500)
         onStats?.(getStats())
         const files = readyTorrent.files
-          .filter((file) => VIDEO_EXTENSION.test(file.name))
-          .map((file): TorrentVideoFile => ({
+          .map((file, index) => ({ file, index }))
+          .filter(({ file }) => VIDEO_EXTENSION.test(file.name))
+          .map(({ file, index }): TorrentVideoFile => ({
             name: file.name,
             path: file.path,
+            index,
             size: file.length,
             type: file.type || 'application/octet-stream',
             get progress() { return file.progress },
@@ -234,10 +239,12 @@ function openBridgeSession(
   }
 
   const files = bridge.files
-    .filter((file) => VIDEO_EXTENSION.test(file.name))
-    .map((file): TorrentVideoFile => ({
+    .map((file, index) => ({ file, index }))
+    .filter(({ file }) => VIDEO_EXTENSION.test(file.name))
+    .map(({ file, index }): TorrentVideoFile => ({
       name: file.name,
       path: file.path,
+      index,
       size: file.size,
       type: file.type || 'application/octet-stream',
       get progress() { return selectedPath === file.path && file.size > 0 ? downloaded / file.size : 0 },
