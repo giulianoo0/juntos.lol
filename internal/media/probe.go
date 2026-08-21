@@ -104,7 +104,12 @@ func parseProbe(data []byte) (*ProbeResult, error) {
 		case "video":
 			if result.VideoCodec == "" {
 				result.VideoCodec = stream.CodecName
-				result.VideoCopyable = stream.CodecName == "h264" || stream.CodecName == "hevc"
+				// Everything here packs into fMP4 and is decoded natively by
+				// the browsers that reach this pipeline, so the encode is a
+				// remux. Anything else is transcoded, which costs a room
+				// roughly its own running time in CPU.
+				result.VideoCopyable = stream.CodecName == "h264" ||
+					stream.CodecName == "hevc" || stream.CodecName == "av1"
 				result.VideoHeight = stream.Height
 			}
 		case "audio":

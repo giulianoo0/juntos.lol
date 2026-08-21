@@ -187,7 +187,7 @@ describe('upload registry', () => {
 
     expect(roomBodies[0].fileName).toBe('movie.mkv')
     expect(uppy.addFile).toHaveBeenCalledWith({ name: 'movie.mkv', type: 'video/x-matroska', data: converted })
-    expect(extractAndUploadSubtitles).toHaveBeenCalledWith(converted, result.roomID)
+    expect(extractAndUploadSubtitles).toHaveBeenCalledWith(converted, result.roomID, 0)
     expect(seen).toEqual([{ phase: 'converting', pct: 50 }])
   })
 
@@ -197,7 +197,7 @@ describe('upload registry', () => {
 
     expect(roomBodies[0].fileName).toBe('movie.mp4')
     expect(uppy.addFile).toHaveBeenCalledWith({ name: 'movie.mp4', type: 'video/mp4', data: file })
-    expect(extractAndUploadSubtitles).toHaveBeenCalledWith(file, result.roomID)
+    expect(extractAndUploadSubtitles).toHaveBeenCalledWith(file, result.roomID, 0)
   })
 
   it('rejects without creating a room when the mp4 has no video track', async () => {
@@ -385,7 +385,7 @@ describe('upload registry', () => {
     expect(createMatroskaSubtitleStream).not.toHaveBeenCalled()
     expect(subtitleFakes.published.at(-1)).toEqual({
       source: 'external',
-      tracks: [{ language: 'por', title: 'Portuguese', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n' }],
+      tracks: [{ language: 'por', title: 'Portuguese', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000 line:-3\nOi\n' }],
       complete: true,
     })
   })
@@ -438,7 +438,7 @@ describe('torrent handover', () => {
     fetchMock.mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({}) } as Response)
     const torrent = session('session-1')
 
-    await startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: torrent })
+    await startTorrentTransfer('room1', '/api/upload/', 1024, 0, { file, session: torrent })
 
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
@@ -458,7 +458,7 @@ describe('torrent handover', () => {
       .mockResolvedValueOnce({ ok: true, status: 201, headers: new Headers({ Location: '/api/upload/x' }) } as Response)
       .mockResolvedValue({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
 
-    await startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: session(undefined) })
+    await startTorrentTransfer('room1', '/api/upload/', 1024, 0, { file, session: session(undefined) })
 
     // Straight to tus creation: no handover was attempted at all.
     expect(fetchMock.mock.calls[0][0]).toBe('/api/upload/')
@@ -471,7 +471,7 @@ describe('torrent handover', () => {
       .mockResolvedValueOnce({ ok: true, status: 201, headers: new Headers({ Location: '/api/upload/x' }) } as Response)
       .mockResolvedValue({ ok: true, status: 204, headers: new Headers({ 'Upload-Offset': '6' }) } as Response)
 
-    await startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: session('session-1') })
+    await startTorrentTransfer('room1', '/api/upload/', 1024, 0, { file, session: session('session-1') })
 
     expect(fetchMock.mock.calls[1][0]).toBe('/api/upload/')
   })
@@ -480,7 +480,7 @@ describe('torrent handover', () => {
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockResolvedValueOnce({ ok: false, status: 409 } as Response)
 
-    await expect(startTorrentTransfer('room1', '/api/upload/', 1024, { file, session: session('s1') }))
+    await expect(startTorrentTransfer('room1', '/api/upload/', 1024, 0, { file, session: session('s1') }))
       .rejects.toThrow('torrent handover failed (409)')
     // A conflict means someone else is already feeding this room; silently
     // starting a second transfer from here would be the wrong repair.

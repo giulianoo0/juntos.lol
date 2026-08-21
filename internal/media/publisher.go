@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/giulianoo0/ss/internal/objectstore"
@@ -31,8 +33,28 @@ var (
 
 const (
 	// PublishInterval is how often a running encode pushes new output to the
-	// bucket. Half a preview segment: the preview is what a viewer waits on.
+	// bucket. Well inside one preview segment, so a segment leaves for the
+	// bucket about as soon as the muxer finishes writing it: the preview is
+	// what a viewer waits on.
 	PublishInterval = time.Second
+
+	// uploadTimeout bounds one object upload. It is deliberately generous
+	// because the alternative to a slow upload is an aborted one, and an
+	// aborted PUT is not a no-op: the bucket keeps an object that reads back
+	// intact over the S3 API while the edge serves it truncated, so the room
+	// loses its video and no cache purge brings it back.
+	uploadTimeout = 5 * time.Minute
+	// uploadConcurrency is how many objects are sent to the bucket at once.
+	uploadConcurrency = 8
+	// publishBatchSize is how many objects land between two republishes of the
+	// playlists. Small enough that a viewer sees the edge move while a backlog
+	// drains, large enough that the bookkeeping stays a rounding error.
+	publishBatchSize = 32
+
+	// bookkeepingTimeout bounds the record of what reached the bucket. It
+	// outlives the cancellation that stopped the uploads, or the objects paid
+	// for would be uploaded again by the next pass.
+	bookkeepingTimeout = 10 * time.Second
 
 	// immutableCacheControl is for segments and init files. Their names carry
 	// a sequence number and a new encode writes new names, so an edge copy can
@@ -41,6 +63,13 @@ const (
 	// subtitleCacheControl is shorter because progressive extraction rewrites
 	// the same name as it reads further into the file.
 	subtitleCacheControl = "public, max-age=3600"
+
+	// maxRememberedSubtitles bounds the record of which subtitle files already
+	// reached the bucket. The record lives as long as the process, and without
+	// a ceiling it would grow for every room the server ever published.
+	// Forgetting all of it costs one redundant upload per track still being
+	// extracted, which is the cheaper failure.
+	maxRememberedSubtitles = 4096
 )
 
 // Publisher moves a room's encoded output into the bucket and publishes the
@@ -56,14 +85,22 @@ type Publisher struct {
 	baseURL string
 	// interval is how often Run publishes. Tests shorten it.
 	interval time.Duration
+
+	// sentSubtitles digests the subtitle files already in the bucket, keyed by
+	// the object key they landed on. Progressive extraction rewrites every
+	// track's file on every tick whether or not its cues moved, so without this
+	// a track that ran out of dialogue is uploaded again on each one.
+	subsMu        sync.Mutex
+	sentSubtitles map[string][sha256.Size]byte
 }
 
 func NewPublisher(store *room.Store, bucket objectstore.Store, mediaPublicURL string) *Publisher {
 	return &Publisher{
-		store:    store,
-		bucket:   bucket,
-		baseURL:  strings.TrimSuffix(mediaPublicURL, "/"),
-		interval: PublishInterval,
+		store:         store,
+		bucket:        bucket,
+		baseURL:       strings.TrimSuffix(mediaPublicURL, "/"),
+		interval:      PublishInterval,
+		sentSubtitles: make(map[string][sha256.Size]byte),
 	}
 }
 
@@ -105,51 +142,123 @@ func (p *Publisher) Publish(ctx context.Context, roomID, hlsDir string, patterns
 		return fmt.Errorf("load published objects: %w", err)
 	}
 
-	var uploaded []string
-	for _, name := range sortedKeys(bodies) {
+	names := sortedKeys(bodies)
+	// Objects are queued in playlist order, so the playable edge of the
+	// playlist a viewer is currently watching moves before anything else.
+	var pending []string
+	for _, name := range names {
 		for _, object := range playlistObjects(bodies[name]) {
 			if _, done := published[object]; done {
 				continue
 			}
-			err := p.putObject(ctx, hlsPrefix(roomID, generation)+object,
-				filepath.Join(hlsDir, object), segmentContentType(object), immutableCacheControl)
-			if errors.Is(err, os.ErrNotExist) {
-				// The playlist names it but the muxer has not finished
-				// renaming it into place. Leaving it unpublished makes the
-				// rendered playlist stop here, which is the whole point of
-				// truncation; the next pass picks it up.
-				continue
-			}
-			if err != nil {
-				// Whatever already reached the bucket is recorded before
-				// giving up, so a retry pays for the remaining objects rather
-				// than for all of them again.
-				if markErr := p.store.MarkPublished(ctx, roomID, uploaded...); markErr != nil {
-					slog.WarnContext(ctx, "record published objects after upload failure",
-						"room_id", roomID, "error", markErr)
-				}
-				return err
-			}
-			published[object] = struct{}{}
-			uploaded = append(uploaded, object)
+			pending = append(pending, object)
 		}
 	}
-	// Recording before rendering is what makes truncation honest: a playlist
-	// may only name an object this set already vouches for.
-	if err := p.store.MarkPublished(ctx, roomID, uploaded...); err != nil {
-		return fmt.Errorf("record published objects: %w", err)
-	}
 
+	var uploadErr error
+	for len(pending) > 0 && uploadErr == nil {
+		// Cancellation stops the pass between batches rather than during one:
+		// an upload already streaming is left to finish, because a half-written
+		// object reads back intact over the S3 API while the edge serves it
+		// truncated, and no cache purge repairs that.
+		if err := ctx.Err(); err != nil {
+			uploadErr = err
+			break
+		}
+		batch := pending[:min(publishBatchSize, len(pending))]
+		pending = pending[len(batch):]
+
+		landed, err := p.uploadBatch(ctx, roomID, generation, hlsDir, batch)
+		uploadErr = err
+		for _, object := range landed {
+			published[object] = struct{}{}
+		}
+		if len(landed) == 0 {
+			continue
+		}
+		// Recording and rendering after every batch is what makes the playable
+		// edge advance during a pass instead of only at the end of one. A room
+		// with thousands of segments queued would otherwise show nothing for as
+		// long as the whole backlog takes.
+		if err := p.commit(ctx, roomID, generation, bodies, names, published, landed); err != nil {
+			return err
+		}
+		p.dropUploadedSegments(hlsDir, landed)
+	}
+	if uploadErr != nil {
+		return uploadErr
+	}
+	// The playlists themselves grow even when every object they name is
+	// already in the bucket, so the last word on what they cover is published
+	// whether or not this pass moved any bytes.
+	return p.commit(ctx, roomID, generation, bodies, names, published, nil)
+}
+
+// uploadBatch sends a batch of objects to the bucket at once and reports which
+// of them landed. Uploading one at a time made the publisher the slowest part
+// of the pipeline by a wide margin: an encode writing thirty segments a second
+// queued all of them behind whichever single object was in flight.
+func (p *Publisher) uploadBatch(ctx context.Context, roomID string, generation int,
+	hlsDir string, objects []string) ([]string, error) {
+	var (
+		mu       sync.Mutex
+		landed   []string
+		firstErr error
+	)
+	slots := make(chan struct{}, uploadConcurrency)
+	var wg sync.WaitGroup
+	for _, object := range objects {
+		wg.Add(1)
+		go func(object string) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			err := p.putObject(ctx, hlsPrefix(roomID, generation)+object,
+				filepath.Join(hlsDir, object), segmentContentType(object), immutableCacheControl)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				// The playlist names it but the muxer has not finished renaming
+				// it into place. Leaving it unpublished makes the rendered
+				// playlist stop here, which is the whole point of truncation;
+				// the next pass picks it up.
+			case err != nil:
+				if firstErr == nil {
+					firstErr = err
+				}
+			default:
+				landed = append(landed, object)
+			}
+		}(object)
+	}
+	wg.Wait()
+	return landed, firstErr
+}
+
+// commit records what reached the bucket and republishes the playlists around
+// it. Recording before rendering is what makes truncation honest: a playlist
+// may only name an object this set already vouches for.
+func (p *Publisher) commit(ctx context.Context, roomID string, generation int,
+	bodies map[string][]byte, names []string, published map[string]struct{}, landed []string) error {
+	// Bookkeeping outlives the cancellation that ended the pass, because a
+	// record lost here is paid for again as a re-upload by the next one.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bookkeepingTimeout)
+	defer cancel()
+	if len(landed) > 0 {
+		if err := p.store.MarkPublished(commitCtx, roomID, landed...); err != nil {
+			return fmt.Errorf("record published objects: %w", err)
+		}
+	}
 	rendered := make(map[string]string, len(bodies))
-	for name, body := range bodies {
-		if out, ok := p.renderPlaylist(roomID, generation, body, published); ok {
+	for _, name := range names {
+		if out, ok := p.renderPlaylist(roomID, generation, bodies[name], published); ok {
 			rendered[name] = out
 		}
 	}
-	if err := p.store.SetPlaylists(ctx, roomID, rendered); err != nil {
+	if err := p.store.SetPlaylists(commitCtx, roomID, rendered); err != nil {
 		return fmt.Errorf("publish playlists: %w", err)
 	}
-	p.dropUploadedSegments(hlsDir, uploaded)
 	return nil
 }
 
@@ -192,9 +301,9 @@ func (p *Publisher) Run(ctx context.Context, roomID, hlsDir string, patterns []s
 	}
 }
 
-// PublishSubtitles uploads every WebVTT file in subsDir. Subtitle URLs are
-// built by the client, so they carry a version query string of their own and
-// do not need the published set.
+// PublishSubtitles uploads every WebVTT file in subsDir whose content is not
+// already in the bucket. Subtitle URLs are built by the client, so they carry
+// a version query string of their own and do not need the published set.
 func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string) error {
 	generation, err := p.generation(ctx, roomID)
 	if err != nil {
@@ -211,12 +320,69 @@ func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".vtt") {
 			continue
 		}
-		if err := p.putObject(ctx, subsPrefix(roomID, generation)+entry.Name(),
-			filepath.Join(subsDir, entry.Name()), "text/vtt; charset=utf-8", subtitleCacheControl); err != nil {
+		if err := p.putSubtitle(ctx, subsPrefix(roomID, generation)+entry.Name(),
+			filepath.Join(subsDir, entry.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// putSubtitle uploads one WebVTT file unless the bucket already holds exactly
+// these bytes under this key.
+//
+// The file is read whole rather than streamed: subtitles are kilobytes, and
+// the read is what the digest is taken from anyway.
+func (p *Publisher) putSubtitle(ctx context.Context, key, path string) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return fmt.Errorf("read %s for upload: %w", filepath.Base(path), err)
+	}
+	digest := sha256.Sum256(body)
+	if p.subtitleSent(key, digest) {
+		return nil
+	}
+	// Detached from the caller's cancellation for the same reason a segment
+	// upload is: an aborted PUT leaves an object that reads back intact over
+	// the S3 API and is served truncated from the edge.
+	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
+	defer cancel()
+	if err := p.bucket.Put(uploadCtx, key, bytes.NewReader(body), int64(len(body)),
+		"text/vtt; charset=utf-8", subtitleCacheControl); err != nil {
+		return err
+	}
+	// Recorded only once the bytes are in the bucket, so a failed upload is
+	// retried by the next pass rather than assumed done.
+	p.rememberSubtitle(key, digest)
+	return nil
+}
+
+func (p *Publisher) subtitleSent(key string, digest [sha256.Size]byte) bool {
+	p.subsMu.Lock()
+	defer p.subsMu.Unlock()
+	sent, ok := p.sentSubtitles[key]
+	return ok && sent == digest
+}
+
+func (p *Publisher) rememberSubtitle(key string, digest [sha256.Size]byte) {
+	p.subsMu.Lock()
+	defer p.subsMu.Unlock()
+	if p.sentSubtitles == nil {
+		p.sentSubtitles = make(map[string][sha256.Size]byte)
+	}
+	if len(p.sentSubtitles) >= maxRememberedSubtitles {
+		clear(p.sentSubtitles)
+	}
+	p.sentSubtitles[key] = digest
+}
+
+func (p *Publisher) rememberedSubtitles() int {
+	p.subsMu.Lock()
+	defer p.subsMu.Unlock()
+	return len(p.sentSubtitles)
 }
 
 // generation reads which source the room is currently on. Every object key
@@ -243,7 +409,14 @@ func (p *Publisher) putObject(ctx context.Context, key, path, contentType, cache
 	if err != nil {
 		return fmt.Errorf("size %s for upload: %w", filepath.Base(path), err)
 	}
-	return p.bucket.Put(ctx, key, file, info.Size(), contentType, cacheControl)
+	// Detached from the caller's cancellation on purpose. Once bytes are
+	// moving, the cheapest outcome is to let them land: an aborted PUT leaves
+	// the bucket holding an object that passes an S3 read and is served
+	// truncated from the edge, which is indistinguishable from working media
+	// until a viewer's player stalls on it.
+	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
+	defer cancel()
+	return p.bucket.Put(uploadCtx, key, file, info.Size(), contentType, cacheControl)
 }
 
 // dropUploadedSegments reclaims disk for media segments now in the bucket.

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -286,7 +287,7 @@ func TestExpiredRoomRemovesTusArtifactsAndCannotResume(t *testing.T) {
 	require.FileExists(t, filepath.Join(cfg.DataDir, "tus-incoming", uploadID))
 
 	require.Eventually(t, func() bool {
-		room.SweepOnce(context.Background(), s, cfg.DataDir)
+		room.SweepOnce(context.Background(), s, cfg.DataDir, objectstore.NewFake())
 		_, err := os.Stat(filepath.Join(cfg.DataDir, "tus-incoming", uploadID))
 		return os.IsNotExist(err)
 	}, 2*time.Second, 10*time.Millisecond)

@@ -14,11 +14,15 @@ vi.mock('../catalog/cinemeta', () => ({
   fetchMeta: vi.fn().mockResolvedValue(null),
 }))
 
-// The drop-zone lives behind the manual-upload dialog now: menu, then panel.
-function openFilePanel() {
+// The drop-zone lives behind the manual-upload panel now: open it, then pick
+// a way in. The panel holds each step one beat while the last one dissolves,
+// so every step has to be waited for.
+async function openManual(step: RegExp) {
   fireEvent.click(screen.getByRole('button', { name: /manual upload|upload manualmente/i }))
-  fireEvent.click(screen.getByRole('button', { name: /upload a file|enviar um arquivo/i }))
+  fireEvent.click(await screen.findByRole('button', { name: step }))
 }
+
+const openFilePanel = () => openManual(/upload a file|enviar um arquivo/i)
 
 describe('Home', () => {
   beforeEach(() => {
@@ -31,7 +35,7 @@ describe('Home', () => {
   it('renders the catalog board and starts upload after file selection', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
     expect(screen.getByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
-    openFilePanel()
+    await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.change(screen.getByLabelText(/your name|seu nome/i), { target: { value: 'giuli' } })
@@ -44,7 +48,7 @@ describe('Home', () => {
 
   it('rejects a file over the limit without network work', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
-    openFilePanel()
+    await openFilePanel()
     const file = new File(['x'], 'huge.mkv')
     Object.defineProperty(file, 'size', { value: MAX_UPLOAD_BYTES + 1 })
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
@@ -56,7 +60,7 @@ describe('Home', () => {
   it('uses the server-generated name when the name is blank', async () => {
     vi.mocked(createRoomAndUpload).mockResolvedValue({ roomID: 'room1234', nickname: 'Guest-abc123' })
     render(<MemoryRouter><Home /></MemoryRouter>)
-    openFilePanel()
+    await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
@@ -72,7 +76,7 @@ describe('Home', () => {
       return new Promise(() => undefined) // conversion still running
     })
     render(<MemoryRouter><Home /></MemoryRouter>)
-    openFilePanel()
+    await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mp4', { type: 'video/mp4' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
@@ -94,7 +98,7 @@ describe('Home', () => {
         </Routes>
       </MemoryRouter>,
     )
-    openFilePanel()
+    await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
@@ -118,9 +122,8 @@ describe('Home', () => {
     })
 
     render(<MemoryRouter><Home /></MemoryRouter>)
-    openFilePanel()
-    fireEvent.click(screen.getByRole('button', { name: /open torrent|abrir torrent/i }))
-    fireEvent.change(screen.getByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
+    await openManual(/open torrent|abrir torrent/i)
+    fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
     fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))
 
     expect(await screen.findByRole('heading', { name: /which video|qual vídeo/i })).toBeInTheDocument()

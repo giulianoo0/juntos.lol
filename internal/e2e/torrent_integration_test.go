@@ -268,7 +268,7 @@ func startServer(t *testing.T, bridgeURL string) *testServer {
 	cfg.MediaPublicURL = "https://media.example.test"
 	publisher := media.NewPublisher(store, objectstore.NewFake(), cfg.MediaPublicURL)
 
-	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(string) {})
+	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(string) {}, nil)
 	queue.Start(ctx)
 	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, publisher,
 		cfg.StreamStartMB<<20, func(string) {}, func(string) {})

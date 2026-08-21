@@ -36,6 +36,10 @@ func TestParseProbeClassifiesVideoAndSubtitleCodecs(t *testing.T) {
 		wantSubtitleIndex int
 	}{
 		{name: "hevc is copyable", videoCodec: "hevc", wantCopyable: true, wantSubtitleIndex: 1},
+		// AV1 packs into fMP4 exactly like the other two, and every browser
+		// that reaches this pipeline decodes it. Transcoding it instead costs
+		// the room roughly its own running time in CPU for no gain.
+		{name: "av1 is copyable", videoCodec: "av1", wantCopyable: true, wantSubtitleIndex: 1},
 		{name: "vp9 needs transcoding", videoCodec: "vp9", wantCopyable: false, wantSubtitleIndex: 1},
 	}
 

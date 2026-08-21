@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -19,6 +20,18 @@ const (
 	publicPipelineCanceled = "media processing canceled"
 	publicQueueFullError   = "media queue is full"
 	queueRejectTimeout     = 2 * time.Second
+	// How many rooms can be waiting for a worker.
+	//
+	// This used to be the number of workers, which made the queue two deep on
+	// the machine this runs on: the fifth room to finish uploading inside one
+	// encode was turned away, and turned away is not a delay but the end of
+	// that room. Waiting is the right answer to a busy encoder.
+	//
+	// A room only reaches this queue once its upload is complete, and the disk
+	// holds a handful of those at a time, so this is far past anything the
+	// machine can actually accumulate. It is a backstop against a loop, not a
+	// capacity decision.
+	queueDepth = 256
 )
 
 // Pipeline processes one uploaded source into browser-ready media tracks.
@@ -37,6 +50,9 @@ type Queue struct {
 	dataDir   string
 	publisher *Publisher
 	onReady   func(roomID string)
+	// onUpdated says the room's metadata moved without claiming its media
+	// status changed — the signal clients refetch subtitle versions on.
+	onUpdated func(roomID string)
 	pipeline  Pipeline
 	jobs      chan string
 	done      chan struct{}
@@ -51,12 +67,12 @@ type Queue struct {
 
 // NewQueue creates a queue backed by the real ffmpeg pipeline.
 func NewQueue(workers int, store *room.Store, dataDir string, publisher *Publisher,
-	onReady func(roomID string)) *Queue {
-	return newQueue(workers, store, dataDir, publisher, onReady, realPipeline{})
+	onReady, onUpdated func(roomID string)) *Queue {
+	return newQueue(workers, store, dataDir, publisher, onReady, onUpdated, realPipeline{})
 }
 
 func newQueue(workers int, store *room.Store, dataDir string, publisher *Publisher,
-	onReady func(string), pipeline Pipeline) *Queue {
+	onReady, onUpdated func(string), pipeline Pipeline) *Queue {
 	if workers < 1 {
 		workers = 1
 	}
@@ -66,8 +82,9 @@ func newQueue(workers int, store *room.Store, dataDir string, publisher *Publish
 		dataDir:   dataDir,
 		publisher: publisher,
 		onReady:   onReady,
+		onUpdated: onUpdated,
 		pipeline:  pipeline,
-		jobs:      make(chan string, workers),
+		jobs:      make(chan string, queueDepth),
 		done:      make(chan struct{}),
 		queued:    make(map[string]struct{}),
 		active:    make(map[string]struct{}),
@@ -120,7 +137,7 @@ func (q *Queue) Recover(ctx context.Context) error {
 			}
 			continue
 		}
-		if storedRoom.Status != "uploading" && storedRoom.Status != "processing" {
+		if !recoverable(storedRoom) {
 			continue
 		}
 		if _, _, err := sourcePath(q.dataDir, roomID); err != nil {
@@ -130,6 +147,23 @@ func (q *Queue) Recover(ctx context.Context) error {
 		q.Submit(roomID)
 	}
 	return nil
+}
+
+// recoverable reports whether a stored room is one a restart should pick back
+// up. An upload that completed and a job that was interrupted are the ordinary
+// cases.
+//
+// A room turned away by a full queue is included deliberately. That failure is
+// a statement about how busy the server was at one instant, not about the
+// media, and leaving it out is what made a moment of overload permanent: the
+// room stayed failed for as long as it existed, with its source file sitting
+// on disk next to it. Every other failure is left alone, because retrying
+// media that cannot be processed only fails again, once per restart.
+func recoverable(r *room.Room) bool {
+	if r.Status == "uploading" || r.Status == "processing" {
+		return true
+	}
+	return r.Status == "error" && r.ErrorMessage == publicQueueFullError
 }
 
 // Submit enqueues roomID, or returns without blocking after the queue stops.
@@ -161,10 +195,12 @@ func (q *Queue) Submit(roomID string) {
 		return
 	case q.jobs <- roomID:
 		q.mu.Unlock()
+		metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelineFinal).Inc()
 		return
 	default:
 		delete(q.queued, roomID)
 		q.mu.Unlock()
+		metrics.FFmpegJobs.WithLabelValues(metrics.PipelineFinal, metrics.JobRejected).Inc()
 		q.rejectFull(ctx, roomID)
 	}
 }
@@ -185,15 +221,24 @@ func (q *Queue) worker(ctx context.Context) {
 			return
 		case roomID := <-q.jobs:
 			q.beginJob(roomID)
+			started := time.Now()
 			if ctx.Err() != nil {
 				q.markCanceled(ctx, roomID)
+				q.recordJob(metrics.JobCanceled, started)
 				q.finishJob(roomID)
 				return
 			}
 			completed := q.process(ctx, roomID)
-			if !completed && ctx.Err() != nil {
+			outcome := metrics.JobSucceeded
+			switch {
+			case completed:
+			case ctx.Err() != nil:
+				outcome = metrics.JobCanceled
 				q.markCanceled(ctx, roomID)
+			default:
+				outcome = metrics.JobFailed
 			}
+			q.recordJob(outcome, started)
 			q.finishJob(roomID)
 		}
 	}
@@ -228,6 +273,15 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		return false
 	}
 	keepReady := storedRoom.Status == "ready" || previewPublished
+	if !keepReady {
+		// The preview announces itself once its last publish lands, which can
+		// happen between the read above and the write below. Re-reading keeps
+		// this job from taking a room that just became watchable back to
+		// "preparing" for the length of the whole encode.
+		if fresh, freshErr := q.store.Get(ctx, roomID); freshErr == nil && fresh.Status == "ready" {
+			keepReady = true
+		}
+	}
 	nextStatus := "processing"
 	if keepReady {
 		nextStatus = "ready"
@@ -268,12 +322,10 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		}
 		return false
 	}
-	if err := q.publisher.Publish(ctx, roomID, hlsDir, finalPublishPatterns); err != nil {
-		if ctx.Err() == nil {
-			q.fail(ctx, roomID, fmt.Errorf("publish final media: %w", err))
-		}
-		return false
-	}
+	// Subtitles go out before the media: they are kilobytes where the media is
+	// gigabytes, and the room is at its oldest cues exactly now — a viewer who
+	// outran the last progressive snapshot is watching the ending without them.
+	// The announce below is what makes connected players refetch.
 	if err := q.publisher.PublishSubtitles(ctx, roomID, filepath.Join(roomDir, "subs")); err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("publish subtitles: %w", err))
@@ -288,6 +340,13 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 	if err != nil {
 		if ctx.Err() == nil {
 			q.fail(ctx, roomID, fmt.Errorf("store media tracks: %w", err))
+		}
+		return false
+	}
+	q.notifyUpdated(roomID)
+	if err := q.publisher.Publish(ctx, roomID, hlsDir, finalPublishPatterns); err != nil {
+		if ctx.Err() == nil {
+			q.fail(ctx, roomID, fmt.Errorf("publish final media: %w", err))
 		}
 		return false
 	}
@@ -316,17 +375,40 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 	return true
 }
 
+// Busy reports whether the room has a job waiting or running. The room's own
+// status does not answer this: a room is ready from the moment its preview
+// plays, and stays ready for the whole of the final encode.
+func (q *Queue) Busy(roomID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	_, queued := q.queued[roomID]
+	_, active := q.active[roomID]
+	return queued || active
+}
+
 func (q *Queue) beginJob(roomID string) {
 	q.mu.Lock()
 	delete(q.queued, roomID)
 	q.active[roomID] = struct{}{}
 	q.mu.Unlock()
+	metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelineFinal).Dec()
+	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelineFinal).Inc()
 }
 
 func (q *Queue) finishJob(roomID string) {
 	q.mu.Lock()
 	delete(q.active, roomID)
 	q.mu.Unlock()
+	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelineFinal).Dec()
+}
+
+// recordJob closes a job out on the counter and the histogram together, so a
+// dashboard can never show a throughput one of them agrees with and the other
+// does not.
+func (q *Queue) recordJob(outcome string, started time.Time) {
+	metrics.FFmpegJobs.WithLabelValues(metrics.PipelineFinal, outcome).Inc()
+	metrics.FFmpegJobDuration.WithLabelValues(metrics.PipelineFinal, outcome).
+		Observe(time.Since(started).Seconds())
 }
 
 func (q *Queue) stopAndDrain() []string {
@@ -339,6 +421,8 @@ func (q *Queue) stopAndDrain() []string {
 		select {
 		case roomID := <-q.jobs:
 			delete(q.queued, roomID)
+			metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelineFinal).Dec()
+			metrics.FFmpegJobs.WithLabelValues(metrics.PipelineFinal, metrics.JobCanceled).Inc()
 			roomIDs = append(roomIDs, roomID)
 		default:
 			return roomIDs
@@ -363,6 +447,13 @@ func (q *Queue) fail(ctx context.Context, roomID string, err error) {
 			"store_error", storeErr,
 		)
 	}
+}
+
+func (q *Queue) notifyUpdated(roomID string) {
+	if q.onUpdated == nil {
+		return
+	}
+	q.onUpdated(roomID)
 }
 
 func (q *Queue) notifyReady(roomID string) {
@@ -420,6 +511,7 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	metrics.VideoHandling.WithLabelValues(metrics.PipelineFinal, videoHandling(probe)).Inc()
 	slog.InfoContext(ctx, "final remux starting",
 		"room_id", roomID,
 		"video_codec", probe.VideoCodec,
@@ -456,4 +548,15 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 		subtitles = probe.Subtitles
 	}
 	return probe.Audio, subtitles, probe.BitmapSubs, nil
+}
+
+// videoHandling says whether a job will copy the video track or re-encode it.
+// The two differ by more than an order of magnitude in what they cost the
+// machine, so the ratio between them predicts the CPU bill better than the
+// number of jobs ever could.
+func videoHandling(probe *ProbeResult) string {
+	if probe != nil && probe.VideoCopyable {
+		return metrics.VideoCopied
+	}
+	return metrics.VideoTranscoded
 }

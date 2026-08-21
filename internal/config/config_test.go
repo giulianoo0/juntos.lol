@@ -40,14 +40,39 @@ func TestLoadRefusesIncompleteMediaStorage(t *testing.T) {
 }
 
 func TestLoadRefusesARoomThatOutlivesItsMedia(t *testing.T) {
-	// The bucket lifecycle reclaims media a day after it is written, so a
-	// longer room TTL would leave a live room pointing at deleted segments.
+	// A longer room TTL leaves a live room pointing at deleted segments.
 	setMediaEnv(t)
 	t.Setenv("ROOM_TTL_HOURS", "48")
 
 	_, err := Load()
 
 	require.ErrorContains(t, err, "outlives")
+}
+
+func TestLoadAllowsARoomTTLMatchingTheMediaLifecycle(t *testing.T) {
+	// The two windows start at different moments: a room's expiry is fixed at
+	// creation and never extended, while each object's own window starts when
+	// it is written, which is always later. Equal windows therefore still
+	// leave every object outliving the room that published it.
+	setMediaEnv(t)
+	t.Setenv("ROOM_TTL_HOURS", "5")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, 5, cfg.RoomTTLHours)
+}
+
+func TestLoadDefaultsToReclaimingAnEmptyRoomQuickly(t *testing.T) {
+	// A room nobody is in holds its Redis record, its disk directory and every
+	// segment it published. Ninety seconds is long enough to survive a
+	// reconnect and short enough that an abandoned room stops costing storage.
+	setMediaEnv(t)
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, 90, cfg.RoomIdleSeconds)
 }
 
 func TestLoadTrimsTheMediaOrigin(t *testing.T) {
@@ -59,4 +84,49 @@ func TestLoadTrimsTheMediaOrigin(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "https://media.example.test", cfg.MediaPublicURL)
+}
+
+func TestLoadDefaultsTheMetricsEndpointToItsOwnPort(t *testing.T) {
+	// The application's listener is published to the host; this one is not,
+	// which is the whole reason it is a second listener.
+	setMediaEnv(t)
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, 9090, cfg.MetricsPort)
+	require.NotEqual(t, cfg.Port, cfg.MetricsPort)
+}
+
+func TestLoadRefusesANonNumericMetricsPort(t *testing.T) {
+	// Falling back silently would leave the endpoint on a port nobody is
+	// scraping, and a dashboard with no data reads exactly like an idle site.
+	setMediaEnv(t)
+	t.Setenv("METRICS_PORT", "nove-mil-e-noventa")
+
+	_, err := Load()
+
+	require.ErrorContains(t, err, "METRICS_PORT")
+}
+
+func TestLoadRefusesToShareTheApplicationPortWithMetrics(t *testing.T) {
+	// Sharing it would publish the metrics endpoint through the same bind the
+	// TLS proxy sits in front of.
+	setMediaEnv(t)
+	t.Setenv("PORT", "8080")
+	t.Setenv("METRICS_PORT", "8080")
+
+	_, err := Load()
+
+	require.ErrorContains(t, err, "METRICS_PORT")
+}
+
+func TestLoadAllowsTurningTheMetricsEndpointOff(t *testing.T) {
+	setMediaEnv(t)
+	t.Setenv("METRICS_PORT", "0")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.MetricsPort)
 }

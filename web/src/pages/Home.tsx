@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { Compass, History, MonitorUp, Upload } from 'lucide-react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { MonitorUp, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
@@ -10,6 +10,9 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import { MorphPanel } from '../ui/MorphPanel'
+import { useMorphingStep } from '../ui/useMorphingStep'
+import { StepBack } from '../ui/StepBack'
 import { CatalogBrowser } from '../catalog/CatalogBrowser'
 import { ProgressiveBlur } from '../catalog/ProgressiveBlur'
 import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
@@ -19,6 +22,9 @@ import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
+
+// The manual-upload panel's steps; false is the panel being shut.
+type ManualStep = false | 'menu' | 'file' | 'magnet'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -76,13 +82,29 @@ export function Home() {
   const [starting, setStarting] = useState(false)
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const [error, setError] = useState('')
-  const [historyOpen, setHistoryOpen] = useState(false)
   const [history, setHistory] = useState<RoomHistoryEntry[]>(readHistory)
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
-  const [manualOpen, setManualOpen] = useState<false | 'menu' | 'file'>(false)
-  const [torrentOpen, setTorrentOpen] = useState(false)
-  const [historyStatus, setHistoryStatus] = useState<Record<string, 'checking' | 'live' | 'expired'>>({})
+  const [manualOpen, setManualOpen] = useState<ManualStep>(false)
+  // The panel is held one beat behind the request so the outgoing step can
+  // dissolve before the next one mounts — see useMorphingStep.
+  const { shown: shownManual, morphing: morphingManual } = useMorphingStep(manualOpen)
+  // The panel arrives before its contents do: while the modal is still fading
+  // in there is nothing to read anyway, and content sliding in with it reads
+  // as two things happening at once.
+  const [panelFilled, setPanelFilled] = useState(false)
+  useEffect(() => {
+    if (manualOpen === false) {
+      setPanelFilled(false)
+      return
+    }
+    if (panelFilled) return
+    const timer = window.setTimeout(() => setPanelFilled(true), 200)
+    return () => window.clearTimeout(timer)
+  }, [manualOpen, panelFilled])
+  // A magnet that already listed its files: backing out of the nickname hands
+  // the swarm back to the picker instead of dropping it.
+  const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const [startingLabel, setStartingLabel] = useState('')
 
   // The details panel is URL-driven: /title/:type/:id renders it over the
@@ -96,29 +118,6 @@ export function Home() {
       rect: state.rect ? new DOMRect(state.rect.left, state.rect.top, state.rect.width, state.rect.height) : undefined,
     }
     : null
-
-  // A room outlives its history entry by only a few hours, so the entry alone
-  // says nothing about whether the link still works. Ask the server.
-  useEffect(() => {
-    if (!historyOpen || history.length === 0) return
-    const controller = new AbortController()
-    setHistoryStatus(Object.fromEntries(history.map((entry) => [entry.id, 'checking' as const])))
-    for (const entry of history) {
-      void fetch(`/api/rooms/${encodeURIComponent(entry.id)}`, { signal: controller.signal })
-        .then((response) => {
-          setHistoryStatus((current) => ({ ...current, [entry.id]: response.ok ? 'live' : 'expired' }))
-        })
-        .catch(() => {
-          // A network failure says nothing about the room, so claim nothing.
-          setHistoryStatus((current) => {
-            const next = { ...current }
-            delete next[entry.id]
-            return next
-          })
-        })
-    }
-    return () => controller.abort()
-  }, [historyOpen, history])
 
   // The picker has to open inside this click, and before any room is created:
   // closing it then leaves nothing behind.
@@ -234,7 +233,7 @@ export function Home() {
     }
   }
 
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+  const onDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault()
     setDragging(false)
     selectFile(event.dataTransfer.files[0])
@@ -248,55 +247,27 @@ export function Home() {
     <main className="home-shell catalog-shell">
       <header className="home-header">
         <ProgressiveBlur />
-        <a className="home-wordmark" href="/">ss.giuli.dev</a>
-        {/* Labels collapse to their icons on a phone, where three of them plus
-            the wordmark and the language will not fit on one line. */}
-        <nav aria-label={t('home.navigation')}>
-          <button className={!historyOpen ? 'is-active' : ''} aria-label={t('catalog.tab')} onClick={() => setHistoryOpen(false)}>
-            <Compass size={15} aria-hidden="true" /><span className="nav-label">{t('catalog.tab')}</span>
-          </button>
-          <button aria-label={t('home.uploadManually')} onClick={() => setManualOpen('menu')}>
-            <Upload size={15} aria-hidden="true" /><span className="nav-label">{t('home.uploadManually')}</span>
-          </button>
-          <button className={historyOpen ? 'is-active' : ''} aria-label={t('home.history')} onClick={() => setHistoryOpen(true)}>
-            <History size={15} aria-hidden="true" /><span className="nav-label">{t('home.history')}</span>
-          </button>
-        </nav>
-        <div className="header-end">
-          <BuildInfo label={t('home.source')} />
+        {/* The catalog is the page, so the header carries only what is not
+            the catalog: who this is, the language, and the way in for media
+            of your own. */}
+        <div className="header-start">
+          <a className="home-wordmark" href="/">ss.giuli.dev</a>
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
         </div>
+        <div className="header-end">
+          <BuildInfo label={t('home.source')} />
+          <button className="header-upload primary-button" onClick={() => setManualOpen('menu')}>
+            <Upload size={15} aria-hidden="true" /><span className="nav-label">{t('home.uploadManually')}</span>
+          </button>
+        </div>
       </header>
 
-      {historyOpen ? (
-        <section className="history-panel" aria-labelledby="history-title">
-          <header><h1 id="history-title">{t('home.history')}</h1></header>
-          {history.length > 0 ? (
-            <div className="history-list">
-              {history.map((entry) => (
-                <Link key={entry.id} to={`/room/${entry.id}`}>
-                  <strong>{entry.fileName}</strong>
-                  <span className="history-meta">
-                    {historyStatus[entry.id] ? (
-                      <span className={`history-status is-${historyStatus[entry.id]}`}>
-                        {t(`home.history${historyStatus[entry.id] === 'live' ? 'Live' : historyStatus[entry.id] === 'expired' ? 'Expired' : 'Checking'}`)}
-                      </span>
-                    ) : null}
-                    <span>{new Date(entry.createdAt).toLocaleDateString(t.language)}</span>
-                  </span>
-                </Link>
-              ))}
-            </div>
-          ) : <p className="empty-copy">{t('home.noHistory')}</p>}
-        </section>
-      ) : (
-        <section className="catalog-stage">
-          <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
-          {error ? <div className="error-card" role="alert">{error}</div> : null}
-        </section>
-      )}
+      <section className="catalog-stage">
+        <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
+        {error ? <div className="error-card" role="alert">{error}</div> : null}
+      </section>
 
       {/* The page fades under this and the preparing state fades in over it,
           instead of the dialog just vanishing as if something broke. */}
@@ -340,64 +311,86 @@ export function Home() {
         />
       ) : null}
 
+      {/* One surface that changes what it is asking: the menu grows into the
+          drop zone or the magnet picker rather than stacking a second panel
+          over the first. */}
       <Dialog open={manualOpen !== false} onOpenChange={(open) => { if (!open) setManualOpen(false) }}>
         {manualOpen !== false ? (
           <DialogContent
-            className={manualOpen === 'file' ? 'upload-dialog' : ''}
+            className="upload-dialog"
             closeLabel={t('home.closeDialog')}
+            hideTitle
             title={t('home.uploadManually')}
-            description={manualOpen === 'menu' ? t('home.uploadGuide') : t('home.dropHint')}
           >
-            {manualOpen === 'menu' ? (
-              <div className="source-options">
-                <button onClick={() => setManualOpen('file')}>
-                  <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
-                </button>
-                <button onClick={startScreenRoom}>
-                  <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
-                </button>
-              </div>
-            ) : (
-              <div
-                className={`drop-zone dialog-drop ${dragging ? 'is-dragging' : ''}`}
-                onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
-                onDragOver={(event) => event.preventDefault()}
-                onDragLeave={() => setDragging(false)}
-                onDrop={onDrop}
-              >
-                <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
-                <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
-                <strong>{t('home.drop')}</strong>
-                <span>{t('home.dropHint')}</span>
-                <div className="drop-actions">
-                  <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
-                  <button className="torrent-button" onClick={() => { setManualOpen(false); setTorrentOpen(true) }}>
-                    <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
-                  </button>
+            <MorphPanel className="upload-morph" sizeKey={panelFilled ? shownManual : 'opening'} morphing={morphingManual || !panelFilled}>
+              {shownManual === 'menu' ? (
+                <div className="morph-step" data-step="menu">
+                  <h2 className="stage-title">{t('home.uploadManually')}</h2>
+                  <p className="stage-description">{t('home.uploadGuide')}</p>
+                  <div className="source-options">
+                    <button onClick={() => setManualOpen('file')}>
+                      <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
+                    </button>
+                    <button onClick={() => { setError(''); setManualOpen('magnet') }}>
+                      <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+                    </button>
+                    <button onClick={startScreenRoom}>
+                      <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
+                    </button>
+                  </div>
                 </div>
-                {error ? <div className="error-card" role="alert">{error}</div> : null}
-              </div>
-            )}
+              ) : null}
+
+              {shownManual === 'file' ? (
+                <div className="morph-step" data-step="file">
+                  <div className="morph-head">
+                    <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
+                    <h2 className="stage-title">{t('home.uploadFile')}</h2>
+                  </div>
+                  <button
+                    type="button"
+                    className={`drop-zone dialog-drop ${dragging ? 'is-dragging' : ''}`}
+                    onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={onDrop}
+                    onClick={() => inputRef.current?.click()}
+                  >
+                    <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
+                    <strong>{t('home.dropOrPick')}</strong>
+                    <span>{t('home.dropHint')}</span>
+                  </button>
+                  {error ? <div className="error-card" role="alert">{error}</div> : null}
+                </div>
+              ) : null}
+
+              {shownManual === 'magnet' ? (
+                <div className="morph-step" data-step="magnet">
+                  {/* The picker draws its own way back, because only it knows
+                      whether that means the magnet it listed or leaving. */}
+                  <TorrentPicker
+                    maxFileBytes={MAX_UPLOAD_BYTES}
+                    t={t}
+                    initialSession={resumed?.session ?? null}
+                    initialMagnet={resumed?.magnet ?? ''}
+                    onExit={() => { setResumed(null); setManualOpen('menu') }}
+                    onPicked={(file, session, magnet) => {
+                      setResumed({ magnet, session })
+                      setManualOpen(false)
+                      setDraftNickname(nickname)
+                      setPendingMedia({ kind: 'torrent', file, session })
+                    }}
+                  />
+                </div>
+              ) : null}
+            </MorphPanel>
           </DialogContent>
         ) : null}
       </Dialog>
 
-      <Dialog open={torrentOpen} onOpenChange={setTorrentOpen}>
-        {torrentOpen ? (
-          <DialogContent
-            className="torrent-dialog"
-            closeLabel={t('home.closeDialog')}
-            hideTitle
-            title={t('home.torrentTitle')}
-          >
-            <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={(file, session) => {
-              setTorrentOpen(false)
-              setDraftNickname(nickname)
-              setPendingMedia({ kind: 'torrent', file, session })
-            }} />
-          </DialogContent>
-        ) : null}
-      </Dialog>
+      {/* Outside the panel: the click that opens it must survive the step it
+          was made in dissolving. */}
+      <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
 
       <Dialog
         open={pendingMedia !== null}

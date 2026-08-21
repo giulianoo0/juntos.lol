@@ -10,6 +10,7 @@ import {
   type SubtitleCollector,
 } from './subtitles'
 import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
+import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentSideFile, TorrentVideoFile } from './torrent'
 
 const TUS_CHUNK_BYTES = 50 * 1024 * 1024
@@ -79,6 +80,7 @@ async function createRoom(fileName: string, nickname: string, kind?: string): Pr
 // A shared screen has no file and no pipeline: the room opens ready and the
 // picture arrives over WebRTC.
 export async function createScreenRoom(nickname: string): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
   const room = await createRoom('', nickname, 'screen')
   return { roomID: room.id, nickname: room.nickname }
 }
@@ -198,12 +200,13 @@ export async function createRoomAndUpload(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
   // Before anything is created, so a file that cannot be read never leaves a
   // room behind that will sit at zero per cent for ever.
   await assertReadable(file)
   const uploadFile = await prepareLocalFile(file, onProgress)
   const room = await createRoom(uploadFile.name, nickname)
-  uploadFileToRoom(room.id, room.uploadEndpoint, streamStartBytes(room), uploadFile, onProgress)
+  uploadFileToRoom(room.id, room.uploadEndpoint, streamStartBytes(room), 0, uploadFile, onProgress)
   return { roomID: room.id, nickname: room.nickname }
 }
 
@@ -213,6 +216,7 @@ export function uploadFileToRoom(
   roomID: string,
   uploadEndpoint: string,
   startBytes: number,
+  mediaGeneration: number,
   uploadFile: File,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
@@ -249,7 +253,7 @@ export function uploadFileToRoom(
   // Fire-and-forget: server-side extraction at completion stays the fallback.
   // For a converted file this runs against the fresh MKV; for an unconverted
   // MP4 it silently no-ops.
-  void extractAndUploadSubtitles(uploadFile, room.id)
+  void extractAndUploadSubtitles(uploadFile, room.id, mediaGeneration)
 }
 
 export async function createRoomAndUploadTorrent(
@@ -257,8 +261,9 @@ export async function createRoomAndUploadTorrent(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
   const created = await createRoom(source.file.name, nickname)
-  await startTorrentTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), source, onProgress)
+  await startTorrentTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), 0, source, onProgress)
   return { roomID: created.id, nickname: created.nickname }
 }
 
@@ -294,11 +299,12 @@ export async function startTorrentTransfer(
   roomID: string,
   uploadEndpoint: string,
   startBytes: number,
+  mediaGeneration: number,
   source: TorrentUploadSource,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<void> {
   if (await handOverToServer(roomID, source)) return
-  uploadTorrentToRoom(roomID, uploadEndpoint, startBytes, source, onProgress)
+  uploadTorrentToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, source, onProgress)
 }
 
 // Pulls a torrent into a room that already exists. Same swarm bookkeeping and
@@ -307,6 +313,7 @@ export function uploadTorrentToRoom(
   roomID: string,
   uploadEndpoint: string,
   startBytes: number,
+  mediaGeneration: number,
   source: TorrentUploadSource,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
@@ -321,7 +328,7 @@ export function uploadTorrentToRoom(
   // Subtitles do not need a second pass over the swarm. Sibling subtitle
   // files are fetched directly, and the tracks muxed into the video are
   // parsed from the very bytes that are already being uploaded.
-  const collector = createSubtitleCollector(room.id)
+  const collector = createSubtitleCollector(room.id, mediaGeneration)
   const externalSubtitles = session.subtitleFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
   if (externalSubtitles.length > 0) {
     collector.register('external')

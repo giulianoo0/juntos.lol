@@ -54,6 +54,8 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const focusedRef = useRef(false)
+  // Read inside the scroll listener, which is bound once.
+  const queryRef = useRef('')
 
   useEffect(() => {
     // The board scrolls on the page at home and on the overlay's own body in
@@ -71,8 +73,9 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
       const y = target instanceof Window ? target.scrollY : target.scrollTop
       const delta = y - lastY
       lastY = y
-      // Typing must never collapse the field out from under the cursor.
-      if (focusedRef.current) return
+      // A field being typed in, or already holding a query, never collapses
+      // out from under the cursor — scrolling the results is part of using it.
+      if (focusedRef.current || queryRef.current.trim() !== '') return
       if (delta > 4 && y > 40) setSearchCompact(true)
       else if (delta < -4 || y <= 40) setSearchCompact(false)
     }
@@ -110,6 +113,7 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
   }, [retrySeq])
 
   useEffect(() => {
+    queryRef.current = query
     const seq = (searchSeqRef.current += 1)
     const trimmed = query.trim()
     if (!trimmed) {

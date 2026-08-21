@@ -11,9 +11,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/giulianoo0/ss/internal/room"
 )
 
 const ffmpegErrorTailBytes = 2 * 1024
+
+// previewSegmentSeconds is how long one preview segment runs.
+//
+// Every segment is a separate object in the bucket, and a write there is the
+// unit the storage bills and the unit the upload pays a round trip for, so the
+// length of a preview segment sets what a whole movie costs to publish twice.
+// It is still short enough that a viewer waits for a fraction of a segment
+// before the room plays, which is what the preview exists for.
+const previewSegmentSeconds = "4"
 
 // BuildRemuxArgs builds the ffmpeg arguments for an HLS fMP4 output.
 func BuildRemuxArgs(in, outDir string, p *ProbeResult) []string {
@@ -38,18 +49,22 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		// Transcoded previews need a keyframe at each short segment boundary;
 		// otherwise ffmpeg waits for libx264's much longer default GOP before
 		// publishing the first playable segment.
-		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*2)")
+		args = append(args, "-force_key_frames",
+			"expr:gte(t,n_forced*"+previewSegmentSeconds+")")
 	}
 
-	playlistType := "vod"
+	// Both passes grow their playlist as they encode. A vod playlist is only
+	// written once ffmpeg finishes, which leaves everything it produced
+	// unpublishable until then: the room stays pinned to whatever the preview
+	// reached, and for a source that arrived all at once that is seconds.
+	playlistType := "event"
 	segmentTime := "6"
 	segmentPattern := filepath.Join(outDir, "stream_%v_%03d.m4s")
 	playlistPattern := filepath.Join(outDir, "stream_%v.m3u8")
 	initName := "init_%v.mp4"
 	masterName := "final_master.m3u8"
 	if progressive {
-		playlistType = "event"
-		segmentTime = "2"
+		segmentTime = previewSegmentSeconds
 		// Keep preview files separate from the authoritative final remux. This
 		// lets the final pass replace master.m3u8 without colliding with files
 		// that a connected player may still have open.
@@ -62,7 +77,7 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		"-f", "hls",
 		"-hls_time", segmentTime,
 		"-hls_segment_type", "fmp4",
-		"-hls_fmp4_init_filename", initName,
+		"-hls_fmp4_init_filename", initSegmentName(initName, streamMap),
 		"-hls_playlist_type", playlistType,
 		"-hls_flags", "independent_segments+temp_file",
 		"-hls_segment_filename", segmentPattern,
@@ -70,6 +85,22 @@ func buildRemuxArgs(in, outDir string, p *ProbeResult, progressive bool) []strin
 		"-master_pl_name", masterName,
 		playlistPattern,
 	)
+}
+
+// initSegmentName resolves the %v in an init filename that ffmpeg will not
+// resolve itself.
+//
+// ffmpeg expands %v in the segment filename and the playlist name always, but
+// in the init filename only when the output carries more than one variant.
+// With a single one it writes a file called literally "init_%v.mp4" and points
+// EXT-X-MAP at that name, which no player can fetch — the room then loads
+// forever rather than failing outright, because a missing init segment is
+// indistinguishable from one that has not been written yet.
+func initSegmentName(pattern, streamMap string) string {
+	if len(strings.Fields(streamMap)) > 1 {
+		return pattern
+	}
+	return strings.Replace(pattern, "%v", "0", 1)
 }
 
 // buildStreamMapping returns the -map/-c arguments and the -var_stream_map
@@ -86,20 +117,33 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 	videoArgs, videoMap := buildVideoRenditionArgs(ladder, p, progressive)
 	args = append(args, videoArgs...)
 
-	for _, track := range p.Audio {
+	audio := p.Audio
+	if progressive {
+		audio = previewAudio(p)
+	}
+	for _, track := range audio {
 		args = append(args, "-map", "0:a:"+strconv.Itoa(track.Index))
 	}
-	if len(p.Audio) > 0 {
+	if len(audio) > 0 {
 		args = append(args, "-c:a", "aac", "-b:a", "192k")
 	}
 
-	if len(p.Audio) == 0 {
+	if len(audio) == 0 {
 		streamMap = strings.Join(videoMap, " ")
 		return args, streamMap
 	}
 
-	variants := make([]string, 0, len(p.Audio)+len(videoMap))
-	for i, track := range p.Audio {
+	// The preview muxes its audio into its one video variant instead of giving
+	// it a group of its own. A group is a second stream of segments, so it
+	// doubles what the preview writes to disk and uploads to the bucket, and it
+	// buys nothing: the preview carries a single rendition and a single dub, so
+	// there is no switch for the group to keep open.
+	if progressive {
+		return args, videoMap[0] + ",a:0"
+	}
+
+	variants := make([]string, 0, len(audio)+len(videoMap))
+	for i, track := range audio {
 		variant := "a:" + strconv.Itoa(i) + ",agroup:audio"
 		if i == 0 {
 			variant += ",default:yes"
@@ -115,6 +159,17 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 		variants = append(variants, video+",agroup:audio")
 	}
 	return args, strings.Join(variants, " ")
+}
+
+// previewAudio is the audio the preview carries: the default track alone. A
+// release with eight dubs would otherwise cost eight AAC encodes and eight
+// segment streams before the room can play at all, and the preview exists to
+// start playback. The remaining dubs arrive with the final ladder.
+func previewAudio(p *ProbeResult) []room.TrackInfo {
+	if len(p.Audio) == 0 {
+		return nil
+	}
+	return p.Audio[:1]
 }
 
 func isSafeLanguage(language string) bool {

@@ -8,6 +8,8 @@ import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } f
 import type { PlayState, RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { expectedPositionMs } from './position'
+import { Settings, type SettingGroup } from './Settings'
+import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { useToast } from '../ui/toastContext'
 
 interface PlayerProps {
@@ -59,6 +61,11 @@ interface BufferedRange {
 // Without a base there is nowhere to point: this server no longer serves
 // subtitle files. The caller renders no tracks at all rather than offering
 // ones that cannot load.
+// index is the track's own position in the source, not its place in the menu.
+// A progressive extraction announces only the tracks that already hold a cue,
+// so the list arrives with gaps — a forced track has nothing in it until the
+// first foreign sign appears — while each published file keeps the name of the
+// track it came from.
 function subtitleSource(room: RoomInfo, index: number, language: string): string {
   const version = `?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
@@ -76,14 +83,22 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const playAttemptRef = useRef(false)
   const controlsTimerRef = useRef<number | null>(null)
   const feedbackSeqRef = useRef(0)
-  const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>([])
+  const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>(
+    () => (mocksEnabled ? MOCK_AUDIO_TRACKS : []),
+  )
   // The picture sizes this source was published in, and which one this viewer
   // is watching. -1 is hls.js's "pick for me". The choice is deliberately per
   // person: everyone in a room has a different connection, and picking a
   // quality for the group would just move the stalling to whoever has least.
-  const [levels, setLevels] = useState<Array<{ height: number; bitrate: number }>>([])
+  // Seeded from the mock only in a dev mock build, where hls.js never attaches
+  // to a playlist and would otherwise report none of either.
+  const [levels, setLevels] = useState<Array<{ height: number; bitrate: number }>>(
+    () => (mocksEnabled ? MOCK_LEVELS : []),
+  )
   const [level, setLevel] = useState(-1)
   const [subtitle, setSubtitle] = useState(-1)
+  // Mirrors what hls.js is decoding, so the settings can name the dub in use.
+  const [audioTrack, setAudioTrack] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [bufferedRanges, setBufferedRanges] = useState<BufferedRange[]>([])
@@ -244,7 +259,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         if (stripCodecs) config.pLoader = codecStrippingLoader(HlsClass)
         const hls = new HlsClass(config)
         hlsRef.current = hls
-        hls.on(HlsClass.Events.MEDIA_ATTACHED, () => hls.loadSource(source))
+        // MEDIA_ATTACHED fires again on every recoverMediaError re-attach, and
+        // the recovery already resumes loading at the pre-error position by
+        // itself. Reloading the source there would restart playback from the
+        // configured start position — the flash to 0:00 viewers reported when
+        // a seek outside the buffer stalled into a recovery.
+        let sourceLoaded = false
+        hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
+          if (sourceLoaded) return
+          sourceLoaded = true
+          hls.loadSource(source)
+        })
         const readLevels = () => setLevels(hls.levels.map(
           ({ height, bitrate }) => ({ height, bitrate })))
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
@@ -330,14 +355,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // a media republish remounting hls.js, and any per-browser mode reset that
   // comes with a <track> src change. Only the first subtitleCount text tracks
   // belong to this component; hls.js may append its own after them.
-  const subtitleCount = (room.subtitleTracks ?? []).length
+  // The selection is remembered as the track's own index rather than its place
+  // in the menu, because the menu grows: a progressive extraction announces a
+  // track once it holds its first cue, and a forced track joining late lands
+  // ahead of languages already listed. A remembered position would slide onto
+  // one of them mid-episode.
+  const subtitleTracks = room.subtitleTracks ?? []
+  const subtitleCount = subtitleTracks.length
   useEffect(() => {
-    const tracks = videoRef.current?.textTracks
-    if (!tracks) return
-    for (let index = 0; index < Math.min(tracks.length, subtitleCount); index += 1) {
-      tracks[index].mode = index === subtitle ? 'showing' : subtitle === -1 ? 'disabled' : 'hidden'
+    const textTracks = videoRef.current?.textTracks
+    if (!textTracks) return
+    for (let position = 0; position < Math.min(textTracks.length, subtitleCount); position += 1) {
+      const chosen = subtitleTracks[position]?.index === subtitle
+      textTracks[position].mode = chosen ? 'showing' : subtitle === -1 ? 'disabled' : 'hidden'
     }
-  }, [subtitle, subtitleCount, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
+  }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
 
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
@@ -546,6 +578,65 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const fullscreenLabel = t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
+  // Only what there is a choice about: a single rendition, a single dub or no
+  // subtitles at all is a group with nothing in it, and an empty group is
+  // worse than none.
+  const settingGroups: SettingGroup[] = []
+  // Gated on the bucket the same way the <track> elements are: without one
+  // these are tracks the browser can never fetch, so offering them is offering
+  // a choice that cannot take effect.
+  if (room.mediaBaseUrl && subtitleTracks.length > 0) {
+    settingGroups.push({
+      id: 'subtitles',
+      label: t('room.subtitles'),
+      current: subtitle,
+      onPick: setSubtitle,
+      options: [
+        { value: -1, label: t('room.off') },
+        // Keyed by the track's own number, never by its place in the list:
+        // the list grows as the extraction runs, and a choice remembered as a
+        // position slides onto another language mid-episode.
+        ...subtitleTracks.map((track) => ({
+          value: track.index,
+          label: track.title || track.language || String(track.index + 1),
+        })),
+      ],
+    })
+  }
+  if (audioTracks.length > 1) {
+    settingGroups.push({
+      id: 'audio',
+      label: t('room.audio'),
+      current: audioTrack,
+      onPick: (value) => {
+        setAudioTrack(value)
+        if (hlsRef.current) hlsRef.current.audioTrack = value
+      },
+      options: audioTracks.map((track, index) => ({
+        value: index,
+        label: track.name || track.lang || String(index + 1),
+      })),
+    })
+  }
+  if (levels.length > 1) {
+    settingGroups.push({
+      id: 'quality',
+      label: t('room.quality'),
+      current: level,
+      onPick: (value) => {
+        setLevel(value)
+        if (hlsRef.current) hlsRef.current.currentLevel = value
+      },
+      options: [
+        { value: -1, label: t('room.qualityAuto') },
+        ...levels.map((entry, index) => ({
+          value: index,
+          label: entry.height ? `${entry.height}p` : `${Math.round(entry.bitrate / 1000)} kbps`,
+        })),
+      ],
+    })
+  }
+
   const seekMax = Math.max(duration, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
   // Each buffered range is split at the playhead: buffer kept behind it is a
@@ -635,25 +726,24 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           setBufferedRanges(readBufferedRanges(event.currentTarget))
         }}
       >
-        {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track, index) => (
+        {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track) => (
           <track
-            key={`${track.index}-${track.language}`}
+            // The versions are in the key on purpose: browsers do not reliably
+            // refetch a <track> whose src attribute merely changed, so a grown
+            // subtitle file only reaches the viewer as a fresh element.
+            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.subsVersion ?? 0}`}
             kind="subtitles"
-            src={subtitleSource(room, index, track.language)}
+            src={subtitleSource(room, track.index, track.language)}
             srcLang={track.language || 'und'}
-            label={track.title || track.language || `Subtitle ${index + 1}`}
+            label={track.title || track.language || `Subtitle ${track.index + 1}`}
           />
         ))}
       </video>
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       {unplayable ? <div className="player-unplayable" role="alert">{t('room.unplayable')}</div> : null}
-      <div className="player-controls raised">
-        <button
-          aria-label={playLabel}
-          title={`${playLabel} (Space)`}
-          onClick={togglePlay}
-          onPointerUp={(event) => event.currentTarget.blur()}
-        >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
+      <div className="player-controls">
+        {/* The scrubber owns the full width of the bar; everything that acts on
+            what it points at sits underneath it. */}
         <div className="seek-control">
           <div className="seek-track" aria-hidden="true">
             <div className="seek-played" style={{ width: pct(currentTime) }} />
@@ -682,75 +772,53 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             onChange={(event) => seek(Number(event.target.value))}
           />
         </div>
-        <span className="timecode">{formatTime(currentTime)} / {formatTime(duration)}</span>
-        {expectedMs !== null ? (
+        {/* What is playing on the left, how it is played on the right. */}
+        <div className="controls-row">
           <button
-            className={`live-button ${atLiveEdge ? 'is-live' : ''}`}
-            title={t(atLiveEdge ? 'room.liveInSync' : 'room.liveBehind')}
-            onClick={goLive}
-          >LIVE</button>
-        ) : null}
-        {levels.length > 1 ? (
-          <label>{t('room.quality')}
-            <select
-              value={level}
-              onChange={(event) => {
-                const next = Number(event.target.value)
-                setLevel(next)
-                if (hlsRef.current) hlsRef.current.currentLevel = next
-              }}
-            >
-              <option value={-1}>{t('room.qualityAuto')}</option>
-              {levels.map((entry, index) => (
-                <option key={`${entry.height}-${index}`} value={index}>
-                  {entry.height ? `${entry.height}p` : `${Math.round(entry.bitrate / 1000)} kbps`}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        {audioTracks.length > 1 ? (
-          <label>{t('room.audio')}
-            <select onChange={(event) => { if (hlsRef.current) hlsRef.current.audioTrack = Number(event.target.value) }}>
-              {audioTracks.map((track, index) => <option key={`${track.name}-${index}`} value={index}>{track.name || track.lang || index + 1}</option>)}
-            </select>
-          </label>
-        ) : null}
-        {(room.subtitleTracks?.length ?? 0) > 0 ? (
-          <label>{t('room.subtitles')}
-            <select value={subtitle} onChange={(event) => setSubtitle(Number(event.target.value))}>
-              <option value={-1}>{t('room.off')}</option>
-              {(room.subtitleTracks ?? []).map((track, index) => <option key={track.index} value={index}>{track.title || track.language || index + 1}</option>)}
-            </select>
-          </label>
-        ) : null}
-        <div className="volume-control">
-          <button
-            className="volume-button"
-            aria-label={muteLabel}
-            title={`${muteLabel} (M)`}
-            onClick={toggleMute}
+            className="control-button is-play"
+            aria-label={playLabel}
+            title={`${playLabel} (Space)`}
+            onClick={togglePlay}
             onPointerUp={(event) => event.currentTarget.blur()}
-          >{volumeIcon(muted ? 0 : volume, 16)}</button>
-          <div className="volume-panel">
-            <input
-              className="volume-range"
-              aria-label={t('room.volume')}
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={muted ? 0 : volume}
-              onChange={(event) => applyVolume(Number(event.target.value))}
-            />
+          >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
+          <span className="timecode">{formatTime(currentTime)} / {formatTime(duration)}</span>
+          {expectedMs !== null ? (
+            <button
+              className={`live-button ${atLiveEdge ? 'is-live' : ''}`}
+              title={t(atLiveEdge ? 'room.liveInSync' : 'room.liveBehind')}
+              onClick={goLive}
+            >LIVE</button>
+          ) : null}
+          <span className="controls-gap" />
+          <Settings groups={settingGroups} t={t} />
+          <div className="volume-control">
+            <button
+              className="control-button"
+              aria-label={muteLabel}
+              title={`${muteLabel} (M)`}
+              onClick={toggleMute}
+              onPointerUp={(event) => event.currentTarget.blur()}
+            >{volumeIcon(muted ? 0 : volume, 16)}</button>
+            <div className="volume-panel">
+              <input
+                className="volume-range"
+                aria-label={t('room.volume')}
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={muted ? 0 : volume}
+                onChange={(event) => applyVolume(Number(event.target.value))}
+              />
+            </div>
           </div>
+          <button
+            className="control-button"
+            aria-label={fullscreenLabel}
+            title={`${fullscreenLabel} (F)`}
+            onClick={toggleFullscreen}
+          >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
         </div>
-        <button
-          className="fullscreen-button"
-          aria-label={fullscreenLabel}
-          title={`${fullscreenLabel} (F)`}
-          onClick={toggleFullscreen}
-        >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
       </div>
       {room.bitmapSubsSkipped > 0 ? <span className="notice-chip">{t('room.bitmapSkipped')}</span> : null}
       {/* Room-level overlays (sync panel, next-episode card) render inside
@@ -784,7 +852,10 @@ function focusOwnsKey(target: EventTarget | null, key: string): boolean {
     case 'INPUT':
       // A range slider is a control; every other input takes typing.
       if ((target as HTMLInputElement).type !== 'range') return true
-      return !insidePlayer || isArrowKey(key)
+      // The volume slider keeps its arrows. The scrubber does not: its native
+      // step is one second, and a focused scrubber must not shrink the room's
+      // five-second seek — the shortcut's preventDefault stops the double move.
+      return !insidePlayer || (isArrowKey(key) && !target.closest('.seek-control'))
     case 'SELECT':
     case 'OPTION':
       // Space is how a picker opens, so it keeps that one too.

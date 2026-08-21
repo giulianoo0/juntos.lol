@@ -2,9 +2,13 @@ package media
 
 import (
 	"context"
+	"crypto/sha256"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,14 +140,61 @@ func TestPublisherLeavesTheMasterPointingAtVariantPlaylists(t *testing.T) {
 
 func TestPublisherFailsWhenTheBucketRefusesASegment(t *testing.T) {
 	publisher, bucket, store, hlsDir := newPublisherFixture(t)
-	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 2, 2, true)
-	bucket.SetFailOn(func(key string) bool { return strings.HasSuffix(key, segmentName(1)) })
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 3, 3, true)
+	bucket.SetFailOn(func(key string) bool { return strings.HasSuffix(key, segmentName(2)) })
 
 	err := publisher.Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"})
 
 	require.Error(t, err, "media has no disk fallback, so a refused upload must fail the job")
-	_, err = store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
-	require.ErrorIs(t, err, room.ErrNotFound)
+	// What did reach the bucket is still worth serving. A viewer plays it and
+	// waits for the rest, which is what keeps a room moving while a long
+	// backlog uploads instead of showing nothing until all of it lands.
+	published, err := store.Playlist(t.Context(), "r1", "preview_stream_0.m3u8")
+	require.NoError(t, err)
+	require.Contains(t, published, segmentName(0))
+	require.NotContains(t, published, segmentName(2))
+	require.NotContains(t, published, "#EXT-X-ENDLIST", "a cut playlist must not claim to be finished")
+}
+
+// countingBucket records how many uploads were ever in flight at once.
+type countingBucket struct {
+	mu       sync.Mutex
+	inFlight int
+	peak     int
+}
+
+func (b *countingBucket) Put(_ context.Context, _ string, r io.Reader, _ int64, _, _ string) error {
+	b.mu.Lock()
+	b.inFlight++
+	b.peak = max(b.peak, b.inFlight)
+	b.mu.Unlock()
+	_, err := io.ReadAll(r)
+	time.Sleep(10 * time.Millisecond)
+	b.mu.Lock()
+	b.inFlight--
+	b.mu.Unlock()
+	return err
+}
+
+func (b *countingBucket) RemovePrefix(context.Context, string) error { return nil }
+
+func TestPublisherUploadsSegmentsConcurrently(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	hlsDir := t.TempDir()
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 9, 9, false)
+	bucket := &countingBucket{}
+
+	require.NoError(t, NewPublisher(store, bucket, publicBase).
+		Publish(t.Context(), "r1", hlsDir, []string{"preview_stream_*.m3u8"}))
+
+	// One object at a time is what left a room frozen while thousands of
+	// segments queued behind the one being uploaded.
+	require.Greater(t, bucket.peak, 1, "uploads must overlap")
 }
 
 func TestPublisherSkipsObjectsAlreadyInTheBucket(t *testing.T) {
@@ -170,6 +221,61 @@ func TestPublisherUploadsSubtitles(t *testing.T) {
 	require.Equal(t, "text/vtt; charset=utf-8", track.ContentType)
 	require.Equal(t, subtitleCacheControl, track.CacheControl)
 	require.Len(t, bucket.Keys(), 1, "only WebVTT belongs in the subtitle prefix")
+}
+
+func TestPublisherSendsOnlyTheSubtitlesThatChanged(t *testing.T) {
+	publisher, bucket, _, _ := newPublisherFixture(t)
+	subsDir := t.TempDir()
+	ended := filepath.Join(subsDir, "sub_0_por.vtt")
+	growing := filepath.Join(subsDir, "sub_1_eng.vtt")
+	require.NoError(t, os.WriteFile(ended,
+		[]byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\noi\n"), 0o644))
+	require.NoError(t, os.WriteFile(growing,
+		[]byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n"), 0o644))
+
+	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))
+	appendToFile(t, growing, "\n00:10:00.000 --> 00:10:02.000\nlater\n")
+	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))
+
+	// A progressive snapshot rewrites every track's file on every tick, so a
+	// track whose cues ran out arrives here byte for byte identical each time.
+	// Sending it again costs a billed write per track per tick and changes
+	// nothing a viewer would fetch.
+	require.Equal(t, 1, bucket.Puts("rooms/r1/g0/subs/sub_0_por.vtt"))
+	require.Equal(t, 2, bucket.Puts("rooms/r1/g0/subs/sub_1_eng.vtt"))
+	object, ok := bucket.Get("rooms/r1/g0/subs/sub_1_eng.vtt")
+	require.True(t, ok)
+	require.Contains(t, string(object.Body), "later")
+}
+
+func TestPublisherResendsSubtitlesAfterASourceSwap(t *testing.T) {
+	// A new source writes the same track names to a prefix of its own, and
+	// nothing has ever been uploaded under those keys.
+	publisher, bucket, store, _ := newPublisherFixture(t)
+	subsDir := t.TempDir()
+	track := filepath.Join(subsDir, "sub_0_eng.vtt")
+	require.NoError(t, os.WriteFile(track,
+		[]byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n"), 0o644))
+	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))
+
+	_, generation, err := store.SwapSource(t.Context(), "r1", "upload", "next.mkv", "uploading", time.Now())
+	require.NoError(t, err)
+	require.Equal(t, 1, generation)
+	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))
+
+	require.Equal(t, 1, bucket.Puts("rooms/r1/g1/subs/sub_0_eng.vtt"))
+}
+
+func TestPublisherForgetsUploadedSubtitlesOnceTheyPileUp(t *testing.T) {
+	// The record of what was already sent lives for the life of the process,
+	// so it needs a ceiling. Forgetting everything costs one redundant upload
+	// per track still being extracted, which is cheaper than a map that only
+	// ever grows.
+	publisher, _, _, _ := newPublisherFixture(t)
+	for i := range maxRememberedSubtitles + 1 {
+		publisher.rememberSubtitle("rooms/r"+strconv.Itoa(i)+"/g0/subs/sub_0_eng.vtt", [sha256.Size]byte{})
+	}
+	require.LessOrEqual(t, publisher.rememberedSubtitles(), maxRememberedSubtitles)
 }
 
 func TestPublisherSubtitleDirectoryMayNotExistYet(t *testing.T) {
@@ -250,4 +356,64 @@ func TestPublisherMovesToANewPrefixAfterASourceSwap(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, published, "/rooms/r1/g1/hls/")
 	require.NotContains(t, published, "/rooms/r1/g0/hls/")
+}
+
+// blockingBucket holds the first upload open so a test can cancel the publish
+// while bytes are still moving, and then reports whether that upload's own
+// context survived the cancellation.
+type blockingBucket struct {
+	started  chan struct{}
+	release  chan struct{}
+	mu       sync.Mutex
+	puts     []string
+	inFlight error
+}
+
+func (b *blockingBucket) Put(ctx context.Context, key string, r io.Reader, _ int64, _, _ string) error {
+	b.mu.Lock()
+	b.puts = append(b.puts, key)
+	first := len(b.puts) == 1
+	b.mu.Unlock()
+	if first {
+		close(b.started)
+		<-b.release
+		b.mu.Lock()
+		b.inFlight = ctx.Err()
+		b.mu.Unlock()
+	}
+	_, err := io.ReadAll(r)
+	return err
+}
+
+func (b *blockingBucket) RemovePrefix(context.Context, string) error { return nil }
+
+func TestPublishLetsAnUploadAlreadyInFlightFinish(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	hlsDir := t.TempDir()
+	writePlaylist(t, hlsDir, "preview_stream_0.m3u8", 3, 3, false)
+	bucket := &blockingBucket{started: make(chan struct{}), release: make(chan struct{})}
+	publisher := NewPublisher(store, bucket, publicBase)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- publisher.Publish(ctx, "r1", hlsDir, previewPublishPatterns) }()
+
+	<-bucket.started
+	// The encode finishing cancels the publishing loop. An upload that is
+	// already streaming must still be allowed to finish: the bucket keeps an
+	// aborted PUT as an object that reads back intact over S3 while the edge
+	// serves it truncated, which costs the room its video and cannot be
+	// repaired by a cache purge.
+	cancel()
+	close(bucket.release)
+	<-done
+
+	bucket.mu.Lock()
+	defer bucket.mu.Unlock()
+	require.NoError(t, bucket.inFlight, "in-flight upload must not observe cancellation")
 }

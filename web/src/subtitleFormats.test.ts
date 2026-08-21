@@ -58,7 +58,24 @@ describe('assToWebVTT', () => {
 
   it('converts dialogue lines and keeps commas inside the text field', () => {
     expect(assToWebVTT(script)).toBe(
-      'WEBVTT\n\n00:00:01.000 --> 00:00:04.400\nHello, there\nfriend\n',
+      'WEBVTT\n\n00:00:01.000 --> 00:00:04.400\n<i>Hello, there</i>\nfriend\n',
+    )
+  })
+
+  it('keeps the placement and color of a styled sign', () => {
+    const styled = [
+      '[Script Info]',
+      'PlayResX: 1920',
+      'PlayResY: 1080',
+      '[V4+ Styles]',
+      'Format: Name, PrimaryColour, Bold, Italic, Alignment',
+      'Style: Signs,&H0000FFFF,0,0,8',
+      '[Events]',
+      'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Signs,,0,0,0,,{\\pos(960,108)}Ateliê',
+    ].join('\n')
+    expect(assToWebVTT(styled)).toContain(
+      '00:00:01.000 --> 00:00:02.000 line:10% position:50%\n<c.yellow>Ateliê</c>\n',
     )
   })
 
@@ -112,7 +129,7 @@ describe('convertSubtitleFile', () => {
     expect(track).toEqual({
       language: 'por',
       title: 'Portuguese',
-      vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n',
+      vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000 line:-3\nOi\n',
     })
   })
 
@@ -122,6 +139,16 @@ describe('convertSubtitleFile', () => {
 
   it('re-emits an existing WebVTT file with a single header', () => {
     const track = convertSubtitleFile('a.eng.vtt', bytes('WEBVTT - from a muxer\n\n00:00:01.000 --> 00:00:02.000\nHi\n'))
-    expect(track?.vtt).toBe('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHi\n')
+    expect(track?.vtt).toBe('WEBVTT\n\n00:00:01.000 --> 00:00:02.000 line:-3\nHi\n')
+  })
+})
+
+describe('convertSubtitleFile positioning', () => {
+  it('lifts sidecar dialogue and sends the second simultaneous line to the top', () => {
+    const srt = '1\n00:00:01,000 --> 00:00:04,000\nprimeira\n\n2\n00:00:02,000 --> 00:00:05,000\nsegunda\n'
+    const track = convertSubtitleFile('Subs/movie.eng.srt', new TextEncoder().encode(srt).buffer as ArrayBuffer)
+
+    expect(track?.vtt).toContain('00:00:01.000 --> 00:00:04.000 line:-3\nprimeira')
+    expect(track?.vtt).toContain('00:00:02.000 --> 00:00:05.000 line:2\nsegunda')
   })
 })

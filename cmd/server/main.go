@@ -15,6 +15,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
@@ -26,6 +27,15 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Before anything else can fail: a metrics port already in use is a
+	// deployment mistake, and finding it out at boot is the point of binding
+	// here rather than inside a goroutine.
+	if cfg.MetricsPort != 0 {
+		if err := metrics.Serve(cfg.MetricsPort); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	opts, err := redis.ParseURL(cfg.RedisURL)
@@ -47,13 +57,17 @@ func main() {
 	publisher := media.NewPublisher(store, bucket, cfg.MediaPublicURL)
 
 	ctx := context.Background()
-	go room.StartSweeper(ctx, store, cfg.DataDir, time.Minute,
+	go room.StartSweeper(ctx, store, cfg.DataDir, bucket, time.Minute,
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
-	hub := syncapi.NewHub(store, cfg)
+	go room.StartStatsSampler(ctx, store, roomCensusInterval)
+	hub := syncapi.NewHub(store, cfg, bucket)
 	defer hub.Close()
 	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(roomID string) {
 		hub.NotifyStatus(roomID, "ready")
-	})
+	}, hub.NotifyRoomUpdated)
+	// The queue reports back into the hub, so it cannot be built before one;
+	// the hub is told about it here instead, before either serves anything.
+	hub.SetMediaWork(queue)
 	queue.Start(ctx)
 	if err := queue.Recover(ctx); err != nil {
 		log.Printf("recover interrupted media jobs: %v", err)
@@ -131,6 +145,12 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+// roomCensusInterval is how often the number of live rooms is counted for the
+// metrics endpoint. Rooms are minutes-to-hours things and the count costs a
+// Redis round trip per room, so anything faster would be paying for precision
+// no graph could show.
+const roomCensusInterval = 15 * time.Second
 
 // progressPublishInterval throttles how often an upload's byte count is
 // persisted and broadcast. Progress ticks arrive twice a second per upload,

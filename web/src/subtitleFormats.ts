@@ -1,3 +1,5 @@
+import { convertAssCue, parseAssHeader, positionDialogueCues } from './assvtt'
+
 // Converters for the subtitle files that ship next to the video inside a
 // torrent. Releases commonly carry SubRip or ASS/SSA in a "Subs" folder
 // instead of muxing them into the container, and those files are tiny and
@@ -115,7 +117,7 @@ export function convertSubtitleFile(path: string, data: ArrayBuffer): VttTrack |
   else if (extension === 'srt') vtt = srtToWebVTT(text)
   else if (extension === 'sub') vtt = text.includes('-->') ? srtToWebVTT(text) : null
   if (!vtt) return null
-  return { ...subtitleIdentity(path), vtt }
+  return { ...subtitleIdentity(path), vtt: positionDialogueCues(vtt) }
 }
 
 function normalizeWebVTT(text: string): string {
@@ -160,15 +162,17 @@ function normalizeSrtStamp(stamp: string): string {
   return `${hours.padStart(2, '0')}:${minutes}:${seconds}.${fraction.padEnd(3, '0').slice(0, 3)}`
 }
 
-// Converts the Events section of an ASS/SSA script. Styling, positioning and
-// karaoke tags are dropped: the player renders plain WebVTT cues.
+// Converts an ASS/SSA script. Placement, italics, bold and quantized colors
+// survive as WebVTT cue settings and tags; the styling VTT cannot carry is
+// dropped.
 export function assToWebVTT(text: string): string {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  const normalized = text.replace(/\r\n?/g, '\n')
+  const info = parseAssHeader(normalized)
   let fields: string[] | null = null
   let inEvents = false
   const cues: string[] = []
 
-  for (const line of lines) {
+  for (const line of normalized.split('\n')) {
     const trimmed = line.trim()
     if (trimmed.startsWith('[')) {
       inEvents = /^\[events\]$/i.test(trimmed)
@@ -186,9 +190,10 @@ export function assToWebVTT(text: string): string {
     const values = splitAssFields(trimmed.slice(trimmed.indexOf(':') + 1), order.length)
     const start = values[order.indexOf('start')]
     const end = values[order.indexOf('end')]
-    const body = cleanAssText(values[order.indexOf('text')] ?? '')
-    if (!start || !end || !body) continue
-    cues.push(`${normalizeAssStamp(start)} --> ${normalizeAssStamp(end)}\n${body}\n`)
+    const converted = convertAssCue(info, values[order.indexOf('style')], values[order.indexOf('text')] ?? '')
+    if (!start || !end || !converted.text) continue
+    const settings = converted.settings === '' ? '' : ` ${converted.settings}`
+    cues.push(`${normalizeAssStamp(start)} --> ${normalizeAssStamp(end)}${settings}\n${converted.text}\n`)
   }
 
   if (cues.length === 0) return ''
@@ -218,13 +223,3 @@ function normalizeAssStamp(stamp: string): string {
   return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}.${fraction.padEnd(3, '0').slice(0, 3)}`
 }
 
-function cleanAssText(value: string): string {
-  return value
-    .replace(/\{[^}]*\}/g, '')
-    .replace(/\\[Nn]/g, '\n')
-    .replace(/\\h/g, ' ')
-    .split('\n')
-    .map((line) => line.trim())
-    .join('\n')
-    .trim()
-}

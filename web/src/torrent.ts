@@ -1,5 +1,6 @@
 import webTorrentBundleURL from 'webtorrent/dist/webtorrent.min.js?url'
 import { isSubtitleFileName } from './subtitleFormats'
+import { mockOpenTorrent, mocksEnabled } from './mocks'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
 // Sibling subtitle files are read whole in a single request, and the bridge
@@ -133,6 +134,7 @@ export async function openTorrent(
   torrentID: string,
   onStats?: (stats: TorrentStats) => void,
 ): Promise<TorrentSession> {
+  if (mocksEnabled) return mockOpenTorrent(onStats)
   const bridge = await openBridge(torrentID)
   if (bridge) return openBridgeSession(bridge, onStats)
 

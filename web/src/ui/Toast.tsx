@@ -1,42 +1,36 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import * as ToastPrimitive from '@radix-ui/react-toast'
+import { useMemo, type ReactNode } from 'react'
+import { Toaster, toast as notify } from 'sonner'
 import { ToastContext } from './toastContext'
 
-// A transient confirmation. Toasts are announced politely rather than
-// interrupting, because none of them report anything the viewer must act on.
-interface ToastMessage {
-  id: number
-  text: string
-}
+// Long enough to read a short confirmation, short enough that a burst of them
+// drains rather than stacking up over the picture.
+const TOAST_MS = 2_600
 
+/**
+ * One notification surface for the whole app.
+ *
+ * Confirmations, refusals and arrivals used to be three different things: a
+ * Radix toast bottom-left, a hand-rolled stack top-right, and nothing at all
+ * for some of it. They say the same kind of thing — something happened, you
+ * need not act — so they now look and behave the same and queue together.
+ *
+ * The context wrapper stays so that call sites, and the tests around them,
+ * keep talking to the app rather than to whichever library is behind it.
+ */
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [messages, setMessages] = useState<ToastMessage[]>([])
-
-  const toast = useCallback((text: string) => {
-    // A monotonic id rather than an index: repeated confirmations of the same
-    // action have to re-enter, not silently reuse a live toast.
-    setMessages((current) => [...current.slice(-2), { id: Date.now() + current.length, text }])
-  }, [])
-
-  const api = useMemo(() => ({ toast }), [toast])
-
+  const api = useMemo(() => ({ toast: (text: ReactNode) => { notify(text) } }), [])
   return (
     <ToastContext.Provider value={api}>
-      <ToastPrimitive.Provider swipeDirection="left" duration={2400}>
-        {children}
-        {messages.map((message) => (
-          <ToastPrimitive.Root
-            key={message.id}
-            className="ui-toast"
-            onOpenChange={(open) => {
-              if (!open) setMessages((current) => current.filter((item) => item.id !== message.id))
-            }}
-          >
-            <ToastPrimitive.Description>{message.text}</ToastPrimitive.Description>
-          </ToastPrimitive.Root>
-        ))}
-        <ToastPrimitive.Viewport className="ui-toast-viewport" />
-      </ToastPrimitive.Provider>
+      {children}
+      <Toaster
+        position="bottom-left"
+        duration={TOAST_MS}
+        gap={8}
+        visibleToasts={4}
+        // Ours entirely: sonner's default card is a light-mode surface, and
+        // these sit over a dark room and a playing picture.
+        toastOptions={{ unstyled: true, classNames: { toast: 'ui-toast' } }}
+      />
     </ToastContext.Provider>
   )
 }

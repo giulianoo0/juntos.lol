@@ -1,4 +1,5 @@
 import parserBundleUrl from 'matroska-subtitles/dist/matroska-subtitles.min.js?url'
+import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
 import type { VttTrack } from './subtitleFormats'
 
 const SLICE_BYTES = 8 * 1024 * 1024
@@ -10,6 +11,8 @@ export interface SubtitleCue {
   text: string
   time: number
   duration: number
+  /** ASS style name, present on cues of ass/ssa tracks. */
+  style?: string
 }
 
 interface ExtractedTrack {
@@ -17,6 +20,8 @@ interface ExtractedTrack {
   language: string
   title: string
   cues: SubtitleCue[]
+  /** Parsed ASS header for ass/ssa tracks, null for plain-text ones. */
+  ass: AssTrackInfo | null
 }
 
 // Types for the self-contained browser bundle of matroska-subtitles, which is
@@ -27,6 +32,8 @@ interface MatroskaTrackInfo {
   language?: string
   name?: string
   type: string
+  /** The track's CodecPrivate: for ass/ssa, the script info and style table. */
+  header?: string
 }
 
 interface MatroskaSubtitleParser {
@@ -98,11 +105,13 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   parser.once('tracks', (list) => {
     for (const track of list) {
       if (tracks.has(track.number)) continue
+      const styled = track.type === 'ass' || track.type === 'ssa'
       tracks.set(track.number, {
         number: track.number,
         language: track.language ?? 'und',
         title: track.name ?? '',
         cues: [],
+        ass: styled && track.header ? parseAssHeader(track.header) : null,
       })
       order.push(track.number)
     }
@@ -115,7 +124,7 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   const collect = (requireCues: boolean): VttTrack[] => order
     .map((number) => tracks.get(number))
     .filter((track): track is ExtractedTrack => track !== undefined && (!requireCues || track.cues.length > 0))
-    .map((track) => ({ language: track.language, title: track.title, vtt: toWebVTT(track.cues) }))
+    .map((track) => ({ language: track.language, title: track.title, vtt: toWebVTT(track.cues, track.ass) }))
 
   return {
     write: (chunk) => parser.write(chunk),
@@ -138,13 +147,20 @@ async function extractSubtitleTracks(file: File): Promise<VttTrack[]> {
   return await stream.finish()
 }
 
-export function toWebVTT(cues: SubtitleCue[]): string {
+export function toWebVTT(cues: SubtitleCue[], ass: AssTrackInfo | null = null): string {
   const sorted = [...cues].sort((a, b) => a.time - b.time)
   const lines = ['WEBVTT', '']
   for (const cue of sorted) {
-    lines.push(`${formatVttTime(cue.time)} --> ${formatVttTime(cue.time + cue.duration)}`, cleanCueText(cue.text), '')
+    const converted = ass
+      ? convertAssCue(ass, cue.style, cue.text)
+      : { settings: '', text: cleanCueText(cue.text) }
+    // A cue with nothing renderable left — a vector drawing, a bare override —
+    // would show viewers an empty box.
+    if (converted.text === '') continue
+    const settings = converted.settings === '' ? '' : ` ${converted.settings}`
+    lines.push(`${formatVttTime(cue.time)} --> ${formatVttTime(cue.time + cue.duration)}${settings}`, converted.text, '')
   }
-  return lines.join('\n')
+  return positionDialogueCues(lines.join('\n'))
 }
 
 function formatVttTime(ms: number): string {
@@ -157,9 +173,41 @@ function formatVttTime(ms: number): string {
   return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}.${String(millis).padStart(3, '0')}`
 }
 
+// cleanCueText rewrites an ASS dialogue line as VTT cue text. Italic and bold
+// overrides become the <i>/<b> tags WebVTT can carry — the same mapping the
+// server-side ffmpeg extraction produces — and every other override (colors,
+// positioning, karaoke) has no VTT equivalent and is dropped.
 function cleanCueText(text: string): string {
-  return text
-    .replace(/\{[^}]*\}/g, '')
+  const open: Array<'i' | 'b'> = []
+  const active = { i: false, b: false }
+  let out = ''
+  let last = 0
+  for (const block of text.matchAll(/\{([^}]*)\}/g)) {
+    out += text.slice(last, block.index)
+    last = block.index + block[0].length
+    for (const flag of block[1].matchAll(/\\(i|b)(\d+)/g)) {
+      const style = flag[1] as 'i' | 'b'
+      const on = flag[2] !== '0'
+      if (on === active[style]) continue
+      active[style] = on
+      if (on) {
+        open.push(style)
+        out += `<${style}>`
+        continue
+      }
+      // VTT ignores an end tag that is not the innermost one, so closing a
+      // style closes everything above it and reopens what should survive.
+      const depth = open.lastIndexOf(style)
+      for (let index = open.length - 1; index >= depth; index -= 1) out += `</${open[index]}>`
+      for (const kept of open.splice(depth).slice(1)) {
+        open.push(kept)
+        out += `<${kept}>`
+      }
+    }
+  }
+  out += text.slice(last)
+  for (let index = open.length - 1; index >= 0; index -= 1) out += `</${open[index]}>`
+  return out
     .replace(/\\N/g, '\n')
     .trim()
 }
@@ -185,7 +233,7 @@ interface CollectorSource {
   complete: boolean
 }
 
-export function createSubtitleCollector(roomID: string): SubtitleCollector {
+export function createSubtitleCollector(roomID: string, mediaGeneration: number): SubtitleCollector {
   const sources = new Map<string, CollectorSource>()
   const order: string[] = []
   let pending: Promise<void> = Promise.resolve()
@@ -211,8 +259,12 @@ export function createSubtitleCollector(roomID: string): SubtitleCollector {
       const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/subtitles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tracks, complete }),
+        body: JSON.stringify({ tracks, complete, mediaGeneration }),
       })
+      // 409 means the room moved on to another video while this extraction
+      // was still reading the previous one. Nothing to retry: these cues
+      // describe a source nobody is watching any more.
+      if (response.status === 409) return
       if (!response.ok) console.warn(`subtitle upload failed with status ${response.status}`)
     } catch (error) {
       console.error('subtitle upload failed', error)
@@ -245,9 +297,10 @@ export function createSubtitleCollector(roomID: string): SubtitleCollector {
 // Best-effort client-side subtitle extraction for a local file: embedded text
 // tracks are posted while the upload is still running. Never rejects; the
 // server-side extraction at upload completion remains the fallback.
-export async function extractAndUploadSubtitles(file: File, roomID: string): Promise<void> {
+export async function extractAndUploadSubtitles(file: File, roomID: string,
+  mediaGeneration: number): Promise<void> {
   if (!isMatroska(file)) return
-  const collector = createSubtitleCollector(roomID)
+  const collector = createSubtitleCollector(roomID, mediaGeneration)
   collector.register('embedded')
   try {
     collector.publish('embedded', await extractSubtitleTracks(file), true)

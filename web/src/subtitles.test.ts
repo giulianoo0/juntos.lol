@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseAssHeader } from './assvtt'
 import { createSubtitleCollector, extractAndUploadSubtitles, toWebVTT, type SubtitleCue } from './subtitles'
 
 describe('toWebVTT', () => {
@@ -10,17 +11,75 @@ describe('toWebVTT', () => {
     expect(toWebVTT(cues)).toBe(
       'WEBVTT\n' +
       '\n' +
-      '00:00:01.000 --> 00:00:04.000\n' +
+      '00:00:01.000 --> 00:00:04.000 line:-3\n' +
       'First\n' +
       '\n' +
-      '01:02:03.456 --> 01:02:04.956\n' +
+      '01:02:03.456 --> 01:02:04.956 line:-3\n' +
       'Second\n',
     )
   })
 
-  it('strips ASS override tags and turns \\N into newlines', () => {
+  it('turns ASS italic overrides into VTT italic tags and \\N into newlines', () => {
     const vtt = toWebVTT([{ text: '{\\i1}Hello{\\i0}\\N{\\an8}world', time: 0, duration: 1_000 }])
-    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000\nHello\nworld\n')
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:-3\n<i>Hello</i>\nworld\n')
+  })
+
+  it('turns ASS bold overrides into VTT bold tags', () => {
+    const vtt = toWebVTT([{ text: '{\\b1}loud{\\b0} quiet', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<b>loud</b> quiet')
+  })
+
+  it('reads style flags out of a block that mixes them with other overrides', () => {
+    const vtt = toWebVTT([{ text: '{\\i1\\pos(20,30)}floating sign', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<i>floating sign</i>')
+  })
+
+  it('closes styles left open at the end of the cue', () => {
+    const vtt = toWebVTT([{ text: '{\\i1}a thought{\\b1}, emphasized', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<i>a thought<b>, emphasized</b></i>')
+  })
+
+  it('ignores a close for a style that was never opened', () => {
+    const vtt = toWebVTT([{ text: '{\\i0}plain words', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:-3\nplain words\n')
+  })
+
+  it('sends the second simultaneous dialogue to the top of the frame', () => {
+    const vtt = toWebVTT([
+      { text: 'primeira', time: 0, duration: 3_000 },
+      { text: 'segunda', time: 1_000, duration: 3_000 },
+    ])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:03.000 line:-3\nprimeira\n')
+    expect(vtt).toContain('00:00:01.000 --> 00:00:04.000 line:2\nsegunda\n')
+  })
+
+  it('carries ASS placement and color when the track brought its header', () => {
+    const header = [
+      '[Script Info]',
+      'PlayResX: 1280',
+      'PlayResY: 720',
+      '[V4+ Styles]',
+      'Format: Name, PrimaryColour, Bold, Italic, Alignment',
+      'Style: Signs,&H0000FFFF,0,0,8',
+    ].join('\n')
+    const vtt = toWebVTT(
+      [{ text: 'placa no alto', time: 0, duration: 1_000, style: 'Signs' }],
+      parseAssHeader(header),
+    )
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:5%\n<c.yellow>placa no alto</c>\n')
+  })
+
+  it('skips cues that are only a drawing', () => {
+    const header = '[V4+ Styles]\nFormat: Name, Alignment\nStyle: Default,2'
+    const vtt = toWebVTT(
+      [
+        { text: '{\\p1}m 0 0 l 10 0{\\p0}', time: 0, duration: 1_000, style: 'Default' },
+        { text: 'fala', time: 2_000, duration: 1_000, style: 'Default' },
+      ],
+      parseAssHeader(header),
+    )
+    expect(vtt).not.toContain('m 0 0')
+    expect(vtt).toContain('fala')
   })
 
   it('clamps negative timings to zero', () => {
@@ -62,31 +121,32 @@ describe('extractAndUploadSubtitles', () => {
   })
 
   it('does nothing for non-Matroska files', async () => {
-    await extractAndUploadSubtitles(new File(['video'], 'movie.mp4', { type: 'video/mp4' }), 'room1')
+    await extractAndUploadSubtitles(new File(['video'], 'movie.mp4', { type: 'video/mp4' }), 'room1', 0)
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it('posts all extracted tracks as WebVTT in one request', async () => {
-    await extractAndUploadSubtitles(new File(['video'], 'movie.mkv', { type: 'video/x-matroska' }), 'room1')
+    await extractAndUploadSubtitles(new File(['video'], 'movie.mkv', { type: 'video/x-matroska' }), 'room1', 0)
     expect(fetch).toHaveBeenCalledWith('/api/rooms/room1/subtitles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello\n' }],
+        tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000 line:-3\nHello\n' }],
         complete: true,
+        mediaGeneration: 0,
       }),
     })
   })
 
   it('resolves silently when the server rejects the tracks', async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 400 } as Response)
-    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1')).resolves.toBeUndefined()
+    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1', 0)).resolves.toBeUndefined()
     expect(console.warn).toHaveBeenCalled()
   })
 
   it('resolves silently when the request itself fails', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('network down'))
-    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1')).resolves.toBeUndefined()
+    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1', 0)).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()
   })
 })
@@ -105,10 +165,22 @@ describe('createSubtitleCollector', () => {
   const body = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
     tracks: Array<{ title: string }>
     complete: boolean
+    mediaGeneration: number
   }
 
+  it('names the source the tracks were read from', async () => {
+    // Extraction outlives the source when the room is swapped mid-read, so
+    // the post has to say which video it describes or the server cannot tell
+    // it apart from one describing the video now playing.
+    const collector = createSubtitleCollector('room1', 2)
+    collector.publish('embedded', [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    expect(body(0).mediaGeneration).toBe(2)
+  })
+
   it('reports incomplete while any registered source is still running', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.register('embedded')
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await collector.flush()
@@ -118,7 +190,7 @@ describe('createSubtitleCollector', () => {
   })
 
   it('posts the union of every source in registration order once all are done', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.register('external')
     collector.register('embedded')
     collector.publish('embedded', [{ language: 'jpn', title: 'Muxed', vtt: 'WEBVTT' }], true)
@@ -131,14 +203,14 @@ describe('createSubtitleCollector', () => {
   })
 
   it('sends nothing while no source has produced a track', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.publish('embedded', [], false)
     await collector.flush()
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it('coalesces progressive updates instead of posting on every publish', async () => {
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.register('embedded')
     for (let index = 0; index < 5; index += 1) {
       collector.publish('embedded', [{ language: 'eng', title: `cue ${index}`, vtt: 'WEBVTT' }], false)
@@ -151,7 +223,7 @@ describe('createSubtitleCollector', () => {
 
   it('keeps the room usable when a publish request fails', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('offline'))
-    const collector = createSubtitleCollector('room1')
+    const collector = createSubtitleCollector('room1', 0)
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await expect(collector.flush()).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()

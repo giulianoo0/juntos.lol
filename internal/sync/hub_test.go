@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,11 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
 func TestHubSyncFlow(t *testing.T) {
-	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	hostWelcome := helloHubClient(t, host, "host", 11)
 	require.Equal(t, "m1", hostWelcome.MemberID)
@@ -61,7 +63,7 @@ func TestHubSyncFlow(t *testing.T) {
 }
 
 func TestHubChatAndControllerPromotion(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -95,7 +97,7 @@ func TestHubChatAndControllerPromotion(t *testing.T) {
 }
 
 func TestHubIgnoresControlTakeoverMessages(t *testing.T) {
-	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -114,7 +116,7 @@ func TestHubIgnoresControlTakeoverMessages(t *testing.T) {
 }
 
 func TestHubRejectsRoomFull(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 1, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 1, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -125,7 +127,7 @@ func TestHubRejectsRoomFull(t *testing.T) {
 }
 
 func TestHubDoesNotAcceptNicknameFromURL(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	client := dialHubWS(t, server, "nickname=url-name")
 	require.NoError(t, client.WriteJSON(Inbound{Type: "hello"}))
 	event := readHubEvent(t, client)
@@ -134,7 +136,7 @@ func TestHubDoesNotAcceptNicknameFromURL(t *testing.T) {
 }
 
 func TestHubIdleCleanupRemovesRoomAndFiles(t *testing.T) {
-	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.idleAfter = 20 * time.Millisecond
 	require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
 	roomDir := filepath.Join(hub.cfg.DataDir, "rooms", "r1")
@@ -151,10 +153,123 @@ func TestHubIdleCleanupRemovesRoomAndFiles(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestHubIdleCleanupReclaimsTheRoomsMedia(t *testing.T) {
+	// The room is gone the moment everyone leaves, and its media is
+	// unreachable from that moment: the playlists naming it went with it.
+	// Leaving the objects for the bucket's own rule keeps paying for storage
+	// nobody can watch.
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
+	hub.idleAfter = 20 * time.Millisecond
+	bucket := hub.bucket.(*objectstore.Fake)
+	require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
+	for _, key := range []string{"rooms/r1/g0/hls/stream_0_000.m4s", "rooms/other/g0/hls/stream_0_000.m4s"} {
+		require.NoError(t, bucket.Put(t.Context(), key, strings.NewReader("x"), 1, "", ""))
+	}
+	client := dialHubWS(t, server)
+	helloHubClient(t, client, "host", 1)
+	require.NoError(t, client.Close())
+
+	require.Eventually(t, func() bool {
+		return len(bucket.Keys()) == 1
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, []string{"rooms/other/g0/hls/stream_0_000.m4s"}, bucket.Keys())
+}
+
+func TestHubIdleCleanupKeepsTheMediaOfAnActiveUpload(t *testing.T) {
+	// An upload that outlives its tab keeps its room, so it must keep the
+	// segments the preview already published too.
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
+	hub.idleAfter = 20 * time.Millisecond
+	bucket := hub.bucket.(*objectstore.Fake)
+	require.NoError(t, store.SetStatus(t.Context(), "r1", "uploading"))
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/preview_stream_0_000000.m4s",
+		strings.NewReader("x"), 1, "", ""))
+	client := dialHubWS(t, server)
+	helloHubClient(t, client, "host", 1)
+	require.NoError(t, client.Close())
+
+	require.Eventually(t, func() bool {
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		return hub.rooms["r1"] == nil
+	}, time.Second, 10*time.Millisecond)
+	require.Len(t, bucket.Keys(), 1)
+}
+
+// The preview makes a room playable seconds after the first megabyte, so a
+// room reads "ready" for most of the time its source is still arriving and for
+// all of the time the final ladder is being encoded. Status alone therefore
+// says nothing about whether reclaiming it would destroy work in flight.
+func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
+	tests := []struct {
+		name      string
+		received  int64
+		total     int64
+		mediaBusy bool
+	}{
+		{name: "source still arriving", received: 500, total: 1000},
+		{name: "final remux running", received: 1000, total: 1000, mediaBusy: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
+			hub.idleAfter = 20 * time.Millisecond
+			hub.SetMediaWork(fakeMediaWork{busy: tt.mediaBusy})
+			bucket := hub.bucket.(*objectstore.Fake)
+			require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
+			require.NoError(t, store.SetIngestProgress(t.Context(), "r1", tt.received, tt.total))
+			require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/preview_stream_0_000000.m4s",
+				strings.NewReader("x"), 1, "", ""))
+			roomDir := filepath.Join(hub.cfg.DataDir, "rooms", "r1")
+			require.NoError(t, os.MkdirAll(roomDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(roomDir, "partial"), []byte("x"), 0o644))
+			client := dialHubWS(t, server)
+			helloHubClient(t, client, "host", 1)
+			require.NoError(t, client.Close())
+
+			require.Eventually(t, func() bool {
+				hub.mu.Lock()
+				defer hub.mu.Unlock()
+				return hub.rooms["r1"] == nil
+			}, time.Second, 10*time.Millisecond)
+
+			// The room outlives the connection, and so does everything the work
+			// still running needs: its directory, and what it already published.
+			_, err := store.Get(t.Context(), "r1")
+			require.NoError(t, err)
+			require.FileExists(t, filepath.Join(roomDir, "partial"))
+			require.Len(t, bucket.Keys(), 1)
+		})
+	}
+}
+
+// The counterpart: with the transfer landed and the pipeline idle there is
+// nothing left to protect, and the room goes as it always did.
+func TestHubIdleCleanupReclaimsARoomWhoseWorkIsDone(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
+	hub.idleAfter = 20 * time.Millisecond
+	hub.SetMediaWork(fakeMediaWork{busy: false})
+	require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
+	require.NoError(t, store.SetIngestProgress(t.Context(), "r1", 1000, 1000))
+	client := dialHubWS(t, server)
+	helloHubClient(t, client, "host", 1)
+	require.NoError(t, client.Close())
+
+	require.Eventually(t, func() bool {
+		_, err := store.Get(t.Context(), "r1")
+		return errors.Is(err, room.ErrNotFound)
+	}, time.Second, 10*time.Millisecond)
+}
+
+type fakeMediaWork struct{ busy bool }
+
+func (f fakeMediaWork) Busy(string) bool { return f.busy }
+
 func TestHubIdleCleanupPreservesActiveUpload(t *testing.T) {
 	for _, status := range []string{"uploading", "processing"} {
 		t.Run(status, func(t *testing.T) {
-			hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+			hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 			hub.idleAfter = 20 * time.Millisecond
 			require.NoError(t, store.SetStatus(t.Context(), "r1", status))
 			roomDir := filepath.Join(hub.cfg.DataDir, "rooms", "r1")
@@ -193,11 +308,11 @@ func newHubTestServer(t *testing.T, cfg config.Config) (*Hub, *room.Store, *http
 	if cfg.MaxParticipants == 0 {
 		cfg.MaxParticipants = 20
 	}
-	if cfg.RoomIdleMinutes == 0 {
-		cfg.RoomIdleMinutes = 10
+	if cfg.RoomIdleSeconds == 0 {
+		cfg.RoomIdleSeconds = 90
 	}
 	cfg.DataDir = t.TempDir()
-	hub := NewHub(store, cfg)
+	hub := NewHub(store, cfg, objectstore.NewFake())
 	t.Cleanup(hub.Close)
 	router := gin.New()
 	router.GET("/ws/rooms/:id", hub.HandleWS)
@@ -247,7 +362,7 @@ func readHubEvent(t *testing.T, conn *websocket.Conn) Outbound {
 }
 
 func TestHubGateReleasesOnQuorum(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	welcome := helloHubClient(t, host, "host", 1)
 	require.NotNil(t, welcome.Gating)
@@ -292,7 +407,7 @@ func TestHubGateReleasesOnQuorum(t *testing.T) {
 }
 
 func TestHubGateReleasesOnTimeout(t *testing.T) {
-	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.gateTimeout = 60 * time.Millisecond
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
@@ -327,7 +442,7 @@ func TestHubGateReleasesOnTimeout(t *testing.T) {
 }
 
 func TestHubGateDisconnectDoesNotHangRoom(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -354,7 +469,7 @@ func TestHubGateDisconnectDoesNotHangRoom(t *testing.T) {
 }
 
 func TestHubGatingSettingIsControllerOnly(t *testing.T) {
-	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -390,7 +505,7 @@ func TestHubGatingSettingIsControllerOnly(t *testing.T) {
 }
 
 func TestHubGateSkipsScreenRooms(t *testing.T) {
-	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: "r1", Status: "ready", SourceKind: room.SourceScreen, ControllerID: "m1",
@@ -440,7 +555,7 @@ func startedRoom(t *testing.T, server *httptest.Server) (host, guest *websocket.
 }
 
 func TestHubStopsTheRoomWhenSomeoneStallsMidPlayback(t *testing.T) {
-	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	// The cooldown only exists to stop a loop; it must not stop the first one.
 	hub.gateTimeout = time.Minute
 	hub.stallCooldown = 0
@@ -460,7 +575,7 @@ func TestHubStopsTheRoomWhenSomeoneStallsMidPlayback(t *testing.T) {
 }
 
 func TestHubIgnoreLetsTheRoomCarryOnWithoutTheStalledMember(t *testing.T) {
-	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.gateTimeout = time.Minute
 	hub.stallCooldown = 0
 	host, guest := startedRoom(t, server)
@@ -490,7 +605,7 @@ func TestHubIgnoreLetsTheRoomCarryOnWithoutTheStalledMember(t *testing.T) {
 }
 
 func TestHubIgnoreIsTheControllersAlone(t *testing.T) {
-	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.gateTimeout = time.Minute
 	hub.stallCooldown = 0
 	host, guest := startedRoom(t, server)
@@ -519,7 +634,7 @@ func TestHubIgnoreIsTheControllersAlone(t *testing.T) {
 }
 
 func TestHubDoesNotStopForAStalledMemberAlone(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 

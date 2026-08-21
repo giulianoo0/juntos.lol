@@ -229,3 +229,50 @@ func TestStoreClientSubtitlesFailsWhenTheBucketRefuses(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, got.SubtitleTracks, "tracks must not be announced without files behind them")
 }
+
+func TestStoreClientSubtitlesRejectsAnExtractionFromAReplacedSource(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", FileName: "first.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	// The controller swaps the room onto a second video. The browser is still
+	// reading the first one — its extraction runs for as long as the file is
+	// large — and finishes afterwards.
+	_, generation, err := store.SwapSource(t.Context(), "r1", room.SourceUpload, "second.mkv", "uploading", now)
+	require.NoError(t, err)
+	require.Equal(t, 1, generation)
+
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	body := `{"mediaGeneration":0,"tracks":[` +
+		`{"language":"eng","title":"From the first video","vtt":` + strconvQuote(validVTT) + `}` +
+		`]}`
+	w := postSubtitles(t, e, "r1", body)
+
+	// Accepting it would hand the new video the previous one's subtitles and,
+	// worse, mark the room as having client subtitles: the server then skips
+	// its own extraction and the new video never gets the right ones at all.
+	require.Equal(t, http.StatusConflict, w.Code)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.False(t, got.ClientSubs)
+	require.Empty(t, got.SubtitleTracks)
+}
+
+func TestStoreClientSubtitlesAcceptsTheCurrentGeneration(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	body := `{"mediaGeneration":0,"tracks":[` +
+		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}` +
+		`]}`
+	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r1", body).Code)
+}

@@ -53,3 +53,25 @@ func TestDecodeSubtitleBytesRecoversLatin1(t *testing.T) {
 	// a replacement character in the middle of a caption.
 	require.Equal(t, []byte("olá"), decodeSubtitleBytes([]byte{'o', 'l', 0xE1}))
 }
+
+func TestConvertSideSubtitlesKeepsStyledSigns(t *testing.T) {
+	script := "[Script Info]\n" +
+		"PlayResX: 1920\n" +
+		"PlayResY: 1080\n" +
+		"[V4+ Styles]\n" +
+		"Format: Name, PrimaryColour, Bold, Italic, Alignment\n" +
+		"Style: Signs,&H0000FFFF,0,0,8\n" +
+		"[Events]\n" +
+		"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" +
+		"Dialogue: 0,0:00:01.00,0:00:02.00,Signs,,0,0,0,,{\\pos(960,108)}Ateliê\n"
+
+	converted, err := ConvertSideSubtitles(t.Context(), t.TempDir(),
+		map[string][]byte{"Subs/English.ass": []byte(script)})
+
+	require.NoError(t, err)
+	require.Len(t, converted, 1)
+	// The sidecar goes through the same converter as the muxed tracks, so its
+	// placement and color survive instead of being flattened by ffmpeg.
+	require.Contains(t, string(converted[0].VTT),
+		"00:00:01.000 --> 00:00:02.000 line:10% position:50%\n<c.yellow>Ateliê</c>")
+}

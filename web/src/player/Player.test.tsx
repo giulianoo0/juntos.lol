@@ -63,9 +63,124 @@ describe('Player', () => {
     )
   })
 
+  it('names each subtitle file by the track it belongs to, not its place in the menu', () => {
+    // A progressive extraction only announces the tracks that hold a cue so
+    // far, so the list arrives with gaps: a forced track carries nothing until
+    // the first foreign sign appears on screen. The published file is named
+    // after the track's real position, so reading the menu position instead
+    // fetches somebody else's language, or a file that is not there yet.
+    const sparse: RoomInfo = {
+      ...room,
+      subtitleTracks: [
+        { index: 1, language: 'eng', title: '', codec: 'webvtt' },
+        { index: 3, language: 'ara', title: 'Saudi Arabia', codec: 'webvtt' },
+      ],
+      subsVersion: 2,
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    const { container } = render(
+      <Player room={sparse} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+
+    const sources = [...container.querySelectorAll('track')].map((node) => node.getAttribute('src'))
+    expect(sources).toEqual([
+      'https://media.example.test/rooms/r1/g0/subs/sub_1_eng.vtt?g=0&s=2',
+      'https://media.example.test/rooms/r1/g0/subs/sub_3_ara.vtt?g=0&s=2',
+    ])
+  })
+
+  it('keeps the chosen subtitle on its own track as the menu fills in', async () => {
+    // The announced list grows while the extraction runs: forced tracks join it
+    // once they hold a cue, and every one of them lands ahead of the languages
+    // that were already there. A choice remembered as a menu position therefore
+    // slides onto a different language mid-episode.
+    const sparse: RoomInfo = {
+      ...room,
+      subtitleTracks: [
+        { index: 1, language: 'eng', title: 'English', codec: 'webvtt' },
+        { index: 3, language: 'por', title: 'Portugues', codec: 'webvtt' },
+      ],
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    const { rerender } = render(
+      <Player room={sparse} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Portugues' }))
+    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
+
+    const full: RoomInfo = {
+      ...sparse,
+      subtitleTracks: [
+        { index: 0, language: 'eng', title: 'Forced', codec: 'webvtt' },
+        ...(sparse.subtitleTracks ?? []),
+        { index: 2, language: 'ara', title: 'Arabic', codec: 'webvtt' },
+      ],
+    }
+    rerender(<Player room={full} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+
+    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
+  })
+
+  // Each group opens where it stands. A menu that replaced the panel would
+  // lose the other two, and the settings would stop being one surface.
+  it('opens one settings group at a time, in place', async () => {
+    const withTracks: RoomInfo = {
+      ...room,
+      subtitleTracks: [
+        { index: 0, language: 'eng', title: 'English', codec: 'webvtt' },
+        { index: 1, language: 'por', title: 'Portugues', codec: 'webvtt' },
+      ],
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    render(<Player room={withTracks} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    const subtitles = await screen.findByRole('button', { name: /subtitles|legendas/i })
+    expect(subtitles).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
+
+    fireEvent.click(subtitles)
+
+    expect(subtitles).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument()
+    // The group it opened from is still there to go back to.
+    expect(screen.getByTestId('setting-subtitles')).toBeInTheDocument()
+
+    fireEvent.click(subtitles)
+    expect(subtitles).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
+  })
+
+  // Settings laid over the picture have to get out of the way the moment
+  // attention moves back to it, without hunting for a close button.
+  it('closes the settings when something outside them is pressed', async () => {
+    const withTracks: RoomInfo = {
+      ...room,
+      subtitleTracks: [{ index: 0, language: 'eng', title: 'English', codec: 'webvtt' }],
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    render(<Player room={withTracks} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
+    expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+
+    // The panel shrinks back into the gear it grew out of.
+    const gear = await screen.findByRole('button', { name: /settings|configurações/i })
+    expect(gear).toHaveAttribute('aria-expanded', 'false')
+    // The group it had open goes with it, so reopening starts from the top.
+    fireEvent.click(gear)
+    expect(await screen.findByRole('button', { name: /subtitles|legendas/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
+  })
+
   it('offers no subtitles at all when the room names no bucket', () => {
     // This server stopped serving subtitle files, so a track without a base
-    // would be one the browser can never load.
+    // would be one the browser can never load — and a choice that cannot take
+    // effect is worse than no choice.
     const withSubs: RoomInfo = {
       ...room,
       subtitleTracks: [{ index: 0, language: 'por', title: 'Legendas', codec: 'webvtt' }],
@@ -75,6 +190,8 @@ describe('Player', () => {
     )
 
     expect(container.querySelector('track')).toBeNull()
+    // Nothing else here is choosable either, so the panel stays away entirely.
+    expect(screen.queryByRole('button', { name: /settings|configurações/i })).not.toBeInTheDocument()
   })
 
   it('starts media inside the controller click before sending synchronized play', async () => {
@@ -378,9 +495,10 @@ describe('Player', () => {
     expect(requestFullscreen).not.toHaveBeenCalled()
   })
 
-  it('leaves the arrow keys to the scrubber while it has focus', () => {
-    // The slider changes its own value with the arrows; seeking on top of that
-    // would move the video twice for one key press.
+  it('seeks five seconds with an arrow even while the scrubber has focus', () => {
+    // Clicking the scrubber leaves it focused, and its native arrow step is
+    // one second. The room shortcut must not lose to the control it sits on:
+    // its preventDefault is what stops the slider from also stepping.
     const send = vi.fn()
     const { container } = render(
       <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />,
@@ -390,7 +508,21 @@ describe('Player', () => {
     scrubber.focus()
     fireEvent.keyDown(scrubber, { key: 'ArrowRight' })
 
-    expect(send).not.toHaveBeenCalled()
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 5000 })
+  })
+
+  it('leaves the arrow keys to the volume slider while it has focus', () => {
+    // Unlike the scrubber, the slider's own arrow step is the volume control.
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(
+      <Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    const slider = container.querySelector('input.volume-range')! as HTMLInputElement
+
+    slider.focus()
+    fireEvent.keyDown(slider, { key: 'ArrowDown' })
+
+    expect(videoRef.current!.volume).toBe(1)
   })
 
   it('leaves the space bar to controls outside the player', () => {

@@ -82,22 +82,105 @@ func TestBuildProgressiveRemuxArgs(t *testing.T) {
 	joined := strings.Join(args, " ")
 	require.Contains(t, joined, "-i pipe:0")
 	require.NotContains(t, joined, "-re")
-	require.Contains(t, joined, "-hls_time 2")
+	require.Contains(t, joined, "-hls_time 4")
 	require.NotContains(t, joined, "-force_key_frames")
 	require.Contains(t, joined, "-hls_playlist_type event")
 	require.NotContains(t, joined, "-hls_playlist_type vod")
-	require.Contains(t, joined, "-var_stream_map a:0,agroup:audio,default:yes,language:eng")
+	require.Contains(t, joined, "-var_stream_map v:0,a:0")
 	require.Contains(t, joined, "-master_pl_name master.m3u8")
-	require.Contains(t, joined, "-hls_fmp4_init_filename preview_init_%v.mp4")
+	require.Contains(t, joined, "-hls_fmp4_init_filename preview_init_0.mp4")
 	require.Contains(t, joined, "/x/hls/preview_stream_%v_%06d.m4s")
 	require.Equal(t, "/x/hls/preview_stream_%v.m3u8", args[len(args)-1])
 
-	vod := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
-	require.Contains(t, vod, "-hls_playlist_type vod")
-	require.Contains(t, vod, "-hls_time 6")
-	require.Contains(t, vod, "-master_pl_name final_master.m3u8")
-	require.NotContains(t, vod, "-re")
-	require.NotContains(t, vod, "event")
+	// The final pass grows its playlist as it encodes. A vod playlist is only
+	// written when ffmpeg finishes, so nothing it produces can be published
+	// until the whole encode lands and the room stays frozen at whatever the
+	// preview reached — for a source that arrived all at once, a few seconds.
+	final := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
+	require.Contains(t, final, "-hls_playlist_type event")
+	require.NotContains(t, final, "-hls_playlist_type vod")
+	require.Contains(t, final, "-hls_time 6")
+	require.Contains(t, final, "-master_pl_name final_master.m3u8")
+	require.NotContains(t, final, "-re")
+}
+
+func TestBuildProgressiveRemuxArgsCarriesOnlyTheDefaultAudioTrack(t *testing.T) {
+	p := &ProbeResult{
+		VideoCopyable: true,
+		Audio: []room.TrackInfo{
+			{Index: 0, Language: "jpn"}, {Index: 1, Language: "eng"}, {Index: 2, Language: "ger"},
+		},
+	}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+	// Every extra dub is another AAC encode and another segment stream before
+	// the room can play at all. The preview exists to start playback; the rest
+	// of the dubs arrive with the final ladder.
+	require.Contains(t, preview, "-map 0:a:0")
+	require.NotContains(t, preview, "-map 0:a:1")
+	require.NotContains(t, preview, "-map 0:a:2")
+	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(p))
+
+	// The final pass still carries all of them.
+	final := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
+	require.Contains(t, final, "-map 0:a:1")
+	require.Contains(t, final, "-map 0:a:2")
+}
+
+func TestBuildProgressiveRemuxArgsMuxesAudioIntoTheOnlyVariant(t *testing.T) {
+	p := &ProbeResult{
+		VideoCopyable: true,
+		Audio:         []room.TrackInfo{{Index: 0, Language: "eng"}},
+	}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+
+	// An audio group is a second segment stream, so it doubles what the preview
+	// writes and uploads. It buys nothing here: the preview carries one video
+	// rendition and one dub, so there is no switch for the group to survive.
+	require.Contains(t, preview, "-var_stream_map v:0,a:0")
+	require.NotContains(t, preview, "agroup")
+
+	// The final ladder keeps its group: switching picture quality there must
+	// not reopen the audio the viewer chose.
+	final := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
+	require.Contains(t, final, "v:0,agroup:audio")
+}
+
+func TestBuildRemuxArgsNamesTheInitSegmentAVariantAtATime(t *testing.T) {
+	// ffmpeg only expands %v in the init filename when the output carries more
+	// than one variant. With a single one it writes a file called literally
+	// "preview_init_%v.mp4", the playlist points EXT-X-MAP at that name, and
+	// nothing decodes: the player fetches an init segment that is not there
+	// and waits forever.
+	single := &ProbeResult{VideoCopyable: true, Audio: []room.TrackInfo{{Index: 0}}}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", single), " ")
+
+	require.Contains(t, preview, "-hls_fmp4_init_filename preview_init_0.mp4")
+	require.NotContains(t, preview, "preview_init_%v.mp4")
+
+	// A ladder with an audio group has several, so the placeholder is expanded
+	// by ffmpeg and has to stay.
+	ladder := &ProbeResult{VideoCopyable: true, VideoHeight: 1080, Audio: []room.TrackInfo{{Index: 0}}}
+	final := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", ladder), " ")
+	require.Contains(t, final, "-hls_fmp4_init_filename init_%v.mp4")
+
+	// A final pass can end up with one variant too: a source small enough for
+	// no lower rung, with no audio to group.
+	lone := &ProbeResult{VideoCopyable: true, VideoHeight: 360}
+	loneFinal := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", lone), " ")
+	require.Contains(t, loneFinal, "-hls_fmp4_init_filename init_0.mp4")
+}
+
+func TestBuildProgressiveRemuxArgsMapsSilentSourcesAlone(t *testing.T) {
+	p := &ProbeResult{VideoCopyable: true}
+
+	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
+
+	require.Contains(t, preview, "-var_stream_map v:0")
+	require.NotContains(t, preview, "a:0")
+	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(p))
 }
 
 func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
@@ -107,8 +190,11 @@ func TestBuildProgressiveRemuxArgsAlignsTranscodedKeyframes(t *testing.T) {
 
 	require.Contains(t, joined, "-c:v:0 libx264 -preset:v:0 ultrafast -crf:v:0 23")
 	require.NotContains(t, joined, "-preset veryfast")
-	require.Contains(t, joined, `-force_key_frames expr:gte(t,n_forced*2)`)
-	require.Contains(t, joined, "-hls_time 2")
+	// The forced keyframe cadence has to follow the segment length: a segment
+	// cannot start anywhere but a keyframe, so a mismatch makes ffmpeg hold the
+	// first playable segment until libx264's own much longer GOP closes.
+	require.Contains(t, joined, `-force_key_frames expr:gte(t,n_forced*4)`)
+	require.Contains(t, joined, "-hls_time 4")
 
 	vod := strings.Join(BuildRemuxArgs("/x/original.mkv", "/x/hls", p), " ")
 	require.Contains(t, vod, "-c:v:0 libx264 -preset:v:0 veryfast -crf:v:0 23")

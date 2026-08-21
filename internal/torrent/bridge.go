@@ -131,6 +131,22 @@ func (b *Bridge) Files(ctx context.Context, sessionID string) ([]FileInfo, error
 	return info.Files, nil
 }
 
+// Stats is what a session reports about the swarm behind it.
+type Stats struct {
+	Peers      int     `json:"peers"`
+	Downloaded int64   `json:"downloaded"`
+	Progress   float64 `json:"progress"`
+}
+
+// Stats reads the swarm behind a session without changing it.
+func (b *Bridge) Stats(ctx context.Context, sessionID string) (Stats, error) {
+	var stats Stats
+	if err := b.postJSON(ctx, "/api/torrent-bridge/stats", map[string]any{"id": sessionID}, &stats); err != nil {
+		return Stats{}, err
+	}
+	return stats, nil
+}
+
 // Close releases a bridge session and, with it, the torrent it held.
 func (b *Bridge) Close(ctx context.Context, sessionID string) error {
 	return b.postJSON(ctx, "/api/torrent-bridge/close", map[string]any{"id": sessionID}, nil)

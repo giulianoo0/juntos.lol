@@ -1,0 +1,354 @@
+[
+  {
+    "uid": "ss-scrape-down",
+    "title": "ss: sem métricas chegando",
+    "ruleGroup": "ss",
+    "folderUID": "${FOLDER_UID}",
+    "condition": "C",
+    "for": "5m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "app": "ss"
+    },
+    "annotations": {
+      "summary": "O coletor não está conseguindo raspar a aplicação há 5 minutos. Ou o processo caiu, ou METRICS_PORT mudou, ou o Alloy parou."
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "${DATASOURCE_UID}",
+        "model": {
+          "refId": "A",
+          "expr": "sum(up{job=\"ss\"})",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 1000,
+          "maxDataPoints": 43200,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DATASOURCE_UID}"
+          }
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "reducer": "last",
+          "expression": "A",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "B",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "lt",
+                "params": [
+                  1
+                ]
+              }
+            }
+          ],
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      }
+    ]
+  },
+  {
+    "uid": "ss-bucket-failing",
+    "title": "ss: bucket recusando ou fora do ar",
+    "ruleGroup": "ss",
+    "folderUID": "${FOLDER_UID}",
+    "condition": "C",
+    "for": "10m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "app": "ss"
+    },
+    "annotations": {
+      "summary": "As escritas no R2 estão falhando. A mídia não tem fallback em disco: toda sala que estiver enviando vídeo agora vai falhar."
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "${DATASOURCE_UID}",
+        "model": {
+          "refId": "A",
+          "expr": "sum(rate(ss_objectstore_errors_total[5m]))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 1000,
+          "maxDataPoints": 43200,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DATASOURCE_UID}"
+          }
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "reducer": "last",
+          "expression": "A",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "B",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0.2
+                ]
+              }
+            }
+          ],
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      }
+    ]
+  },
+  {
+    "uid": "ss-ffmpeg-backed-up",
+    "title": "ss: fila do FFmpeg parada",
+    "ruleGroup": "ss",
+    "folderUID": "${FOLDER_UID}",
+    "condition": "C",
+    "for": "15m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "app": "ss"
+    },
+    "annotations": {
+      "summary": "Há jobs esperando worker há 15 minutos. Com FFMPEG_JOBS workers ocupados esse tempo todo, quem enviou vídeo está vendo uma tela de espera que não anda."
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "${DATASOURCE_UID}",
+        "model": {
+          "refId": "A",
+          "expr": "sum(ss_ffmpeg_jobs_queued)",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 1000,
+          "maxDataPoints": 43200,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DATASOURCE_UID}"
+          }
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "reducer": "last",
+          "expression": "A",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "B",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0
+                ]
+              }
+            }
+          ],
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      }
+    ]
+  },
+  {
+    "uid": "ss-class-a-burst",
+    "title": "ss: operações Class A acima do normal",
+    "ruleGroup": "ss",
+    "folderUID": "${FOLDER_UID}",
+    "condition": "C",
+    "for": "30m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "app": "ss"
+    },
+    "annotations": {
+      "summary": "O R2 está recebendo mais de 20 operações Class A por segundo — cerca de USD 230 por dia nesse ritmo. Costuma ser um objeto passando do limite de parte única e virando multipart, ou um loop de republicação."
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "${DATASOURCE_UID}",
+        "model": {
+          "refId": "A",
+          "expr": "sum(rate(ss_objectstore_operations_total{class=\"class_a\"}[30m]))",
+          "instant": true,
+          "range": false,
+          "editorMode": "code",
+          "intervalMs": 1000,
+          "maxDataPoints": 43200,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DATASOURCE_UID}"
+          }
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "reducer": "last",
+          "expression": "A",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "C",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "B",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  20
+                ]
+              }
+            }
+          ],
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      }
+    ]
+  }
+]

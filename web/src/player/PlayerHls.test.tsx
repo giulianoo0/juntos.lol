@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { translate, type Translator } from '../i18n/useT'
@@ -35,6 +35,7 @@ vi.mock('hls.js', () => {
     audioTracks: unknown[] = []
     destroyed = false
     loadedSource: string | null = null
+    loadSourceCalls = 0
     startLoadCalls = 0
     recoverCalls = 0
     constructor(config: Record<string, unknown>) {
@@ -47,7 +48,7 @@ vi.mock('hls.js', () => {
     emit(event: string, data: Record<string, unknown>) {
       for (const handler of this.handlers.get(event) ?? []) handler(event, data)
     }
-    loadSource(url: string) { this.loadedSource = url }
+    loadSource(url: string) { this.loadedSource = url; this.loadSourceCalls += 1 }
     attachMedia() { this.emit(FakeHls.Events.MEDIA_ATTACHED, {}) }
     startLoad() { this.startLoadCalls += 1 }
     recoverMediaError() { this.recoverCalls += 1 }
@@ -75,6 +76,8 @@ interface FakeHlsInstance {
   levels: Array<{ videoCodec?: string; audioCodec?: string }>
   destroyed: boolean
   loadedSource: string | null
+  loadSourceCalls: number
+  recoverCalls: number
   emit: (event: string, data: Record<string, unknown>) => void
 }
 
@@ -120,6 +123,21 @@ describe('Player HLS lifecycle', () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+
+  it('does not reload the source when the media re-attaches after a recovery', async () => {
+    // hls.js's recoverMediaError re-attaches the media and resumes loading at
+    // the pre-error position itself. Reloading the source on that second
+    // MEDIA_ATTACHED resets playback to the configured start position, which
+    // viewers saw as a jump to 0:00 before the sync dragged them back.
+    const { hls } = await renderPlayer()
+    const instance = hls.instances[0]
+
+    act(() => instance.emit('hlsError', { fatal: true, type: 'mediaError', details: 'bufferStalledError' }))
+    act(() => instance.emit('hlsMediaAttached', {}))
+
+    expect(instance.recoverCalls).toBe(1)
+    expect(instance.loadSourceCalls).toBe(1)
   })
 
   it('declares the room unplayable when hls.js drops the only video rendition', async () => {
@@ -292,8 +310,9 @@ describe('Player HLS lifecycle', () => {
     const textTracks = [{ mode: 'disabled' }]
     Object.defineProperty(video, 'textTracks', { configurable: true, value: textTracks })
 
-    const select = view.container.querySelector('select')!
-    fireEvent.change(select, { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
     expect(textTracks[0].mode).toBe('showing')
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=1')
 
@@ -304,5 +323,21 @@ describe('Player HLS lifecycle', () => {
     )
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=2')
     expect(textTracks[0].mode).toBe('showing')
+  })
+
+  it('replaces the track element when the subtitles grow, so the browser reloads the cues', async () => {
+    const subtitleTracks = [{ index: 0, language: 'en', title: 'English', codec: 'webvtt' }]
+    const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
+    const before = view.container.querySelector('track')
+
+    // Browsers do not reliably refetch a <track> whose src attribute merely
+    // changed: the cue list loaded first stays. Only a fresh element makes the
+    // new version's cues reach a viewer who joined while extraction ran.
+    view.rerender(
+      <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    const after = view.container.querySelector('track')
+    expect(after).not.toBeNull()
+    expect(after).not.toBe(before)
   })
 })
