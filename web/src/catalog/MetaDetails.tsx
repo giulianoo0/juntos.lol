@@ -23,6 +23,10 @@ export interface TitlePick {
   stream: CatalogStream
   target: StreamTarget
   displayName: string
+  // The title's own identity, so the room can remember what is playing and
+  // offer the next episode when this one ends.
+  metaName: string
+  poster: string
 }
 
 interface MetaDetailsProps {
@@ -48,6 +52,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const [revealed, setRevealed] = useState(false)
   const [detail, setDetail] = useState<MetaDetail | null>(null)
   const [detailFailed, setDetailFailed] = useState(false)
+  const [detailRetry, setDetailRetry] = useState(0)
   const [season, setSeason] = useState(focus?.season ?? 1)
   const [selected, setSelected] = useState<MetaVideo | null>(null)
   const [streams, setStreams] = useState<CatalogStream[] | null>(null)
@@ -62,6 +67,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
 
   useEffect(() => {
     let cancelled = false
+    setDetailFailed(false)
     fetchMeta(meta.type, meta.id)
       .then((value) => {
         if (cancelled) return
@@ -70,7 +76,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
       })
       .catch(() => { if (!cancelled) setDetailFailed(true) })
     return () => { cancelled = true }
-  }, [meta.id, meta.type])
+  }, [meta.id, meta.type, detailRetry])
 
   // Series wait for an episode pick; movies list their streams immediately.
   const target: StreamTarget | null = useMemo(() => {
@@ -314,10 +320,28 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
           {detail?.cast.length ? (
             <p className="details-cast">{t('details.cast')}: {detail.cast.slice(0, 5).join(', ')}</p>
           ) : null}
-          {detailFailed ? <p className="empty-copy">{t('details.metaFailed')}</p> : null}
+          {detailFailed ? (
+            <p className="empty-copy">
+              {t('details.metaFailed')}{' '}
+              <button type="button" className="catalog-retry" onClick={() => setDetailRetry((seq) => seq + 1)}>{t('catalog.retry')}</button>
+            </p>
+          ) : null}
+          {/* Slow connections: the panel never sits empty — text and episode
+              placeholders hold the layout until Cinemeta answers. */}
+          {!detail && !detailFailed ? (
+            <div className="details-skeleton" aria-hidden="true">
+              <span className="text-skeleton" style={{ width: '70%' }} />
+              <span className="text-skeleton" style={{ width: '52%' }} />
+              {meta.type === 'series' ? (
+                <div className="details-skeleton-episodes">
+                  {Array.from({ length: 4 }, (_, index) => <span key={index} className="episode-skeleton" />)}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <AnimatePresence mode="wait" initial={false}>
-          {meta.type === 'series' && !selected ? (
+          {meta.type === 'series' && !detail && !detailFailed ? null : meta.type === 'series' && !selected ? (
             <motion.div
               key="episodes"
               className="details-episodes"
@@ -485,6 +509,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                         displayName: selected
                           ? `${meta.name} S${String(selected.season).padStart(2, '0')}E${String(selected.episode).padStart(2, '0')}`
                           : meta.name,
+                        metaName: detail?.name ?? meta.name,
+                        poster: detail?.poster || meta.poster,
                       })}
                     >
                       <span className="stream-label">{stream.label}</span>

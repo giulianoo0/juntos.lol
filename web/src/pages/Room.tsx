@@ -23,6 +23,7 @@ import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequ
 import { CatalogOverlay, type OverlayFocus } from '../catalog/CatalogOverlay'
 import { openCatalogStream } from '../catalog/openStream'
 import type { TitlePick } from '../catalog/MetaDetails'
+import { NextEpisodeCard, nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/NextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
@@ -137,6 +138,15 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
   const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
+  // What this tab believes the room is playing (catalog picks only). Kept in
+  // localStorage so a reload does not lose the next-episode chain.
+  const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(nowPlayingKey(room.id)) ?? 'null') as NowPlaying | null
+    } catch {
+      return null
+    }
+  })
 
   // Repointing the room is the controller's call alone; the server enforces it
   // too, so a stale client cannot swap what everyone is watching.
@@ -172,6 +182,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const chooseCatalogStream = (pick: TitlePick) => {
     setCatalogOpen(false)
     setCatalogFocus(null)
+    const playing = nowPlayingFromPick(pick)
+    setNowPlaying(playing)
+    try {
+      if (playing) localStorage.setItem(nowPlayingKey(room.id), JSON.stringify(playing))
+      else localStorage.removeItem(nowPlayingKey(room.id))
+    } catch { /* private mode: the chain just will not survive a reload */ }
     void swapSource(async () => {
       const opened = await openCatalogStream(pick.stream)
       try {
@@ -257,6 +273,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       if (error) setUploadFailed(error)
     })
   }, [room.id, liveRoom.mediaGeneration])
+
+  // Only the controller can actually swap the source, so only it counts down.
+  const nextEpisode = useNextEpisode(
+    nowPlaying,
+    videoRef,
+    sync.isController && !isScreenRoom && mediaStatus === 'ready',
+    chooseCatalogStream,
+  )
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
@@ -360,18 +384,32 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               t={t}
               syncState={sync.state}
               serverOffsetMs={sync.serverOffsetMs}
+              // Inside the wrap, so both survive fullscreen.
+              overlay={
+                <>
+                  {sync.waiting !== null ? (
+                    <WaitingPanel
+                      waiting={sync.waiting}
+                      members={sync.members}
+                      isController={sync.isController}
+                      selfId={sync.memberId}
+                      onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
+                      t={t}
+                    />
+                  ) : null}
+                  {nextEpisode.pending && nowPlaying ? (
+                    <NextEpisodeCard
+                      video={nextEpisode.pending.video}
+                      poster={nowPlaying.poster}
+                      seconds={nextEpisode.seconds}
+                      onPlayNow={nextEpisode.playNow}
+                      onDismiss={nextEpisode.dismiss}
+                    />
+                  ) : null}
+                </>
+              }
             />
           )}
-          {sync.waiting !== null && !isScreenRoom ? (
-            <WaitingPanel
-              waiting={sync.waiting}
-              members={sync.members}
-              isController={sync.isController}
-              selfId={sync.memberId}
-              onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
-              t={t}
-            />
-          ) : null}
           <div className="presence-row">
             {sync.members.map((member) => (
               <span key={member.id} className={`member-chip ${member.id === sync.controllerId ? 'is-controller' : ''}`}>

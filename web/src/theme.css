@@ -115,7 +115,7 @@ h1, h2, p { margin-top: 0; }
 .live-button { flex: 0 0 auto; padding: 5px 10px; border: 0; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: #f6cf65; background: rgba(246,207,101,.13); }
 .live-button.is-live { color: #7ee2a8; background: rgba(126,226,168,.13); cursor: default; }
 .media-column { position: relative; }
-.waiting-panel { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); z-index: 12; display: flex; flex-direction: column; gap: 6px; min-width: 220px; padding: 13px 16px; border-radius: 16px; background: rgba(7,8,12,.86); backdrop-filter: blur(14px) saturate(130%); font-size: 13px; }
+.waiting-panel { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); z-index: 12; display: flex; flex-direction: column; gap: 6px; min-width: 220px; padding: 13px 16px; border-radius: 16px; background: rgba(11,12,18,.62); backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 14px 40px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.08); font-size: 13px; }
 .waiting-panel strong { font-size: 12px; color: var(--text-dim); font-weight: 500; }
 .waiting-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: #f6cf65; }
 .waiting-row.is-ready { color: #7ee2a8; }
@@ -382,3 +382,39 @@ h1, h2, p { margin-top: 0; }
 .fade-img { opacity: 0; transition: opacity 300ms var(--ease); }
 .fade-img.is-loaded { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .fade-img { transition-duration: .01ms; } }
+
+/* --- next episode ------------------------------------------------------- */
+/* Floating bottom-right inside the player wrap, so fullscreen keeps it. */
+.next-episode-card { position: absolute; right: 18px; bottom: 84px; z-index: 12; display: flex; gap: 12px; width: min(340px, calc(100% - 36px)); padding: 12px 30px 12px 12px; border-radius: 18px; background: rgba(11,12,18,.62); backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 16px 44px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); }
+.next-episode-art { flex: 0 0 auto; width: 96px; height: 58px; border-radius: 10px; overflow: hidden; }
+.next-episode-copy { min-width: 0; display: grid; gap: 3px; align-content: center; }
+.next-episode-kicker { color: var(--text-faint); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.next-episode-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.next-episode-count { color: var(--text-dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.next-episode-play { justify-self: start; display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; padding: 5px 11px; border: 0; border-radius: 999px; background: var(--primary); color: white; font-size: 11.5px; font-weight: 600; }
+.next-episode-play svg { fill: currentColor; }
+.next-episode-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
+
+/* --- starting overlay --------------------------------------------------- */
+.starting-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(6,7,11,.88); backdrop-filter: blur(10px); }
+.starting-card { display: grid; justify-items: center; gap: 10px; padding: 24px; text-align: center; }
+.starting-card h2 { margin: 8px 0 0; font-size: 22px; letter-spacing: -.03em; }
+.starting-file { margin: 0; max-width: min(480px, 80vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
+.starting-phase { margin: 0; color: var(--text-faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* --- slow-connection skeletons ------------------------------------------ */
+.details-skeleton { display: grid; gap: 10px; margin-top: 16px; }
+.text-skeleton { height: 13px; border-radius: 7px; background: linear-gradient(110deg, rgba(255,255,255,.05) 40%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.05) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+.details-skeleton-episodes { display: flex; gap: 12px; margin-top: 10px; overflow: hidden; }
+.episode-skeleton { flex: 0 0 clamp(220px, 26vw, 300px); aspect-ratio: 1 / 1.02; border-radius: 20px; background: linear-gradient(110deg, var(--card) 40%, var(--card-hover) 50%, var(--card) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .text-skeleton, .episode-skeleton { animation: none; } }
+
+/* Phone header: three labeled buttons must fit on one line. */
+@media (max-width: 620px) {
+  .catalog-shell .home-header { grid-template-columns: auto 1fr auto; gap: 4px; }
+  .catalog-shell .home-header nav { min-width: 0; justify-content: center; gap: 0; }
+  .catalog-shell .home-header nav button { padding: 6px 6px; font-size: 11px; white-space: nowrap; }
+  .catalog-shell .home-wordmark { font-size: 13px; }
+  .details-content { padding-bottom: 24px; }
+  .next-episode-card { right: 10px; bottom: 74px; }
+}

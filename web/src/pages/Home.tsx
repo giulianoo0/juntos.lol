@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { History, MonitorUp, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
@@ -12,6 +13,7 @@ import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import { CatalogBrowser } from '../catalog/CatalogBrowser'
 import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
 import { openCatalogStream } from '../catalog/openStream'
+import { nowPlayingFromPick, nowPlayingKey } from '../catalog/NextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
@@ -80,6 +82,7 @@ export function Home() {
   const [manualOpen, setManualOpen] = useState<false | 'menu' | 'file'>(false)
   const [torrentOpen, setTorrentOpen] = useState(false)
   const [historyStatus, setHistoryStatus] = useState<Record<string, 'checking' | 'live' | 'expired'>>({})
+  const [startingLabel, setStartingLabel] = useState('')
 
   // The details panel is URL-driven: /title/:type/:id renders it over the
   // board, so every title is deep-linkable. A click also stashes the poster's
@@ -168,6 +171,11 @@ export function Home() {
     if (!media || starting) return
     setPendingMedia(null)
     setStarting(true)
+    setStartingLabel(
+      media.kind === 'screen' ? t('room.screenLabel')
+        : media.kind === 'stream' ? media.pick.displayName
+          : media.file.name,
+    )
     try {
       // Resolves once the room exists and the upload has started; MP4s are
       // converted to MKV first, which is what the preparing state covers.
@@ -195,6 +203,12 @@ export function Home() {
           throw error
         }
         fileName = media.pick.displayName
+        // Remember what the fresh room is playing, so the episode's end can
+        // offer the next one.
+        const playing = nowPlayingFromPick(media.pick)
+        try {
+          if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
+        } catch { /* private mode */ }
       } else {
         room = await createScreenRoom(draftNickname.trim())
         fileName = t('room.screenLabel')
@@ -270,16 +284,41 @@ export function Home() {
       ) : (
         <section className="catalog-stage">
           <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
-          {progress?.phase === 'converting' ? (
-            <div className="progress-wrap" aria-label={t('home.preparing')}>
-              <div className="progress-copy"><span>{t('home.preparing')}</span><span>{progress.pct}%</span></div>
-              <div className="progress-track"><span style={{ width: `${progress.pct}%` }} /></div>
-            </div>
-          ) : null}
-          {starting && !progress ? <p className="catalog-starting">{t('catalog.opening')}</p> : null}
           {error ? <div className="error-card" role="alert">{error}</div> : null}
         </section>
       )}
+
+      {/* The page fades under this and the preparing state fades in over it,
+          instead of the dialog just vanishing as if something broke. */}
+      <AnimatePresence>
+        {starting ? (
+          <motion.div
+            className="starting-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+            role="status"
+            aria-live="polite"
+          >
+            <motion.div
+              className="starting-card"
+              initial={{ opacity: 0, transform: 'translateY(14px)' }}
+              animate={{ opacity: 1, transform: 'translateY(0px)' }}
+              transition={{ duration: 0.35, delay: 0.15, ease: [0.23, 1, 0.32, 1] }}
+            >
+              <span className="player-spinner" aria-hidden="true" />
+              <h2>{t('home.preparing')}</h2>
+              <p className="starting-file">{startingLabel}</p>
+              <p className="starting-phase">
+                {progress?.phase === 'converting' && progress.pct > 0
+                  ? `${progress.pct}%`
+                  : t('catalog.opening')}
+              </p>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {detailsOpen ? (
         <MetaDetails

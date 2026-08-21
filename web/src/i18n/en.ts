@@ -160,4 +160,8 @@ export const en: Record<string, string> = {
   'catalog.movies': 'Movies',
   'catalog.series': 'Series',
   'details.back': 'Back to episodes',
+  'next.upNext': 'Up next',
+  'next.playingIn': 'Playing in',
+  'next.playNow': 'Play now',
+  'next.cancel': 'Cancel next episode',
 }

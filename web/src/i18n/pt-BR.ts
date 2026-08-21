@@ -160,4 +160,8 @@ export const ptBR: Record<string, string> = {
   'catalog.movies': 'Filmes',
   'catalog.series': 'Séries',
   'details.back': 'Voltar aos episódios',
+  'next.upNext': 'A seguir',
+  'next.playingIn': 'Reproduzindo em',
+  'next.playNow': 'Assistir agora',
+  'next.cancel': 'Cancelar próximo episódio',
 }

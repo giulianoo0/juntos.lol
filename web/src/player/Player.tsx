@@ -19,6 +19,8 @@ interface PlayerProps {
   // The shared playback state and clock offset, for the viewer LIVE control.
   syncState?: PlayState
   serverOffsetMs?: number
+  // Extra content rendered inside the fullscreen-capable wrap.
+  overlay?: ReactNode
 }
 
 // TAP_TOGGLE_DELAY_MS is how long a tap waits to see whether it is really the
@@ -62,7 +64,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0 }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, overlay }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -751,6 +753,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
       </div>
       {room.bitmapSubsSkipped > 0 ? <span className="notice-chip">{t('room.bitmapSkipped')}</span> : null}
+      {/* Room-level overlays (sync panel, next-episode card) render inside
+          the wrap, so they survive fullscreen — fixed elements outside the
+          fullscreen element simply do not paint there. */}
+      {overlay}
     </div>
   )
 }
