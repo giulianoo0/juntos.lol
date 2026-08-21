@@ -18,6 +18,22 @@ type Inbound struct {
 	// Enabled carries the "gating" room setting. A pointer so an absent field
 	// is distinguishable from an explicit false.
 	Enabled *bool `json:"enabled,omitempty"`
+	// Title carries a viewer's "titleRequest": a catalog title they want the
+	// controller to switch the room to.
+	Title *TitleRequest `json:"title,omitempty"`
+}
+
+// TitleRequest is a catalog title a viewer asks the controller to play. The
+// server relays it verbatim after validation, filling From with the sender's
+// nickname.
+type TitleRequest struct {
+	MetaID   string `json:"metaId"`
+	MetaType string `json:"metaType"`
+	Name     string `json:"name"`
+	Poster   string `json:"poster,omitempty"`
+	Season   int    `json:"season,omitempty"`
+	Episode  int    `json:"episode,omitempty"`
+	From     string `json:"from,omitempty"`
 }
 
 // Outbound is a WebSocket message sent from the server to clients.
@@ -41,6 +57,9 @@ type Outbound struct {
 	// Gating carries the room's synchronized-start setting, in the welcome
 	// frame and in "gating" broadcasts when the controller changes it.
 	Gating *bool `json:"gating,omitempty"`
+	// Title relays a viewer's "titleRequest" to the whole room; MemberID names
+	// the requester.
+	Title *TitleRequest `json:"title,omitempty"`
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.

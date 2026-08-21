@@ -32,6 +32,10 @@ const (
 	maxWSNicknameBytes = 64
 	maxChatBytes       = 2 << 10
 	storeTimeout       = 5 * time.Second
+	// titleRequest bounds: id/name stay short, posters are full image URLs.
+	maxTitleFieldBytes   = 256
+	maxTitleURLBytes     = 1 << 10
+	titleRequestCooldown = 5 * time.Second
 )
 
 type Hub struct {
@@ -490,7 +494,34 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.broadcast(Outbound{Type: "chat", Message: &chat})
 	case "play", "pause", "seek", "rate":
 		r.handleState(event.client, message)
+	case "titleRequest":
+		r.handleTitleRequest(event.client, message)
 	}
+}
+
+// handleTitleRequest relays a viewer's catalog pick to the whole room. The
+// controller swaps sources directly, so its own requests are dropped, and a
+// per-member cooldown keeps a viewer from flooding the room with asks.
+func (r *roomConn) handleTitleRequest(sender *client, message Inbound) {
+	request := message.Title
+	if sender.id == r.controllerID || request == nil {
+		return
+	}
+	if request.MetaID == "" || len(request.MetaID) > maxTitleFieldBytes ||
+		(request.MetaType != "movie" && request.MetaType != "series") ||
+		!validText(request.Name, maxTitleFieldBytes, false) ||
+		len(request.Poster) > maxTitleURLBytes ||
+		request.Season < 0 || request.Episode < 0 {
+		return
+	}
+	now := time.Now()
+	if now.Sub(sender.lastTitleRequest) < titleRequestCooldown {
+		return
+	}
+	sender.lastTitleRequest = now
+	relayed := *request
+	relayed.From = sender.member.Nickname
+	r.broadcast(Outbound{Type: "titleRequest", MemberID: sender.id, Title: &relayed})
 }
 
 func (r *roomConn) handleState(sender *client, message Inbound) {

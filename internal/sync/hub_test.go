@@ -534,3 +534,57 @@ func TestHubDoesNotStopForAStalledMemberAlone(t *testing.T) {
 	require.NoError(t, host.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 5}))
 	require.Equal(t, "pong", readHubEvent(t, host).Type, "the room reacted to a solo stall")
 }
+
+func TestHubTitleRequestBroadcasts(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	request := &TitleRequest{MetaID: "tt0903747", MetaType: "series", Name: "Breaking Bad", Poster: "https://img/poster.jpg", Season: 1, Episode: 2}
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: request}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		event := readHubEvent(t, conn)
+		require.Equal(t, "titleRequest", event.Type)
+		require.Equal(t, "m2", event.MemberID)
+		require.NotNil(t, event.Title)
+		require.Equal(t, "tt0903747", event.Title.MetaID)
+		require.Equal(t, "series", event.Title.MetaType)
+		require.Equal(t, "Breaking Bad", event.Title.Name)
+		require.Equal(t, "guest", event.Title.From)
+		require.Equal(t, 1, event.Title.Season)
+		require.Equal(t, 2, event.Title.Episode)
+	}
+}
+
+func TestHubTitleRequestValidationAndRateLimit(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	// The controller picks sources directly, so a request from it is dropped.
+	require.NoError(t, host.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt1", MetaType: "movie", Name: "X"}}))
+	// Malformed requests are dropped without an error frame.
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest"}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "", MetaType: "movie", Name: "X"}}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt1", MetaType: "other", Name: "X"}}))
+
+	// The first valid request lands...
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt2", MetaType: "movie", Name: "First"}}))
+	event := readHubEvent(t, guest)
+	require.Equal(t, "titleRequest", event.Type)
+	require.Equal(t, "First", event.Title.Name)
+	// ...and an immediate follow-up is rate-limited away.
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt3", MetaType: "movie", Name: "Second"}}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 7}))
+	require.Equal(t, "pong", readHubEvent(t, guest).Type)
+
+	require.Equal(t, "titleRequest", readHubEvent(t, host).Type)
+	require.NoError(t, host.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 8}))
+	require.Equal(t, "pong", readHubEvent(t, host).Type)
+}

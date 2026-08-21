@@ -23,6 +23,9 @@ type client struct {
 	send       chan Outbound
 	// report is owned by the room goroutine, like every other mutable field.
 	report memberReport
+	// lastTitleRequest backs the per-member titleRequest cooldown; owned by
+	// the room goroutine.
+	lastTitleRequest time.Time
 }
 
 func (c *client) readPump() {
