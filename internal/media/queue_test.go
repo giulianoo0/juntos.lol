@@ -362,6 +362,39 @@ func TestQueueDeduplicatesActiveRoom(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// What the idle sweep asks before reclaiming a room. It cannot read this off
+// the room's status: a room is "ready" from the moment its preview plays and
+// stays ready for the whole of the final encode.
+func TestQueueReportsWhetherARoomIsStillBeingWorkedOn(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "busy")
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		started <- struct{}{}
+		<-release
+		return nil, nil, 0, nil
+	})
+	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+	require.False(t, q.Busy("busy"), "idle before anything is submitted")
+
+	q.Submit("busy")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	require.True(t, q.Busy("busy"))
+	require.False(t, q.Busy("some-other-room"))
+
+	close(release)
+	require.Eventually(t, func() bool { return !q.Busy("busy") }, time.Second, 10*time.Millisecond)
+}
+
 func TestQueueCancellationMarksActiveAndBufferedJobs(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "active")
 	addQueueTestRoom(t, store, dataDir, "buffered")

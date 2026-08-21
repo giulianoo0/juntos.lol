@@ -54,6 +54,9 @@ func main() {
 	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(roomID string) {
 		hub.NotifyStatus(roomID, "ready")
 	}, hub.NotifyRoomUpdated)
+	// The queue reports back into the hub, so it cannot be built before one;
+	// the hub is told about it here instead, before either serves anything.
+	hub.SetMediaWork(queue)
 	queue.Start(ctx)
 	if err := queue.Recover(ctx); err != nil {
 		log.Printf("recover interrupted media jobs: %v", err)
