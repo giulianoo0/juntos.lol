@@ -30,6 +30,13 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
   const reduceMotion = useReducedMotion()
   const [details, setDetails] = useState<TitleOpen | null>(focus?.open ?? null)
 
+  // "Ver fontes" on a request card must land here even when the overlay is
+  // already open; `focus` is parent state, so its identity only changes when
+  // a new request is opened.
+  useEffect(() => {
+    if (focus) setDetails(focus.open)
+  }, [focus])
+
   // Escape only closes the overlay when the details panel is not up — the
   // panel handles its own Escape and stops there being two layers vanishing.
   useEffect(() => {

@@ -32,6 +32,9 @@ export interface CatalogStream {
   languages: string[]
   infoHash: string
   fileName: string
+  // Index into the torrent's file list, for multi-file releases whose stream
+  // has no filename hint.
+  fileIdx: number | null
 }
 
 export interface StreamTarget {
@@ -107,6 +110,7 @@ export function parseStreams(payload: unknown): CatalogStream[] {
       languages: parsed.languages,
       infoHash: stream.infoHash.toLowerCase(),
       fileName: typeof hints.filename === 'string' ? hints.filename : '',
+      fileIdx: typeof stream.fileIdx === 'number' && Number.isInteger(stream.fileIdx) && stream.fileIdx >= 0 ? stream.fileIdx : null,
     })
   }
   return result

@@ -106,8 +106,8 @@ describe('Home', () => {
 
   it('opens a magnet and lets the user choose one of multiple video files', async () => {
     const destroy = vi.fn()
-    const episodeOne = { name: 'episode-01.mkv', path: 'show/episode-01.mkv', size: 2_000, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn() }
-    const episodeTwo = { name: 'episode-02.mkv', path: 'show/episode-02.mkv', size: 1_900, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn() }
+    const episodeOne = { name: 'episode-01.mkv', path: 'show/episode-01.mkv', index: 0, size: 2_000, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn() }
+    const episodeTwo = { name: 'episode-02.mkv', path: 'show/episode-02.mkv', index: 0, size: 1_900, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn() }
     vi.mocked(openTorrent).mockResolvedValue({
       name: 'My show',
       files: [episodeOne, episodeTwo],

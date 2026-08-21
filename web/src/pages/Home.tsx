@@ -180,12 +180,20 @@ export function Home() {
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
         fileName = media.file.name
       } else if (media.kind === 'stream') {
+        // The details panel sits over the whole page; leaving it up would
+        // hide the progress (and any error) that comes next.
+        closeTitle()
         // Opening the torrent is part of the start: peers and metadata first,
         // then the room, so a dead stream never leaves an empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
         const opened = await openCatalogStream(media.pick.stream)
         setProgress(null)
-        room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
+        try {
+          room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
+        } catch (error) {
+          opened.session.destroy()
+          throw error
+        }
         fileName = media.pick.displayName
       } else {
         room = await createScreenRoom(draftNickname.trim())

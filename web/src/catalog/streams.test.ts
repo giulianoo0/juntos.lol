@@ -68,7 +68,7 @@ describe('parseStreams', () => {
 describe('buildMagnet', () => {
   it('builds a magnet with the file name and public trackers', () => {
     const magnet = buildMagnet({
-      quality: '1080p', resolution: '1080p', label: 'Movie', seeders: 1, size: '1 GB', source: 'x', languages: [],
+      quality: '1080p', resolution: '1080p', label: 'Movie', seeders: 1, size: '1 GB', source: 'x', languages: [], fileIdx: 0,
       infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00', fileName: 'Movie.mkv',
     })
     expect(magnet.startsWith('magnet:?xt=urn:btih:ad9462066cdf17273f91c4b4f708f1650394fc00')).toBe(true)

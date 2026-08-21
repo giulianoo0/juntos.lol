@@ -159,4 +159,5 @@ export const en: Record<string, string> = {
   'catalog.scrollForward': 'Scroll forward',
   'catalog.movies': 'Movies',
   'catalog.series': 'Series',
+  'details.back': 'Back to episodes',
 }

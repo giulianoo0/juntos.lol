@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { animate } from 'motion'
-import { motion, useReducedMotion } from 'motion/react'
-import { MessageSquareShare, Play, Star, X } from 'lucide-react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { ChevronLeft, MessageSquareShare, Play, Star, X } from 'lucide-react'
 import { Dropdown } from './Dropdown'
 import { languageName } from './languages'
 import { Carousel } from './Carousel'
@@ -103,11 +103,15 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
     [detail, season],
   )
 
-  // Deep-linked focus lands on the asked-for episode as soon as it exists.
+  // Deep-linked focus lands on the asked-for episode as soon as it exists —
+  // once. The prop's identity is unstable across parent re-renders, and
+  // re-applying it would snap the panel back over whatever the host picked.
+  const focusAppliedRef = useRef(false)
   useEffect(() => {
-    if (!focus || !detail) return
+    if (!focus || !detail || focusAppliedRef.current) return
     const match = detail.videos.find((video) => video.season === focus.season && video.episode === focus.episode)
     if (match) {
+      focusAppliedRef.current = true
       setSeason(match.season)
       setSelected(match)
     }
@@ -251,6 +255,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const requestEpisode = () => {
     onRequestTitle?.(selected ? { season: selected.season, episode: selected.episode } : {})
     setRequested(true)
+    // The server enforces a per-member cooldown and drops extras silently;
+    // re-enabling after it keeps a quick second ask from dying unseen.
+    window.setTimeout(() => setRequested(false), 6000)
   }
 
   const reveal = revealed
@@ -309,19 +316,38 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
           ) : null}
           {detailFailed ? <p className="empty-copy">{t('details.metaFailed')}</p> : null}
 
-          {meta.type === 'series' ? (
-            <div className="details-episodes">
+          <AnimatePresence mode="wait" initial={false}>
+          {meta.type === 'series' && !selected ? (
+            <motion.div
+              key="episodes"
+              className="details-episodes"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              animate={{ opacity: 1, filter: 'blur(0px)' }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              transition={{ duration: 0.2, ease: REVEAL_EASE }}
+            >
               <div className="details-season-row">
-                <span className="details-season-label">{t('details.season')}</span>
-                <Dropdown
-                  label={t('details.season')}
-                  value={String(season)}
-                  options={(seasons.length > 0 ? seasons : [season]).map((value) => ({
-                    value: String(value),
-                    label: `${t('details.seasonN')} ${value}`,
-                  }))}
-                  onChange={(value) => { setSeason(Number(value)); setSelected(null) }}
-                />
+                <div className="season-tabs" role="tablist" aria-label={t('details.season')}>
+                  {(seasons.length > 0 ? seasons : [season]).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      aria-selected={value === season}
+                      className={value === season ? 'is-active' : ''}
+                      onClick={() => setSeason(value)}
+                    >
+                      {value === season ? (
+                        <motion.span
+                          layoutId="season-pill"
+                          className="season-pill"
+                          transition={reduceMotion ? { duration: 0 } : { type: 'spring', duration: 0.45, bounce: 0.2 }}
+                        />
+                      ) : null}
+                      <span className="season-tab-label">{seasons.length > 6 ? `T${value}` : `${t('details.seasonN')} ${value}`}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
               {episodes.length > 0 ? (
                 <Carousel className="details-episode-carousel" prevLabel={t('catalog.scrollBack')} nextLabel={t('catalog.scrollForward')}>
@@ -329,7 +355,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                     <button
                       key={video.id}
                       type="button"
-                      className={`episode-card ${selected?.id === video.id ? 'is-selected' : ''}`}
+                      className="episode-card"
                       onClick={() => setSelected(video)}
                     >
                       {video.thumbnail ? <FadeImg className="episode-art" src={video.thumbnail} alt="" loading="lazy" /> : null}
@@ -346,24 +372,47 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   ))}
                 </Carousel>
               ) : detail ? <p className="empty-copy">{t('details.noEpisodes')}</p> : null}
-            </div>
-          ) : null}
-
-          {mode === 'viewer' ? (
-            <div className="details-request">
+            </motion.div>
+          ) : mode === 'viewer' ? (
+            <motion.div
+              key="request"
+              className="details-request"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              animate={{ opacity: 1, filter: 'blur(0px)' }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              transition={{ duration: 0.2, ease: REVEAL_EASE }}
+            >
+              {selected ? (
+                <button type="button" className="details-back" onClick={() => setSelected(null)}>
+                  <ChevronLeft size={15} aria-hidden="true" />
+                  {t('details.back')} · E{selected.episode} {selected.name}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="primary-button raised"
-                disabled={requested || (meta.type === 'series' && !selected)}
+                disabled={requested}
                 onClick={requestEpisode}
               >
                 <MessageSquareShare size={16} aria-hidden="true" />
                 {requested ? t('details.requested') : t('details.requestHost')}
               </button>
-              {meta.type === 'series' && !selected ? <p className="empty-copy">{t('details.pickEpisodeFirst')}</p> : null}
-            </div>
+            </motion.div>
           ) : target ? (
-            <div className="details-streams">
+            <motion.div
+              key="sources"
+              className="details-streams"
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              animate={{ opacity: 1, filter: 'blur(0px)' }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              transition={{ duration: 0.2, ease: REVEAL_EASE }}
+            >
+              {meta.type === 'series' && selected ? (
+                <button type="button" className="details-back" onClick={() => setSelected(null)}>
+                  <ChevronLeft size={15} aria-hidden="true" />
+                  {t('details.back')} · E{selected.episode} {selected.name}
+                </button>
+              ) : null}
               <div className="details-streams-head">
                 <h3>{t('details.sources')}</h3>
                 {streams && streams.length > 0 ? (
@@ -426,9 +475,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   animate={{ opacity: 1, filter: 'blur(0px)' }}
                   transition={{ duration: 0.25, ease: REVEAL_EASE }}
                 >
-                  {visibleStreams.slice(0, 30).map((stream) => (
+                  {visibleStreams.slice(0, 30).map((stream, index) => (
                     <button
-                      key={stream.infoHash + stream.fileName}
+                      key={`${stream.infoHash}:${stream.fileIdx ?? ''}:${stream.fileName}:${index}`}
                       type="button"
                       onClick={() => onPickStream({
                         stream,
@@ -450,10 +499,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   ))}
                 </motion.div>
               )}
-            </div>
-          ) : meta.type === 'series' ? (
-            <p className="empty-copy">{t('details.pickEpisode')}</p>
+            </motion.div>
           ) : null}
+          </AnimatePresence>
         </motion.div>
       </div>
     </div>

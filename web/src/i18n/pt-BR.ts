@@ -159,4 +159,5 @@ export const ptBR: Record<string, string> = {
   'catalog.scrollForward': 'Avançar',
   'catalog.movies': 'Filmes',
   'catalog.series': 'Séries',
+  'details.back': 'Voltar aos episódios',
 }
