@@ -45,29 +45,49 @@ let connection: Promise<IDBDatabase> | null = null
 
 function open(): Promise<IDBDatabase> {
   if (connection) return connection
-  connection = new Promise((resolve, reject) => {
+  let cached: Promise<IDBDatabase>
+  const forget = () => { if (connection === cached) connection = null }
+
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) {
         request.result.createObjectStore(STORE, { keyPath: 'id' })
       }
     }
-    request.onsuccess = () => resolve(request.result)
+    // Another tab is holding an older version open. Without this the promise
+    // never settles at all — no value, no error, just a caller left hanging.
+    request.onblocked = () => reject(new Error('plugin registry: another tab is holding an older version open'))
+    request.onsuccess = () => {
+      const db = request.result
+      // Another tab wants to upgrade: let go, rather than blocking it for ever.
+      db.onversionchange = () => { db.close(); forget() }
+      // The browser can close the connection on its own. A dead handle left in
+      // the cache makes every later transaction throw InvalidStateError.
+      db.onclose = forget
+      resolve(db)
+    }
     request.onerror = () => reject(request.error ?? new Error('plugin registry failed to open'))
   })
-  return connection
+
+  // A failed open must not be cached: it would leave the registry dead until
+  // a reload, with no way to retry.
+  cached = opening.catch((error: unknown) => {
+    forget()
+    throw error
+  })
+  connection = cached
+  return cached
 }
 
 function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   return open().then((db) => new Promise<T>((resolve, reject) => {
     const transaction = db.transaction(STORE, mode)
     const request = work(transaction.objectStore(STORE))
-    let result: T
-    request.onsuccess = () => { result = request.result }
-    // Resolved on the transaction rather than the request: a write is not
-    // stored until it commits, and a commit can still fail after the request
-    // reported success.
-    transaction.oncomplete = () => resolve(result)
+    // Read at commit time, when `request.result` is already filled in.
+    // Resolving on the request instead would call a write successful before
+    // it committed, and a commit can still fail after that.
+    transaction.oncomplete = () => resolve(request.result)
     transaction.onabort = transaction.onerror = () =>
       reject(transaction.error ?? request.error ?? new Error('plugin registry request failed'))
   }))

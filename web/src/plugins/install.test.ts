@@ -23,6 +23,44 @@ describe('canonicalRepoUrl', () => {
 
   it('drops anything beyond the repository itself', () => {
     expect(canonicalRepoUrl('https://github.com/user/repo/tree/main')).toBe('https://github.com/user/repo')
+    expect(canonicalRepoUrl('https://github.com/user/repo.git/tree/main')).toBe('https://github.com/user/repo')
+  })
+
+  it('gives one id to a repository written in either case', () => {
+    // GitHub does not distinguish case, so TORVALDS/Linux and torvalds/linux
+    // are one repository. Two ids here would be two installed plugins, and a
+    // manifest declaring the other spelling would read as a redirected
+    // origin and refuse every legitimate update.
+    expect(canonicalRepoUrl('https://github.com/TORVALDS/Linux')).toBe('https://github.com/torvalds/linux')
+  })
+
+  it('refuses a path that walks to a different owner', () => {
+    // `new URL` collapses the dots before pathname, so this installs
+    // `evil/plugin` while the person reading the address sees the trusted
+    // owner in front of it. It is the only deception surface here, because
+    // installing is otherwise a deliberate act.
+    for (const written of [
+      'https://github.com/torrentio-oficial/../evil/plugin',
+      'https://github.com/%2e%2e/%2e%2e/evil/x',
+      'https://github.com/./evil/x',
+    ]) {
+      expect(() => canonicalRepoUrl(written)).toThrow(/repository/)
+    }
+  })
+
+  it('refuses names that are not names', () => {
+    for (const written of [
+      'https://github.com/a%2Fb/c',
+      'https://github.com/a/b%0d%0aX-Foo:bar',
+      'https://github.com/аdmin/repo',
+      'https://github.com//repo',
+    ]) {
+      expect(() => canonicalRepoUrl(written)).toThrow(/repository|URL/)
+    }
+  })
+
+  it('strips userinfo by rebuilding the address rather than trusting it', () => {
+    expect(canonicalRepoUrl('https://user:pass@github.com/a/b')).toBe('https://github.com/a/b')
   })
 })
 
@@ -56,6 +94,28 @@ describe('fetchGitPlugin', () => {
     })
     await expect(fetchGitPlugin('https://github.com/user/repo', { fetch: fetchMock as unknown as typeof fetch }))
       .resolves.toEqual({ source: 'export const manifest = {}', commit: 'abc123' })
+
+    // Which address, and with what. Without asserting these, deleting
+    // `credentials: 'omit'` — the security property of this function — or
+    // pointing rawUrl somewhere else leaves the suite green.
+    expect(fetchMock.mock.calls[0][0]).toBe('https://raw.githubusercontent.com/user/repo/HEAD/plugin.js')
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ credentials: 'omit', cache: 'no-store' })
+  })
+
+  it('refuses a plugin.js that is too large instead of storing half of it', async () => {
+    // Truncating would store half a module with a sha256 that agrees with
+    // itself and with nothing else, and the update check runs unattended on
+    // every page load over whatever the repository serves.
+    const huge = 'x'.repeat((1 << 20) + 10)
+    const fetchMock = vi.fn(async () => new Response(huge, { status: 200 }))
+    await expect(fetchGitPlugin('https://github.com/user/repo', { fetch: fetchMock as unknown as typeof fetch }))
+      .rejects.toThrow(/too large/)
+  })
+
+  it('refuses an empty plugin.js', async () => {
+    const fetchMock = vi.fn(async () => new Response('   ', { status: 200 }))
+    await expect(fetchGitPlugin('https://github.com/user/repo', { fetch: fetchMock as unknown as typeof fetch }))
+      .rejects.toThrow(/empty/)
   })
 
   it('installs from a repository that will not report a commit', async () => {
@@ -106,6 +166,16 @@ describe('buildInstall', () => {
       readManifest: () => Promise.resolve(withHome),
     })
     expect(plugin.origin).toEqual({ kind: 'file', fileName: 'p.js', updateUrl: 'https://github.com/user/repo' })
+  })
+
+  it('canonicalises the updateUrl a dropped file declared', async () => {
+    // parseManifest normalises by a different rule — it keeps the path and
+    // the case — and this string is what the locked origin gets compared
+    // against. Left raw, every update from a dropped file is refused.
+    const plugin = await buildInstall('src', { kind: 'file', fileName: 'p.js', updateUrl: null }, {
+      readManifest: () => Promise.resolve({ ...manifest, updateUrl: 'https://github.com/User/Repo/tree/main' }),
+    })
+    expect(plugin.origin.updateUrl).toBe('https://github.com/user/repo')
   })
 
   it('keeps a file id stable once it learns where it updates from', async () => {

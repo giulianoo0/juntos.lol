@@ -1,4 +1,4 @@
-import { fetchGitPlugin, readManifestFromSource, type InstallDeps } from './install'
+import { canonicalRepoUrl, fetchGitPlugin, readManifestFromSource, type InstallDeps } from './install'
 import { listPlugins, putPlugin, sha256Hex, type InstalledPlugin } from './store'
 import type { PluginManifest } from './manifest'
 
@@ -17,6 +17,16 @@ export type UpdateOutcome =
 /** Where this plugin updates from, or null for a file with no home. */
 export function updateUrlOf(plugin: InstalledPlugin): string | null {
   return plugin.origin.updateUrl
+}
+
+/** Whether two written addresses name the same repository. */
+function sameOrigin(declared: string, locked: string): boolean {
+  try {
+    return canonicalRepoUrl(declared) === canonicalRepoUrl(locked)
+  } catch {
+    // A declared address that is not a repository at all is not this one.
+    return false
+  }
 }
 
 /** Hosts a new manifest wants that nobody has agreed to. */
@@ -50,8 +60,12 @@ export async function updatePlugin(plugin: InstalledPlugin, deps: UpdateDeps = {
     if (sha256 === plugin.sha256) return { kind: 'unchanged' }
 
     const manifest = await readManifest(source)
+    // Compared canonically on both sides. `parseManifest` normalises by a
+    // different rule — it keeps the path and the case — and GitHub does not
+    // distinguish case, so a raw string comparison would read `User/Repo` as a
+    // redirected origin and refuse a legitimate update for ever.
     // Dropping the field is not a redirect: the locked origin still governs.
-    if (manifest.updateUrl !== null && manifest.updateUrl !== address) {
+    if (manifest.updateUrl !== null && !sameOrigin(manifest.updateUrl, address)) {
       return { kind: 'refused', reason: 'origin-changed' }
     }
 

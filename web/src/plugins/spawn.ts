@@ -1,7 +1,7 @@
 import type { FetchResult, PluginHandle, SpawnOptions, WorkerRequest } from './runtime'
 
 /** How much of a response body is worth reading. Generous for addon JSON. */
-const MAX_BODY_BYTES = 4 << 20
+export const MAX_BODY_BYTES = 4 << 20
 
 function start(source: string, message: Record<string, unknown>) {
   return (options: SpawnOptions): PluginHandle => {
@@ -68,17 +68,21 @@ export async function pageFetch(url: URL, signal: AbortSignal): Promise<FetchRes
   return {
     ok: response.ok,
     status: response.status,
-    text: await readCapped(response, signal),
+    text: await readCapped(response, MAX_BODY_BYTES, signal),
     finalUrl: response.url || url.toString(),
   }
 }
 
 /**
- * Reads at most MAX_BODY_BYTES. `await response.text()` has no ceiling, and
- * 32 requests times an unbounded body is the host's tab downloading gigabytes
- * on a plugin's say-so.
+ * Reads at most `limit` bytes. `await response.text()` has no ceiling, and 32
+ * requests times an unbounded body is the host's tab downloading gigabytes on
+ * a plugin's say-so.
+ *
+ * It truncates rather than throwing, which suits a response body a plugin
+ * asked for. A caller that must not accept a truncated answer — the plugin's
+ * own source, say — passes `limit + 1` and refuses anything longer.
  */
-async function readCapped(response: Response, signal: AbortSignal): Promise<string> {
+export async function readCapped(response: Response, limit: number, signal?: AbortSignal): Promise<string> {
   if (!response.body) return response.text()
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -88,12 +92,12 @@ async function readCapped(response: Response, signal: AbortSignal): Promise<stri
     for (;;) {
       // An abort is a failure, not a short read. Breaking here would hand a
       // truncated body back marked `ok: true`.
-      if (signal.aborted) throw new DOMException('aborted', 'AbortError')
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
       const { done, value } = await reader.read()
       if (done) break
       seen += value.byteLength
-      if (seen > MAX_BODY_BYTES) {
-        out += decoder.decode(value.slice(0, value.byteLength - (seen - MAX_BODY_BYTES)), { stream: true })
+      if (seen > limit) {
+        out += decoder.decode(value.slice(0, value.byteLength - (seen - limit)), { stream: true })
         break
       }
       out += decoder.decode(value, { stream: true })
