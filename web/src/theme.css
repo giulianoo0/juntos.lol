@@ -72,7 +72,7 @@ h1, h2, p { margin-top: 0; }
 .join-card { text-align: left; }.join-card h1 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.035em; }.join-card p { margin: 0 0 22px; font-size: 14px; }.join-card label { display: block; margin-bottom: 7px; color: var(--text-dim); font-size: 12px; }.join-card input { width: 100%; padding: 13px 14px; border-radius: var(--r-field); }.join-card .primary-button { width: 100%; margin-top: 18px; }
 .availability-card { text-align: center; }.availability-card h1 { margin-bottom: 12px; }.availability-meter { margin-top: 26px; text-align: left; }.availability-meter strong { color: var(--text); font-variant-numeric: tabular-nums; }.availability-detail { display: flex; justify-content: space-between; margin-top: 9px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .room-shell { height: 100dvh; padding: 12px; overflow: hidden; }.room-header { height: 56px; width: 100%; padding: 0 14px 0 18px; border: 0; background: transparent; position: relative; z-index: 20; }
-.room-heading { min-width: 0; flex: 1; }.room-header > div, .header-actions { display: flex; align-items: center; gap: 8px; }.room-file { color: var(--text-dim); max-width: min(52vw, 720px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.header-actions { flex: 0 0 auto; }.header-actions button { padding: 7px 11px; border: 0; border-radius: 999px; background: rgba(255,255,255,.055); }
+.room-heading { min-width: 0; flex: 1; }.room-header > div, .header-actions { display: flex; align-items: center; gap: 8px; }.room-file { color: var(--text-dim); max-width: min(52vw, 720px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.header-actions { flex: 0 0 auto; }.header-actions button:not(.icon-button) { padding: 7px 11px; }.header-actions button { border: 0; border-radius: 999px; background: rgba(255,255,255,.055); }
 .upload-chip { padding: 5px 10px; border: 1px solid var(--border); border-radius: 99px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }.upload-chip.is-error { border-color: rgba(239,107,115,.35); background: rgba(239,107,115,.1); color: #ffc4c7; }
 .room-layout { height: calc(100dvh - 80px); min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 320px; }.media-column { min-width: 0; min-height: 0; padding: 12px 0 0; display: grid; grid-template-rows: minmax(0,1fr) auto; gap: 10px; }.player-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 0; border-radius: 30px; background: #030407; box-shadow: none; }.video { width: 100%; height: 100%; object-fit: contain; display: block; }
 .player-wrap:fullscreen { width: 100vw; height: 100vh; border: 0; border-radius: 0; aspect-ratio: auto; background: #000; }
@@ -92,7 +92,7 @@ h1, h2, p { margin-top: 0; }
 .video::cue(.magenta) { color: #f57af5; }
 .video::cue(.blue) { color: #7aa5ff; }
 .video::cue(.black) { color: #16181d; text-shadow: 1.5px 2.5px 2px rgba(255,255,255,.6), 0 0 8px rgba(255,255,255,.45); }
-.player-controls { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: min(820px, calc(100% - 32px)); padding: 12px 14px 10px; border: 0; background: transparent; opacity: 1; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
+.player-controls { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: calc(100% - 32px); padding: 12px 14px 10px; border: 0; background: transparent; opacity: 1; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
 .controls-hidden { cursor: none; }
 .controls-hidden .player-controls { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
 .controls-hidden:has(.player-controls :focus-visible) { cursor: auto; }
@@ -167,7 +167,7 @@ h1, h2, p { margin-top: 0; }
 @keyframes torrent-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) and (pointer: fine) { .home-header nav button:hover > span { transform: translateY(-1px); } }
 @media (max-width: 900px) { .room-layout { grid-template-columns: 1fr; }.chat-drawer { position: fixed; inset: 80px 12px 12px auto; width: min(360px, calc(100vw - 24px)); margin: 0; z-index: 30; box-shadow: -30px 0 80px #000; }.chat-drawer:not(.is-open) { transform: translateX(calc(100% + 20px)); }.screen-tile { right: 16px; width: min(420px, calc(100vw - 32px)); }.settings-panel { width: 230px; } }
-@media (max-width: 620px) { .home-shell { padding: 80px 12px 20px; align-items: start; }.home-header { height: 68px; padding: 0 12px; }.home-header button { padding: 7px; font-size: 12px; }.home-intro { margin: 18px 0; }.room-shell { padding: 8px; }.room-header { height: 52px; padding: 0 9px 0 12px; }.room-file { display: none; }.header-actions { width: 100%; justify-content: flex-end; gap: 4px; }.header-actions button { padding: 7px 9px; font-size: 12px; }.header-actions button:nth-of-type(1) { display: none; }.room-layout { height: calc(100dvh - 68px); }.media-column { padding-top: 8px; }.player-wrap { border-radius: 22px; }.player-controls { bottom: 8px; width: calc(100% - 16px); padding: 10px 10px 8px; }.control-button { width: 32px; height: 32px; }.control-button.is-play { width: 34px; height: 34px; }.timecode { margin: 0 4px; font-size: 11px; }.viewer-note { font-size: 0; }.viewer-note button { font-size: 11px; }.room-header .status-pill { display: none; } }
+@media (max-width: 620px) { .home-shell { padding: 80px 12px 20px; align-items: start; }.home-header { height: 68px; padding: 0 12px; }.home-header button { padding: 7px; font-size: 12px; }.home-intro { margin: 18px 0; }.room-shell { padding: 8px; }.room-header { height: 52px; padding: 0 9px 0 12px; }.room-file { display: none; }.header-actions { width: 100%; justify-content: flex-end; gap: 4px; }.header-actions button:not(.icon-button) { padding: 7px 9px; }.header-actions button { font-size: 12px; }.header-actions button:nth-of-type(1) { display: none; }.room-layout { height: calc(100dvh - 68px); }.media-column { padding-top: 8px; }.player-wrap { border-radius: 22px; }.player-controls { bottom: 8px; width: calc(100% - 16px); padding: 10px 10px 8px; }.control-button { width: 32px; height: 32px; }.control-button.is-play { width: 34px; height: 34px; }.timecode { margin: 0 4px; font-size: 11px; }.viewer-note { font-size: 0; }.viewer-note button { font-size: 11px; }.room-header .status-pill { display: none; } }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .room-header, .home-card, .state-card, .player-controls, .chat-panel { background: #171923; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }.home-stage { transform: none; }.controls-hidden .player-controls { transform: translateX(-50%); } }
 /* The scrub bar draws what is actually held: played ground, buffer kept
@@ -313,12 +313,12 @@ h1, h2, p { margin-top: 0; }
    would return faster than the panel shrinks, briefly overrun the row and
    wrap onto a second line before settling. Nothing wraps here for that
    reason; the narrow layout gets its wrapping back further down. */
-.source-row { --morph-w: min(520px, calc(100vw - 32px)); display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 10px; transition: gap var(--t-morph) var(--ease-move); }
+.source-row { --pill-h: 36px; --morph-w: min(520px, calc(100vw - 32px)); display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 10px; transition: gap var(--t-morph) var(--ease-move); }
 .source-row:not([data-step='drop']) { gap: 0; }
 
 /* One height and one radius across the row, so the three ways in are the same
    pill — and so the radius never has to be animated. */
-.source-row > * { height: 36px; border-radius: 18px; }
+.source-row > * { height: var(--pill-h); border-radius: calc(var(--pill-h) / 2); }
 /* The row pins every pill to one height, so the label has to be centred in it
    rather than sitting on the padding it no longer has. */
 .source-side { display: inline-flex; align-items: center; justify-content: center; padding-top: 0; padding-bottom: 0; max-width: 340px; overflow: hidden; white-space: nowrap; transition: max-width var(--t-morph) var(--ease-move), opacity 140ms var(--ease), transform var(--t-morph) var(--ease-move), padding var(--t-morph) var(--ease-move), border-width var(--t-morph) var(--ease-move); }
@@ -340,7 +340,7 @@ h1, h2, p { margin-top: 0; }
 /* The hover belongs to the box, since the box is what is being pressed. */
 .source-row[data-step='drop'] .source-morph:has(.morph-trigger:hover) { border-color: rgba(120,127,250,.45); background: rgba(120,127,250,.08); }
 .source-morph:has(.morph-trigger:active) { transform: scale(.97); }
-.morph-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: 100%; padding: 0 16px; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); font-size: 13px; white-space: nowrap; }
+.morph-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: calc(var(--pill-h) - 2px); padding: 0 16px; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); font-size: 13px; white-space: nowrap; }
 .source-morph:has(.morph-trigger:hover) .morph-trigger { color: var(--text); }
 .morph-trigger .magnet-glyph { color: #b8bcff; flex: 0 0 auto; }
 .morph-trigger:hover:not(:disabled), .morph-trigger:active:not(:disabled) { background: transparent; border-color: transparent; transform: none; }
@@ -349,7 +349,7 @@ h1, h2, p { margin-top: 0; }
    trading places, with it one panel reforms. Carried by whatever is doing the
    swapping, so a step nested inside another one dissolves the same way. */
 .morph-fade { opacity: 1; filter: blur(0); transform: none; transition: opacity var(--t-open) var(--ease), filter var(--t-open) var(--ease), transform var(--t-open) var(--ease); }
-.morph-fade[data-morphing='true'] { opacity: 0; filter: blur(8px); transform: scale(1.02); transition-duration: 130ms; }
+.morph-fade[data-morphing='true'] { opacity: 0; filter: blur(8px); transform: scale(1.02); transition-duration: 90ms; }
 .morph-pane { min-width: 0; }
 /* The panel never grows past the window. Everything above the list keeps its
    height and the list takes what is left, so a season pack scrolls inside the
@@ -418,7 +418,7 @@ h1, h2, p { margin-top: 0; }
    What is withheld is its width: a grid track opening from 0fr to 1fr
    interpolates against the real text, so the reveal neither overshoots a
    guessed maximum nor stalls with nothing left to open. */
-.icon-button { position: relative; display: inline-flex; align-items: center; gap: 0; height: 34px; padding: 0 8px; border: 0; border-radius: 999px; color: var(--text-dim); background: transparent; font-size: 12px; white-space: nowrap; }
+.icon-button { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0; height: 34px; min-width: 34px; padding: 0 8px; border: 0; border-radius: 999px; color: var(--text-dim); background: transparent; font-size: 12px; white-space: nowrap; }
 .icon-button:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.08); }
 .icon-button-glyph { display: inline-flex; align-items: center; justify-content: center; width: 18px; flex: 0 0 auto; }
 .icon-button-label { display: grid; grid-template-columns: 0fr; transition: grid-template-columns var(--t-open) var(--ease-move); }
@@ -428,7 +428,7 @@ h1, h2, p { margin-top: 0; }
   .icon-button:hover .icon-button-label { grid-template-columns: 1fr; }
 }
 .icon-button:focus-visible .icon-button-label { grid-template-columns: 1fr; }
-.icon-button-label > span { padding-left: 7px; }
+.icon-button-label > span::before { content: ''; display: inline-block; width: 7px; }
 .icon-button.is-confirmed { color: #7ee2a8; }
 .icon-button.is-on { color: var(--text); background: var(--primary-soft); }
 .icon-button .chat-badge { top: -1px; right: -1px; }

@@ -7,12 +7,19 @@ import { StepBack } from '../ui/StepBack'
 
 const EMPTY_TORRENT_STATS: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
 
+/** How often the file list re-reads the swarm's counters. */
+const STATS_INTERVAL_MS = 500
+
 interface TorrentPickerProps {
   maxFileBytes: number
-  /** Handed a selected and prioritized file; ownership of the session moves to the caller. */
-  onPicked: (file: TorrentVideoFile, session: TorrentSession) => void
+  /** Handed a selected and prioritized file, and the magnet it came from; ownership of the session moves to the caller. */
+  onPicked: (file: TorrentVideoFile, session: TorrentSession, magnet: string) => void
   /** Called when backing out past the magnet, to leave the torrent flow. */
   onExit?: () => void
+  /** A swarm given back by the caller, so the picker opens on its list rather than on an empty magnet. */
+  initialSession?: TorrentSession | null
+  /** The magnet that swarm was listed from, so backing out of the list still has it. */
+  initialMagnet?: string
   t: Translator
 }
 
@@ -31,14 +38,16 @@ function formatBytes(bytes: number): string {
 /**
  * Magnet input and file chooser for a torrent.
  *
- * It owns the session until a file is picked, and tears it down on unmount, so
- * abandoning the dialog never leaves a swarm connection running.
+ * It owns the session until a file is picked, and tears down what it opened on
+ * unmount, so abandoning the dialog never leaves a swarm connection running. A
+ * session handed in by the caller is a step being resumed rather than one
+ * opened here: it is given up only deliberately, by backing out of its list.
  */
-export function TorrentPicker({ maxFileBytes, onPicked, onExit, t }: TorrentPickerProps) {
-  const [magnet, setMagnet] = useState('')
+export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
+  const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [session, setSession] = useState<TorrentSession | null>(null)
+  const [session, setSession] = useState<TorrentSession | null>(initialSession ?? null)
   const [stats, setStats] = useState<TorrentStats>(EMPTY_TORRENT_STATS)
   const [query, setQuery] = useState('')
   const owned = useRef<TorrentSession | null>(null)
@@ -53,18 +62,37 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, t }: TorrentPick
   // The magnet field giving way to the file list is a step change like any
   // other, so it dissolves rather than cutting — inside the same panel, which
   // grows to fit whichever of the two is showing.
-  const { shown: listing, morphing: picking } = useMorphingStep(session !== null)
+  //
+  // It is the session itself that is held a beat behind, not merely whether
+  // there is one. Backing out hands the swarm back at once, and a list drawn
+  // from the live session would empty on that frame — while it is still fully
+  // on screen — collapsing the panel to the height of its own heading and then
+  // sending it back up once the magnet field arrived. Drawn from the outgoing
+  // session it dissolves at the size it had, and the panel travels once.
+  const { shown: listed, morphing: picking } = useMorphingStep(session)
+  const listing = listed !== null
 
   const needle = query.trim().toLowerCase()
-  const matches = !session ? [] : needle === ''
-    ? session.files
-    : session.files.filter((file) => file.name.toLowerCase().includes(needle))
+  const matches = !listed ? [] : needle === ''
+    ? listed.files
+    : listed.files.filter((file) => file.name.toLowerCase().includes(needle))
 
   useEffect(() => () => owned.current?.destroy(), [])
 
+  // A swarm reports its progress to whoever opened it. One handed back to a
+  // picker that did not open it would report to a picker that no longer
+  // exists, so a list on screen reads the numbers off the session instead of
+  // waiting to be told them.
+  useEffect(() => {
+    if (!session) return
+    setStats(session.stats())
+    const timer = window.setInterval(() => setStats(session.stats()), STATS_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [session])
+
   const load = async () => {
     if (!magnet.trim() || loading) return
-    owned.current?.destroy()
+    session?.destroy()
     owned.current = null
     setSession(null)
     setError('')
@@ -85,10 +113,12 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, t }: TorrentPick
   // Retreats one step. From the list that is the magnet it was listed from,
   // still holding what was typed — a swarm with the wrong episode in it should
   // not cost the magnet as well. From the magnet there is nothing left to
-  // retreat to, so it leaves.
+  // retreat to, so it leaves. Which of the two it is comes from the live
+  // session, not from the step being drawn: what a press does is decided by
+  // where the picker actually is, not by what is still fading out of it.
   const back = () => {
-    if (!listing) { onExit?.(); return }
-    owned.current?.destroy()
+    if (!session) { onExit?.(); return }
+    session.destroy()
     owned.current = null
     setSession(null)
     setQuery('')
@@ -110,7 +140,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, t }: TorrentPick
     // The caller drives the upload from here and owns the teardown.
     owned.current = null
     setSession(null)
-    onPicked(file, session)
+    onPicked(file, session, magnet)
   }
 
   return (
@@ -135,10 +165,10 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, t }: TorrentPick
             onChange={(event) => setMagnet(event.target.value)}
           />
         </>
-      ) : session ? (
+      ) : listed ? (
         <>
           <div className="torrent-summary">
-            <strong>{session.name}</strong>
+            <strong>{listed.name}</strong>
             <span>{stats.peers} {t('home.peers')} · {formatBytes(stats.downloadSpeed)}/s</span>
           </div>
           {/* A season pack is dozens of files in a panel one pill wide.

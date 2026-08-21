@@ -164,6 +164,43 @@ describe('Home', () => {
     expect(await screen.findByRole('button', { name: /choose video|escolher vídeo/i })).toBeInTheDocument()
   })
 
+  // The name step is reached from an episode in a list, and that list cost a
+  // magnet and an open swarm to reach. Backing out of the name returns there,
+  // holding the same swarm — going back should undo one step, and the step
+  // before the name was the list, not the start.
+  it('walks back from the nickname step to the list the file was picked from', async () => {
+    const destroy = vi.fn()
+    const files = ['ep-01.mkv', 'ep-02.mkv'].map((name, index) => ({
+      name, path: `show/${name}`, size: 2_000 - index, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn(),
+    }))
+    vi.mocked(openTorrent).mockResolvedValue({
+      name: 'My show',
+      files,
+      subtitleFiles: [],
+      stats: () => ({ peers: 2, downloadSpeed: 100, downloaded: 0, progress: 0 }),
+      select: vi.fn().mockResolvedValue(undefined),
+      destroy,
+    })
+    render(<MemoryRouter><Home /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: /open torrent|abrir torrent/i }))
+    fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
+    fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /ep-02\.mkv/i }))
+    await screen.findByRole('heading', { name: /what should we call|como devemos chamar/i })
+
+    fireEvent.click(screen.getByRole('button', { name: /back|voltar/i }))
+
+    expect(await screen.findByRole('button', { name: /ep-01\.mkv/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /ep-02\.mkv/i })).toBeInTheDocument()
+    // The swarm survives the round trip: it is the one the list was made from.
+    expect(destroy).not.toHaveBeenCalled()
+
+    // And the magnet it was listed from is still behind the list.
+    fireEvent.click(screen.getByRole('button', { name: /back|voltar/i }))
+    expect(await screen.findByLabelText(/magnet link/i)).toHaveValue('magnet:?xt=urn:btih:test')
+    expect(destroy).toHaveBeenCalled()
+  })
+
   // A season pack is dozens of files, and the panel it is listed in is one
   // pill wide. Scrolling for the episode is the wrong answer when the name is
   // already known.

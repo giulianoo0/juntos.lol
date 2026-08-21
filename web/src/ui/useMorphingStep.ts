@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react'
  * How long the outgoing step is given to dissolve before the next one is
  * mounted in its place. Short enough that a click still feels answered
  * immediately, long enough that the two states are never on screen together.
+ * It has to outlast the dissolve it waits on, which is why the two are quoted
+ * against each other: the fade is 90ms, and this is the beat after it.
  */
-export const MORPH_OUT_MS = 90
+export const MORPH_OUT_MS = 70
 
 /**
  * Holds the rendered step one beat behind the requested one.

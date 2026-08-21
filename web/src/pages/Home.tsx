@@ -37,7 +37,12 @@ export function Home() {
   const [error, setError] = useState('')
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
+  const [torrentMagnet, setTorrentMagnet] = useState('')
   const [step, setStep] = useState<Step>('drop')
+  // A torrent reached the nickname step through a magnet and a list of files.
+  // Backing out of the nickname undoes one step, not the whole flow, so the
+  // swarm and the magnet are held here and handed back to the picker.
+  const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const { shown, morphing } = useMorphingStep(step)
   const starting = step === 'starting'
   // The buttons flanking the panel stay mounted so their width can animate
@@ -64,9 +69,19 @@ export function Home() {
     if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
   }
 
-  const backToDrop = () => {
-    discardPending(pendingMedia)
+  // One step back from the nickname. For a torrent that is the list the file
+  // was picked from — the same swarm, still open, rather than a magnet to type
+  // out again. For anything else there is no step in between, so it is the
+  // start, and whatever was being held is given up.
+  const stepBack = () => {
+    const media = pendingMedia
     setPendingMedia(null)
+    if (media?.kind === 'torrent') {
+      setResumed({ magnet: torrentMagnet, session: media.session })
+      setStep('torrent')
+      return
+    }
+    discardPending(media)
     setStep('drop')
   }
 
@@ -101,6 +116,7 @@ export function Home() {
       navigate(`/room/${room.roomID}`)
     } catch (error) {
       discardPending(media)
+      setResumed(null)
       // A file that changed under the picker is not a failed transfer, and
       // saying "try again" would send someone straight back into it.
       setError(t(isUnreadableFile(error) ? 'error.fileChanged' : 'home.failed'))
@@ -175,8 +191,12 @@ export function Home() {
                   <TorrentPicker
                     maxFileBytes={MAX_UPLOAD_BYTES}
                     t={t}
-                    onExit={() => setStep('drop')}
-                    onPicked={(file, session) => {
+                    initialSession={resumed?.session ?? null}
+                    initialMagnet={resumed?.magnet ?? ''}
+                    onExit={() => { setResumed(null); setStep('drop') }}
+                    onPicked={(file, session, magnet) => {
+                      setResumed(null)
+                      setTorrentMagnet(magnet)
                       setDraftNickname(nickname)
                       setPendingMedia({ kind: 'torrent', file, session })
                       setStep('name')
@@ -189,7 +209,7 @@ export function Home() {
                 <div className="morph-step">
                   <span className="dialog-file">{pendingMedia.kind === 'screen' ? t('home.screenDialog') : pendingMedia.file.name}</span>
                   <div className="morph-head">
-                    <StepBack label={t('home.back')} onClick={backToDrop} />
+                    <StepBack label={t('home.back')} onClick={stepBack} />
                     <h2 className="stage-title">{t('home.dialogTitle')}</h2>
                   </div>
                   <p className="stage-description">{t('home.dialogGuide')}</p>

@@ -5,36 +5,27 @@ const EASE_MOVE = 'cubic-bezier(.77, 0, .175, 1)'
 const DEFAULT_DURATION_MS = 320
 
 type Size = { width: number; height: number }
-type Axis = 'both' | 'width' | 'height'
+type Axis = 'both' | 'width'
 
 export interface MorphingSizeOptions {
   durationMs?: number
   /** 'width' leaves the height alone, for a control that only grows sideways. */
-  axis?: 'both' | 'width'
+  axis?: Axis
   /**
-   * The element whose height the box takes. Given one, the box also follows it
+   * The element whose size the box takes. Given one, the box also follows it
    * growing or shrinking between key changes — an error appearing under a
    * form, a list arriving — instead of only at them.
    */
   contentRef?: RefObject<HTMLElement | null>
 }
 
-/** The element's own vertical trim, which its content height sits inside. */
-function verticalChrome(element: HTMLElement): number {
-  const style = getComputedStyle(element)
-  return parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)
-    + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
-}
-
 function differs(from: Size, to: Size, axis: Axis): boolean {
   if (axis === 'width') return from.width !== to.width
-  if (axis === 'height') return from.height !== to.height
   return from.width !== to.width || from.height !== to.height
 }
 
 function keyframe(size: Size, axis: Axis): Keyframe {
   if (axis === 'width') return { width: `${size.width}px` }
-  if (axis === 'height') return { height: `${size.height}px` }
   return { width: `${size.width}px`, height: `${size.height}px` }
 }
 
@@ -63,63 +54,97 @@ export function useMorphingSize(
   // as anywhere it is going to end up.
   const settled = useRef<Size | null>(null)
   const travelling = useRef<Animation | null>(null)
+  // The contents as they measured at the last settle, so a resize that is only
+  // that settle rippling through can be told apart from the contents moving.
+  const content = useRef<Size | null>(null)
+  // Set when the contents move while the box is already travelling, so the
+  // move is answered on arrival rather than dropped.
+  const chasing = useRef(false)
 
   /**
-   * A change arriving while the element is still moving retargets it from
-   * wherever it currently is, rather than being dropped or restarted from a
-   * position it has already left.
+   * Sends the element from wherever it is now to the size its own stylesheet
+   * gives it.
+   *
+   * The target is always measured, never derived: the box's height is its
+   * contents' only while its stylesheet lets it hug them, and deriving one
+   * from the other is how a pill with a fixed height ends up animating to the
+   * height of the label inside it and then snapping back. A measurement only
+   * reads as the stylesheet size with nothing animating over it, so the travel
+   * in flight is stopped first — and its last frame kept, so the element
+   * carries on from where it had got to instead of restarting from a size it
+   * has already left.
    */
-  const travel = (element: HTMLElement, to: Size, moving: Axis) => {
-    const from = settled.current
+  const settle = (element: HTMLElement, moving: Axis) => {
+    const running = travelling.current?.playState === 'running'
+    const from = running ? { width: element.offsetWidth, height: element.offsetHeight } : settled.current
+    travelling.current?.cancel()
+    travelling.current = null
+    const to = { width: element.offsetWidth, height: element.offsetHeight }
     settled.current = to
     if (!from || !differs(from, to, moving)) return
     // Reduced motion means the size change lands at once rather than travelling.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    // Read before cancelling: afterwards the element measures as its CSS size.
-    const start = travelling.current?.playState === 'running'
-      ? { width: element.offsetWidth, height: element.offsetHeight }
-      : from
-    travelling.current?.cancel()
-    travelling.current = element.animate(
-      [keyframe(start, moving), keyframe(to, moving)],
+    const travel = element.animate(
+      [keyframe(from, moving), keyframe(to, moving)],
       { duration: durationMs, easing: EASE_MOVE },
     )
+    travelling.current = travel
+    // Whatever moved while this was in flight is answered here, where the box
+    // is somewhere real again and can be measured. Cancelling does not run
+    // this, so a travel that was replaced leaves the follow to its replacement.
+    travel.onfinish = () => { if (chasing.current) follow() }
+  }
+
+  const remember = (element: HTMLElement | null) => {
+    content.current = element ? { width: element.offsetWidth, height: element.offsetHeight } : null
+  }
+
+  /** Takes the box to whatever its contents have just made it, if they moved at all. */
+  const follow = () => {
+    const element = ref.current
+    const pane = contentRef?.current
+    if (!element || !pane) return
+    chasing.current = false
+    const seen = content.current
+    // A delivery reporting the size the last settle already measured is that
+    // settle arriving here a frame later, not the contents moving.
+    if (seen && seen.width === pane.offsetWidth && seen.height === pane.offsetHeight) return
+    remember(pane)
+    settle(element, axis)
   }
 
   useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
     // Runs before the browser paints the new contents, so the natural size is
-    // there to be measured — but only once any travel in flight is stopped.
-    const moving = travelling.current?.playState === 'running'
-      ? { width: element.offsetWidth, height: element.offsetHeight }
-      : null
-    travelling.current?.cancel()
-    travelling.current = null
-    if (moving) settled.current = moving
-    travel(element, { width: element.offsetWidth, height: element.offsetHeight }, axis)
-    // travel closes over refs and options that are stable for a given element.
+    // there to be measured.
+    settle(element, axis)
+    remember(contentRef?.current ?? null)
+    // settle closes over refs and options that are stable for a given element.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, key, axis, durationMs])
 
   useEffect(() => {
     const element = ref.current
-    const content = contentRef?.current
+    const pane = contentRef?.current
     // jsdom has no ResizeObserver, and a test that renders this component
     // should not have to care that the box follows its contents.
-    if (!element || !content || typeof ResizeObserver === 'undefined') return
-    let first = true
+    if (!element || !pane || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
-      // The first delivery is the size the element already has.
-      if (first) { first = false; return }
-      // Taken from the contents, never from the box: during a key change the
-      // box is mid-travel, and this delivery is only that change rippling
-      // through — it resolves to the same target and falls out as a no-op.
-      const width = settled.current?.width ?? element.offsetWidth
-      travel(element, { width, height: content.offsetHeight + verticalChrome(element) }, 'height')
+      // Nothing is measured while the box is travelling. A box that clips its
+      // contents lays them out against the width it has at that instant, so
+      // mid-travel every frame reshapes them and reports back here; answering
+      // that would retarget the travel from wherever it had got to, once a
+      // frame, and the box would crawl at its own contents' heels without ever
+      // arriving. The delivery is not thrown away either — a step changing
+      // while the panel is still moving is exactly when that would show — it
+      // is deferred to the end of the travel, which is the next moment the box
+      // measures as anywhere.
+      if (travelling.current?.playState === 'running') { chasing.current = true; return }
+      follow()
     })
-    observer.observe(content)
+    observer.observe(pane)
     return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref, contentRef, durationMs])
+  }, [ref, contentRef, axis, durationMs])
 }
