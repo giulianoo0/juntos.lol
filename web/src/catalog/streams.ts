@@ -1,11 +1,5 @@
 import type { MetaType } from './cinemeta'
 
-// Any Stremio-protocol stream addon works here; Torrentio is the default. The
-// addon only returns torrent identifiers (infoHash + file hints) — the bytes
-// flow through the room's existing torrent pipeline, never through the addon.
-const ADDON_BASE = (import.meta.env.VITE_STREAM_ADDON as string | undefined)?.replace(/\/$/, '')
-  ?? 'https://torrentio.strem.fun'
-
 // The magnet alone identifies the torrent; these public trackers are the same
 // kind the manual magnet flow relies on for peer discovery.
 const TRACKERS = [
@@ -16,6 +10,17 @@ const TRACKERS = [
 ]
 
 export type StreamResolution = '2160p' | '1080p' | '720p' | 'sd'
+
+/**
+ * Where a stream's bytes actually are.
+ *
+ * A plugin points at them one of two ways, and the two travel very different
+ * paths afterwards: a torrent goes through the swarm, a url is fetched by
+ * whoever can reach it.
+ */
+export type StreamLocation =
+  | { kind: 'torrent'; infoHash: string; fileIdx: number | null; fileName: string }
+  | { kind: 'url'; url: string }
 
 export interface CatalogStream {
   // First line of the addon's name field, e.g. "Torrentio 1080p".
@@ -30,11 +35,11 @@ export interface CatalogStream {
   // flag whether the language comes as audio or as subtitles, which is
   // exactly what the language filter wants.
   languages: string[]
-  infoHash: string
-  fileName: string
-  // Index into the torrent's file list, for multi-file releases whose stream
-  // has no filename hint.
-  fileIdx: number | null
+  location: StreamLocation
+  /** The registry key of the plugin that produced this. Opaque. */
+  pluginId: string
+  /** What that plugin calls itself, which is what a person can act on. */
+  pluginName: string
 }
 
 export interface StreamTarget {
@@ -85,7 +90,36 @@ export function streamResolution(quality: string, label: string): StreamResoluti
   return 'sd'
 }
 
-export function parseStreams(payload: unknown): CatalogStream[] {
+/**
+ * Reads where a stream points, or null if it points nowhere usable.
+ *
+ * A torrent wins over a url when a stream carries both: the swarm costs
+ * nobody's server anything. `http:` is refused outright — the page is https,
+ * and a url the server would later have to fetch gets checked again there.
+ */
+function readLocation(stream: Record<string, unknown>): StreamLocation | null {
+  if (typeof stream.infoHash === 'string' && /^[0-9a-f]{40}$/i.test(stream.infoHash)) {
+    const hints = typeof stream.behaviorHints === 'object' && stream.behaviorHints !== null
+      ? stream.behaviorHints as Record<string, unknown>
+      : {}
+    return {
+      kind: 'torrent',
+      infoHash: stream.infoHash.toLowerCase(),
+      fileIdx: typeof stream.fileIdx === 'number' && Number.isInteger(stream.fileIdx) && stream.fileIdx >= 0
+        ? stream.fileIdx
+        : null,
+      fileName: typeof hints.filename === 'string' ? hints.filename : '',
+    }
+  }
+  if (typeof stream.url === 'string') {
+    try {
+      if (new URL(stream.url).protocol === 'https:') return { kind: 'url', url: stream.url }
+    } catch { /* not a url at all */ }
+  }
+  return null
+}
+
+export function parseStreams(payload: unknown, pluginId: string, pluginName = ''): CatalogStream[] {
   if (typeof payload !== 'object' || payload === null) return []
   const streams = (payload as { streams?: unknown }).streams
   if (!Array.isArray(streams)) return []
@@ -93,11 +127,9 @@ export function parseStreams(payload: unknown): CatalogStream[] {
   for (const value of streams) {
     if (typeof value !== 'object' || value === null) continue
     const stream = value as Record<string, unknown>
-    if (typeof stream.infoHash !== 'string' || !/^[0-9a-f]{40}$/i.test(stream.infoHash)) continue
+    const location = readLocation(stream)
+    if (!location) continue
     const title = typeof stream.title === 'string' ? stream.title : ''
-    const hints = typeof stream.behaviorHints === 'object' && stream.behaviorHints !== null
-      ? stream.behaviorHints as Record<string, unknown>
-      : {}
     const parsed = parseStreamTitle(title)
     const quality = typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : ''
     result.push({
@@ -108,26 +140,24 @@ export function parseStreams(payload: unknown): CatalogStream[] {
       size: parsed.size,
       source: parsed.source,
       languages: parsed.languages,
-      infoHash: stream.infoHash.toLowerCase(),
-      fileName: typeof hints.filename === 'string' ? hints.filename : '',
-      fileIdx: typeof stream.fileIdx === 'number' && Number.isInteger(stream.fileIdx) && stream.fileIdx >= 0 ? stream.fileIdx : null,
+      location,
+      pluginId,
+      pluginName,
     })
   }
   return result
 }
 
-export async function fetchStreams(target: StreamTarget): Promise<CatalogStream[]> {
-  const id = target.type === 'series' && target.season != null && target.episode != null
-    ? `${target.id}:${target.season}:${target.episode}`
-    : target.id
-  const response = await fetch(`${ADDON_BASE}/stream/${target.type}/${encodeURIComponent(id)}.json`)
-  if (!response.ok) throw new Error(`stream addon ${response.status}`)
-  return parseStreams(await response.json())
-}
-
-export function buildMagnet(stream: CatalogStream): string {
-  const name = stream.fileName || stream.label
+export function buildMagnet(location: Extract<StreamLocation, { kind: 'torrent' }>, label: string): string {
+  const name = location.fileName || label
   const dn = name ? `&dn=${encodeURIComponent(name)}` : ''
   const trackers = TRACKERS.map((tracker) => `&tr=${encodeURIComponent(tracker)}`).join('')
-  return `magnet:?xt=urn:btih:${stream.infoHash}${dn}${trackers}`
+  return `magnet:?xt=urn:btih:${location.infoHash}${dn}${trackers}`
+}
+
+/** Identifies one stream among the ones on screen, for React keys. */
+export function streamKey(location: StreamLocation): string {
+  return location.kind === 'torrent'
+    ? `torrent:${location.infoHash}:${location.fileIdx ?? ''}:${location.fileName}`
+    : `url:${location.url}`
 }

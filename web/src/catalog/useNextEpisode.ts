@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { fetchMeta, type MetaVideo } from './cinemeta'
-import { fetchStreams } from './streams'
+import { resolveStreams } from '../plugins/resolve'
 import type { TitlePick } from './MetaDetails'
 import type { StreamResolution } from './streams'
 
@@ -68,7 +68,11 @@ export function useNextEpisode(
         const index = ordered.findIndex((candidate) => candidate.season === now.season && candidate.episode === now.episode)
         const next = index >= 0 ? ordered[index + 1] : undefined
         if (!next) return
-        const streams = await fetchStreams({ type: 'series', id: now.metaId, season: next.season, episode: next.episode })
+        const resolved = await resolveStreams({ type: 'series', id: now.metaId, season: next.season, episode: next.episode })
+        // With nothing installed there is nothing to suggest, and it is the
+        // same silence as finding no source: the invitation to install lives
+        // on the details panel, not here.
+        const streams = resolved.kind === 'streams' ? resolved.streams : []
         if (requestSeqRef.current !== seq || streams.length === 0) return
         // Keep the watching quality; fall back to the addon's own top pick.
         const stream = streams.find((candidate) => candidate.resolution === now.resolution) ?? streams[0]

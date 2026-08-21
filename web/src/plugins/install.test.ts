@@ -87,7 +87,8 @@ describe('gitSourceUrls', () => {
 
 describe('fetchGitPlugin', () => {
   it('reads the source and the commit sha', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void init
       const url = String(input)
       if (url.includes('api.github.com')) return new Response(JSON.stringify({ sha: 'abc123' }), { status: 200 })
       return new Response('export const manifest = {}', { status: 200 })

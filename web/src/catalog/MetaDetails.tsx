@@ -8,7 +8,8 @@ import { Carousel } from './Carousel'
 import { FadeImg } from './FadeImg'
 import { useT } from '../i18n/useT'
 import { fetchMeta, type MetaDetail, type MetaVideo } from './cinemeta'
-import { fetchStreams, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
+import { streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
+import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
 
 // The poster card's corner radius — the morph starts here and grows into the
@@ -37,13 +38,16 @@ interface MetaDetailsProps {
   onClose: () => void
   onPickStream: (pick: TitlePick) => void
   onRequestTitle?: (request: { season?: number; episode?: number }) => void
+  // Opens the plugins panel. Both empty states that a plugin would fix lead
+  // here, so the answer is one click from the problem.
+  onOpenPlugins?: () => void
 }
 
 // The details panel. It morphs out of the clicked poster (FLIP: mounted at
 // the poster's rect, grown into its resting layout), reveals its content only
 // once the morph lands, and shrinks back into the card on close. Without an
 // origin rect — deep links, keyboard opens, reduced motion — it fades.
-export function MetaDetails({ open, mode, focus, onClose, onPickStream, onRequestTitle }: MetaDetailsProps) {
+export function MetaDetails({ open, mode, focus, onClose, onPickStream, onRequestTitle, onOpenPlugins }: MetaDetailsProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -57,6 +61,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const [selected, setSelected] = useState<MetaVideo | null>(null)
   const [streams, setStreams] = useState<CatalogStream[] | null>(null)
   const [streamsFailed, setStreamsFailed] = useState(false)
+  // Distinct from an empty list: nothing is installed, which is fixable.
+  const [noPlugins, setNoPlugins] = useState(false)
   const [resolutionFilter, setResolutionFilter] = useState<'all' | StreamResolution>('all')
   // A flag emoji, or 'all'. A flag matches releases carrying the language as
   // audio or as subtitles alike — Torrentio lists it either way.
@@ -86,15 +92,28 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   }, [meta.id, meta.type, selected])
 
   useEffect(() => {
-    if (!target) return
+    // A viewer never sees this list — they see the button that asks the host.
+    // Resolving anyway would run plugins to build something the interface
+    // throws away, and would make a viewer need a plugin installed, which
+    // contradicts the whole design.
+    if (!target || mode === 'viewer') return
     let cancelled = false
     setStreams(null)
     setStreamsFailed(false)
-    fetchStreams(target)
-      .then((value) => { if (!cancelled) setStreams(value) })
+    setNoPlugins(false)
+    resolveStreams(target)
+      .then((result) => {
+        if (cancelled) return
+        if (result.kind === 'no-plugins') {
+          setNoPlugins(true)
+          setStreams([])
+          return
+        }
+        setStreams(result.streams)
+      })
       .catch(() => { if (!cancelled) setStreamsFailed(true) })
     return () => { cancelled = true }
-  }, [target])
+  }, [target, mode])
 
   const seasons = useMemo(() => {
     const numbers = new Set<number>()
@@ -487,8 +506,23 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                 </motion.div>
               ) : streamsFailed || streams === null ? (
                 <p className="empty-copy">{t('details.sourcesFailed')}</p>
+              ) : noPlugins ? (
+                // Three empty states, because they are three different
+                // problems: nothing installed, installed and found nothing,
+                // and found things the filters are hiding.
+                <p className="empty-copy">
+                  {t('details.noPlugins')}{' '}
+                  <button type="button" className="catalog-retry" onClick={onOpenPlugins}>
+                    {t('details.openPlugins')}
+                  </button>
+                </p>
               ) : streams.length === 0 ? (
-                <p className="empty-copy">{t('details.noSources')}</p>
+                <p className="empty-copy">
+                  {t('details.noPluginResolved')}{' '}
+                  <button type="button" className="catalog-retry" onClick={onOpenPlugins}>
+                    {t('details.openPlugins')}
+                  </button>
+                </p>
               ) : visibleStreams.length === 0 ? (
                 <p className="empty-copy">{t('details.noFilteredSources')}</p>
               ) : (
@@ -501,7 +535,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                 >
                   {visibleStreams.slice(0, 30).map((stream, index) => (
                     <button
-                      key={`${stream.infoHash}:${stream.fileIdx ?? ''}:${stream.fileName}:${index}`}
+                      key={`${streamKey(stream.location)}:${index}`}
                       type="button"
                       onClick={() => onPickStream({
                         stream,

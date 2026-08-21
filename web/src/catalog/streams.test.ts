@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMagnet, parseStreams, parseStreamTitle, streamResolution } from './streams'
+import { buildMagnet, parseStreams, parseStreamTitle, streamKey, streamResolution } from './streams'
 
 describe('parseStreamTitle', () => {
   it('splits the release name from the emoji stats line', () => {
@@ -36,22 +36,17 @@ describe('streamResolution', () => {
 })
 
 describe('parseStreams', () => {
-  it('accepts torrent streams and drops anything without a valid infoHash', () => {
-    const streams = parseStreams({
-      streams: [
-        {
-          name: 'Torrentio\n4k DV',
-          title: 'Movie.2160p\n👤 40 💾 17.1 GB ⚙️ 1337x',
-          infoHash: 'AD9462066CDF17273F91C4B4F708F1650394FC00',
-          fileIdx: 0,
-          behaviorHints: { filename: 'Movie.2160p.mkv' },
-        },
-        { name: 'HTTP', title: 'external', url: 'https://elsewhere/video' },
-        { infoHash: 'short' },
-      ],
-    })
-    expect(streams).toHaveLength(1)
-    expect(streams[0]).toMatchObject({
+  it('reads a torrent stream into a torrent location', () => {
+    const [stream] = parseStreams({
+      streams: [{
+        name: 'Torrentio\n4k DV',
+        title: 'Movie.2160p\n\u{1F464} 40 \u{1F4BE} 17.1 GB \u2699\uFE0F 1337x',
+        infoHash: 'AD9462066CDF17273F91C4B4F708F1650394FC00',
+        fileIdx: 0,
+        behaviorHints: { filename: 'Movie.2160p.mkv' },
+      }],
+    }, 'sha-of-origin', 'Torrentio')
+    expect(stream).toMatchObject({
       quality: '4k DV',
       resolution: '2160p',
       label: 'Movie.2160p',
@@ -59,20 +54,77 @@ describe('parseStreams', () => {
       size: '17.1 GB',
       source: '1337x',
       languages: [],
+    })
+    expect(stream.location).toEqual({
+      kind: 'torrent',
       infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00',
+      fileIdx: 0,
       fileName: 'Movie.2160p.mkv',
     })
+    // The id is the opaque registry key; the name is what a person reads.
+    expect(stream.pluginId).toBe('sha-of-origin')
+    expect(stream.pluginName).toBe('Torrentio')
+  })
+
+  it('reads a direct https url into a url location', () => {
+    const [stream] = parseStreams({
+      streams: [{ name: 'Mirror\n720p', title: 'Movie.720p', url: 'https://cdn.example.com/movie.mkv' }],
+    }, 'p', 'Mirrors')
+    expect(stream.location).toEqual({ kind: 'url', url: 'https://cdn.example.com/movie.mkv' })
+    expect(stream.resolution).toBe('720p')
+  })
+
+  it('prefers the torrent when a stream carries both', () => {
+    // A torrent goes through the swarm and costs nobody bandwidth; a url is
+    // somebody's server. Given the choice, take the swarm.
+    const [stream] = parseStreams({
+      streams: [{ infoHash: 'a'.repeat(40), url: 'https://cdn.example.com/movie.mkv' }],
+    }, 'p')
+    expect(stream.location.kind).toBe('torrent')
+  })
+
+  it('drops a stream that points nowhere, and one that points over http', () => {
+    expect(parseStreams({ streams: [{ name: 'x', title: 'y' }] }, 'p')).toEqual([])
+    expect(parseStreams({ streams: [{ url: 'http://cdn.example.com/m.mkv' }] }, 'p')).toEqual([])
+    expect(parseStreams({ streams: [{ url: 'not a url' }] }, 'p')).toEqual([])
+    expect(parseStreams({ streams: [{ infoHash: 'nothex' }] }, 'p')).toEqual([])
+    expect(parseStreams({ streams: [{ infoHash: 'a'.repeat(39) }] }, 'p')).toEqual([])
+  })
+
+  it('survives a payload that is not the shape it should be', () => {
+    expect(parseStreams(null, 'p')).toEqual([])
+    expect(parseStreams({ streams: 'no' }, 'p')).toEqual([])
+    expect(parseStreams({ streams: [null, 42, 'x'] }, 'p')).toEqual([])
   })
 })
 
 describe('buildMagnet', () => {
   it('builds a magnet with the file name and public trackers', () => {
-    const magnet = buildMagnet({
-      quality: '1080p', resolution: '1080p', label: 'Movie', seeders: 1, size: '1 GB', source: 'x', languages: [], fileIdx: 0,
-      infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00', fileName: 'Movie.mkv',
-    })
+    const magnet = buildMagnet(
+      { kind: 'torrent', infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00', fileIdx: 0, fileName: 'Movie.mkv' },
+      'Movie',
+    )
     expect(magnet.startsWith('magnet:?xt=urn:btih:ad9462066cdf17273f91c4b4f708f1650394fc00')).toBe(true)
     expect(magnet).toContain('&dn=Movie.mkv')
     expect(magnet).toContain('&tr=')
+  })
+
+  it('falls back to the label when the torrent named no file', () => {
+    const magnet = buildMagnet({ kind: 'torrent', infoHash: 'b'.repeat(40), fileIdx: null, fileName: '' }, 'Some Release')
+    expect(magnet).toContain('&dn=Some%20Release')
+  })
+})
+
+describe('streamKey', () => {
+  it('separates two files of the same torrent', () => {
+    const at = (fileIdx: number) => streamKey({
+      kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx, fileName: '',
+    })
+    expect(at(0)).not.toBe(at(1))
+  })
+
+  it('separates a torrent from a url', () => {
+    expect(streamKey({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' }))
+      .not.toBe(streamKey({ kind: 'url', url: 'https://cdn.example.com/m.mkv' }))
   })
 })
