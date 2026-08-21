@@ -4,7 +4,7 @@ import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
-import { Check, Crown, MessageSquare, MonitorUp, Upload } from 'lucide-react'
+import { Check, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -17,8 +17,12 @@ import {
   takeScreenStream,
 } from '../screenshare'
 import { Button } from '../ui/Button'
+import { IconButton } from '../ui/IconButton'
+import { MorphPanel } from '../ui/MorphPanel'
+import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
+import { playJoinChime } from '../ui/chime'
 import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting } from '../types'
 import { TorrentPicker } from '../components/TorrentPicker'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
@@ -34,9 +38,8 @@ import {
   type RoomUploadProgress,
 } from '../upload'
 
-// How long one arrival or departure stays on screen before the next is shown.
-const PRESENCE_TOAST_MS = 4_000
-const MAX_VISIBLE_TOASTS = 3
+// How long the copied tick stands before the button offers the copy again.
+const COPIED_MS = 1_800
 // How often a room still being prepared re-reads its own progress, as a
 // fallback for the live updates rather than a replacement for them.
 const PREPARING_POLL_MS = 3_000
@@ -65,39 +68,100 @@ export function RoomPage() {
     return () => controller.abort()
   }, [id])
 
-  if (missing) return <EmptyRoom />
-  if (!room) return <main className="center-state"><StatusPill status="connecting" label="Connecting" /></main>
-  if (!nickname) {
-    return <JoinRoom onJoin={(value) => { localStorage.setItem('ss.nickname', value); setNickname(value) }} />
+  // Everything before the room can play is one surface changing what it says,
+  // so arriving, being asked for a name and watching the file land read as one
+  // continuous wait instead of three screens replacing each other.
+  const waiting: GateStep = missing ? 'expired' : !room ? 'connecting' : !nickname ? 'join' : null
+  if (waiting !== null) {
+    return (
+      <RoomGate
+        step={waiting}
+        onJoin={(value) => { localStorage.setItem('ss.nickname', value); setNickname(value) }}
+      />
+    )
   }
-  return <ConnectedRoom room={room} nickname={nickname} />
+  return <ConnectedRoom room={room!} nickname={nickname} />
 }
 
-// The room link is the whole invitation: whoever opens it is already in, and
-// the only thing still missing is what to call them.
-function JoinRoom({ onJoin }: { onJoin: (nickname: string) => void }) {
+/** Every state the room passes through before there is a picture to show. */
+type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'failed' | 'error' | null
+
+/**
+ * The room's waiting room: one panel that changes what it is asking for or
+ * reporting, travelling between the sizes each state needs and dissolving
+ * between them, rather than swapping whole screens.
+ */
+function RoomGate({ step, onJoin, progress, preparation, failure, errorMessage }: {
+  step: GateStep
+  onJoin?: (nickname: string) => void
+  progress?: RoomUploadProgress | null
+  preparation?: RoomInfo['preparation']
+  failure?: string | null
+  errorMessage?: string
+}) {
   const t = useT()
   const [draft, setDraft] = useState('')
+  const { shown, morphing } = useMorphingStep(step)
   return (
     <main className="center-state">
-      <form className="state-card raised join-card" onSubmit={(event) => {
-        event.preventDefault()
-        onJoin(draft.trim() || guestName())
-      }}>
-        <h1>{t('room.joinTitle')}</h1>
-        <p>{t('room.joinGuide')}</p>
-        <label htmlFor="join-nickname">{t('home.nickname')}</label>
-        <input
-          id="join-nickname"
-          className="sunken text-field"
-          autoFocus
-          value={draft}
-          maxLength={64}
-          placeholder={t('home.nicknamePlaceholder')}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button type="submit" className="primary-button">{t('room.join')}</button>
-      </form>
+      <MorphPanel className="gate-panel raised" sizeKey={shown} morphing={morphing}>
+        {shown === 'connecting' ? (
+          <div className="gate-centered">
+            <span className="stage-spinner" aria-hidden="true" />
+            <StatusPill status="connecting" label={t('status.connecting')} />
+          </div>
+        ) : null}
+
+        {shown === 'join' ? (
+          // The room link is the whole invitation: whoever opens it is already
+          // in, and the only thing still missing is what to call them.
+          <form className="join-card" onSubmit={(event) => {
+            event.preventDefault()
+            onJoin?.(draft.trim() || guestName())
+          }}>
+            <h1>{t('room.joinTitle')}</h1>
+            <p>{t('room.joinGuide')}</p>
+            <label htmlFor="join-nickname">{t('home.nickname')}</label>
+            <input
+              id="join-nickname"
+              className="sunken text-field"
+              autoFocus
+              value={draft}
+              maxLength={64}
+              placeholder={t('home.nicknamePlaceholder')}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <button type="submit" className="primary-button">{t('room.join')}</button>
+          </form>
+        ) : null}
+
+        {shown === 'preparing' ? (
+          <UploadAvailability progress={progress ?? null} preparation={preparation} t={t} />
+        ) : null}
+
+        {shown === 'expired' ? (
+          <div className="gate-centered">
+            <h1>{t('room.expired')}</h1>
+            <Link className="primary-button" to="/">{t('room.new')}</Link>
+          </div>
+        ) : null}
+
+        {shown === 'failed' ? (
+          <div className="gate-centered gate-bad">
+            <h1>{t('room.uploadFailed')}</h1>
+            {failure === FILE_UNREADABLE ? <p>{t('error.fileChanged')}</p> : null}
+            <Link className="primary-button" to="/">{t('room.new')}</Link>
+          </div>
+        ) : null}
+
+        {shown === 'error' ? (
+          <div className="gate-centered gate-bad">
+            <h1>{t('room.error')}</h1>
+            {errorMessage ? <p>{errorMessage}</p> : null}
+            <Link className="primary-button" to="/">{t('room.new')}</Link>
+          </div>
+        ) : null}
+      </MorphPanel>
     </main>
   )
 }
@@ -120,15 +184,25 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
-  const toasts = usePresenceToasts(sync.presence)
+  usePresenceNotices(sync.presence, t)
   const [sourcePanel, setSourcePanel] = useState<'menu' | 'torrent' | null>(null)
   // Messages that arrived while the chat was shut. Counting from a mark rather
   // than incrementing a tally keeps it right when history arrives at once.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isScreenRoom = liveRoom.sourceKind === 'screen'
+  // The room is still waiting on something, or it is not. Running the last of
+  // those states through the same step machine is what lets the panel dissolve
+  // before the picture arrives, instead of the two cutting over each other.
+  const gate: GateStep = uploadFailed !== null ? 'failed'
+    : mediaStatus === 'processing' || mediaStatus === 'uploading' ? 'preparing'
+    : mediaStatus === 'error' ? 'error'
+    : null
+  const { shown: shownGate } = useMorphingStep(gate)
 
   // Repointing the room is the controller's call alone; the server enforces it
   // too, so a stale client cannot swap what everyone is watching.
@@ -262,33 +336,43 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [room.id, liveRoom.mediaGeneration])
 
   const copyLink = async () => {
-    await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
+    // The clipboard is refused outright on an insecure origin and can be
+    // denied on a secure one. Confirming a copy that did not happen is worse
+    // than saying nothing, so the tick is only shown once the write resolves.
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
+    } catch (error) {
+      console.error('copy room link failed', error)
+      return
+    }
     toast(t('room.copiedToast'))
+    setCopied(true)
   }
+  // The tick stands for a moment and then the button goes back to offering the
+  // copy, so a link can be shared twice without wondering whether it took.
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), COPIED_MS)
+    return () => window.clearTimeout(timer)
+  }, [copied])
 
-  if (uploadFailed) {
+  // Held one beat past the moment the room became playable: the panel spends
+  // it dissolving, so the picture arrives into an empty screen rather than
+  // over the top of what was still being said.
+  if (shownGate !== null) {
     return (
-      <main className="center-state"><div className="state-card error-card">
-        <h1>{t('room.uploadFailed')}</h1>
-        {uploadFailed === FILE_UNREADABLE ? <p>{t('error.fileChanged')}</p> : null}
-        <Link to="/">{t('room.new')}</Link>
-      </div></main>
+      <RoomGate
+        step={gate}
+        progress={uploadProgress}
+        preparation={liveRoom.preparation}
+        failure={uploadFailed}
+        errorMessage={liveRoom.errorMessage}
+      />
     )
-  }
-  if (mediaStatus === 'processing' || mediaStatus === 'uploading') {
-    return (
-      <main className="center-state">
-        <UploadAvailability progress={uploadProgress} preparation={liveRoom.preparation} t={t} />
-      </main>
-    )
-  }
-  if (mediaStatus === 'error') {
-    return <main className="center-state"><div className="state-card error-card"><h1>{t('room.error')}</h1><p>{liveRoom.errorMessage}</p><Link to="/">{t('room.new')}</Link></div></main>
   }
 
   return (
-    <main className="room-shell">
-      <PresenceToasts events={toasts} t={t} />
+    <main className="room-shell room-enter">
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
@@ -311,22 +395,34 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             </Button>
           ) : null}
           {sync.isController ? (
-            <Button onClick={() => { setSourceError(false); setSourcePanel('menu') }}>{t('room.changeSource')}</Button>
+            <IconButton
+              icon={<Replace size={16} />}
+              label={t('room.changeSource')}
+              onClick={() => { setSourceError(false); setSourcePanel('menu') }}
+            />
           ) : null}
-          <Button onClick={copyLink}>{t('room.copy')}</Button>
-          <Button
-            variant="icon"
-            size="icon"
+          <IconButton
+            icon={
+              // The glyph is what confirms the copy; the button keeps naming
+              // itself, so a lone tick never has to be worked out.
+              <span className="morph-fade" data-morphing={copyMorphing}>
+                {copiedShown ? <Check size={16} /> : <Link2 size={16} />}
+              </span>
+            }
+            label={t('room.copy')}
+            className={copiedShown ? 'is-confirmed' : ''}
+            onClick={copyLink}
+          />
+          <IconButton
+            icon={<>
+              <MessageSquare size={16} />
+              {unread > 0 ? <span className="chat-badge">{unread > 9 ? '9+' : unread}</span> : null}
+            </>}
+            label={t('chat.title')}
             className={`chat-toggle ${chatOpen ? 'is-on' : ''}`}
-            aria-label={t('chat.title')}
             aria-pressed={chatOpen}
             onClick={() => setChatOpen((open) => !open)}
-          >
-            <MessageSquare size={16} aria-hidden="true" />
-            {unread > 0 ? (
-              <span className="chat-badge">{unread > 9 ? '9+' : unread}</span>
-            ) : null}
-          </Button>
+          />
         </div>
       </header>
       <div className={`room-layout ${chatOpen ? 'chat-open' : ''}`}>
@@ -400,7 +496,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
                 </Button>
               </div>
             ) : (
-              <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={chooseTorrent} />
+              <TorrentPicker
+                maxFileBytes={MAX_UPLOAD_BYTES}
+                t={t}
+                onExit={() => setSourcePanel('menu')}
+                onPicked={chooseTorrent}
+              />
             )}
           </DialogContent>
         ) : null}
@@ -575,43 +676,31 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
   )
 }
 
-// Turns the presence log into a short-lived queue. Each entry is retired on
-// its own timer, so a burst of arrivals drains one at a time instead of
-// stacking up and covering the player.
-function usePresenceToasts(presence: PresenceEvent[]): PresenceEvent[] {
-  const [toasts, setToasts] = useState<PresenceEvent[]>([])
+/**
+ * Announces arrivals and departures through the same notifications everything
+ * else uses, and gives an arrival a sound.
+ *
+ * A room is watched, not read: whoever just joined is looking at the picture,
+ * not at a corner of the screen, so the arrival has to be audible as well as
+ * visible. Departures stay silent — nobody needs calling back to the screen
+ * because somebody left.
+ */
+function usePresenceNotices(presence: PresenceEvent[], t: Translator): void {
+  const { toast } = useToast()
   const lastSeenRef = useRef(0)
 
   useEffect(() => {
     const fresh = presence.filter((event) => event.id > lastSeenRef.current)
     if (fresh.length === 0) return
     lastSeenRef.current = fresh[fresh.length - 1].id
-    setToasts((current) => [...current, ...fresh])
-  }, [presence])
-
-  useEffect(() => {
-    if (toasts.length === 0) return
-    const timer = window.setTimeout(() => setToasts((current) => current.slice(1)), PRESENCE_TOAST_MS)
-    return () => window.clearTimeout(timer)
-  }, [toasts])
-
-  return toasts
-}
-
-function PresenceToasts({ events, t }: { events: PresenceEvent[]; t: Translator }) {
-  if (events.length === 0) return null
-  return (
-    <div className="presence-toasts" role="status" aria-live="polite">
-      {events.slice(0, MAX_VISIBLE_TOASTS).map((event) => (
-        <span key={event.id} className={`presence-toast ${event.kind === 'leave' ? 'is-leave' : ''}`}>
+    for (const event of fresh) {
+      toast(
+        <span className={event.kind === 'leave' ? 'is-leave' : ''}>
           <strong>{event.nickname}</strong> {t(event.kind === 'join' ? 'presence.joined' : 'presence.left')}
-        </span>
-      ))}
-    </div>
-  )
+        </span>,
+      )
+      if (event.kind === 'join') playJoinChime()
+    }
+  }, [presence, t, toast])
 }
 
-function EmptyRoom() {
-  const t = useT()
-  return <main className="center-state"><div className="state-card raised"><h1>{t('room.expired')}</h1><Link className="primary-button" to="/">{t('room.new')}</Link></div></main>
-}

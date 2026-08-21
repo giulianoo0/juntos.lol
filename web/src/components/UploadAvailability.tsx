@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import NumberFlow from '@number-flow/react'
 import type { Translator } from '../i18n/useT'
 import type { RoomPreparation } from '../types'
 import type { RoomUploadProgress } from '../upload'
@@ -93,9 +94,12 @@ export function UploadAvailability({
   const total = preparation?.sourceBytes ?? progress?.bytesTotal ?? 0
   const rate = useTransferRate(received)
 
+  // The surface belongs to the panel this is drawn inside; only the contents
+  // are this component's, so the wait can change shape without the card
+  // beneath it being replaced.
   if (received === 0 && total === 0) {
     return (
-      <div className="state-card availability-card raised">
+      <div className="availability-card">
         <h1>{t('room.processing')}</h1>
         <p>{t('room.waitingInitial')}</p>
       </div>
@@ -119,7 +123,7 @@ export function UploadAvailability({
     : t(phaseKey(prep))
 
   return (
-    <div className="state-card availability-card raised">
+    <div className="availability-card">
       <h1>{t('room.processing')}</h1>
       <p>{label}</p>
       <div className="availability-meter">
@@ -142,7 +146,10 @@ export function UploadAvailability({
         <div className="availability-detail">
           <span>{formatSize(received)}{total > 0 ? ` / ${formatSize(total)}` : ''}</span>
           <span>
-            {rate > 0 ? `${formatRate(rate)} · ` : ''}{t('home.uploading')} {transferPct}%
+            {rate > 0 ? `${formatRate(rate)} · ` : ''}{t('home.uploading')}{' '}
+            {/* Counters that tick rather than jump: the digits are the only
+                thing on this screen reporting that anything is happening. */}
+            <NumberFlow value={transferPct} suffix="%" />
           </span>
         </div>
       </div>

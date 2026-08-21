@@ -10,6 +10,7 @@ import {
   type SubtitleCollector,
 } from './subtitles'
 import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
+import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentSideFile, TorrentVideoFile } from './torrent'
 
 const TUS_CHUNK_BYTES = 50 * 1024 * 1024
@@ -79,6 +80,7 @@ async function createRoom(fileName: string, nickname: string, kind?: string): Pr
 // A shared screen has no file and no pipeline: the room opens ready and the
 // picture arrives over WebRTC.
 export async function createScreenRoom(nickname: string): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
   const room = await createRoom('', nickname, 'screen')
   return { roomID: room.id, nickname: room.nickname }
 }
@@ -198,6 +200,7 @@ export async function createRoomAndUpload(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
   // Before anything is created, so a file that cannot be read never leaves a
   // room behind that will sit at zero per cent for ever.
   await assertReadable(file)
@@ -258,6 +261,7 @@ export async function createRoomAndUploadTorrent(
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
   const created = await createRoom(source.file.name, nickname)
   await startTorrentTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), 0, source, onProgress)
   return { roomID: created.id, nickname: created.nickname }

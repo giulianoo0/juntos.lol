@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
-import { X } from 'lucide-react'
+import { SendHorizontal, X } from 'lucide-react'
 import type { ChatEntry } from '../types'
 import { Button } from '../ui/Button'
 import type { Translator } from '../i18n/useT'
@@ -62,9 +62,11 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
           </article>
         ))}
       </div>
-      <div className="chat-composer sunken">
+      <div className="chat-composer">
         <input value={text} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown} placeholder={t('chat.placeholder')} maxLength={2048} />
-        <Button variant="ghost" onClick={submit}>{t('chat.send')}</Button>
+        <Button variant="ghost" size="icon" onClick={submit} aria-label={t('chat.send')}>
+          <SendHorizontal size={16} aria-hidden="true" />
+        </Button>
       </div>
     </aside>
   )

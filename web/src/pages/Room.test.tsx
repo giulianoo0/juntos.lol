@@ -316,8 +316,10 @@ describe('RoomPage header', () => {
 
     expect(writeText).toHaveBeenCalledWith('http://localhost/room/abc123')
     expect(await screen.findByText(/link copied|link copiado/i)).toBeInTheDocument()
-    // The button keeps its own label rather than becoming the confirmation.
-    expect(copy).toHaveTextContent(/copy link|copiar link/i)
+    // The glyph is what confirms; the button keeps naming itself, so nobody
+    // has to work out what a lone tick used to be.
+    await waitFor(() => expect(copy.querySelector('.lucide-check')).toBeTruthy())
+    expect(copy).toHaveAccessibleName(/copy link|copiar link/i)
   })
 
   it('counts messages that arrive while the chat is shut', async () => {

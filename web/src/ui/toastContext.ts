@@ -1,7 +1,7 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 
 export interface ToastApi {
-  toast: (text: string) => void
+  toast: (text: ReactNode) => void
 }
 
 export const ToastContext = createContext<ToastApi | null>(null)

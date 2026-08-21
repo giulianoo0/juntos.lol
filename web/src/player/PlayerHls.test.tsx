@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { translate, type Translator } from '../i18n/useT'
@@ -310,8 +310,9 @@ describe('Player HLS lifecycle', () => {
     const textTracks = [{ mode: 'disabled' }]
     Object.defineProperty(video, 'textTracks', { configurable: true, value: textTracks })
 
-    const select = view.container.querySelector('select')!
-    fireEvent.change(select, { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
     expect(textTracks[0].mode).toBe('showing')
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=1')
 

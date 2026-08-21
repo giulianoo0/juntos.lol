@@ -1,23 +1,19 @@
-import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { History, MonitorUp, Plus, Upload } from 'lucide-react'
+import { useRef, useState, type DragEvent, type ChangeEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { MonitorUp } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
-import { Dialog, DialogContent } from '../ui/Dialog'
+import { MorphPanel } from '../ui/MorphPanel'
+import { useMorphingStep } from '../ui/useMorphingStep'
+import { StepBack } from '../ui/StepBack'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
-const HISTORY_KEY = 'ss.room-history.v1'
 
-interface RoomHistoryEntry {
-  id: string
-  fileName: string
-  createdAt: number
-}
 
 type PendingMedia =
   | { kind: 'local'; file: File }
@@ -26,23 +22,10 @@ type PendingMedia =
   // the live stream through the nickname step.
   | { kind: 'screen'; stream: MediaStream }
 
-function readHistory(): RoomHistoryEntry[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]')
-    if (!Array.isArray(value)) return []
-    const history = value.filter((entry): entry is RoomHistoryEntry => (
-      typeof entry === 'object' && entry !== null &&
-      typeof entry.id === 'string' && typeof entry.fileName === 'string' &&
-      typeof entry.createdAt === 'number'
-    )).map(({ id, fileName, createdAt }) => ({ id, fileName, createdAt })).slice(0, 12)
-    // Migrate old entries that included the nickname. Room history never
-    // needs identity data and links must remain safe to copy.
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history))
-    return history
-  } catch {
-    return []
-  }
-}
+// Every source ends at the same nickname step, and every step is drawn in the
+// same block, so picking a video never stacks a second surface over the one
+// the user is already looking at.
+type Step = 'drop' | 'torrent' | 'name' | 'starting'
 
 export function Home() {
   const t = useT()
@@ -50,38 +33,18 @@ export function Home() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [nickname, setNickname] = useState(() => localStorage.getItem('ss.nickname') ?? '')
   const [dragging, setDragging] = useState(false)
-  const [starting, setStarting] = useState(false)
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const [error, setError] = useState('')
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const [history, setHistory] = useState<RoomHistoryEntry[]>(readHistory)
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
-  const [torrentOpen, setTorrentOpen] = useState(false)
-  const [historyStatus, setHistoryStatus] = useState<Record<string, 'checking' | 'live' | 'expired'>>({})
-
-  // A room outlives its history entry by only a few hours, so the entry alone
-  // says nothing about whether the link still works. Ask the server.
-  useEffect(() => {
-    if (!historyOpen || history.length === 0) return
-    const controller = new AbortController()
-    setHistoryStatus(Object.fromEntries(history.map((entry) => [entry.id, 'checking' as const])))
-    for (const entry of history) {
-      void fetch(`/api/rooms/${encodeURIComponent(entry.id)}`, { signal: controller.signal })
-        .then((response) => {
-          setHistoryStatus((current) => ({ ...current, [entry.id]: response.ok ? 'live' : 'expired' }))
-        })
-        .catch(() => {
-          // A network failure says nothing about the room, so claim nothing.
-          setHistoryStatus((current) => {
-            const next = { ...current }
-            delete next[entry.id]
-            return next
-          })
-        })
-    }
-    return () => controller.abort()
-  }, [historyOpen, history])
+  const [step, setStep] = useState<Step>('drop')
+  const { shown, morphing } = useMorphingStep(step)
+  const starting = step === 'starting'
+  // The buttons flanking the panel stay mounted so their width can animate
+  // away, which means they have to be withdrawn deliberately: a control
+  // collapsed to nothing is still tabbable, and still announced, until it is
+  // disabled and taken out of the accessibility tree.
+  const aside = shown === 'drop' ? {} : { disabled: true, tabIndex: -1, 'aria-hidden': true }
 
   // The picker has to open inside this click, and before any room is created:
   // closing it then leaves nothing behind.
@@ -90,6 +53,7 @@ export function Home() {
       setError('')
       setDraftNickname(nickname)
       setPendingMedia({ kind: 'screen', stream })
+      setStep('name')
     }).catch((error: unknown) => {
       if (!isScreenShareCancelled(error)) setError(t('error.screenshare'))
     })
@@ -98,6 +62,12 @@ export function Home() {
   const discardPending = (media: PendingMedia | null) => {
     if (media?.kind === 'torrent') media.session.destroy()
     if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
+  }
+
+  const backToDrop = () => {
+    discardPending(pendingMedia)
+    setPendingMedia(null)
+    setStep('drop')
   }
 
   const selectFile = (file?: File) => {
@@ -109,13 +79,14 @@ export function Home() {
     setError('')
     setDraftNickname(nickname)
     setPendingMedia({ kind: 'local', file })
+    setStep('name')
   }
 
   const startUpload = async () => {
     const media = pendingMedia
     if (!media || starting) return
     setPendingMedia(null)
-    setStarting(true)
+    setStep('starting')
     try {
       // Resolves once the room exists and the upload has started; MP4s are
       // converted to MKV first, which is what the preparing state covers.
@@ -127,19 +98,13 @@ export function Home() {
       if (media.kind === 'screen') stashScreenStream(room.roomID, media.stream)
       setNickname(room.nickname)
       localStorage.setItem('ss.nickname', room.nickname)
-      const nextHistory = [
-        { id: room.roomID, fileName: media.kind === 'screen' ? t('room.screenLabel') : media.file.name, createdAt: Date.now() },
-        ...history.filter((entry) => entry.id !== room.roomID),
-      ].slice(0, 12)
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(nextHistory))
-      setHistory(nextHistory)
       navigate(`/room/${room.roomID}`)
     } catch (error) {
       discardPending(media)
       // A file that changed under the picker is not a failed transfer, and
       // saying "try again" would send someone straight back into it.
       setError(t(isUnreadableFile(error) ? 'error.fileChanged' : 'home.failed'))
-      setStarting(false)
+      setStep('drop')
       setProgress(null)
     }
   }
@@ -155,13 +120,15 @@ export function Home() {
   }
 
   return (
-    <main className="home-shell">
+    <main
+      className={`home-shell ${dragging ? 'is-dragging' : ''}`}
+      onDragEnter={(event) => { if (shown === 'drop') { event.preventDefault(); setDragging(true) } }}
+      onDragOver={(event) => { if (shown === 'drop') event.preventDefault() }}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false) }}
+      onDrop={onDrop}
+    >
       <header className="home-header">
         <a className="home-wordmark" href="/">ss.giuli.dev</a>
-        <nav aria-label={t('home.navigation')}>
-          <button className={!historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(false)}><Plus size={15} aria-hidden="true" />{t('home.newRoom')}</button>
-          <button className={historyOpen ? 'is-active' : ''} onClick={() => setHistoryOpen(true)}><History size={15} aria-hidden="true" />{t('home.history')}</button>
-        </nav>
         <div className="header-end">
           <BuildInfo label={t('home.source')} />
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
@@ -170,108 +137,105 @@ export function Home() {
         </div>
       </header>
 
-      {historyOpen ? (
-        <section className="history-panel" aria-labelledby="history-title">
-          <header><h1 id="history-title">{t('home.history')}</h1></header>
-          {history.length > 0 ? (
-            <div className="history-list">
-              {history.map((entry) => (
-                <Link key={entry.id} to={`/room/${entry.id}`}>
-                  <strong>{entry.fileName}</strong>
-                  <span className="history-meta">
-                    {historyStatus[entry.id] ? (
-                      <span className={`history-status is-${historyStatus[entry.id]}`}>
-                        {t(`home.history${historyStatus[entry.id] === 'live' ? 'Live' : historyStatus[entry.id] === 'expired' ? 'Expired' : 'Checking'}`)}
-                      </span>
-                    ) : null}
-                    <span>{new Date(entry.createdAt).toLocaleDateString(t.language)}</span>
-                  </span>
-                </Link>
-              ))}
-            </div>
-          ) : <p className="empty-copy">{t('home.noHistory')}</p>}
-        </section>
-      ) : (
-      <section className="home-stage">
-        <div className="home-intro">
-          <h1>{t('home.title')}</h1>
-          <p>{t('home.guide')}</p>
-        </div>
-        <div
-          className={`drop-zone ${dragging ? 'is-dragging' : ''}`}
-          onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
-          <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
-          <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
-          <strong>{t('home.drop')}</strong>
-          <span>{t('home.dropHint')}</span>
-          <div className="drop-actions">
-            <button className="primary-button raised" onClick={() => inputRef.current?.click()}>{t('home.choose')}</button>
-            <button className="torrent-button" onClick={() => setTorrentOpen(true)}>
-              <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
-            </button>
-            <button className="torrent-button" onClick={startScreenRoom}>
-              <MonitorUp size={16} aria-hidden="true" />{t('home.shareScreen')}
-            </button>
+      {/* Kept out of the stage so the step it belongs to can dissolve without
+          taking the input — and the click that opens it — down with it. */}
+      <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
+
+      <section className="home-stage" data-step={shown}>
+        {/* The headline is the invitation, and once a source is being picked
+            the invitation has been accepted. It gets out of the way — and
+            gives the panel its room — until the picking is abandoned. */}
+        <div className="collapse-slot">
+          <div className="home-intro">
+            <h1>{t('home.title')}</h1>
+            <p>{t('home.guide')}</p>
           </div>
         </div>
-        {progress?.phase === 'converting' ? (
-          <div className="progress-wrap" aria-label={t('home.preparing')}>
-            <div className="progress-copy"><span>{t('home.preparing')}</span><span>{progress.pct}%</span></div>
-            <div className="progress-track"><span style={{ width: `${progress.pct}%` }} /></div>
-          </div>
-        ) : null}
+        {/* Three ways in, side by side, and the middle one grows into whatever
+            the chosen way still needs to ask. Nothing is stacked over anything:
+            the control that was clicked becomes the panel. */}
+        <div className="source-row" data-step={shown}>
+          <button className="source-side primary-button raised" onClick={() => inputRef.current?.click()} {...aside}>
+            {t('home.choose')}
+          </button>
+          <MorphPanel className="source-morph" sizeKey={shown} morphing={morphing}>
+              {shown === 'drop' ? (
+                // Bare on purpose: the pill it looks like is the panel's own
+                // border and background, so opening it grows that same box
+                // instead of trading a button for a surface.
+                <button className="morph-trigger" onClick={() => { setError(''); setStep('torrent') }}>
+                  <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+                </button>
+              ) : null}
+
+              {shown === 'torrent' ? (
+                <div className="morph-step">
+                  {/* The picker draws its own way back, because only it knows
+                      whether that means the magnet it listed or leaving. */}
+                  <TorrentPicker
+                    maxFileBytes={MAX_UPLOAD_BYTES}
+                    t={t}
+                    onExit={() => setStep('drop')}
+                    onPicked={(file, session) => {
+                      setDraftNickname(nickname)
+                      setPendingMedia({ kind: 'torrent', file, session })
+                      setStep('name')
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              {shown === 'name' && pendingMedia ? (
+                <div className="morph-step">
+                  <span className="dialog-file">{pendingMedia.kind === 'screen' ? t('home.screenDialog') : pendingMedia.file.name}</span>
+                  <div className="morph-head">
+                    <StepBack label={t('home.back')} onClick={backToDrop} />
+                    <h2 className="stage-title">{t('home.dialogTitle')}</h2>
+                  </div>
+                  <p className="stage-description">{t('home.dialogGuide')}</p>
+                  <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
+                    <label htmlFor="nickname">{t('home.nickname')}</label>
+                    <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />
+                    <div className="stage-actions">
+                      <Button type="submit" variant="primary">{t('home.continue')}</Button>
+                    </div>
+                  </form>
+                </div>
+              ) : null}
+
+              {shown === 'starting' ? (
+                <div className="morph-step is-centered">
+                  {/* An MP4 is remuxed before it can be sent, and that is the
+                      one part of starting a room with a length worth drawing.
+                      Until it reports in there is nothing to measure, so the
+                      wait is indeterminate and says so. */}
+                  {progress?.phase === 'converting' ? (
+                    <div className="progress-wrap" aria-label={t('home.preparing')}>
+                      <div className="progress-copy"><span>{t('home.preparing')}</span><span>{progress.pct}%</span></div>
+                      <div className="progress-track"><span style={{ width: `${progress.pct}%` }} /></div>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="stage-spinner" aria-hidden="true" />
+                      <strong>{t('home.preparing')}</strong>
+                    </>
+                  )}
+                </div>
+              ) : null}
+          </MorphPanel>
+          <button className="source-side torrent-button" onClick={startScreenRoom} {...aside}>
+            <MonitorUp size={16} aria-hidden="true" />{t('home.shareScreen')}
+          </button>
+        </div>
+        {/* Goes with the headline. Left merely transparent it would still hold
+            its band of the page, and on a short window that is the band that
+            pushes the panel off the bottom. */}
+        <div className="collapse-slot">
+          <p className="source-hint">{t('home.dropHint')}</p>
+        </div>
         {error ? <div className="error-card" role="alert">{error}</div> : null}
       </section>
-      )}
-      <Dialog open={torrentOpen} onOpenChange={setTorrentOpen}>
-        {torrentOpen ? (
-          <DialogContent
-            className="torrent-dialog"
-            closeLabel={t('home.closeDialog')}
-            hideTitle
-            title={t('home.torrentTitle')}
-          >
-            <TorrentPicker maxFileBytes={MAX_UPLOAD_BYTES} t={t} onPicked={(file, session) => {
-              setTorrentOpen(false)
-              setDraftNickname(nickname)
-              setPendingMedia({ kind: 'torrent', file, session })
-            }} />
-          </DialogContent>
-        ) : null}
-      </Dialog>
-      <Dialog
-        open={pendingMedia !== null}
-        onOpenChange={(open) => {
-          if (open || !pendingMedia) return
-          discardPending(pendingMedia)
-          setPendingMedia(null)
-        }}
-      >
-        {pendingMedia ? (
-          <DialogContent
-            closeLabel={t('home.closeDialog')}
-            title={t('home.dialogTitle')}
-            description={t('home.dialogGuide')}
-          >
-            <span className="dialog-file">{pendingMedia.kind === 'screen' ? t('home.screenDialog') : pendingMedia.file.name}</span>
-            <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
-              <label htmlFor="nickname">{t('home.nickname')}</label>
-              <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />
-              <div className="dialog-actions">
-                <Button onClick={() => {
-                  discardPending(pendingMedia)
-                  setPendingMedia(null)
-                }}>{t('home.cancel')}</Button>
-                <Button type="submit" variant="primary">{t('home.continue')}</Button>
-              </div>
-            </form>
-          </DialogContent>
-        ) : null}
-      </Dialog>
     </main>
   )
 }
+
