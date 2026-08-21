@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -299,11 +300,117 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Submit blocked behind a busy worker")
 	}
-	require.Eventually(t, func() bool {
-		got, err := store.Get(t.Context(), "overflow")
-		return err == nil && got.Status == "error" && got.ErrorMessage == "media queue is full"
-	}, time.Second, 10*time.Millisecond)
-	require.Contains(t, logs.String(), "media queue full")
+	got, err := store.Get(t.Context(), "overflow")
+	require.NoError(t, err)
+	require.NotEqual(t, "error", got.Status)
+	require.NotContains(t, logs.String(), "media queue full")
+}
+
+// The queue was as deep as it had workers, so with two of each the fifth room
+// to finish uploading was turned away — and being turned away is permanent,
+// because Recover never looks at a failed room. A busy encoder is a reason to
+// wait, not a reason to lose the room.
+func TestQueueHoldsRoomsPastTheWorkerCount(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "busy")
+	waiting := make([]string, 0, 12)
+	for i := range 12 {
+		roomID := fmt.Sprintf("waiting-%02d", i)
+		addQueueTestRoom(t, store, dataDir, roomID)
+		waiting = append(waiting, roomID)
+	}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	ready := make(chan string, len(waiting)+1)
+	pipe := pipelineFunc(func(_ context.Context, roomID, _, _ string, _ bool) (
+		[]room.TrackInfo, []room.TrackInfo, int, error,
+	) {
+		if roomID == "busy" {
+			started <- struct{}{}
+			<-release
+		}
+		return nil, nil, 0, nil
+	})
+	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil, pipe)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+
+	q.Submit("busy")
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not start")
+	}
+	for _, roomID := range waiting {
+		q.Submit(roomID)
+	}
+
+	// Every one of them is behind a worker that cannot take them yet, and none
+	// of them is a failure.
+	for _, roomID := range waiting {
+		got, err := store.Get(t.Context(), roomID)
+		require.NoError(t, err)
+		require.NotEqualf(t, "error", got.Status, "room %s failed while waiting for a worker", roomID)
+	}
+
+	close(release)
+	seen := make(map[string]struct{}, len(waiting)+1)
+	for range len(waiting) + 1 {
+		select {
+		case roomID := <-ready:
+			seen[roomID] = struct{}{}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d rooms were processed", len(seen), len(waiting)+1)
+		}
+	}
+	for _, roomID := range waiting {
+		require.Contains(t, seen, roomID)
+	}
+}
+
+// Being turned away is the one failure worth retrying: it says the server was
+// busy at an instant, not that there is anything wrong with the media. Recover
+// skipped every failed room, so a moment of overload outlived the overload.
+func TestRecoverResubmitsARoomTurnedAwayByAFullQueue(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "turned-away")
+	addQueueTestRoom(t, store, dataDir, "broken")
+	require.NoError(t, store.SetError(t.Context(), "turned-away", publicQueueFullError))
+	require.NoError(t, store.SetError(t.Context(), "broken", publicPipelineError))
+	ready := make(chan string, 2)
+	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil,
+		pipelineFunc(func(context.Context, string, string, string, bool) (
+			[]room.TrackInfo, []room.TrackInfo, int, error,
+		) {
+			return nil, nil, 0, nil
+		}))
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+
+	require.NoError(t, q.Recover(ctx))
+
+	select {
+	case roomID := <-ready:
+		require.Equal(t, "turned-away", roomID)
+	case <-time.After(time.Second):
+		t.Fatal("a room turned away by a full queue was never resubmitted")
+	}
+	got, err := store.Get(t.Context(), "turned-away")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
+	// The message went with the retry rather than outliving it.
+	require.Empty(t, got.ErrorMessage)
+
+	// Media that could not be processed is left where it is: retrying it would
+	// only fail again, once per restart, for as long as the room exists.
+	broken, err := store.Get(t.Context(), "broken")
+	require.NoError(t, err)
+	require.Equal(t, "error", broken.Status)
+	select {
+	case roomID := <-ready:
+		t.Fatalf("unexpected resubmission of %s", roomID)
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func TestQueueFullRejectionPersistsAfterCancellation(t *testing.T) {

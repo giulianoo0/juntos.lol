@@ -20,6 +20,18 @@ const (
 	publicPipelineCanceled = "media processing canceled"
 	publicQueueFullError   = "media queue is full"
 	queueRejectTimeout     = 2 * time.Second
+	// How many rooms can be waiting for a worker.
+	//
+	// This used to be the number of workers, which made the queue two deep on
+	// the machine this runs on: the fifth room to finish uploading inside one
+	// encode was turned away, and turned away is not a delay but the end of
+	// that room. Waiting is the right answer to a busy encoder.
+	//
+	// A room only reaches this queue once its upload is complete, and the disk
+	// holds a handful of those at a time, so this is far past anything the
+	// machine can actually accumulate. It is a backstop against a loop, not a
+	// capacity decision.
+	queueDepth = 256
 )
 
 // Pipeline processes one uploaded source into browser-ready media tracks.
@@ -72,7 +84,7 @@ func newQueue(workers int, store *room.Store, dataDir string, publisher *Publish
 		onReady:   onReady,
 		onUpdated: onUpdated,
 		pipeline:  pipeline,
-		jobs:      make(chan string, workers),
+		jobs:      make(chan string, queueDepth),
 		done:      make(chan struct{}),
 		queued:    make(map[string]struct{}),
 		active:    make(map[string]struct{}),
@@ -125,7 +137,7 @@ func (q *Queue) Recover(ctx context.Context) error {
 			}
 			continue
 		}
-		if storedRoom.Status != "uploading" && storedRoom.Status != "processing" {
+		if !recoverable(storedRoom) {
 			continue
 		}
 		if _, _, err := sourcePath(q.dataDir, roomID); err != nil {
@@ -135,6 +147,23 @@ func (q *Queue) Recover(ctx context.Context) error {
 		q.Submit(roomID)
 	}
 	return nil
+}
+
+// recoverable reports whether a stored room is one a restart should pick back
+// up. An upload that completed and a job that was interrupted are the ordinary
+// cases.
+//
+// A room turned away by a full queue is included deliberately. That failure is
+// a statement about how busy the server was at one instant, not about the
+// media, and leaving it out is what made a moment of overload permanent: the
+// room stayed failed for as long as it existed, with its source file sitting
+// on disk next to it. Every other failure is left alone, because retrying
+// media that cannot be processed only fails again, once per restart.
+func recoverable(r *room.Room) bool {
+	if r.Status == "uploading" || r.Status == "processing" {
+		return true
+	}
+	return r.Status == "error" && r.ErrorMessage == publicQueueFullError
 }
 
 // Submit enqueues roomID, or returns without blocking after the queue stops.
