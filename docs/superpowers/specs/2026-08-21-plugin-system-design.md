@@ -39,18 +39,29 @@ sendo um IMDb id vindo do Cinemeta.
 
 `streams` devolve o formato de stream do Stremio. Isso não é diplomacia com o
 Stremio, é economia: `parseStreams`, os filtros de qualidade e idioma e o
-`openCatalogStream` já falam esse formato, então nada disso precisa mudar e o
+`openCatalogStream` já falam esse formato, então quase nada precisa mudar e o
 plugin do Torrentio cabe em quinze linhas.
+
+Cada stream carrega uma de duas formas de apontar para os bytes:
+
+- `infoHash` (40 hex) com `fileIdx` opcional — um torrent
+- `url` — um arquivo por HTTPS, `.mkv`, `.mp4`, o que for
+
+As duas são suportadas de ponta a ponta. Sem a segunda, um plugin só sabe
+falar torrent, e o ponto de extensão não é ponto de extensão nenhum.
 
 Campos do manifest:
 
 | Campo | Obrigatório | Regra |
 |---|---|---|
-| `id` | sim | `[a-z0-9-]{1,64}`; identifica o plugin entre atualizações |
+| `id` | sim | `[a-z0-9-]{1,64}`; rótulo de exibição e chave de deduplicação |
 | `name` | sim | até 64 caracteres, exibido na lista |
 | `version` | sim | texto livre, exibido na lista |
 | `hosts` | sim | nomes de host, sem esquema nem caminho; lista não vazia |
-| `updateUrl` | não | repositório git de onde o plugin se atualiza |
+| `updateUrl` | não | repositório git de onde o plugin se atualiza, lido só na instalação |
+
+O `id` não decide nada. Quem identifica um plugin entre versões é a origem
+travada na instalação, descrita adiante.
 
 Plugins resolvem fontes e nada mais. O catálogo continua sendo o Cinemeta
 embutido; não há ponto de extensão para catálogo, e acrescentar um depois não
@@ -88,25 +99,48 @@ confiança acaba em quem escreveu o plugin, e a documentação diz isso.
 ## Instalação e atualização
 
 Instalados ficam no IndexedDB, por navegador. Cada registro guarda o código
-fonte, o manifest lido dele, a origem (arquivo ou URL), o SHA do commit quando
-veio de um repositório, e se está ligado.
+fonte, o manifest lido dele, a origem travada, o SHA-256 do código, o SHA do
+commit quando veio de um repositório, os hosts aprovados, e se está ligado.
 
 **Arrastar um `.js`** instala aquele arquivo. Se o manifest declarar
 `updateUrl`, ele passa a se atualizar dali como se tivesse sido instalado por
-URL — e a tela de instalação diz de onde, porque um arquivo que se atualiza
-sozinho de um endereço que você não digitou merece ser dito em voz alta.
+URL — e a tela de instalação diz de onde, porque um arquivo que busca código
+de um endereço que você não digitou merece ser dito em voz alta.
 
 **Colar uma URL de repositório** (`https://github.com/user/repo`) busca
 `plugin.js` do branch padrão via `raw.githubusercontent.com` e guarda o SHA do
 commit obtido da API do GitHub.
 
-A cada abertura do site, cada plugin com endereço de atualização tem o SHA
-conferido; se mudou, o código é baixado e trocado. Uma atualização cujo
-manifest traga um `id` diferente do instalado é recusada — é outro plugin, não
-uma versão nova daquele. Falha de rede na checagem é silenciosa: fica a versão
-que está instalada.
-
 Sem token, sem autenticação: os repositórios são públicos.
+
+### Identidade entre versões
+
+A identidade de um plugin é **a origem travada no momento da instalação**, não
+o `id` e não o hash do código.
+
+O hash do código não pode servir para isso: ele muda a cada atualização — é o
+que uma atualização é. Hash fixa uma versão, não uma identidade. Ele é gravado
+e exibido por outro motivo, que é deixar você conferir um `.js` arrastado
+contra um hash publicado.
+
+A origem, uma vez aceita, não muda mais. Uma versão nova que venha declarando
+outro `updateUrl` é recusada: um plugin não redireciona o próprio canal de
+atualização por conta própria. Trocar de origem exige instalar de novo, à mão.
+É o raciocínio do `known_hosts` do SSH — a confiança é no endereço que você
+aceitou uma vez.
+
+### Reconsentimento
+
+Código mudar é esperado. Capacidade mudar não é.
+
+Se uma versão nova declarar hosts além dos aprovados na instalação, a
+atualização fica **retida**: o plugin continua na versão que você tem, e a
+lista mostra que há uma atualização esperando aval, com os hosts novos ditos
+por extenso. Aprovar aplica e passa a valer a lista nova. Hosts que
+desaparecem não pedem nada.
+
+Fora esse caso, a checagem roda a cada abertura do site: SHA do commit
+diferente, baixa e troca. Falha de rede é silenciosa — fica a versão instalada.
 
 ## Onde entra no aplicativo
 
@@ -115,6 +149,15 @@ Sem token, sem autenticação: os repositórios são públicos.
 plugins ligados em paralelo, normaliza cada resultado com o `parseStreams` que
 já existe, marca cada stream com o plugin que a produziu, e concatena. Um
 plugin que falha ou estoura o tempo não derruba os outros.
+
+`parseStreams` deixa de exigir `infoHash`. Um stream é aceito com `infoHash`
+válido **ou** com `url` `https:`, e `CatalogStream` ganha esse discriminante.
+Hoje o que não tem `infoHash` some sem erro nenhum, que é o pior jeito de
+falhar: o plugin funcionou, a lista veio vazia, e nada explica por quê.
+
+`openCatalogStream` passa a ramificar. Torrent segue o caminho de hoje. URL
+não abre torrent nenhum: entrega a URL para a rota de ingestão descrita
+adiante, e a sala nasce dali.
 
 `MetaDetails` chama `resolveStreams` no lugar de `fetchStreams`, e passa a
 distinguir três estados vazios, porque são três problemas diferentes:
@@ -157,12 +200,37 @@ qualidade e bandeira continua no ss, onde já está testado.
 
 ## Servidor
 
+### Ingestão por URL
+
+Uma sala pode nascer de uma URL. O `Ingestor` já bombeia bytes de uma fonte
+para o upload tus; o que entra é uma fonte nova — um GET com range sobre a URL
+— reusando o `pump` que já existe. O navegador do host nunca carrega esses
+bytes: ele entrega a URL e o servidor puxa, do mesmo jeito que faz com uma
+sessão do bridge.
+
+O servidor buscar um endereço que um plugin escolheu é SSRF, e é tratado como
+tal:
+
+- só `https:`
+- o host é resolvido e cada IP conferido antes de conectar; loopback, privado,
+  link-local, multicast e qualquer coisa fora do espaço público são recusados
+- redirecionamentos são seguidos com a mesma conferência a cada salto, com
+  teto de saltos
+- teto de tamanho igual ao do upload manual, e teto de tempo
+- só `Content-Type` de vídeo, ou nenhum; nada de seguir para HTML
+
+O erro que chega ao host diz qual dessas regras barrou, sem devolver corpo
+nenhum da resposta remota.
+
+### Documentação estática
+
 `registerFrontend` passa a servir `/docs` a partir de `WEB_DIR/docs`, e o
 `NoRoute` responde 404 para caminhos sob `/docs` em vez de devolver o
 `index.html` do aplicativo — um endereço de documentação errado deve dizer que
 está errado, não abrir o site.
 
-Nenhuma outra mudança no servidor. O plugin nunca toca o backend.
+O código dos plugins nunca chega ao servidor. O que chega é uma URL que o
+plugin produziu, e ela passa pelas regras acima.
 
 ## Documentação
 
@@ -190,8 +258,14 @@ escrever.
   `http:`, a própria origem, `localhost`, IP literal
 - `resolveStreams` — junta dois plugins, sobrevive a um que lança, sobrevive a
   um que estoura o tempo, marca a procedência de cada stream
-- atualização — SHA igual não baixa, SHA diferente troca, `id` diferente recusa
+- `parseStreams` — aceita `infoHash`, aceita `url` `https:`, recusa `url`
+  `http:`, recusa stream sem os dois
+- atualização — SHA igual não baixa, SHA diferente troca, `updateUrl`
+  divergente recusa, host novo retém em vez de aplicar, aprovar aplica
 - armazenamento — instala, lê, liga e desliga, remove
+- guarda de SSRF, em Go — recusa `http:`, loopback, `10/8`, `172.16/12`,
+  `192.168/16`, `169.254/16`, IPv6 local, nome que resolve para privado, e
+  redirecionamento de público para privado
 - `MetaDetails` — sem plugin mostra o convite, com plugin e sem fonte mostra a
   outra mensagem, `mode === 'viewer'` não resolve nada
 
