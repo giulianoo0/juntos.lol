@@ -6,8 +6,24 @@ const MAX_BODY_BYTES = 4 << 20
 function start(source: string, message: Record<string, unknown>) {
   return (options: SpawnOptions): PluginHandle => {
     const pluginUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
-    const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+    let worker: Worker
+    try {
+      worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+    } catch (error) {
+      // A worker the CSP refused, or a chunk that is not there. The blob would
+      // otherwise leak for the life of the page.
+      URL.revokeObjectURL(pluginUrl)
+      throw error
+    }
     worker.onmessage = (event: MessageEvent) => options.onMessage(event.data as WorkerRequest)
+    // Without these, a worker script that fails to load — a misconfigured CSP,
+    // a chunk that was never emitted — is silence, and the run dies fifteen
+    // seconds later reporting a timeout. You would go looking at the plugin.
+    worker.onerror = (event) => options.onMessage({
+      kind: 'error',
+      message: (event instanceof ErrorEvent && event.message) || 'plugin worker failed to load',
+    })
+    worker.onmessageerror = () => options.onMessage({ kind: 'error', message: 'plugin sent an unreadable message' })
     worker.postMessage({ kind: 'start', pluginUrl, ...message })
     return {
       post: (reply) => worker.postMessage({ kind: 'reply', ...reply }),
@@ -70,11 +86,14 @@ async function readCapped(response: Response, signal: AbortSignal): Promise<stri
   let seen = 0
   try {
     for (;;) {
+      // An abort is a failure, not a short read. Breaking here would hand a
+      // truncated body back marked `ok: true`.
+      if (signal.aborted) throw new DOMException('aborted', 'AbortError')
       const { done, value } = await reader.read()
-      if (done || signal.aborted) break
+      if (done) break
       seen += value.byteLength
       if (seen > MAX_BODY_BYTES) {
-        out += decoder.decode(value.slice(0, value.byteLength - (seen - MAX_BODY_BYTES)))
+        out += decoder.decode(value.slice(0, value.byteLength - (seen - MAX_BODY_BYTES)), { stream: true })
         break
       }
       out += decoder.decode(value, { stream: true })
@@ -82,5 +101,6 @@ async function readCapped(response: Response, signal: AbortSignal): Promise<stri
   } finally {
     void reader.cancel().catch(() => undefined)
   }
-  return out
+  // Flush whatever multi-byte sequence was left half-read.
+  return out + decoder.decode()
 }

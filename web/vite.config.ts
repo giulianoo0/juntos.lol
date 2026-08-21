@@ -10,9 +10,20 @@ export default defineConfig({
     // without this the sandbox works in `npm run dev` and breaks after
     // deploy — the worst shape a bug can have.
     format: 'es',
-    // A stable prefix so the server can recognise this one response and serve
-    // it with a Content-Security-Policy the rest of the app must not have.
-    rollupOptions: { output: { entryFileNames: 'assets/plugin-worker-[hash].js' } },
+    // Its own directory, so the server can match a path rather than a name and
+    // give this one response a Content-Security-Policy the rest of the app
+    // must not have. All three patterns are pinned on purpose: with only
+    // entryFileNames set, the first `import` added to worker.ts would split a
+    // shared chunk out to the default `assets/[name]-[hash].js`, which stops
+    // matching, and the worker would then load code with no policy at all —
+    // a security downgrade caused by adding an import.
+    rolldownOptions: {
+      output: {
+        entryFileNames: 'assets/plugin-worker/[hash].js',
+        chunkFileNames: 'assets/plugin-worker/[hash].js',
+        assetFileNames: 'assets/plugin-worker/[hash][extname]',
+      },
+    },
   },
   test: {
     environment: 'jsdom',

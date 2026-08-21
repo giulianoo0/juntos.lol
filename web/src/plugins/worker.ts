@@ -6,55 +6,89 @@
  * Three layers, and no single one of them is enough.
  *
  * 1. The header. This script is served with
- *    `Content-Security-Policy: default-src 'none'; script-src blob:; connect-src 'none'`.
- *    It is the only layer plugin code cannot reach around by construction, and
- *    the only thing that stops a dynamic `import()` of a remote module —
- *    which, from in here, nothing can remove.
+ *    `Content-Security-Policy: default-src 'none'; script-src blob:`.
+ *    It is the only layer plugin code cannot reach around by construction,
+ *    and the only thing that stops `import('https://…')` — which fetches the
+ *    URL before rejecting it, making it an exfiltration channel of arbitrary
+ *    width that nothing inside a worker can close.
  *
- * 2. The scope, below. Note that it deletes along the prototype chain rather
- *    than assigning `undefined` to `self`. `fetch` and friends live on
- *    `WorkerGlobalScope.prototype`, so an own-property assignment only
- *    shadows them, and `Object.getPrototypeOf(self).fetch` walks straight
- *    past it. `Worker` is on the list for the same class of reason: a nested
- *    worker is born with an untouched scope, and it would make everything
- *    above pointless.
+ * 2. The scope, below.
  *
  * 3. The page. `api.fetch` is a message, and the page decides — including
  *    where a redirect landed. See runtime.ts.
  *
+ * The scope is trimmed to an **allowlist**, and that is a deliberate reversal.
+ * A denylist of dangerous globals loses to every API the platform ships:
+ * writing one carefully still left `WebSocketStream` (a second, differently
+ * spelled WebSocket) and `webkitRequestFileSystemSync` (persistent storage
+ * with a global entry point that does not go through `navigator`) reachable.
+ * Enumerating what a plugin may keep is the only form that does not decay.
+ *
+ * Deleting walks the prototype chain rather than assigning to `self`, because
+ * `fetch` and friends live on `WorkerGlobalScope.prototype` and an own-property
+ * assignment merely shadows them.
+ *
  * What is deliberately NOT claimed: that a plugin cannot compute whatever it
- * likes, or that it cannot return a magnet the room will open. Trust ends
- * with whoever wrote the plugin. What is enforced is that it never reaches
- * this site's own origin, its API, or its storage.
+ * likes, or that it cannot return a magnet the room will open. Trust ends with
+ * whoever wrote the plugin. What is enforced is that it never reaches this
+ * site's own origin, its API, or its storage.
  */
 
-const BLOCKED = [
-  // Network.
-  'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'WebTransport',
-  'RTCPeerConnection', 'importScripts',
-  // Storage, and the channels that reach other contexts of this origin.
-  'caches', 'indexedDB', 'BroadcastChannel', 'Notification',
-  // Anywhere a fresh, untouched scope could be obtained.
-  'Worker', 'SharedWorker',
-  // navigator carries sendBeacon, serviceWorker and storage. A plugin has no
-  // business with any of it, so the whole object goes.
-  'navigator',
-]
+const ALLOWED = new Set([
+  // --- The global itself, and the message port that is the only way out.
+  'self', 'globalThis', 'postMessage', 'onmessage', 'onmessageerror', 'close',
+  'onerror', 'onunhandledrejection', 'onrejectionhandled',
+  'addEventListener', 'removeEventListener', 'dispatchEvent', 'constructor',
+  'EventTarget', 'Event', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent',
+  'DOMException', 'WorkerGlobalScope', 'DedicatedWorkerGlobalScope',
 
-for (const name of BLOCKED) {
-  // Delete wherever it actually lives, not only where it appears to.
-  for (let object: object | null = self; object; object = Object.getPrototypeOf(object) as object | null) {
-    if (!Object.prototype.hasOwnProperty.call(object, name)) continue
+  // --- ECMAScript. Inert by construction: no I/O, no persistence.
+  'Object', 'Function', 'Boolean', 'Symbol', 'Array', 'Number', 'BigInt',
+  'String', 'RegExp', 'Date', 'Math', 'JSON', 'Promise', 'Proxy', 'Reflect',
+  'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef', 'FinalizationRegistry',
+  'ArrayBuffer', 'DataView', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray',
+  'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float16Array',
+  'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
+  'Error', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError',
+  'TypeError', 'URIError', 'AggregateError', 'Intl', 'Iterator',
+  'AsyncFunction', 'GeneratorFunction', 'AsyncGeneratorFunction',
+  'DisposableStack', 'AsyncDisposableStack', 'SuppressedError',
+  'undefined', 'NaN', 'Infinity', 'eval', 'isFinite', 'isNaN',
+  'parseFloat', 'parseInt', 'decodeURI', 'decodeURIComponent',
+  'encodeURI', 'encodeURIComponent', 'escape', 'unescape',
+
+  // --- Utilities with no reach outside this worker.
+  'console', 'crypto', 'Crypto', 'SubtleCrypto', 'CryptoKey',
+  'performance', 'Performance',
+  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+  'queueMicrotask', 'structuredClone', 'reportError',
+  'atob', 'btoa',
+  'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream',
+  'URL', 'URLSearchParams',
+  'AbortController', 'AbortSignal',
+  'Blob', 'CompressionStream', 'DecompressionStream',
+  'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader',
+  'ReadableStreamDefaultController', 'ReadableByteStreamController',
+  'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
+  'WritableStreamDefaultController', 'TransformStream',
+  'TransformStreamDefaultController', 'ByteLengthQueuingStrategy',
+  'CountQueuingStrategy',
+])
+
+// Object.prototype is where `hasOwnProperty` and `toString` live. Trimming it
+// would break the plugin, this file, and the module loader alike.
+for (let scope: object | null = self; scope && scope !== Object.prototype; scope = Object.getPrototypeOf(scope) as object | null) {
+  for (const name of Object.getOwnPropertyNames(scope)) {
+    if (ALLOWED.has(name)) continue
     try {
-      delete (object as Record<string, unknown>)[name]
+      delete (scope as Record<string, unknown>)[name]
     } catch {
-      // Non-configurable: the defineProperty below is the second attempt.
+      // Non-configurable. The defineProperty below is the second attempt, and
+      // the CSP header is what this ultimately rests on.
     }
-  }
-  try {
-    Object.defineProperty(self, name, { value: undefined, writable: false, configurable: false })
-  } catch {
-    // Nothing more to do from in here. The CSP header is what this rests on.
+    try {
+      Object.defineProperty(scope, name, { value: undefined, writable: false, configurable: false })
+    } catch { /* see above */ }
   }
 }
 

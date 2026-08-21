@@ -81,21 +81,41 @@ executa na página tem `localStorage`, tem o IndexedDB dos outros plugins e tem
 O contorno tem três camadas, e nenhuma delas sozinha basta.
 
 **Cabeçalho.** O script do worker é servido com
-`Content-Security-Policy: default-src 'none'; connect-src 'none'`. É a única
+`Content-Security-Policy: default-src 'none'; script-src blob:`. É a única
 camada que o código do plugin não pode contornar por construção, e é ela que
-fecha o `import()` remoto — que, de dentro do worker, nada consegue remover.
+fecha o `import()` de módulo remoto — que busca a URL **antes** de rejeitá-la,
+e portanto é um canal de exfiltração de largura arbitrária que nada de dentro
+do worker consegue remover.
 
-**Escopo.** O bootstrap remove tudo que alcança rede ou armazenamento, e
-remove **subindo a cadeia de protótipos**, não só do próprio `self`. Uma
-atribuição `self.fetch = undefined` cria uma propriedade que sombreia; o
-original continua em `WorkerGlobalScope.prototype`, a um
-`Object.getPrototypeOf(self).fetch` de distância. A lista:
+O `script-src blob:` não é frouxidão: é o módulo do próprio plugin, que é
+importado de um blob. Sem ele, `default-src 'none'` bloquearia o próprio
+plugin e o sistema inteiro deixaria de funcionar. O que ele não permite é
+`https:`, que é o ponto. De quebra, a ausência de `'unsafe-eval'` e de
+`'wasm-unsafe-eval'` remove `eval`, `new Function` e a compilação de
+WebAssembly de dentro do worker — a documentação de quem escreve plugin diz
+isso, porque é uma limitação real.
 
-`fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `WebTransport`,
-`caches`, `indexedDB`, `importScripts`, `BroadcastChannel`, `Notification`,
-`navigator.sendBeacon`, e **`Worker`** — sem esse último, o plugin cria um
-worker filho, que nasce com o escopo intacto, e tudo o que veio antes não
-serviu para nada.
+**Escopo.** O bootstrap reduz o escopo global a uma **allowlist**, removendo
+tudo o mais **subindo a cadeia de protótipos** (parando antes de
+`Object.prototype`, onde moram `hasOwnProperty` e `toString`). Duas decisões,
+e as duas foram aprendidas errando.
+
+Subir a cadeia, porque `self.fetch = undefined` apenas sombreia: o original
+continua em `WorkerGlobalScope.prototype`, a um `Object.getPrototypeOf(self).fetch`
+de distância.
+
+Allowlist e não denylist, porque uma denylist perde para toda API nova que a
+plataforma entrega. Uma lista de proibidos escrita com cuidado ainda deixou
+passar `WebSocketStream` — um segundo WebSocket com outro nome, egresso de
+rede completo — e `webkitRequestFileSystemSync`, armazenamento persistente com
+ponto de entrada global que não passa por `navigator`. Enumerar o que o plugin
+**pode** ficar é a única forma que não apodrece. Na prática, o escopo cai de
+385 nomes para cerca de 125: os intrínsecos do ECMAScript, o `postMessage` que
+é a única saída, e um punhado de utilitários sem alcance nenhum — `console`,
+`crypto`, `performance`, temporizadores, `TextEncoder`/`TextDecoder`, `URL`,
+`AbortController` e os streams. Ficam de fora, entre outros, `navigator`,
+`location` e `origin`: sem eles o plugin não consegue nem montar a URL absoluta
+da própria origem.
 
 **Mediação.** A única saída é `api.fetch`, que empacota o pedido num
 `postMessage` para a página, e é a página que decide se ele acontece:
@@ -385,7 +405,12 @@ escrever.
 - `parseManifest` — aceita o mínimo válido, recusa `id` fora do padrão, `hosts`
   vazio, `hosts` com esquema ou caminho, campos ausentes
 - política de `api.fetch` — permite host declarado, recusa host não declarado,
-  `http:`, a própria origem, `localhost`, IP literal
+  `http:`, a própria origem **em qualquer porta**, `localhost`, IP literal em
+  qualquer grafia, e devolve a URL sem as credenciais que nela viessem
+- escopo do worker — verificação manual contra um build, não contra o `dev`:
+  em `dev` o worker é servido de `/src/` e não casa a regra da CSP, então o
+  `dev` é **mais frouxo** que a produção. A conferência enumera os globais que
+  sobraram e falha se aparecer nome fora da allowlist
 - `resolveStreams` — junta dois plugins, sobrevive a um que lança, sobrevive a
   um que estoura o tempo, marca a procedência de cada stream
 - `parseStreams` — aceita `infoHash`, aceita `url` `https:`, recusa `url`

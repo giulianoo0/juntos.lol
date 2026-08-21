@@ -105,6 +105,9 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
         finish(() => reject(new PluginRunError('plugin-error', `plugin failed: ${message.message}`)))
         return
       }
+      // Anything that is not a well-formed fetch is not a request at all, and
+      // must not spend the budget.
+      if (message.kind !== 'fetch' || typeof message.url !== 'string' || typeof message.id !== 'number') return
       // Counted before the policy runs, so a plugin cannot spend an unlimited
       // budget on requests that are going to be refused anyway.
       requests += 1
