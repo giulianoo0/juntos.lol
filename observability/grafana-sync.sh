@@ -122,16 +122,24 @@ ensure_folder() {
 
 push_dashboards() {
 	check_token
-	local folder dashboard payload url
+	local folder ds_uid dashboard payload url
 	folder="$(ensure_folder)"
+	ds_uid="$(datasource_uid)"
 	note "folder $folder_title ($folder)"
+	note "data source $ds_uid"
 	for dashboard in "$here"/dashboards/*.json; do
 		# version and id are dropped so the stack's own history decides them:
 		# sending a stale version is how a push fails with a version conflict
 		# on a dashboard nobody has touched.
-		payload="$(jq -c --arg folder "$folder" \
-			'{dashboard: (. + {id: null, version: null}), folderUid: $folder,
-			  overwrite: true, message: "pushed from the repository"}' "$dashboard")"
+		# The data source is pinned on the way out, the same way the alert
+		# rules are. Left as a dashboard variable it would also be one more
+		# thing that has to resolve for a reader — and a dashboard shared
+		# outside the stack resolves no variables at all, so every panel would
+		# come up empty for exactly the audience that cannot fix it.
+		payload="$(jq -c --arg folder "$folder" --arg ds "$ds_uid" \
+			'walk(if type == "string" and . == "${DATASOURCE_UID}" then $ds else . end)
+			 | {dashboard: (. + {id: null, version: null}), folderUid: $folder,
+			    overwrite: true, message: "pushed from the repository"}' "$dashboard")"
 		url="$(grafana POST /api/dashboards/db --data "$payload" | jq -r '.url')"
 		note "dashboard $(basename "$dashboard") -> ${GRAFANA_URL%/}$url"
 	done
