@@ -12,6 +12,15 @@ export interface MorphingSizeOptions {
   /** 'width' leaves the height alone, for a control that only grows sideways. */
   axis?: Axis
   /**
+   * False lands the new size at once instead of travelling to it.
+   *
+   * A change is only worth watching where there is something left to watch it
+   * happen to. Going back to a control the panel has already dissolved out of
+   * is not that: the box would spend a third of a second closing on an empty
+   * space, behind contents that finished swapping before it set off.
+   */
+  travel?: boolean
+  /**
    * The element whose size the box takes. Given one, the box also follows it
    * growing or shrinking between key changes — an error appearing under a
    * form, a list arriving — instead of only at them.
@@ -47,7 +56,7 @@ function keyframe(size: Size, axis: Axis): Keyframe {
 export function useMorphingSize(
   ref: RefObject<HTMLElement | null>,
   key: unknown,
-  { durationMs = DEFAULT_DURATION_MS, axis = 'both', contentRef }: MorphingSizeOptions = {},
+  { durationMs = DEFAULT_DURATION_MS, axis = 'both', travel = true, contentRef }: MorphingSizeOptions = {},
 ) {
   // Where the element was last asked to stop. Kept separately because the
   // element itself, mid-travel, measures as a frame of the journey rather than
@@ -80,19 +89,21 @@ export function useMorphingSize(
     travelling.current?.cancel()
     travelling.current = null
     const to = { width: element.offsetWidth, height: element.offsetHeight }
+    // Recorded either way: a change that lands at once is still where the next
+    // travel has to start from.
     settled.current = to
-    if (!from || !differs(from, to, moving)) return
+    if (!travel || !from || !differs(from, to, moving)) return
     // Reduced motion means the size change lands at once rather than travelling.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const travel = element.animate(
+    const journey = element.animate(
       [keyframe(from, moving), keyframe(to, moving)],
       { duration: durationMs, easing: EASE_MOVE },
     )
-    travelling.current = travel
+    travelling.current = journey
     // Whatever moved while this was in flight is answered here, where the box
     // is somewhere real again and can be measured. Cancelling does not run
     // this, so a travel that was replaced leaves the follow to its replacement.
-    travel.onfinish = () => { if (chasing.current) follow() }
+    journey.onfinish = () => { if (chasing.current) follow() }
   }
 
   const remember = (element: HTMLElement | null) => {
@@ -122,7 +133,7 @@ export function useMorphingSize(
     remember(contentRef?.current ?? null)
     // settle closes over refs and options that are stable for a given element.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref, key, axis, durationMs])
+  }, [ref, key, axis, durationMs, travel])
 
   useEffect(() => {
     const element = ref.current
@@ -146,5 +157,5 @@ export function useMorphingSize(
     observer.observe(pane)
     return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref, contentRef, axis, durationMs])
+  }, [ref, contentRef, axis, durationMs, travel])
 }

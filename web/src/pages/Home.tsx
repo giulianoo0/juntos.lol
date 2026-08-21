@@ -170,11 +170,19 @@ export function Home() {
         {/* Three ways in, side by side, and the middle one grows into whatever
             the chosen way still needs to ask. Nothing is stacked over anything:
             the control that was clicked becomes the panel. */}
-        <div className="source-row" data-step={shown}>
+        {/* The step being drawn, and the one asked for. They differ only while
+            a step is dissolving, which is the one moment the row has to know
+            where it is heading rather than where it is. */}
+        <div className="source-row" data-step={shown} data-next={step}>
           <button className="source-side primary-button raised" onClick={() => inputRef.current?.click()} {...aside}>
             {t('home.choose')}
           </button>
-          <MorphPanel className="source-morph" sizeKey={shown} morphing={morphing}>
+          {/* The way in is the pill growing into the panel. The way out is not
+              the reverse: by the time the box could start back the panel has
+              already dissolved, so it would be a third of a second of an empty
+              box closing on nothing. Going back to the pill lands at once,
+              under the dissolve that is already covering it. */}
+          <MorphPanel className="source-morph" sizeKey={shown} morphing={morphing} travel={shown !== 'drop'}>
               {shown === 'drop' ? (
                 // Bare on purpose: the pill it looks like is the panel's own
                 // border and background, so opening it grows that same box

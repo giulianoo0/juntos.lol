@@ -6,6 +6,8 @@ interface MorphPanelProps {
   sizeKey: unknown
   /** True while the outgoing step is dissolving, which is what the blur hangs off. */
   morphing: boolean
+  /** False for a step the panel dissolves out of rather than travels to; see MorphingSizeOptions. */
+  travel?: boolean
   className?: string
   children: ReactNode
 }
@@ -23,10 +25,10 @@ interface MorphPanelProps {
  * Callers keep the step machine (`useMorphingStep`) so they can decide what
  * each step renders; this only draws the panel around it.
  */
-export function MorphPanel({ sizeKey, morphing, className = '', children }: MorphPanelProps) {
+export function MorphPanel({ sizeKey, morphing, travel = true, className = '', children }: MorphPanelProps) {
   const boxRef = useRef<HTMLDivElement>(null)
   const paneRef = useRef<HTMLDivElement>(null)
-  useMorphingSize(boxRef, sizeKey, { contentRef: paneRef })
+  useMorphingSize(boxRef, sizeKey, { contentRef: paneRef, travel })
   return (
     <div className={`morph-box ${className}`.trim()} ref={boxRef}>
       <div className="morph-pane morph-fade" ref={paneRef} data-morphing={morphing}>
