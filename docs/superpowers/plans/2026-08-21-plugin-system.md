@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Tirar o Torrentio de dentro do repositório e pôr no lugar um ponto de extensão: plugins de terceiros, instalados pelo host, que resolvem fontes de mídia por torrent ou por URL direta.
+**Goal:** Tirar o Torrentio de dentro do repositório e pôr no lugar um ponto de extensão: plugins de terceiros, instalados pelo host, que resolvem fontes de mídia por torrent ou por URL direta — e, ao lado dele, o Plex como fonte nativa.
 
-**Architecture:** Um plugin é um módulo ES com `manifest` e `streams`, executado num Web Worker de onde todo global de rede foi removido; a única saída é `api.fetch`, mediado pela página contra os hosts que o manifest declarou. Instalados vivem no IndexedDB do navegador do host. O que o plugin devolve é o formato de stream do Stremio, que o parser existente já entende, acrescido do caso de URL direta — e para esse caso o servidor ganha uma ingestão própria, com guarda de SSRF, modelada na ingestão de torrent que já existe.
+**Architecture:** Um plugin é um módulo ES com `manifest` e `streams`, executado num Web Worker servido com uma CSP própria e de onde todo global de rede foi removido — inclusive pela cadeia de protótipos, e inclusive `Worker`. Nenhum código de plugin roda na página, nem para ler o manifest. A única saída é `api.fetch`, mediado pela página contra os hosts que o manifest declarou, aplicado também à URL onde a resposta chegou. Instalados vivem no IndexedDB do navegador do host, chaveados pela origem de onde vieram. O que o plugin devolve é o formato de stream do Stremio, que o parser existente já entende, acrescido do caso de URL direta — e para esse caso o servidor ganha uma ingestão própria, com guarda de SSRF, modelada na ingestão de torrent que já existe.
+
+O Plex entra pelo outro lado: fonte nativa, fora do sistema de plugins, porque precisa de pareamento, credencial guardada e descoberta de servidor — coisas que não se dá a todo plugin. Os bytes dele vão para a sala pelo servidor quando a conexão vencedora é pública, e pelo navegador do host quando é de rede local, reusando a bomba tus que o caminho de torrent já tem.
 
 **Tech Stack:** React 18, TypeScript, Vite 8, vitest, `fake-indexeddb` (novo), Go 1.x com gin, Astro + Starlight + `toolbeam-docs-theme` (repo separado).
 
@@ -103,12 +105,15 @@ const ID_PATTERN = /^[a-z0-9-]{1,64}$/
 // A bare hostname: labels of letters, digits and hyphens joined by dots. No
 // scheme, no port, no path — the policy compares hostnames, and anything
 // carrying more than a hostname would compare against something that never
-// appears on the other side.
+// appears on the other side. At least one dot is required, which rules out
+// single-label names — there is no addon on the public internet at `intranet`,
+// and allowing it only widens what a declared host can reach.
 const HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
 
 const MAX_NAME = 64
 const MAX_VERSION = 32
 const MAX_HOSTS = 16
+const MAX_HOST_LENGTH = 253
 
 function text(value: unknown, field: string, max: number): string {
   if (typeof value !== 'string' || value.trim() === '' || value.length > max) {
@@ -131,7 +136,9 @@ export function parseManifest(value: unknown): PluginManifest {
     throw new Error('plugin manifest: hosts must be a non-empty list')
   }
   const hosts = raw.hosts.map((host) => {
-    if (typeof host !== 'string' || !HOST_PATTERN.test(host.toLowerCase())) {
+    // 253 is the longest a hostname can legally be. Without a ceiling here,
+    // `hosts` is the one field with no length limit at all.
+    if (typeof host !== 'string' || host.length > MAX_HOST_LENGTH || !HOST_PATTERN.test(host.toLowerCase())) {
       throw new Error('plugin manifest: hosts must be bare hostnames')
     }
     return host.toLowerCase()
@@ -285,7 +292,7 @@ export function checkFetchUrl(raw: string, hosts: string[], selfOrigin: string):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd web && npx vitest run src/plugins/policy.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -311,8 +318,9 @@ O worker de verdade entra na Task 4. Aqui fica a lógica que decide: tetos de te
   - `type WorkerReply = { id: number; ok: boolean; status: number; text: string }`
   - `interface PluginHandle { post(reply: WorkerReply): void; terminate(): void }`
   - `interface SpawnOptions { onMessage(message: WorkerRequest): void }`
+  - `type FetchResult = { ok: boolean; status: number; text: string; finalUrl?: string }`
   - `runPlugin(options: RunPluginOptions): Promise<unknown>` onde
-    `RunPluginOptions = { hosts: string[]; selfOrigin: string; spawn(options: SpawnOptions): PluginHandle; fetchUrl(url: URL): Promise<{ ok: boolean; status: number; text: string }>; timeoutMs?: number; maxRequests?: number }`
+    `RunPluginOptions = { hosts: string[]; selfOrigin: string; spawn(options: SpawnOptions): PluginHandle; fetchUrl(url: URL, signal: AbortSignal): Promise<FetchResult>; timeoutMs?: number; maxRequests?: number }`
   - `PluginRunError` com `.reason: 'timeout' | 'too-many-requests' | 'plugin-error'`
 
 - [ ] **Step 1: Write the failing test**
@@ -394,6 +402,53 @@ describe('runPlugin', () => {
     vi.useRealTimers()
   })
 
+  it('refuses a body that a declared host redirected in from somewhere else', async () => {
+    const worker = fakeWorker()
+    const fetchUrl = vi.fn().mockResolvedValue({
+      ok: true, status: 200, text: 'secret', finalUrl: 'https://evil.com/x',
+    })
+    const promise = runPlugin({ ...base, spawn: worker.spawn, fetchUrl })
+    worker.emit({ kind: 'fetch', id: 4, url: 'https://a.com/x' })
+    await vi.waitFor(() => expect(worker.replies).toHaveLength(1))
+    expect(worker.replies[0]).toMatchObject({ id: 4, ok: false, status: 0 })
+    expect(worker.replies[0].text).not.toContain('secret')
+    worker.emit({ kind: 'done', streams: [] })
+    await promise
+  })
+
+  it('answers a request that arrived before spawn returned', async () => {
+    // A spawn that drives onMessage synchronously used to post into a null
+    // handle and lose the reply for ever.
+    const replies: WorkerReply[] = []
+    let onMessage: ((message: WorkerRequest) => void) | null = null
+    const spawn = (options: SpawnOptions) => {
+      onMessage = options.onMessage
+      onMessage({ kind: 'fetch', id: 1, url: 'https://a.com/x' })
+      return { post: (reply: WorkerReply) => replies.push(reply), terminate: () => undefined }
+    }
+    const promise = runPlugin({ ...base, spawn, fetchUrl: vi.fn().mockResolvedValue({ ok: true, status: 200, text: 'x' }) })
+    await vi.waitFor(() => expect(replies).toHaveLength(1))
+    onMessage?.({ kind: 'done', streams: [] })
+    await expect(promise).resolves.toEqual([])
+  })
+
+  it('aborts requests still in flight when the plugin is killed', async () => {
+    vi.useFakeTimers()
+    const worker = fakeWorker()
+    let seen: AbortSignal | null = null
+    const fetchUrl = vi.fn((_url: URL, signal: AbortSignal) => {
+      seen = signal
+      return new Promise<never>(() => undefined)
+    })
+    const promise = runPlugin({ ...base, spawn: worker.spawn, fetchUrl, timeoutMs: 1_000 })
+    worker.emit({ kind: 'fetch', id: 1, url: 'https://a.com/x' })
+    const assertion = expect(promise).rejects.toMatchObject({ reason: 'timeout' })
+    await vi.advanceTimersByTimeAsync(1_001)
+    await assertion
+    expect(seen?.aborted).toBe(true)
+    vi.useRealTimers()
+  })
+
   it('surfaces an error the plugin threw', async () => {
     const worker = fakeWorker()
     const promise = runPlugin({ ...base, spawn: worker.spawn, fetchUrl: vi.fn() })
@@ -436,11 +491,25 @@ export interface SpawnOptions {
   onMessage(message: WorkerRequest): void
 }
 
+/**
+ * What the page reports back about a request it performed.
+ *
+ * `finalUrl` is where the response actually came from. It matters because a
+ * declared host is free to answer 302 and send the page somewhere else, and a
+ * policy that only inspects the request is a pre-flight policy.
+ */
+export interface FetchResult {
+  ok: boolean
+  status: number
+  text: string
+  finalUrl?: string
+}
+
 export interface RunPluginOptions {
   hosts: string[]
   selfOrigin: string
   spawn(options: SpawnOptions): PluginHandle
-  fetchUrl(url: URL): Promise<{ ok: boolean; status: number; text: string }>
+  fetchUrl(url: URL, signal: AbortSignal): Promise<FetchResult>
   timeoutMs?: number
   maxRequests?: number
 }
@@ -470,11 +539,24 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
     let settled = false
     let requests = 0
     let handle: PluginHandle | null = null
+    // Requests answered before `spawn` returns would be posted into a null
+    // handle and lost in silence. They wait here instead.
+    const outbox: WorkerReply[] = []
+    // Everything the page has in flight for this plugin, cancelled together
+    // with the worker. Without it the time ceiling kills the worker and the
+    // requests it started keep running.
+    const inflight = new AbortController()
+
+    const post = (reply: WorkerReply) => {
+      if (handle) handle.post(reply)
+      else outbox.push(reply)
+    }
 
     const finish = (run: () => void) => {
       if (settled) return
       settled = true
       window.clearTimeout(timer)
+      inflight.abort()
       handle?.terminate()
       run()
     }
@@ -503,19 +585,31 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
         // A refusal is answered rather than thrown: a plugin that asks for
         // something it may not have should get to handle that, the same as it
         // would handle a server saying no.
-        handle?.post({ id: message.id, ok: false, status: 0, text: `blocked: ${decision.reason}` })
+        post({ id: message.id, ok: false, status: 0, text: `blocked: ${decision.reason}` })
         return
       }
-      fetchUrl(decision.url)
-        .then((response) => {
-          if (!settled) handle?.post({ id: message.id, ...response })
+      fetchUrl(decision.url, inflight.signal)
+        .then(({ finalUrl, ...response }) => {
+          if (settled) return
+          // The allowlist applies to where the response came from, not only to
+          // where the request went.
+          const landed = finalUrl ? checkFetchUrl(finalUrl, hosts, selfOrigin) : null
+          if (landed && !landed.ok) {
+            post({ id: message.id, ok: false, status: 0, text: `blocked: redirect-${landed.reason}` })
+            return
+          }
+          post({ id: message.id, ...response })
         })
         .catch((error: unknown) => {
-          if (!settled) handle?.post({ id: message.id, ok: false, status: 0, text: String(error) })
+          if (!settled) post({ id: message.id, ok: false, status: 0, text: String(error) })
         })
     }
 
     handle = spawn({ onMessage })
+    // `spawn` may have called `onMessage` synchronously, in which case the
+    // run is already over or there are replies waiting.
+    if (settled) handle.terminate()
+    else for (const reply of outbox.splice(0)) handle.post(reply)
   })
 }
 ```
@@ -523,7 +617,7 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd web && npx vitest run src/plugins/runtime.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -534,19 +628,37 @@ git commit -m "feat: run a plugin under a time and request budget"
 
 ---
 
-### Task 4: O worker e o `spawn` real
+### Task 4: O worker endurecido e o `spawn` real
 
-Este é o único pedaço sem teste automático: jsdom não tem `Worker`, e um teste de browser não está montado neste repositório. Ele é mantido fino de propósito — toda a decisão vive na Task 3 — e é verificado à mão no passo 4.
+Este é o único pedaço sem teste automático: jsdom não tem `Worker`, e um ambiente de browser não está montado neste repositório. Ele é mantido fino de propósito — toda a decisão vive na Task 3 — e é verificado à mão no passo 6.
+
+É também o pedaço onde um erro custa mais caro, então leia o comentário de cabeçalho do worker antes de mexer em qualquer linha dele.
 
 **Files:**
 - Create: `web/src/plugins/worker.ts`
 - Create: `web/src/plugins/spawn.ts`
+- Modify: `web/vite.config.ts`
 
 **Interfaces:**
-- Consumes: `PluginHandle`, `SpawnOptions`, `WorkerReply`, `WorkerRequest` da Task 3.
-- Produces: `spawnPluginWorker(source: string): (options: SpawnOptions) => PluginHandle` e `pageFetch(url: URL): Promise<{ ok: boolean; status: number; text: string }>`.
+- Consumes: `PluginHandle`, `SpawnOptions`, `WorkerReply`, `WorkerRequest`, `FetchResult` da Task 3.
+- Produces:
+  - `spawnPluginWorker(source: string, target: unknown): (options: SpawnOptions) => PluginHandle`
+  - `spawnManifestReader(source: string): (options: SpawnOptions) => PluginHandle`
+  - `pageFetch(url: URL, signal: AbortSignal): Promise<FetchResult>`
 
-- [ ] **Step 1: Write the worker bootstrap**
+- [ ] **Step 1: Let Vite build the worker as a module**
+
+Em `web/vite.config.ts`, acrescente ao objeto de configuração:
+
+```ts
+  // The plugin worker dynamically imports the plugin's own module, and a
+  // classic worker cannot do that. Vite's build default is 'iife', which
+  // means this works in `npm run dev` and breaks after deploy — the worst
+  // shape a bug can have.
+  worker: { format: 'es' },
+```
+
+- [ ] **Step 2: Write the worker bootstrap**
 
 ```ts
 // web/src/plugins/worker.ts
@@ -555,38 +667,64 @@ Este é o único pedaço sem teste automático: jsdom não tem `Worker`, e um te
 /**
  * The bootstrap a plugin wakes up inside.
  *
- * Everything that reaches the network or storage is removed from the global
- * scope before the plugin's own module is loaded, so what the plugin gets is
- * a scope that can compute and nothing else. Its one way out is `api.fetch`,
- * which is a message to the page — and the page decides.
+ * Three layers, and no single one of them is enough.
  *
- * Known limit, stated plainly because the documentation states it too: a
- * dynamic `import()` of a remote module is the module loader, not `fetch`,
- * and cannot be removed from here. Containment ends there; the boundary this
- * enforces is that the plugin never reaches this site's own origin, its API,
- * or its storage.
+ * 1. The header. This script is served with
+ *    `Content-Security-Policy: default-src 'none'; connect-src 'none'`
+ *    (Task 16). It is the only layer plugin code cannot reach around by
+ *    construction, and the only thing that stops a dynamic `import()` of a
+ *    remote module — which, from in here, nothing can remove.
+ *
+ * 2. The scope, below. Note that it deletes along the prototype chain rather
+ *    than assigning `undefined` to `self`. `fetch` and friends live on
+ *    `WorkerGlobalScope.prototype`, so an own-property assignment only
+ *    shadows them, and `Object.getPrototypeOf(self).fetch` walks straight
+ *    past it. `Worker` is on the list for the same class of reason: a nested
+ *    worker is born with an untouched scope, and it would make everything
+ *    above pointless.
+ *
+ * 3. The page. `api.fetch` is a message, and the page decides — including
+ *    where a redirect landed. See runtime.ts.
+ *
+ * What is deliberately NOT claimed: that a plugin cannot compute whatever it
+ * likes, or that it cannot return a magnet the room will open. Trust ends
+ * with whoever wrote the plugin. What is enforced is that it never reaches
+ * this site's own origin, its API, or its storage.
  */
-const scope = self as unknown as Record<string, unknown>
-for (const name of [
-  'fetch', 'XMLHttpRequest', 'importScripts', 'WebSocket', 'EventSource',
-  'caches', 'indexedDB', 'Notification', 'BroadcastChannel',
-]) {
+
+const BLOCKED = [
+  'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'WebTransport',
+  'caches', 'indexedDB', 'importScripts', 'BroadcastChannel', 'Notification',
+  'Worker', 'SharedWorker', 'RTCPeerConnection',
+]
+
+for (const name of BLOCKED) {
+  // Delete wherever it actually lives, not only where it appears to.
+  for (let object: object | null = self; object; object = Object.getPrototypeOf(object) as object | null) {
+    if (!Object.prototype.hasOwnProperty.call(object, name)) continue
+    try {
+      delete (object as Record<string, unknown>)[name]
+    } catch {
+      // Non-configurable: the defineProperty below is the second attempt.
+    }
+  }
   try {
-    scope[name] = undefined
+    Object.defineProperty(self, name, { value: undefined, writable: false, configurable: false })
   } catch {
-    // A non-configurable global is left alone; the page-side policy is what
-    // actually decides, and it does not trust this list to be complete.
+    // Nothing more to do from in here. The CSP header is what this rests on.
   }
 }
 try {
-  ;(navigator as unknown as Record<string, unknown>).sendBeacon = undefined
+  delete (navigator as unknown as Record<string, unknown>).sendBeacon
 } catch { /* see above */ }
 
-interface PendingRequest {
-  resolve(value: { ok: boolean; status: number; text: string }): void
+interface Reply {
+  ok: boolean
+  status: number
+  text: string
 }
 
-const pending = new Map<number, PendingRequest>()
+const pending = new Map<number, (reply: Reply) => void>()
 let nextId = 0
 
 const api = {
@@ -594,14 +732,12 @@ const api = {
     const id = (nextId += 1)
     return new Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }>(
       (resolve) => {
-        pending.set(id, {
-          resolve: (reply) => resolve({
-            ok: reply.ok,
-            status: reply.status,
-            text: () => Promise.resolve(reply.text),
-            json: () => Promise.resolve(JSON.parse(reply.text) as unknown),
-          }),
-        })
+        pending.set(id, (reply) => resolve({
+          ok: reply.ok,
+          status: reply.status,
+          text: () => Promise.resolve(reply.text),
+          json: () => Promise.resolve(JSON.parse(reply.text) as unknown),
+        }))
         self.postMessage({ kind: 'fetch', id, url })
       },
     )
@@ -611,21 +747,28 @@ const api = {
 self.onmessage = (event: MessageEvent) => {
   const data = event.data as Record<string, unknown>
   if (data.kind === 'reply') {
-    const entry = pending.get(data.id as number)
-    if (!entry) return
+    const resolve = pending.get(data.id as number)
+    if (!resolve) return
     pending.delete(data.id as number)
-    entry.resolve(data as unknown as { ok: boolean; status: number; text: string })
+    resolve(data as unknown as Reply)
     return
   }
   if (data.kind !== 'start') return
   void (async () => {
     try {
       const module = await import(/* @vite-ignore */ data.pluginUrl as string) as {
+        manifest?: unknown
         streams?: (target: unknown, api: unknown) => Promise<unknown>
       }
+      // Importing already ran the plugin's top level. That it happened in
+      // here and not in the page is the whole point of reading the manifest
+      // through this path.
+      if (data.op === 'manifest') {
+        self.postMessage({ kind: 'done', streams: module.manifest })
+        return
+      }
       if (typeof module.streams !== 'function') throw new Error('plugin has no streams export')
-      const streams = await module.streams(data.target, api)
-      self.postMessage({ kind: 'done', streams })
+      self.postMessage({ kind: 'done', streams: await module.streams(data.target, api) })
     } catch (error) {
       self.postMessage({ kind: 'error', message: error instanceof Error ? error.message : String(error) })
     }
@@ -633,22 +776,21 @@ self.onmessage = (event: MessageEvent) => {
 }
 ```
 
-- [ ] **Step 2: Write the page-side spawn**
+- [ ] **Step 3: Write the page-side spawn**
 
 ```ts
 // web/src/plugins/spawn.ts
-import type { PluginHandle, SpawnOptions, WorkerRequest } from './runtime'
+import type { FetchResult, PluginHandle, SpawnOptions, WorkerRequest } from './runtime'
 
-/**
- * Builds the `spawn` the runtime asks for: a worker running this plugin's
- * source, already told which title to resolve.
- */
-export function spawnPluginWorker(source: string, target: unknown) {
+/** How much of a response body is worth reading. Generous for addon JSON. */
+const MAX_BODY_BYTES = 4 << 20
+
+function start(source: string, message: Record<string, unknown>) {
   return (options: SpawnOptions): PluginHandle => {
     const pluginUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
     worker.onmessage = (event: MessageEvent) => options.onMessage(event.data as WorkerRequest)
-    worker.postMessage({ kind: 'start', pluginUrl, target })
+    worker.postMessage({ kind: 'start', pluginUrl, ...message })
     return {
       post: (reply) => worker.postMessage({ kind: 'reply', ...reply }),
       terminate: () => {
@@ -659,47 +801,129 @@ export function spawnPluginWorker(source: string, target: unknown) {
   }
 }
 
+/** A worker running this plugin's source, told which title to resolve. */
+export function spawnPluginWorker(source: string, target: unknown) {
+  return start(source, { op: 'streams', target })
+}
+
+/**
+ * A worker that imports the plugin and reports its manifest.
+ *
+ * Reading a manifest means running the module's top level, and running it in
+ * the page would hand the plugin localStorage, the plugin registry itself and
+ * a same-origin `/api`. Installing and updating both come through here.
+ */
+export function spawnManifestReader(source: string) {
+  return start(source, { op: 'manifest' })
+}
+
 /**
  * The page performing what a plugin asked for. Only reached after the policy
  * said yes; `no-store` and `omit` keep this out of the cache and stop any
  * cookie of ours from riding along.
+ *
+ * `finalUrl` travels back so the runtime can apply the allowlist to where the
+ * response came from — following the redirect and then checking is the only
+ * order available to a browser, which will not tell us the hops.
  */
-export async function pageFetch(url: URL): Promise<{ ok: boolean; status: number; text: string }> {
-  const response = await fetch(url.toString(), { credentials: 'omit', cache: 'no-store', redirect: 'follow' })
-  return { ok: response.ok, status: response.status, text: await response.text() }
+export async function pageFetch(url: URL, signal: AbortSignal): Promise<FetchResult> {
+  const response = await fetch(url.toString(), {
+    credentials: 'omit', cache: 'no-store', redirect: 'follow', signal,
+  })
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: await readCapped(response, signal),
+    finalUrl: response.url || url.toString(),
+  }
+}
+
+/**
+ * Reads at most MAX_BODY_BYTES. `await response.text()` has no ceiling, and
+ * 32 requests times an unbounded body is the host's tab downloading gigabytes
+ * on a plugin's say-so.
+ */
+async function readCapped(response: Response, signal: AbortSignal): Promise<string> {
+  if (!response.body) return response.text()
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let out = ''
+  let seen = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done || signal.aborted) break
+      seen += value.byteLength
+      if (seen > MAX_BODY_BYTES) {
+        out += decoder.decode(value.slice(0, value.byteLength - (seen - MAX_BODY_BYTES)))
+        break
+      }
+      out += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    void reader.cancel().catch(() => undefined)
+  }
+  return out
 }
 ```
 
-- [ ] **Step 3: Type-check**
+- [ ] **Step 4: Type-check and lint**
 
-Run: `cd web && npx tsc -b`
+Run: `cd web && npx tsc -b && npx oxlint src`
 Expected: sem erros.
 
-- [ ] **Step 4: Verify by hand in the browser**
+- [ ] **Step 5: Verify the sandbox by hand**
 
 Rode `cd web && npm run dev`, abra o console em `http://localhost:5173` e cole:
 
 ```js
-const src = `export const manifest = { id:'t', name:'T', version:'1', hosts:['httpbin.org'] }
+const { runPlugin } = await import('/src/plugins/runtime.ts')
+const { spawnPluginWorker, pageFetch } = await import('/src/plugins/spawn.ts')
+const run = (src, hosts = ['httpbin.org']) => runPlugin({
+  hosts, selfOrigin: location.origin,
+  spawn: spawnPluginWorker(src, { type: 'movie', id: 'tt0111161' }), fetchUrl: pageFetch,
+})
+
+// 1. O caminho feliz.
+await run(`export const manifest = { id:'t', name:'T', version:'1', hosts:['httpbin.org'] }
 export async function streams(target, api) {
   const r = await api.fetch('https://httpbin.org/json')
   return [{ infoHash: '0'.repeat(40), title: target.id + ':' + r.status, name: 'demo' }]
-}`
-const { runPlugin } = await import('/src/plugins/runtime.ts')
-const { spawnPluginWorker, pageFetch } = await import('/src/plugins/spawn.ts')
-await runPlugin({
-  hosts: ['httpbin.org'], selfOrigin: location.origin,
-  spawn: spawnPluginWorker(src, { type: 'movie', id: 'tt0111161' }), fetchUrl: pageFetch,
-})
+}`)
+// Esperado: um array cujo title termina em ":200".
+
+// 2. Host não declarado.
+await run(`export const manifest = {}
+export async function streams(_t, api) { return [(await api.fetch('https://httpbin.org/json')).status] }`, ['outra.com'])
+// Esperado: [0] — a política recusou sem buscar.
+
+// 3. A fuga pelo protótipo. ESTE É O TESTE QUE IMPORTA.
+await run(`export const manifest = {}
+export async function streams() {
+  const f = Object.getPrototypeOf(self).fetch ?? self.constructor?.prototype?.fetch
+  return [typeof f]
+}`)
+// Esperado: ["undefined"]. Se vier ["function"], o worker não está fechado.
+
+// 4. O worker aninhado.
+await run(`export const manifest = {}
+export async function streams() { return [typeof Worker] }`)
+// Esperado: ["undefined"].
 ```
 
-Esperado: um array com um objeto cujo `title` termina em `:200`. Depois troque `hosts` para `['outra.com']` e confirme que o `status` volta `0` e o texto começa com `blocked:`.
+Confirme os quatro. O terceiro e o quarto são a razão de esta task existir na forma em que está.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Verify the production build too**
+
+Run: `cd web && npm run build && npm run preview`
+
+Repita o caso 1 do passo anterior contra a porta do `preview`. O `dev` usa módulos nativos e o build não; um worker que só funciona em `dev` é um bug que só aparece depois do deploy.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add web/src/plugins/worker.ts web/src/plugins/spawn.ts
-git commit -m "feat: execute plugins in a worker stripped of network globals"
+git add web/src/plugins/worker.ts web/src/plugins/spawn.ts web/vite.config.ts
+git commit -m "feat: run plugins in a worker with no path to the network"
 ```
 
 ---
@@ -719,6 +943,9 @@ git commit -m "feat: execute plugins in a worker stripped of network globals"
   - `type PluginOrigin = { kind: 'file'; fileName: string; updateUrl: string | null } | { kind: 'git'; updateUrl: string; commit: string }`
   - `interface PendingUpdate { source: string; sha256: string; manifest: PluginManifest; commit: string; newHosts: string[] }`
   - `listPlugins(): Promise<InstalledPlugin[]>`, `putPlugin(plugin: InstalledPlugin): Promise<void>`, `getPlugin(id: string): Promise<InstalledPlugin | null>`, `deletePlugin(id: string): Promise<void>`, `sha256Hex(source: string): Promise<string>`
+  - `originKey(origin: PluginOrigin): string` e `originId(origin: PluginOrigin): Promise<string>` — a chave do registro, derivada da origem
+
+O campo `id` de `InstalledPlugin` **não é** `manifest.id`. É o SHA-256 da origem. Se fosse o do manifest, instalar um repositório qualquer que declarasse `id: 'torrentio'` sobrescreveria o Torrentio instalado — origem, hosts aprovados e código — sem dizer nada. `manifest.id` é rótulo; a origem é identidade.
 
 - [ ] **Step 1: Install the test double for IndexedDB**
 
@@ -731,14 +958,24 @@ Depois acrescente ao topo de `web/src/test/setup.ts`:
 ```ts
 // jsdom has no IndexedDB, and the plugin registry lives in one.
 import 'fake-indexeddb/auto'
+import { webcrypto } from 'node:crypto'
+
+// jsdom ships Crypto without SubtleCrypto, and the registry identifies a
+// plugin's version by SHA-256. Without this, five tests across three files
+// fail on `crypto.subtle` being undefined.
+if (!globalThis.crypto?.subtle) {
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto })
+}
 ```
+
+Confirme que faltava mesmo, antes de acreditar: `node -e "const {JSDOM}=require('jsdom');const w=new JSDOM('').window;console.log(!!w.crypto, !!w.crypto?.subtle)"` imprime `true false`.
 
 - [ ] **Step 2: Write the failing test**
 
 ```ts
 // web/src/plugins/store.test.ts
 import { beforeEach, describe, expect, it } from 'vitest'
-import { deletePlugin, getPlugin, listPlugins, putPlugin, sha256Hex, type InstalledPlugin } from './store'
+import { deletePlugin, getPlugin, listPlugins, originId, originKey, putPlugin, sha256Hex, type InstalledPlugin } from './store'
 
 const sample = (id: string, enabled = true): InstalledPlugin => ({
   id,
@@ -766,11 +1003,22 @@ describe('the plugin registry', () => {
     expect(await getPlugin('torrentio')).toEqual(sample('torrentio'))
   })
 
-  it('overwrites on a second put with the same id', async () => {
+  it('replaces a plugin when the same record is put again', async () => {
     await putPlugin(sample('torrentio'))
     await putPlugin(sample('torrentio', false))
     expect(await listPlugins()).toHaveLength(1)
     expect((await getPlugin('torrentio'))?.enabled).toBe(false)
+  })
+
+  it('keeps two origins apart even when they claim the same manifest id', async () => {
+    // The whole reason the record is keyed by origin: a repo that declares
+    // `id: 'torrentio'` must not land on top of the installed Torrentio.
+    const mine = { kind: 'git' as const, updateUrl: 'https://github.com/me/ss-plugin-torrentio', commit: 'a' }
+    const theirs = { kind: 'git' as const, updateUrl: 'https://github.com/someone/evil', commit: 'b' }
+    expect(originKey(mine)).not.toBe(originKey(theirs))
+    await putPlugin({ ...sample('x'), id: await originId(mine), origin: mine })
+    await putPlugin({ ...sample('x'), id: await originId(theirs), origin: theirs })
+    expect(await listPlugins()).toHaveLength(2)
   })
 
   it('removes a plugin', async () => {
@@ -857,9 +1105,28 @@ function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRe
   return open().then((db) => new Promise<T>((resolve, reject) => {
     const transaction = db.transaction(STORE, mode)
     const request = work(transaction.objectStore(STORE))
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error ?? new Error('plugin registry request failed'))
+    let result: T
+    request.onsuccess = () => { result = request.result }
+    // Resolving on the request rather than the transaction would call a write
+    // successful before it committed.
+    transaction.oncomplete = () => resolve(result)
+    transaction.onabort = transaction.onerror = () =>
+      reject(transaction.error ?? request.error ?? new Error('plugin registry request failed'))
   }))
+}
+
+/**
+ * A plugin's identity: where it came from, never what it calls itself.
+ *
+ * Locked at install and never rewritten, which is what makes an update
+ * unable to redirect its own update channel — the `known_hosts` argument.
+ */
+export function originKey(origin: PluginOrigin): string {
+  return origin.kind === 'git' ? `git:${origin.updateUrl}` : `file:${origin.fileName}`
+}
+
+export function originId(origin: PluginOrigin): Promise<string> {
+  return sha256Hex(originKey(origin))
 }
 
 export function listPlugins(): Promise<InstalledPlugin[]> {
@@ -889,7 +1156,7 @@ export async function sha256Hex(source: string): Promise<string> {
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `cd web && npx vitest run src/plugins/store.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -907,9 +1174,9 @@ git commit -m "feat: keep installed plugins in an indexeddb registry"
 - Test: `web/src/plugins/install.test.ts`
 
 **Interfaces:**
-- Consumes: `parseManifest` (Task 1), `sha256Hex`/`InstalledPlugin`/`PluginOrigin` (Task 5).
+- Consumes: `parseManifest` (Task 1), `runPlugin`/`PluginRunError` (Task 3), `spawnManifestReader` (Task 4), `sha256Hex`/`originId`/`InstalledPlugin`/`PluginOrigin` (Task 5).
 - Produces:
-  - `readManifestFromSource(source: string): Promise<PluginManifest>` — importa o módulo por blob URL e lê o `manifest` exportado.
+  - `readManifestFromSource(source: string): Promise<PluginManifest>` — lê o `manifest` **executando o módulo no worker endurecido**, nunca na página.
   - `gitSourceUrls(repoUrl: string): { rawUrl: string; commitApi: string }`
   - `fetchGitPlugin(repoUrl: string, deps?: InstallDeps): Promise<{ source: string; commit: string }>`
   - `buildInstall(source: string, origin: PluginOrigin, deps?: InstallDeps): Promise<InstalledPlugin>`
@@ -972,6 +1239,14 @@ describe('buildInstall', () => {
     expect(plugin.sha256).toHaveLength(64)
   })
 
+  it('keys the record by origin, not by the id the manifest claims', async () => {
+    const asFile = await buildInstall('src', { kind: 'file', fileName: 'p.js', updateUrl: null }, { readManifest })
+    const asRepo = await buildInstall('src', { kind: 'git', updateUrl: 'https://github.com/u/r', commit: 'c' }, { readManifest })
+    expect(asFile.id).not.toBe(asRepo.id)
+    expect(asFile.id).not.toBe(manifest.id)
+    expect(asFile.manifest.id).toBe('torrentio')
+  })
+
   it('carries a file manifest updateUrl into the origin, so a dropped file can still update', async () => {
     const withHome = { ...manifest, updateUrl: 'https://github.com/user/repo' }
     const plugin = await buildInstall('src', { kind: 'file', fileName: 'p.js', updateUrl: null }, {
@@ -992,7 +1267,9 @@ Expected: FAIL — módulo não encontrado.
 ```ts
 // web/src/plugins/install.ts
 import { parseManifest, type PluginManifest } from './manifest'
-import { sha256Hex, type InstalledPlugin, type PluginOrigin } from './store'
+import { runPlugin } from './runtime'
+import { pageFetch, spawnManifestReader } from './spawn'
+import { originId, sha256Hex, type InstalledPlugin, type PluginOrigin } from './store'
 
 export interface InstallDeps {
   fetch?: typeof globalThis.fetch
@@ -1003,19 +1280,31 @@ export interface InstallDeps {
 const PLUGIN_FILE = 'plugin.js'
 
 /**
- * Loads the module far enough to read what it says about itself. The plugin's
- * top level runs here, in the page — which is why a manifest is all that is
- * read, and why `streams` is never called outside the worker.
+ * Reads what a module says about itself.
+ *
+ * Reading a manifest means running the module's top level, and that happens
+ * in the worker, never here. Doing it in the page would hand the plugin
+ * `localStorage`, the registry of every other installed plugin, and a
+ * same-origin `/api` — and since updates run unattended on every page load
+ * over code freshly pulled from a repository, a compromised plugin repo would
+ * get all of that without a single click.
+ *
+ * `hosts: []` is not an oversight. Reading a manifest needs no network at
+ * all, so every `api.fetch` this module attempts is refused.
  */
 export async function readManifestFromSource(source: string): Promise<PluginManifest> {
-  const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
-  try {
-    const module = await import(/* @vite-ignore */ url) as { manifest?: unknown }
-    return parseManifest(module.manifest)
-  } finally {
-    URL.revokeObjectURL(url)
-  }
+  const raw = await runPlugin({
+    hosts: [],
+    selfOrigin: globalThis.location?.origin ?? '',
+    spawn: spawnManifestReader(source),
+    fetchUrl: pageFetch,
+    timeoutMs: MANIFEST_TIMEOUT_MS,
+  })
+  return parseManifest(raw)
 }
+
+/** Importing a module and reading one object is not a 15-second job. */
+const MANIFEST_TIMEOUT_MS = 5_000
 
 export function gitSourceUrls(repoUrl: string): { rawUrl: string; commitApi: string } {
   let url: URL
@@ -1069,7 +1358,8 @@ export async function buildInstall(source: string, origin: PluginOrigin, deps: I
     ? { ...origin, updateUrl: origin.updateUrl ?? manifest.updateUrl }
     : origin
   return {
-    id: manifest.id,
+    // Keyed by origin, not by what the manifest calls itself.
+    id: await originId(resolved),
     manifest,
     source,
     sha256: await sha256Hex(source),
@@ -1085,7 +1375,7 @@ export async function buildInstall(source: string, origin: PluginOrigin, deps: I
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd web && npx vitest run src/plugins/install.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1801,7 +2091,7 @@ git commit -m "feat: resolve sources through installed plugins"
 - Modify: `web/src/i18n/pt-BR.ts`, `web/src/i18n/en.ts`
 
 **Interfaces:**
-- Consumes: `listPlugins`/`putPlugin`/`deletePlugin`/`InstalledPlugin` (Task 5), `buildInstall`/`fetchGitPlugin`/`readManifestFromSource` (Task 6), `updateAll`/`approvePendingUpdate` (Task 7).
+- Consumes: `listPlugins`/`putPlugin`/`deletePlugin`/`InstalledPlugin` (Task 5), `buildInstall`/`fetchGitPlugin`/`readManifestFromSource` (Task 6), `updateAll`/`approvePendingUpdate` (Task 7), e a prop `onOpenPlugins` que a **Task 9** acrescentou a `MetaDetailsProps` — sem ela o passo 5 não compila.
 - Produces: `<PluginsPanel open={boolean} onClose={() => void} />`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1813,7 +2103,6 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PluginsPanel } from './PluginsPanel'
 import { deletePlugin, listPlugins, putPlugin, type InstalledPlugin } from './store'
-import { I18nProvider } from '../i18n/useT'
 
 vi.mock('./install', async () => {
   const actual = await vi.importActual<typeof import('./install')>('./install')
@@ -1826,7 +2115,10 @@ vi.mock('./install', async () => {
   }
 })
 
-const show = () => render(<I18nProvider><PluginsPanel open onClose={() => undefined} /></I18nProvider>)
+// There is no I18nProvider in this repository: `useT` (web/src/i18n/useT.ts,
+// not .tsx) is a per-component hook that reads localStorage['ss.language'] and
+// falls back to pt-BR. Nothing to wrap.
+const show = () => render(<PluginsPanel open onClose={() => undefined} />)
 
 const existing: InstalledPlugin = {
   id: 'mirrors',
@@ -1879,6 +2171,31 @@ describe('PluginsPanel', () => {
     await waitFor(async () => expect(await listPlugins()).toHaveLength(0))
   })
 
+  it('switches a plugin off without removing it', async () => {
+    await putPlugin(existing)
+    show()
+    await userEvent.click(await screen.findByRole('checkbox', { name: /ativar mirrors/i }))
+    await waitFor(async () => expect((await listPlugins())[0]?.enabled).toBe(false))
+  })
+
+  it('offers to update everything only when something has somewhere to update from', async () => {
+    await putPlugin(existing)   // origin: file, updateUrl null — nowhere to go
+    show()
+    expect(await screen.findByText('Mirrors')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /atualizar todos/i })).toBeNull()
+
+    await putPlugin({ ...existing, id: 'repo', origin: { kind: 'git', updateUrl: 'https://github.com/u/r', commit: 'a' } })
+    show()
+    expect(await screen.findByRole('button', { name: /atualizar todos/i })).toBeInTheDocument()
+  })
+
+  it('closes on Escape', async () => {
+    const onClose = vi.fn()
+    render(<PluginsPanel open onClose={onClose} />)
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
   it('names the new hosts of a held update', async () => {
     await putPlugin({
       ...existing,
@@ -1895,7 +2212,7 @@ describe('PluginsPanel', () => {
 })
 ```
 
-Confira antes de escrever o componente se `web/src/i18n/useT.tsx` exporta um `I18nProvider`; se o repositório não usa provider (o `useT` lê um módulo direto), remova o wrapper dos testes e renderize `<PluginsPanel />` puro.
+As asserções em português acima funcionam sem configuração: sem chave no `localStorage`, `normalizeLanguage` devolve `pt-BR`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1937,7 +2254,11 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const { morphing } = useMorphingStep(step)
+  // `shown` is the step one beat behind `step`, so the outgoing content
+  // dissolves before the next one mounts. Rendering from `step` and using
+  // only `morphing` would defeat the hook — compare Home.tsx:91 and 325.
+  const view = candidate ? 'confirm' : step
+  const { shown, morphing } = useMorphingStep(view)
 
   const refresh = useCallback(async () => setInstalled(await listPlugins()), [])
 
@@ -1988,18 +2309,42 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
     if (file) void fromFile(file)
   }
 
+  // Escape closes, and the page behind stops scrolling — both are what
+  // MetaDetails does (MetaDetails.tsx:228-243) and what the Radix dialog on
+  // the manual upload gives for free.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previous
+    }
+  }, [open, onClose])
+
   if (!open) return null
 
   return (
-    <div className="plugins-backdrop" onClick={onClose}>
-      <MorphPanel sizeKey={candidate ? 'confirm' : step} morphing={morphing} className="plugins-morph">
+    // The backdrop closes only when the backdrop itself is clicked. A plain
+    // onClick here also fires for clicks on the MorphPanel's own frame, which
+    // sits outside the panel's stopPropagation.
+    <div
+      className="plugins-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('plugins.title')}
+      onClick={(event) => { if (event.target === event.currentTarget) onClose() }}
+    >
+      <MorphPanel sizeKey={shown} morphing={morphing} className="plugins-morph">
         <div className="plugins-panel" onClick={(event) => event.stopPropagation()}>
           <button type="button" className="plugins-close" aria-label={t('plugins.close')} onClick={onClose}>
             <X size={18} aria-hidden="true" />
           </button>
 
           <AnimatePresence mode="wait" initial={false}>
-            {candidate ? (
+            {shown === 'confirm' && candidate ? (
               <motion.div key="confirm" className="plugins-step">
                 <StepBack label={t('plugins.back')} onClick={() => setCandidate(null)} />
                 <h2>{candidate.manifest.name}</h2>
@@ -2017,7 +2362,7 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
                   {t('plugins.install')}
                 </button>
               </motion.div>
-            ) : step === 'add' ? (
+            ) : shown === 'add' ? (
               <motion.div key="add" className="plugins-step">
                 <StepBack label={t('plugins.back')} onClick={() => setStep('list')} />
                 <button
@@ -2176,7 +2521,17 @@ Em `web/src/pages/Home.tsx`, dentro de `.header-end` e antes do botão `.header-
 
 com `const [pluginsOpen, setPluginsOpen] = useState(false)` no componente, `<PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />` junto dos outros overlays, `onOpenPlugins={() => setPluginsOpen(true)}` no `<MetaDetails>`, e `import { Puzzle } from 'lucide-react'`.
 
-Repita o mesmo par botão/painel em `web/src/catalog/CatalogOverlay.tsx`, para que o catálogo aberto de dentro de uma sala tenha o mesmo caminho, repassando `onOpenPlugins` ao `MetaDetails` que ele já renderiza.
+Repita o par botão/painel em `web/src/catalog/CatalogOverlay.tsx`, para que o catálogo aberto de dentro de uma sala tenha o mesmo caminho. O cabeçalho lá é `<header className="catalog-overlay-head">` (linha 65) e não tem `.header-end`: o botão entra entre o `<h1>` e o `.dialog-close`.
+
+```tsx
+        <h1>{t('catalog.tab')}</h1>
+        <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
+          <Puzzle size={15} aria-hidden="true" />{t('plugins.open')}
+        </button>
+        <button type="button" className="dialog-close" aria-label={t('details.close')} onClick={onClose}>
+```
+
+E repasse `onOpenPlugins={() => setPluginsOpen(true)}` ao `<MetaDetails>` que o overlay já renderiza (linha 76).
 
 - [ ] **Step 6: Style it**
 
@@ -2184,8 +2539,8 @@ Em `web/src/theme.css`, ao lado do bloco `--- catalog header ---`:
 
 ```css
 /* --- plugins ------------------------------------------------------------ */
-.home-header .header-plugins { padding: 9px 14px; border: 0; border-radius: 999px; color: var(--text-dim); background: transparent; font-size: 13px; display: inline-flex; align-items: center; gap: 7px; }
-.home-header .header-plugins:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.header-plugins { padding: 9px 14px; border: 0; border-radius: 999px; color: var(--text-dim); background: transparent; font-size: 13px; display: inline-flex; align-items: center; gap: 7px; }
+.header-plugins:hover { color: var(--text); background: rgba(255,255,255,.06); }
 .plugins-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(4,5,9,.55); backdrop-filter: blur(10px); }
 .plugins-morph { width: min(560px, 100%); }
 .plugins-panel { position: relative; padding: 26px; }
@@ -2223,39 +2578,14 @@ git commit -m "feat: install and manage plugins from the header"
 
 **Files:**
 - Modify: `web/src/main.tsx`
-- Test: `web/src/plugins/update.test.ts` (acrescentar um caso a `updateAll`)
 
 **Interfaces:**
 - Consumes: `updateAll` (Task 7).
 - Produces: nada novo.
 
-- [ ] **Step 1: Write the failing test**
+Esta task não tem teste automatizado, e dizer isso é mais honesto do que acrescentar um que passaria de qualquer jeito. O comportamento de `updateAll` já é coberto na Task 7, onde ele é escrito; o que muda aqui é uma linha de `main.tsx`, e testá-la exigiria montar o boot do aplicativo inteiro para observar um efeito colateral que não retorna nada.
 
-Acrescente ao fim de `web/src/plugins/update.test.ts`:
-
-```ts
-describe('updateAll', () => {
-  it('checks every plugin and never rejects, whatever any single one does', async () => {
-    const { updateAll } = await import('./update')
-    const { putPlugin, deletePlugin, listPlugins } = await import('./store')
-    for (const p of await listPlugins()) await deletePlugin(p.id)
-    await putPlugin({ ...installed, id: 'good' })
-    await putPlugin({ ...installed, id: 'bad' })
-    const outcomes = await updateAll({
-      fetchGit: async (_url) => { throw new Error('offline') },
-    })
-    expect(Object.keys(outcomes).sort()).toEqual(['bad', 'good'])
-    expect(Object.values(outcomes).every((o) => o.kind === 'failed')).toBe(true)
-  })
-})
-```
-
-- [ ] **Step 2: Run test to verify it fails or passes**
-
-Run: `cd web && npx vitest run src/plugins/update.test.ts`
-Expected: PASS já — `updateAll` foi escrito na Task 7. Se falhar, o motivo é `installed.id` fixo sobrescrevendo: use `{ ...installed, id: 'good', manifest: { ...installed.manifest, id: 'good' } }`.
-
-- [ ] **Step 3: Kick it off at boot**
+- [ ] **Step 1: Kick it off at boot**
 
 Em `web/src/main.tsx`, depois do `createRoot(...).render(...)`:
 
@@ -2265,14 +2595,18 @@ Em `web/src/main.tsx`, depois do `createRoot(...).render(...)`:
 void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined)
 ```
 
-- [ ] **Step 4: Verify by hand**
+- [ ] **Step 2: Verify by hand**
 
 Rode `cd web && npm run dev`, instale um plugin de repositório, empurre um commit novo nesse repositório e recarregue a página. A versão na lista deve trocar sozinha.
 
-- [ ] **Step 5: Commit**
+Depois confirme o caso que importa mais: com o navegador offline, recarregue e veja que o plugin continua na versão instalada e nada aparece na tela. Uma falha de rede não é um evento.
+
+- [ ] **Step 3: Type-check and commit**
+
+Run: `cd web && npx tsc -b`
 
 ```bash
-git add web/src/main.tsx web/src/plugins/update.test.ts
+git add web/src/main.tsx
 git commit -m "feat: check plugin origins once per load"
 ```
 
@@ -2333,13 +2667,51 @@ func TestCheckAddr(t *testing.T) {
 	if err := CheckAddr("tcp4", "93.184.216.34:443"); err != nil {
 		t.Fatalf("public address refused: %v", err)
 	}
-	for _, addr := range []string{"127.0.0.1:443", "10.1.2.3:443", "169.254.169.254:80", "[::1]:443"} {
+	for _, addr := range []string{
+		"127.0.0.1:443", "10.1.2.3:443", "169.254.169.254:80", "[::1]:443",
+		"100.100.1.1:443", "198.18.0.1:443", "255.255.255.255:443", "[64:ff9b::a00:1]:443",
+	} {
 		if err := CheckAddr("tcp", addr); !errors.Is(err, ErrPrivateAddress) {
 			t.Fatalf("CheckAddr(%q) = %v, want ErrPrivateAddress", addr, err)
 		}
 	}
 }
+
+// The test that matters, and the one a guard in the wrong place passes by
+// accident: a perfectly ordinary hostname, resolved by the client itself, that
+// lands on a private address. `localhost` is the one name every machine has.
+func TestSafeClientRefusesANameThatResolvesToLoopback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	// http, not https: CheckURL is not what is under test here, the dialer is.
+	request, err := http.NewRequest(http.MethodGet, "http://localhost:"+port+"/", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if _, err := SafeClient(5 * time.Second).Do(request); err == nil {
+		t.Fatal("expected the dial to be refused")
+	} else if !strings.Contains(err.Error(), ErrPrivateAddress.Error()) {
+		t.Fatalf("err = %v, want it to mention %v", err, ErrPrivateAddress)
+	}
+}
+
+// And the other half: a name that resolves somewhere public is dialled.
+// Without this, a guard that refuses everything would pass the test above.
+func TestSafeClientAllowsAPublicAddress(t *testing.T) {
+	if err := CheckAddr("tcp4", "93.184.216.34:443"); err != nil {
+		t.Fatalf("public address refused by the dialer's gate: %v", err)
+	}
+}
 ```
+
+Os imports do teste são `errors`, `net`, `net/http`, `net/http/httptest`, `strings`, `testing` e `time`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2366,6 +2738,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"syscall"
 	"time"
 )
 
@@ -2412,15 +2785,43 @@ func CheckAddr(_ string, addr string) error {
 	return nil
 }
 
+// blocked holds the ranges the standard library has no predicate for.
+var blocked = func() []*net.IPNet {
+	ranges := []string{
+		"100.64.0.0/10",  // CGNAT — a carrier's inside, not the public internet
+		"192.0.0.0/24",   // IETF protocol assignments
+		"198.18.0.0/15",  // benchmarking
+		"192.0.2.0/24",   // documentation
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		"64:ff9b::/96",   // NAT64 — embeds an IPv4 address, private ones included
+		"64:ff9b:1::/48", // local-use NAT64
+		"2002::/16",      // 6to4, same problem
+	}
+	nets := make([]*net.IPNet, 0, len(ranges))
+	for _, entry := range ranges {
+		_, network, err := net.ParseCIDR(entry)
+		if err != nil {
+			panic("urlingest: bad blocked range " + entry)
+		}
+		nets = append(nets, network)
+	}
+	return nets
+}()
+
 func isPublic(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+	// Everything that is not global unicast — loopback, link-local,
+	// multicast, unspecified — is out in one predicate.
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
 		return false
 	}
-	// Unique local addresses: fc00::/7. net.IP.IsPrivate covers this for IPv6
-	// already, but being explicit costs nothing and documents the intent.
-	if len(ip) == net.IPv6len && ip[0]&0xfe == 0xfc {
+	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 255 {
 		return false
+	}
+	for _, network := range blocked {
+		if network.Contains(ip) {
+			return false
+		}
 	}
 	return true
 }
@@ -2455,9 +2856,28 @@ func equalFold(a, b string) bool {
 // server's time for free.
 const MaxRedirects = 5
 
+// ResponseHeaderTimeout bounds how long an origin may take to say anything.
+// There is deliberately no ceiling on reading the body: a 10 GB film is a
+// long, legitimate read, and http.Client.Timeout would kill it.
+const ResponseHeaderTimeout = 30 * time.Second
+
 // SafeClient builds the only client this package fetches with.
+//
+// The address check lives in Dialer.Control, not in Transport.DialContext,
+// and the difference is the whole thing. DialContext receives "host:port"
+// with the name unresolved — net.ParseIP on it returns nil for every real
+// hostname, so a check there either refuses every legitimate URL or checks
+// nothing at all. Control runs once per connection, after the resolver and
+// before connect, with the actual IP. It also closes the window between
+// checking a name and connecting to it, which is what DNS rebinding lives in.
 func SafeClient(timeout time.Duration) *http.Client {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			return CheckAddr(network, address)
+		},
+	}
 	return &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -2468,12 +2888,9 @@ func SafeClient(timeout time.Duration) *http.Client {
 			return err
 		},
 		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				if err := CheckAddr(network, addr); err != nil {
-					return nil, err
-				}
-				return dialer.DialContext(ctx, network, addr)
-			},
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     true,
+			ResponseHeaderTimeout: ResponseHeaderTimeout,
 		},
 	}
 }
@@ -2506,7 +2923,7 @@ git commit -m "feat: refuse private addresses when fetching a plugin url"
 - Consumes: `CheckURL`/`SafeClient` (Task 12), o mesmo `room.Store` e o mesmo protocolo tus que `internal/torrent/ingest.go` usa.
 - Produces:
   - `type Job struct { RoomID, URL, FileName string; Size int64 }`
-  - `func NewIngestor(uploadURL string, maxJobs int, hooks Hooks) *Ingestor` com `Enabled()`, `Start(ctx)`, `Submit(Job) error`, `Cancel(roomID string)` e `ErrBusy` — mesma superfície de `torrent.Ingestor`, para que a rota fique idêntica em forma.
+  - `func NewIngestor(uploadURL string, maxJobs int, maxBytes int64, hooks Hooks) *Ingestor` com `Enabled()`, `Start(ctx)`, `Submit(Job) error`, `Cancel(roomID string)` e `ErrBusy` — mesma superfície de `torrent.Ingestor`, para que a rota fique idêntica em forma.
   - `func RegisterURLSourceRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config, ingestor URLIngestor)`
 
 - [ ] **Step 1: Read the reference implementation completely**
@@ -2521,6 +2938,7 @@ package urlingest
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -2569,7 +2987,7 @@ func TestIngestPumpsTheWholeBody(t *testing.T) {
 	defer tus.Close()
 
 	done := make(chan error, 1)
-	ingestor := NewIngestor(tus.URL+"/uploads", 1, Hooks{OnFailed: func(_ string, err error) { done <- err }, OnDone: func(string) { done <- nil }})
+	ingestor := NewIngestor(tus.URL+"/uploads", 1, 1<<30, Hooks{OnFailed: func(_ string, err error) { done <- err }, OnDone: func(string) { done <- nil }})
 	// The guard refuses httptest's loopback address, so the test injects a
 	// client without it. The guard has its own tests; this one is about the pump.
 	ingestor.client = &http.Client{Timeout: 10 * time.Second}
@@ -2596,8 +3014,96 @@ func TestIngestPumpsTheWholeBody(t *testing.T) {
 	}
 }
 
+// The common case: a stream carries a url and no byte count.
+func TestIngestAsksTheOriginWhenTheSizeIsUnknown(t *testing.T) {
+	payload := strings.Repeat("video-bytes", 512)
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/x-matroska")
+		if r.Header.Get("Range") == "bytes=0-0" {
+			w.Header().Set("Content-Range", "bytes 0-0/"+strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = io.WriteString(w, payload[:1])
+			return
+		}
+		_, _ = io.WriteString(w, payload)
+	}))
+	defer source.Close()
+
+	var received strings.Builder
+	var mu sync.Mutex
+	tus := fakeTus(t, &received, &mu)
+	defer tus.Close()
+
+	done := make(chan error, 1)
+	ingestor := NewIngestor(tus.URL+"/uploads", 1, 1<<30, Hooks{
+		OnFailed: func(_ string, err error) { done <- err },
+		OnDone:   func(string) { done <- nil },
+	})
+	ingestor.client = &http.Client{Timeout: 10 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ingestor.Start(ctx)
+
+	if err := ingestor.Submit(Job{RoomID: "r2", URL: source.URL + "/movie.mkv", FileName: "movie.mkv"}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ingest failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ingest did not finish")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if received.Len() != len(payload) {
+		t.Fatalf("received %d bytes, want %d", received.Len(), len(payload))
+	}
+}
+
+func TestIngestRefusesAnHTMLErrorPage(t *testing.T) {
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "<html>not here</html>")
+	}))
+	defer source.Close()
+
+	var received strings.Builder
+	var mu sync.Mutex
+	tus := fakeTus(t, &received, &mu)
+	defer tus.Close()
+
+	done := make(chan error, 1)
+	ingestor := NewIngestor(tus.URL+"/uploads", 1, 1<<30, Hooks{
+		OnFailed: func(_ string, err error) { done <- err },
+		OnDone:   func(string) { done <- nil },
+	})
+	ingestor.client = &http.Client{Timeout: 10 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ingestor.Start(ctx)
+
+	if err := ingestor.Submit(Job{RoomID: "r3", URL: source.URL + "/movie.mkv", FileName: "movie.mkv", Size: 21}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrNotVideo) {
+			t.Fatalf("err = %v, want ErrNotVideo", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ingest did not finish")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if received.Len() != 0 {
+		t.Fatalf("wrote %d bytes of an html page into the room", received.Len())
+	}
+}
+
 func TestIngestRefusesAPrivateURL(t *testing.T) {
-	ingestor := NewIngestor("http://example.invalid/uploads", 1, Hooks{})
+	ingestor := NewIngestor("http://example.invalid/uploads", 1, 1<<30, Hooks{})
 	if err := ingestor.Submit(Job{RoomID: "r1", URL: "http://127.0.0.1/movie.mkv", FileName: "m.mkv", Size: 10}); err == nil {
 		t.Fatal("expected a private url to be refused at submit")
 	}
@@ -2656,7 +3162,10 @@ type Job struct {
 	RoomID   string
 	URL      string
 	FileName string
-	Size     int64
+	// Size is what the caller announced. Zero means unknown, which is the
+	// common case: a stream object carries a URL far more often than it
+	// carries a byte count. An unknown size is asked of the origin instead.
+	Size int64
 }
 
 // Hooks lets the ingest report into the rest of the server without depending
@@ -2680,6 +3189,9 @@ var (
 	// ErrNoRange reports a source that ignored a Range request, which makes a
 	// resumed transfer impossible.
 	ErrNoRange = errors.New("source does not support resuming")
+	// ErrUnknownSize reports a source that will not say how big it is. A tus
+	// upload is created against a length, so there is nothing to create.
+	ErrUnknownSize = errors.New("source did not report its size")
 )
 
 // Ingestor pulls remote files into rooms through the server's own tus
@@ -2690,6 +3202,10 @@ type Ingestor struct {
 	uploadURL string
 	client    *http.Client
 	hooks     Hooks
+	// maxBytes is the room's ceiling, the same one the manual upload has. It
+	// is enforced here because a job with an unknown size cannot be checked
+	// by the route.
+	maxBytes int64
 
 	// backoff spaces out resumed streams. A field rather than a constant so
 	// tests can exercise the stall path without waiting out real seconds.
@@ -2704,7 +3220,7 @@ type Ingestor struct {
 
 // NewIngestor wires an ingestor to the tus endpoint of this same server.
 // uploadURL is absolute and loopback.
-func NewIngestor(uploadURL string, maxJobs int, hooks Hooks) *Ingestor {
+func NewIngestor(uploadURL string, maxJobs int, maxBytes int64, hooks Hooks) *Ingestor {
 	if maxJobs < 1 {
 		maxJobs = 1
 	}
@@ -2712,6 +3228,7 @@ func NewIngestor(uploadURL string, maxJobs int, hooks Hooks) *Ingestor {
 		uploadURL: uploadURL,
 		client:    SafeClient(0),
 		hooks:     hooks,
+		maxBytes:  maxBytes,
 		backoff:   resumeBackoff,
 		running:   make(map[string]context.CancelFunc),
 		maxJobs:   maxJobs,
@@ -2738,8 +3255,8 @@ func (i *Ingestor) Submit(job Job) error {
 	if _, err := CheckURL(job.URL); err != nil {
 		return err
 	}
-	if job.Size <= 0 {
-		return fmt.Errorf("%w: size must be positive", ErrBadURL)
+	if job.Size < 0 || (i.maxBytes > 0 && job.Size > i.maxBytes) {
+		return fmt.Errorf("%w: announced size %d", ErrTooLarge, job.Size)
 	}
 	i.mu.Lock()
 	if !i.started || i.ctx == nil || i.ctx.Err() != nil {
@@ -2797,6 +3314,18 @@ func (i *Ingestor) finish(roomID string) {
 }
 
 func (i *Ingestor) run(ctx context.Context, job Job) error {
+	if job.Size <= 0 {
+		// tus creates an upload against a length, so the length has to come
+		// from somewhere. Ask the origin before anything is reserved.
+		size, err := i.probeSize(ctx, job)
+		if err != nil {
+			return err
+		}
+		job.Size = size
+	}
+	if i.maxBytes > 0 && job.Size > i.maxBytes {
+		return fmt.Errorf("%w: %d bytes, ceiling is %d", ErrTooLarge, job.Size, i.maxBytes)
+	}
 	uploadURL, err := i.createUpload(ctx, job)
 	if err != nil {
 		return err
@@ -2812,7 +3341,7 @@ func (i *Ingestor) run(ctx context.Context, job Job) error {
 		}
 		// A source that hands back something other than a video, or more bytes
 		// than the room reserved, will do it again on every retry.
-		if errors.Is(err, ErrNotVideo) || errors.Is(err, ErrTooLarge) || errors.Is(err, ErrNoRange) {
+		if errors.Is(err, ErrNotVideo) || errors.Is(err, ErrTooLarge) || errors.Is(err, ErrNoRange) || errors.Is(err, ErrUnknownSize) {
 			return err
 		}
 		if err == nil {
@@ -2842,6 +3371,41 @@ func (i *Ingestor) run(ctx context.Context, job Job) error {
 		}
 	}
 	return nil
+}
+
+// probeSize asks the origin how big the file is, with a one-byte range
+// request. A HEAD would be tidier and is answered wrongly by enough origins
+// that it is not worth the tidiness.
+func (i *Ingestor) probeSize(ctx context.Context, job Job) (int64, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, job.URL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("build probe request: %w", err)
+	}
+	request.Header.Set("Range", "bytes=0-0")
+	response, err := i.client.Do(request)
+	if err != nil {
+		return 0, fmt.Errorf("probe source: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
+		response.Body.Close()
+	}()
+	if contentType := response.Header.Get("Content-Type"); contentType != "" && !videoContentType(contentType) {
+		return 0, fmt.Errorf("%w: content-type %q", ErrNotVideo, contentType)
+	}
+	if response.StatusCode == http.StatusPartialContent {
+		// "bytes 0-0/12345" — the total is what is after the slash.
+		contentRange := response.Header.Get("Content-Range")
+		if slash := strings.LastIndexByte(contentRange, '/'); slash >= 0 {
+			if total, err := strconv.ParseInt(strings.TrimSpace(contentRange[slash+1:]), 10, 64); err == nil && total > 0 {
+				return total, nil
+			}
+		}
+	}
+	if response.StatusCode == http.StatusOK && response.ContentLength > 0 {
+		return response.ContentLength, nil
+	}
+	return 0, ErrUnknownSize
 }
 
 // fetch opens the source at offset and returns a body that stops at the
@@ -3186,7 +3750,10 @@ type URLIngestor interface {
 type ingestURLRequest struct {
 	URL      string `json:"url" binding:"required"`
 	FileName string `json:"fileName" binding:"required"`
-	Size     int64  `json:"size" binding:"required"`
+	// No `binding:"required"` on Size: zero is a legitimate value meaning
+	// "the stream did not say", and the ingestor asks the origin instead.
+	// `required` on an int64 rejects zero, which would refuse the common case.
+	Size int64 `json:"size"`
 }
 
 // RegisterURLSourceRoute mounts the endpoint that hands a plugin-supplied url
@@ -3218,7 +3785,7 @@ func ingestURL(store *room.Store, cfg config.Config, ingestor URLIngestor) gin.H
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		if !validFileName(req.FileName) || req.Size <= 0 || req.Size > cfg.MaxUploadMB<<20 {
+		if !validFileName(req.FileName) || req.Size < 0 || req.Size > cfg.MaxUploadMB<<20 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
@@ -3255,6 +3822,8 @@ func ingestURL(store *room.Store, cfg config.Config, ingestor URLIngestor) gin.H
 			return
 		}
 
+		// A zero here is honest: the room shows a transfer with no total until
+		// the ingestor learns one from the origin.
 		if err := store.SetIngestProgress(c.Request.Context(), roomID, 0, req.Size); err != nil {
 			slog.ErrorContext(c.Request.Context(), "record ingest size", "room_id", roomID, "error", err)
 		}
@@ -3290,7 +3859,7 @@ Em `internal/httpapi/server.go`, registre ao lado da chamada de `RegisterTorrent
 RegisterURLSourceRoute(api, store, cfg, urlIngestor)
 ```
 
-O `urlIngestor` vem de onde o `torrent.Ingestor` já é construído e iniciado — encontre a chamada de `NewIngestor` do torrent no wiring (`cmd/` ou o construtor do servidor), construa `urlingest.NewIngestor(uploadURL, maxJobs, urlingest.Hooks{OnFailed: <o mesmo hook que o torrent usa para derrubar a transferência da sala>})` com o **mesmo** `uploadURL` de loopback, e chame `Start(ctx)` no mesmo lugar.
+O `urlIngestor` vem de onde o `torrent.Ingestor` já é construído e iniciado — encontre a chamada de `NewIngestor` do torrent no wiring (`cmd/` ou o construtor do servidor), construa `urlingest.NewIngestor(uploadURL, maxJobs, cfg.MaxUploadMB<<20, urlingest.Hooks{OnFailed: <o mesmo hook que o torrent usa para derrubar a transferência da sala>})` com o **mesmo** `uploadURL` de loopback, e chame `Start(ctx)` no mesmo lugar.
 
 - [ ] **Step 7: Run everything and commit**
 
@@ -3318,11 +3887,10 @@ git commit -m "feat: ingest a room's media from a plugin url"
 
 - [ ] **Step 1: Write the failing test**
 
+`web/src/upload.test.ts:1-2` já importa de `vitest` e de `./upload`. **Não acrescente imports**: some `startUrlTransfer` à lista da linha 2 e cole só o `describe`.
+
 ```ts
 // acrescente a web/src/upload.test.ts
-import { describe, expect, it, vi } from 'vitest'
-import { startUrlTransfer } from './upload'
-
 describe('startUrlTransfer', () => {
   it('hands the url to the room and lets the server pull it', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }))
@@ -3335,10 +3903,22 @@ describe('startUrlTransfer', () => {
     vi.unstubAllGlobals()
   })
 
-  it('throws with the status when the server refuses the url', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"bad"}', { status: 400 })))
+  it('carries the reason the server gave, not just the status', async () => {
+    // "not https" and "points at your own network" are different problems
+    // with different fixes, and the person who has to act on it is the one
+    // who installed the plugin.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('{"error":"unsafe_source","reason":"source url must be https"}', { status: 400 }),
+    ))
+    await expect(startUrlTransfer('room1', 'http://cdn.example.com/m.mkv', 'm.mkv', 1024))
+      .rejects.toThrow(/must be https/)
+    vi.unstubAllGlobals()
+  })
+
+  it('still says something useful when the body is not the shape it should be', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>502</html>', { status: 502 })))
     await expect(startUrlTransfer('room1', 'https://cdn.example.com/m.mkv', 'm.mkv', 1024))
-      .rejects.toThrow(/400/)
+      .rejects.toThrow(/502/)
     vi.unstubAllGlobals()
   })
 })
@@ -3365,7 +3945,15 @@ export async function startUrlTransfer(roomID: string, url: string, fileName: st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, fileName, size }),
   })
-  if (!response.ok) throw new Error(`url source refused (${response.status})`)
+  if (response.ok) return
+  // The server names which rule barred the address; dropping that and
+  // reporting a bare status would leave the host with nothing to act on.
+  let reason = ''
+  try {
+    const body = await response.json() as { reason?: unknown }
+    if (typeof body.reason === 'string') reason = body.reason
+  } catch { /* not JSON, which is itself not worth reporting */ }
+  throw new Error(reason ? `url source refused (${response.status}): ${reason}` : `url source refused (${response.status})`)
 }
 
 export async function createRoomAndIngestUrl(
@@ -3383,25 +3971,46 @@ export async function createRoomAndIngestUrl(
 
 - [ ] **Step 4: Branch at both call sites**
 
-Em `web/src/pages/Home.tsx`, onde hoje está `const opened = await openCatalogStream(media.pick.stream)` (linha 197), ramifique antes:
+Em `web/src/pages/Home.tsx`, o ramo `media.kind === 'stream'` (linhas 190-210) vira dois. **Não saia cedo com `navigate`**: tudo o que vem depois do `if/else` — `setNickname`, gravar `ss.nickname`, escrever o histórico — vale para uma sala aberta por URL exatamente como vale para as outras, e um `return` ali faz a sala sumir do histórico e o apelido não ser salvo.
 
 ```tsx
-        if (media.pick.stream.location.kind === 'url') {
-          const { url } = media.pick.stream.location
-          // A URL source has no swarm to open and no file list to pick from:
-          // the name comes from the pick, and the size is what the room
-          // reserves — zero means "unknown", which the server treats as
-          // whatever the response reports.
-          const result = await createRoomAndIngestUrl(url, `${media.pick.title}.mkv`, 0, nickname)
-          navigate(`/room/${result.roomID}`)
-          return
-        }
-        const opened = await openCatalogStream(media.pick.stream)
+      } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
+        // The details panel sits over the whole page; leaving it up would
+        // hide the progress (and any error) that comes next.
+        closeTitle()
+        const { url } = media.pick.stream.location
+        // A url source has no swarm to open and no file list to pick from.
+        // The size is zero because a stream object rarely carries one, and
+        // zero is how the server is told to ask the origin instead.
+        room = await createRoomAndIngestUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
+        fileName = media.pick.displayName
+        const playing = nowPlayingFromPick(media.pick)
+        try {
+          if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
+        } catch { /* private mode */ }
+      } else if (media.kind === 'stream') {
+        // ... o corpo do ramo de torrent de hoje, sem alteração ...
+      } else {
 ```
 
-Confira o nome exato do campo de título em `TitlePick` antes de escrever `media.pick.title` — leia a interface no topo de `web/src/catalog/MetaDetails.tsx` e use o que estiver lá.
+O apelido é `draftNickname.trim()`, que é o que o diálogo acabou de coletar — `nickname` é o estado anterior. E o campo de título é `displayName`: `TitlePick` (`web/src/catalog/MetaDetails.tsx:22-30`) tem `stream`, `target`, `displayName`, `metaName` e `poster`, e não tem `title`.
 
-Em `web/src/pages/Room.tsx`, na linha 267, faça o mesmo com `changeRoomSource` seguido de `startUrlTransfer` no lugar de `startTorrentTransfer`, seguindo a sequência que o caminho de torrent já usa logo abaixo — inclusive o argumento `mediaGeneration`.
+Em `web/src/pages/Room.tsx`, dentro de `chooseCatalogStream` (linha 267), ramifique antes de abrir o torrent:
+
+```tsx
+    void swapSource(async () => {
+      if (pick.stream.location.kind === 'url') {
+        const { url } = pick.stream.location
+        await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
+        await startUrlTransfer(room.id, url, `${pick.displayName}.mkv`, 0)
+        return
+      }
+      const opened = await openCatalogStream(pick.stream)
+      // ... o resto como está hoje ...
+    })
+```
+
+Nenhum `mediaGeneration` aqui, e isso é deliberado. O caminho de torrent precisa dele porque é o navegador que faz o `PATCH` do tus e tem de dizer para qual geração está escrevendo. O caminho de URL entrega a fonte ao servidor, que cria o upload por conta própria — exatamente como a rota `/rooms/:id/torrent` já faz, e ela também não recebe geração nenhuma.
 
 - [ ] **Step 5: Run the suite and commit**
 
@@ -3471,7 +4080,9 @@ Rode `cd web && npm run dev`, abra o painel de plugins, cole a URL do repositór
 
 - [ ] **Step 4: Point the README at it**
 
-Em `README.md` deste repositório, na seção que hoje descreve as fontes, substitua a menção ao Torrentio embutido por uma frase dizendo que fontes vêm de plugins, com o link para `https://ss.giuli.dev/docs`.
+O `README.md` deste repositório não menciona Torrentio, addon nem fontes em lugar nenhum — o catálogo entrou nos commits recentes e nunca foi documentado ali. Confira com `grep -in "torrentio\|addon\|fonte" README.md` antes de procurar a seção que não existe.
+
+Então isto é um acréscimo, não uma substituição: na seção que lista o que está pronto, uma linha dizendo que as fontes do catálogo vêm de plugins instalados pelo host, com o link para `https://ss.giuli.dev/docs`.
 
 - [ ] **Step 5: Commit**
 
@@ -3486,7 +4097,8 @@ git commit -m "docs: point sources at the plugin system"
 
 **Files:**
 - Create (fora deste repositório): repositório `ss-docs` — Astro + Starlight + `toolbeam-docs-theme`
-- Modify: `internal/httpapi/server.go` (`registerFrontend`)
+- Modify: `internal/httpapi/server.go` (`registerFrontend` e `privacyHeaders`)
+- Modify: `web/vite.config.ts` (nome de saída do worker)
 - Test: `internal/httpapi/server_test.go`
 - Modify: o script de deploy usado hoje (rsync para `/opt/ss`)
 
@@ -3525,7 +4137,18 @@ func TestDocsPathDoesNotFallBackToTheApp(t *testing.T) {
 }
 ```
 
-`newServerWithWebDir` é um helper que você escreve espelhando a montagem que os testes existentes de `server_test.go` já fazem.
+`server_test.go` importa `net/http`, `net/http/httptest`, `os`, `path/filepath`, `testing` e `testify/require` — **não** `strings`, que o teste acima usa. Acrescente-o.
+
+`newServerWithWebDir` é o helper que falta, e ele é as linhas 20-22 do arquivo:
+
+```go
+func newServerWithWebDir(t *testing.T, webDir string) http.Handler {
+	t.Helper()
+	cfg := testCfg(t)
+	cfg.WebDir = webDir
+	return NewServer(cfg, newTestStore(t), nil)
+}
+```
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -3550,7 +4173,60 @@ e dentro do `NoRoute`, acrescente `/docs/` à lista de prefixos que respondem 40
 
 Um endereço de documentação errado deve dizer que está errado, não abrir o site.
 
-- [ ] **Step 4: Scaffold the docs repository**
+- [ ] **Step 4: Give the plugin worker its own Content-Security-Policy**
+
+Esta é a única camada do isolamento que o código do plugin não consegue contornar por construção, e é ela que fecha o `import()` remoto que a Task 4 não consegue fechar de dentro do worker.
+
+Primeiro dê ao worker um nome de arquivo previsível, em `web/vite.config.ts`, junto do `worker: { format: 'es' }` da Task 4:
+
+```ts
+  worker: {
+    format: 'es',
+    // A stable prefix so the server can recognise this one response and give
+    // it a policy the rest of the app must not have.
+    rollupOptions: { output: { entryFileNames: 'assets/plugin-worker-[hash].js' } },
+  },
+```
+
+Depois, em `internal/httpapi/server.go`, dentro de `privacyHeaders`:
+
+```go
+		// The plugin worker gets a policy of its own. `connect-src 'none'`
+		// removes every network API from that context — including the ones a
+		// plugin could reach through the prototype chain if the bootstrap
+		// missed one. `script-src blob:` is the exception it needs to exist
+		// at all: the plugin's own module is imported from a blob URL. What
+		// it does NOT allow is https, so `import('https://…')`, which nothing
+		// inside a worker can take away, is refused here.
+		if strings.HasPrefix(c.Request.URL.Path, "/assets/plugin-worker-") {
+			c.Header("Content-Security-Policy", "default-src 'none'; script-src blob:; connect-src 'none'")
+		}
+```
+
+E um teste, no mesmo arquivo do anterior:
+
+```go
+func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
+	webDir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(webDir, "assets"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(webDir, "assets", "plugin-worker-abc.js"), []byte("//"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(webDir, "assets", "app-abc.js"), []byte("//"), 0o644))
+	server := newServerWithWebDir(t, webDir)
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/plugin-worker-abc.js", nil))
+	require.Contains(t, rec.Header().Get("Content-Security-Policy"), "connect-src 'none'")
+
+	// And the app itself must not inherit it, or nothing would reach /api.
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil))
+	require.Empty(t, rec.Header().Get("Content-Security-Policy"))
+}
+```
+
+Verifique à mão depois do build: `cd web && npm run build && ls dist/assets/plugin-worker-*`. Se não existir arquivo com esse prefixo, a política não está sendo aplicada a nada e o passo falhou em silêncio.
+
+- [ ] **Step 5: Scaffold the docs repository**
 
 ```bash
 mkdir -p ~/projects/ss-docs && cd ~/projects/ss-docs
@@ -3581,7 +4257,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 5: Write the pages**
+- [ ] **Step 6: Write the pages**
 
 Sete arquivos em `src/content/docs/`: `index.md`, `salas.md`, `plugins/index.md`, `plugins/instalar.md`, `plugins/escrever.md`, `plugins/referencia.md`.
 
@@ -3595,11 +4271,12 @@ Fatos que as docs precisam trazer e que só existem neste plano — passe-os aos
 - O manifest e seus campos, exatamente como na Task 1, incluindo que `hosts` são nomes de host puros.
 - A identidade é a origem travada na instalação; o hash SHA-256 é exibido para conferência, não é identidade; uma atualização que mude `updateUrl` é recusada; uma que peça hosts novos fica retida pedindo aval.
 - Os limites de execução: 15 segundos e 32 requisições por resolução, worker novo a cada resolução, sem estado entre chamadas.
-- O limite honesto do isolamento: um `import()` dinâmico de módulo remoto não pode ser removido de dentro do worker, então o que a caixa garante é que o plugin não alcança a origem do site, sua API nem seu armazenamento — não contenção total. Diga isso sem suavizar.
+- O limite honesto do isolamento, em duas partes, e sem suavizar nenhuma. Primeira: o `import()` de módulo remoto não pode ser removido de dentro do worker — quem o fecha é o cabeçalho `Content-Security-Policy` com que o worker é servido, e é por isso que ele existe. Segunda, e essa não tem conserto: a política de rede casa **nomes de host**, não endereços, então um plugin pode declarar um host que resolve para a rede local de quem o instalou e fazer o navegador bater ali. O CORS impede o plugin de ler a resposta, mas não impede o pedido. O que a caixa garante é que o plugin não alcança a origem do site, sua API nem seu armazenamento — não contenção total.
+- Que só o Plex é fonte nativa, e por quê; e que ele não é um plugin.
 - Um stream aponta por `infoHash` (com `fileIdx` opcional) ou por `url` https; `http` é recusado.
 - Só o host precisa de plugin; quem entra como espectador pede o título ao host.
 
-- [ ] **Step 6: Build and wire the deploy**
+- [ ] **Step 7: Build and wire the deploy**
 
 ```bash
 cd ~/projects/ss-docs && npm run build   # gera dist/
@@ -3607,7 +4284,7 @@ cd ~/projects/ss-docs && npm run build   # gera dist/
 
 No script de deploy do ss, depois do rsync do `web/dist`, acrescente o passo que copia o build das docs para `WEB_DIR/docs` na VPS. Se o deploy hoje é um rsync manual para `/opt/ss`, o passo novo é um segundo rsync de `~/projects/ss-docs/dist/` para `/opt/ss/web/dist/docs/`, preservando o que a memória do projeto já diz sobre preservar `.env`, override e `livekit.yaml`.
 
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 8: Verify and commit**
 
 Run: `go test ./internal/httpapi/ && cd web && npm run build`
 
@@ -3620,10 +4297,1009 @@ git commit -m "feat: serve the documentation at /docs"
 
 ---
 
+### Task 17: A conta do Plex — parear e guardar o token
+
+O Plex é fonte nativa, não plugin. A razão está na spec e vale repetir aqui, porque ela decide a forma do código: o Plex precisa de um fluxo de pareamento, de uma credencial de conta guardada entre sessões e de descoberta de servidor. Dar isso ao contrato de plugin seria dar isso a todo plugin.
+
+**Files:**
+- Create: `web/src/plex/account.ts`
+- Test: `web/src/plex/account.test.ts`
+
+**Interfaces:**
+- Consumes: nada.
+- Produces:
+  - `clientIdentifier(): Promise<string>` — o `X-Plex-Client-Identifier`, gerado uma vez e guardado
+  - `createPin(deps?: PlexDeps): Promise<{ id: number; code: string; authUrl: string }>`
+  - `pollPin(id: number, deps?: PlexDeps): Promise<string | null>` — o token, ou `null` enquanto não aprovado
+  - `getToken(): Promise<string | null>`, `setToken(token: string): Promise<void>`, `clearToken(): Promise<void>`
+  - `interface PlexDeps { fetch?: typeof globalThis.fetch }`
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// web/src/plex/account.test.ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearToken, clientIdentifier, createPin, getToken, pollPin, setToken } from './account'
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+
+describe('clientIdentifier', () => {
+  it('is stable across calls', async () => {
+    const first = await clientIdentifier()
+    expect(first).toMatch(/^[0-9a-f-]{36}$/)
+    expect(await clientIdentifier()).toBe(first)
+  })
+})
+
+describe('createPin', () => {
+  it('asks plex.tv for a pin and builds the url the person has to visit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ id: 42, code: 'WXYZ' }))
+    const pin = await createPin({ fetch: fetchMock as unknown as typeof fetch })
+    expect(pin).toMatchObject({ id: 42, code: 'WXYZ' })
+    expect(pin.authUrl).toContain('app.plex.tv/auth')
+    expect(pin.authUrl).toContain('code=WXYZ')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://plex.tv/api/v2/pins?strong=true')
+    expect(init.method).toBe('POST')
+    // Without this header plex.tv answers 400, and the failure reads as
+    // "the pin endpoint is broken" rather than "you forgot a header".
+    expect((init.headers as Record<string, string>)['X-Plex-Client-Identifier']).toBeTruthy()
+    expect((init.headers as Record<string, string>).Accept).toBe('application/json')
+  })
+})
+
+describe('pollPin', () => {
+  it('answers null while the pin is still waiting for approval', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ id: 42, authToken: null }))
+    await expect(pollPin(42, { fetch: fetchMock as unknown as typeof fetch })).resolves.toBeNull()
+  })
+
+  it('answers the token once it has been approved', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ id: 42, authToken: 'tok_abc' }))
+    await expect(pollPin(42, { fetch: fetchMock as unknown as typeof fetch })).resolves.toBe('tok_abc')
+  })
+
+  it('treats an expired pin as an error, not as still waiting', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ error: 'gone' }, 404))
+    await expect(pollPin(42, { fetch: fetchMock as unknown as typeof fetch })).rejects.toThrow(/expired|404/i)
+  })
+})
+
+describe('the token', () => {
+  beforeEach(async () => { await clearToken() })
+
+  it('is absent until one is stored', async () => {
+    expect(await getToken()).toBeNull()
+  })
+
+  it('survives being written and read back', async () => {
+    await setToken('tok_abc')
+    expect(await getToken()).toBe('tok_abc')
+  })
+
+  it('can be forgotten, which is the whole point of having a disconnect button', async () => {
+    await setToken('tok_abc')
+    await clearToken()
+    expect(await getToken()).toBeNull()
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd web && npx vitest run src/plex/account.test.ts`
+Expected: FAIL — módulo não encontrado.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```ts
+// web/src/plex/account.ts
+
+/**
+ * Pairing with a Plex account, and the credential it produces.
+ *
+ * We never ask for the person's Plex password. The PIN flow is what Plex
+ * offers third-party clients: we ask for a code, they approve it inside Plex
+ * itself, and we poll until a token comes back.
+ *
+ * The token lives in IndexedDB rather than localStorage. It is an account
+ * credential, not a preference, and it should be as easy to delete as it was
+ * to obtain — see clearToken, which the panel's disconnect button calls.
+ */
+
+export interface PlexDeps {
+  fetch?: typeof globalThis.fetch
+}
+
+const DB_NAME = 'ss-plex'
+const DB_VERSION = 1
+const STORE = 'account'
+const TOKEN_KEY = 'authToken'
+const CLIENT_KEY = 'clientIdentifier'
+
+const PRODUCT = 'ss'
+const VERSION = '1.0.0'
+
+let connection: Promise<IDBDatabase> | null = null
+
+function open(): Promise<IDBDatabase> {
+  if (connection) return connection
+  connection = new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE)
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error('plex store failed to open'))
+  })
+  return connection
+}
+
+function read(key: string): Promise<string | null> {
+  return open().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE, 'readonly')
+    const request = transaction.objectStore(STORE).get(key) as IDBRequest<string | undefined>
+    let value: string | undefined
+    request.onsuccess = () => { value = request.result }
+    transaction.oncomplete = () => resolve(value ?? null)
+    transaction.onabort = transaction.onerror = () => reject(transaction.error ?? new Error('plex store read failed'))
+  }))
+}
+
+function write(key: string, value: string | null): Promise<void> {
+  return open().then((db) => new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE, 'readwrite')
+    const store = transaction.objectStore(STORE)
+    if (value === null) store.delete(key)
+    else store.put(value, key)
+    transaction.oncomplete = () => resolve()
+    transaction.onabort = transaction.onerror = () => reject(transaction.error ?? new Error('plex store write failed'))
+  }))
+}
+
+/**
+ * This installation's opaque identity, as far as plex.tv is concerned.
+ *
+ * It is not optional: `POST /api/v2/pins` answers 400 without it, and so does
+ * resource discovery. It has to be the same value across both, and across
+ * restarts, or a pin approved by one identity is invisible to the other.
+ */
+export async function clientIdentifier(): Promise<string> {
+  const existing = await read(CLIENT_KEY)
+  if (existing) return existing
+  const fresh = crypto.randomUUID()
+  await write(CLIENT_KEY, fresh)
+  return fresh
+}
+
+export async function plexHeaders(): Promise<Record<string, string>> {
+  return {
+    Accept: 'application/json',
+    'X-Plex-Product': PRODUCT,
+    'X-Plex-Version': VERSION,
+    'X-Plex-Client-Identifier': await clientIdentifier(),
+  }
+}
+
+export async function createPin(deps: PlexDeps = {}): Promise<{ id: number; code: string; authUrl: string }> {
+  const request = deps.fetch ?? globalThis.fetch.bind(globalThis)
+  const response = await request('https://plex.tv/api/v2/pins?strong=true', {
+    method: 'POST',
+    headers: await plexHeaders(),
+  })
+  if (!response.ok) throw new Error(`plex pin request failed (${response.status})`)
+  const body = await response.json() as { id?: unknown; code?: unknown }
+  if (typeof body.id !== 'number' || typeof body.code !== 'string') {
+    throw new Error('plex pin request returned no pin')
+  }
+  const params = new URLSearchParams({
+    clientID: await clientIdentifier(),
+    code: body.code,
+    'context[device][product]': PRODUCT,
+  })
+  return { id: body.id, code: body.code, authUrl: `https://app.plex.tv/auth#?${params.toString()}` }
+}
+
+export async function pollPin(id: number, deps: PlexDeps = {}): Promise<string | null> {
+  const request = deps.fetch ?? globalThis.fetch.bind(globalThis)
+  const response = await request(`https://plex.tv/api/v2/pins/${id}`, { headers: await plexHeaders() })
+  // A pin expires after a few minutes. Reporting that as "still waiting"
+  // would poll for ever against something that will never answer.
+  if (response.status === 404) throw new Error('plex pin expired')
+  if (!response.ok) throw new Error(`plex pin poll failed (${response.status})`)
+  const body = await response.json() as { authToken?: unknown }
+  return typeof body.authToken === 'string' && body.authToken !== '' ? body.authToken : null
+}
+
+export function getToken(): Promise<string | null> {
+  return read(TOKEN_KEY)
+}
+
+export function setToken(token: string): Promise<void> {
+  return write(TOKEN_KEY, token)
+}
+
+export function clearToken(): Promise<void> {
+  return write(TOKEN_KEY, null)
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd web && npx vitest run src/plex/account.test.ts`
+Expected: PASS, 9 tests.
+
+`crypto.randomUUID` existe no jsdom pelo polyfill de `webcrypto` que a Task 5 acrescentou ao `setup.ts`. Se falhar aqui, é porque a Task 5 não foi feita.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/plex/account.ts web/src/plex/account.test.ts
+git commit -m "feat: pair with a plex account without asking for a password"
+```
+
+---
+
+### Task 18: Achar o servidor e navegar a biblioteca
+
+**Files:**
+- Create: `web/src/plex/server.ts`
+- Test: `web/src/plex/server.test.ts`
+- Create: `web/src/plex/library.ts`
+- Test: `web/src/plex/library.test.ts`
+
+**Interfaces:**
+- Consumes: `plexHeaders`/`getToken` (Task 17).
+- Produces:
+  - `type PlexConnection = { uri: string; local: boolean; relay: boolean }`
+  - `type PlexServer = { name: string; clientIdentifier: string; connections: PlexConnection[] }`
+  - `listServers(token: string, deps?: PlexDeps): Promise<PlexServer[]>`
+  - `pickConnection(server: PlexServer, token: string, deps?: PlexDeps): Promise<PlexConnection>`
+  - `type PlexItem = { ratingKey: string; title: string; year: number | null; type: 'movie' | 'episode'; partKey: string; size: number; container: string }`
+  - `listSections`, `searchLibrary`, `itemDetails`, `partUrl(base, partKey, token)`
+
+- [ ] **Step 1: Write the failing test for discovery**
+
+```ts
+// web/src/plex/server.test.ts
+import { describe, expect, it, vi } from 'vitest'
+import { listServers, pickConnection } from './server'
+
+const resources = [
+  {
+    name: 'Casa', clientIdentifier: 'srv1', provides: 'server',
+    connections: [
+      { uri: 'https://10-0-0-5.hash.plex.direct:32400', local: true, relay: false },
+      { uri: 'https://1.2.3.4.hash.plex.direct:32400', local: false, relay: false },
+      { uri: 'https://relay.plex.direct:443', local: false, relay: true },
+    ],
+  },
+  { name: 'Um telefone', clientIdentifier: 'p1', provides: 'player', connections: [] },
+]
+
+describe('listServers', () => {
+  it('keeps the servers and drops everything else on the account', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(resources), { status: 200 }))
+    const servers = await listServers('tok', { fetch: fetchMock as unknown as typeof fetch })
+    expect(servers.map((server) => server.name)).toEqual(['Casa'])
+    expect(servers[0].connections).toHaveLength(3)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('includeHttps=1')
+    expect(url).toContain('includeRelay=1')
+    expect((init.headers as Record<string, string>)['X-Plex-Token']).toBe('tok')
+  })
+})
+
+describe('pickConnection', () => {
+  it('takes the first connection that answers, not the first in the list', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      // The LAN address is listed first and is the one that does not answer.
+      if (url.startsWith('https://10-0-0-5')) throw new Error('unreachable')
+      return new Response('{}', { status: 200 })
+    })
+    const chosen = await pickConnection(resources[0] as never, 'tok', { fetch: fetchMock as unknown as typeof fetch })
+    expect(chosen.uri).toBe('https://1.2.3.4.hash.plex.direct:32400')
+  })
+
+  it('prefers the LAN when the LAN answers, because relay is metered and slow', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }))
+    const chosen = await pickConnection(resources[0] as never, 'tok', { fetch: fetchMock as unknown as typeof fetch })
+    expect(chosen.local).toBe(true)
+  })
+
+  it('says so when nothing answers, rather than returning a connection that does not work', async () => {
+    const fetchMock = vi.fn(async () => { throw new Error('unreachable') })
+    await expect(pickConnection(resources[0] as never, 'tok', { fetch: fetchMock as unknown as typeof fetch }))
+      .rejects.toThrow(/no reachable/i)
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd web && npx vitest run src/plex/server.test.ts`
+Expected: FAIL — módulo não encontrado.
+
+- [ ] **Step 3: Write discovery**
+
+```ts
+// web/src/plex/server.ts
+import { plexHeaders, type PlexDeps } from './account'
+
+export interface PlexConnection {
+  uri: string
+  local: boolean
+  relay: boolean
+}
+
+export interface PlexServer {
+  name: string
+  clientIdentifier: string
+  connections: PlexConnection[]
+}
+
+/** How long a connection gets to prove it is reachable. */
+const PROBE_TIMEOUT_MS = 4_000
+
+export async function listServers(token: string, deps: PlexDeps = {}): Promise<PlexServer[]> {
+  const request = deps.fetch ?? globalThis.fetch.bind(globalThis)
+  const response = await request('https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1', {
+    headers: { ...await plexHeaders(), 'X-Plex-Token': token },
+  })
+  if (!response.ok) throw new Error(`plex resources failed (${response.status})`)
+  const body = await response.json() as unknown
+  if (!Array.isArray(body)) return []
+  return body
+    .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
+    .filter((entry) => typeof entry.provides === 'string' && entry.provides.split(',').includes('server'))
+    .map((entry) => ({
+      name: typeof entry.name === 'string' ? entry.name : 'Plex',
+      clientIdentifier: typeof entry.clientIdentifier === 'string' ? entry.clientIdentifier : '',
+      connections: (Array.isArray(entry.connections) ? entry.connections : [])
+        .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+        .filter((c) => typeof c.uri === 'string' && c.uri.startsWith('https://'))
+        .map((c) => ({ uri: c.uri as string, local: c.local === true || c.local === 1, relay: c.relay === true || c.relay === 1 })),
+    }))
+}
+
+/**
+ * Finds a connection that actually works.
+ *
+ * Which one that is cannot be decided on paper: a LAN address is the fastest
+ * when the host is at home and unreachable when they are not, and a relay
+ * always works and is metered. So every connection is probed at once and the
+ * ranking only breaks ties among the ones that answered.
+ *
+ * The LAN address is HTTPS with a real certificate because of plex.direct,
+ * which is a DNS trick: 10-0-0-5.<hash>.plex.direct resolves to 10.0.0.5 and
+ * carries a wildcard cert. It is the only reason a page on ss.giuli.dev can
+ * talk to a box on someone's home network at all.
+ */
+export async function pickConnection(server: PlexServer, token: string, deps: PlexDeps = {}): Promise<PlexConnection> {
+  const request = deps.fetch ?? globalThis.fetch.bind(globalThis)
+  const headers = { ...await plexHeaders(), 'X-Plex-Token': token }
+
+  const reachable = await Promise.all(server.connections.map(async (connection) => {
+    const abort = new AbortController()
+    const timer = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS)
+    try {
+      const response = await request(`${connection.uri}/identity`, { headers, signal: abort.signal })
+      return response.ok ? connection : null
+    } catch {
+      // A LAN address from outside the LAN, or a router refusing a DNS answer
+      // that points at a private address. Neither is worth reporting on its
+      // own; what matters is whether anything answered.
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
+  }))
+
+  const answered = reachable.filter((connection): connection is PlexConnection => connection !== null)
+  if (answered.length === 0) throw new Error('plex: no reachable connection to this server')
+  const rank = (connection: PlexConnection) => (connection.local ? 0 : connection.relay ? 2 : 1)
+  return answered.sort((a, b) => rank(a) - rank(b))[0]
+}
+```
+
+- [ ] **Step 4: Write the failing test for the library**
+
+```ts
+// web/src/plex/library.test.ts
+import { describe, expect, it, vi } from 'vitest'
+import { itemDetails, partUrl, searchLibrary } from './library'
+
+const base = 'https://10-0-0-5.hash.plex.direct:32400'
+const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+
+describe('searchLibrary', () => {
+  it('reads titles out of a plex search response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({
+      MediaContainer: {
+        Metadata: [
+          { ratingKey: '11', title: 'Duna', year: 2021, type: 'movie' },
+          { ratingKey: '12', title: 'Um artista', year: 2019, type: 'artist' },
+        ],
+      },
+    }))
+    const found = await searchLibrary(base, 'tok', 'duna', { fetch: fetchMock as unknown as typeof fetch })
+    // Music and photos are on the same account and are not what a watch party
+    // is for.
+    expect(found.map((item) => item.title)).toEqual(['Duna'])
+    expect(String(fetchMock.mock.calls[0][0])).toContain('query=duna')
+  })
+})
+
+describe('itemDetails', () => {
+  it('finds the file behind a title', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({
+      MediaContainer: {
+        Metadata: [{
+          ratingKey: '11', title: 'Duna', year: 2021, type: 'movie',
+          Media: [{ container: 'mkv', Part: [{ key: '/library/parts/9/1600/file.mkv', size: 1234567 }] }],
+        }],
+      },
+    }))
+    const item = await itemDetails(base, 'tok', '11', { fetch: fetchMock as unknown as typeof fetch })
+    expect(item).toMatchObject({ title: 'Duna', partKey: '/library/parts/9/1600/file.mkv', size: 1234567, container: 'mkv' })
+  })
+
+  it('is explicit when the title has no file behind it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ MediaContainer: { Metadata: [{ ratingKey: '11', title: 'Duna' }] } }))
+    await expect(itemDetails(base, 'tok', '11', { fetch: fetchMock as unknown as typeof fetch }))
+      .rejects.toThrow(/no playable file/i)
+  })
+})
+
+describe('partUrl', () => {
+  it('builds a url the browser can range-request', () => {
+    expect(partUrl(base, '/library/parts/9/1600/file.mkv', 'tok'))
+      .toBe(`${base}/library/parts/9/1600/file.mkv?download=1&X-Plex-Token=tok`)
+  })
+})
+```
+
+- [ ] **Step 5: Write the library**
+
+```ts
+// web/src/plex/library.ts
+import { plexHeaders, type PlexDeps } from './account'
+
+export interface PlexItem {
+  ratingKey: string
+  title: string
+  year: number | null
+  type: 'movie' | 'episode'
+  partKey: string
+  size: number
+  container: string
+}
+
+/** What a watch party can play. The account may also hold music and photos. */
+const PLAYABLE = new Set(['movie', 'episode'])
+
+async function get(base: string, token: string, path: string, deps: PlexDeps): Promise<Record<string, unknown>> {
+  const request = deps.fetch ?? globalThis.fetch.bind(globalThis)
+  const response = await request(`${base}${path}`, {
+    headers: { ...await plexHeaders(), 'X-Plex-Token': token },
+  })
+  if (!response.ok) throw new Error(`plex request failed (${response.status})`)
+  return await response.json() as Record<string, unknown>
+}
+
+function metadata(body: Record<string, unknown>): Record<string, unknown>[] {
+  const container = body.MediaContainer as Record<string, unknown> | undefined
+  const list = container?.Metadata
+  return Array.isArray(list) ? list.filter((e): e is Record<string, unknown> => typeof e === 'object' && e !== null) : []
+}
+
+export async function listSections(base: string, token: string, deps: PlexDeps = {}): Promise<{ key: string; title: string }[]> {
+  const body = await get(base, token, '/library/sections', deps)
+  const container = body.MediaContainer as Record<string, unknown> | undefined
+  const directories = Array.isArray(container?.Directory) ? container.Directory : []
+  return directories
+    .filter((entry): entry is Record<string, unknown> => typeof entry === 'object' && entry !== null)
+    .filter((entry) => entry.type === 'movie' || entry.type === 'show')
+    .map((entry) => ({ key: String(entry.key ?? ''), title: String(entry.title ?? '') }))
+}
+
+/** Titles only — the file behind one is read separately, by itemDetails. */
+export async function searchLibrary(
+  base: string, token: string, query: string, deps: PlexDeps = {},
+): Promise<Pick<PlexItem, 'ratingKey' | 'title' | 'year' | 'type'>[]> {
+  const body = await get(base, token, `/search?query=${encodeURIComponent(query)}`, deps)
+  return metadata(body)
+    .filter((entry) => typeof entry.type === 'string' && PLAYABLE.has(entry.type))
+    .map((entry) => ({
+      ratingKey: String(entry.ratingKey ?? ''),
+      title: String(entry.title ?? ''),
+      year: typeof entry.year === 'number' ? entry.year : null,
+      type: entry.type as 'movie' | 'episode',
+    }))
+}
+
+export async function itemDetails(base: string, token: string, ratingKey: string, deps: PlexDeps = {}): Promise<PlexItem> {
+  const body = await get(base, token, `/library/metadata/${encodeURIComponent(ratingKey)}`, deps)
+  const [entry] = metadata(body)
+  if (!entry) throw new Error('plex: no such item')
+  const media = Array.isArray(entry.Media) ? entry.Media[0] as Record<string, unknown> | undefined : undefined
+  const part = media && Array.isArray(media.Part) ? media.Part[0] as Record<string, unknown> | undefined : undefined
+  if (!part || typeof part.key !== 'string') throw new Error('plex: this title has no playable file')
+  return {
+    ratingKey: String(entry.ratingKey ?? ratingKey),
+    title: String(entry.title ?? ''),
+    year: typeof entry.year === 'number' ? entry.year : null,
+    type: entry.type === 'episode' ? 'episode' : 'movie',
+    partKey: part.key,
+    size: typeof part.size === 'number' ? part.size : 0,
+    container: typeof media?.container === 'string' ? media.container : 'mkv',
+  }
+}
+
+/**
+ * The original file, not a transcode.
+ *
+ * `download=1` is what asks for direct play, and it is also where this fails
+ * for some accounts: Plex only serves the original file to a user with
+ * "Allow Downloads" enabled. A 403 here means that setting, not a bad token,
+ * and the interface has to say so — otherwise it reads as a login problem
+ * and the person re-pairs for ever.
+ */
+export function partUrl(base: string, partKey: string, token: string): string {
+  return `${base}${partKey}?download=1&X-Plex-Token=${encodeURIComponent(token)}`
+}
+```
+
+- [ ] **Step 6: Run tests and commit**
+
+Run: `cd web && npx vitest run src/plex/ && npx tsc -b && npx oxlint src`
+Expected: PASS.
+
+```bash
+git add web/src/plex/server.ts web/src/plex/server.test.ts web/src/plex/library.ts web/src/plex/library.test.ts
+git commit -m "feat: find a plex server and read its library"
+```
+
+---
+
+### Task 19: Tocar um arquivo do Plex numa sala
+
+Duas rotas, e qual delas serve foi decidido pela corrida de conexões da Task 18.
+
+Se a conexão vencedora é pública — WAN ou relay — a URL é HTTPS e alcançável de fora, e isso é a ingestão por URL da Task 13: o servidor puxa sozinho e a aba do host pode fechar.
+
+Se venceu a de LAN, a VPS não alcança `192.168.x.x`, e não vai passar a alcançar — abrir a guarda de SSRF para endereço privado é desfazer a guarda. Quem bombeia é o navegador do host, que já está na mesma rede. E essa bomba já existe: `startTorrentTransfer` é exatamente ela. Esta task a generaliza em vez de escrever uma segunda.
+
+**Files:**
+- Modify: `web/src/upload.ts` (extrair a bomba, acrescentar a fonte de URL com range)
+- Test: `web/src/upload.test.ts`
+- Create: `web/src/plex/open.ts`
+- Test: `web/src/plex/open.test.ts`
+
+**Interfaces:**
+- Consumes: `startUrlTransfer`/`createRoomAndIngestUrl` (Task 14), `partUrl`/`PlexItem` (Task 18).
+- Produces:
+  - `interface ChunkSource { name: string; size: number; subtitleFiles: SubtitleFile[]; read(at: number, end: number): Promise<ArrayBuffer>; destroy(): void }`
+  - `startRemoteTransfer(roomID, uploadEndpoint, startBytes, mediaGeneration, source: ChunkSource, onProgress?)`
+  - `rangeSource(url: string, name: string, size: number): ChunkSource`
+  - `openPlexItem(connection: PlexConnection, item: PlexItem, token: string): PlexOpen` onde `PlexOpen = { kind: 'server-pull'; url: string; fileName: string; size: number } | { kind: 'browser-pump'; source: ChunkSource; fileName: string }`
+
+- [ ] **Step 1: Write the failing test for the decision**
+
+```ts
+// web/src/plex/open.test.ts
+import { describe, expect, it } from 'vitest'
+import { openPlexItem } from './open'
+
+const item = {
+  ratingKey: '11', title: 'Duna', year: 2021, type: 'movie' as const,
+  partKey: '/library/parts/9/1600/file.mkv', size: 1234567, container: 'mkv',
+}
+
+describe('openPlexItem', () => {
+  it('lets the server pull when the connection is reachable from outside', () => {
+    const open = openPlexItem(
+      { uri: 'https://1-2-3-4.hash.plex.direct:32400', local: false, relay: false }, item, 'tok',
+    )
+    expect(open).toMatchObject({ kind: 'server-pull', size: 1234567 })
+    expect(open.kind === 'server-pull' && open.url).toContain('X-Plex-Token=tok')
+    expect(open.fileName).toBe('Duna.mkv')
+  })
+
+  it('pumps from the browser when the server is only reachable on the local network', () => {
+    const open = openPlexItem(
+      { uri: 'https://10-0-0-5.hash.plex.direct:32400', local: true, relay: false }, item, 'tok',
+    )
+    // The VPS cannot reach 10.0.0.5, and the SSRF guard will not be opened to
+    // let it try. The host's browser is already on that network.
+    expect(open.kind).toBe('browser-pump')
+  })
+
+  it('pumps from the browser for a relay too, because relay bandwidth is the account owner to spend', () => {
+    const open = openPlexItem(
+      { uri: 'https://relay.plex.direct:443', local: false, relay: true }, item, 'tok',
+    )
+    expect(open.kind).toBe('browser-pump')
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd web && npx vitest run src/plex/open.test.ts`
+Expected: FAIL — módulo não encontrado.
+
+- [ ] **Step 3: Write the failing test for the ranged source**
+
+Acrescente a `web/src/upload.test.ts` — sem imports novos além de `rangeSource` na linha 2:
+
+```ts
+describe('rangeSource', () => {
+  it('asks for exactly the byte range the pump wants', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2, 3]), { status: 206, headers: { 'Content-Type': 'video/x-matroska' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const source = rangeSource('https://plex.local/file.mkv', 'Duna.mkv', 3000)
+    const chunk = await source.read(100, 199)
+    expect(chunk.byteLength).toBe(3)
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string>).Range).toBe('bytes=100-199')
+    vi.unstubAllGlobals()
+  })
+
+  it('fails loudly when the origin ignores the range', async () => {
+    // A 200 here means the whole file is coming, and writing that at a
+    // non-zero offset corrupts the upload silently — the worst outcome.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 })))
+    const source = rangeSource('https://plex.local/file.mkv', 'Duna.mkv', 3000)
+    await expect(source.read(100, 199)).rejects.toThrow(/range/i)
+    vi.unstubAllGlobals()
+  })
+
+  it('names the Allow Downloads problem when plex refuses the original file', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403 })))
+    const source = rangeSource('https://plex.local/file.mkv', 'Duna.mkv', 3000)
+    await expect(source.read(0, 99)).rejects.toThrow(/allow downloads/i)
+    vi.unstubAllGlobals()
+  })
+})
+```
+
+- [ ] **Step 4: Generalise the pump**
+
+Em `web/src/upload.ts`:
+
+1. Declare `ChunkSource`, e note que ele é exatamente o que `startTorrentTransfer` já consome do WebTorrent:
+
+```ts
+/**
+ * Somewhere bytes can be read from by offset. The torrent path reads from a
+ * swarm and the Plex path from an HTTPS range request; the tus pump between
+ * them is the same code and always was.
+ */
+export interface ChunkSource {
+  name: string
+  size: number
+  /** Sibling subtitle files, if the source has any. */
+  subtitleFiles: { name: string; read(): Promise<ArrayBuffer> }[]
+  /** Inclusive on both ends, like an HTTP Range. */
+  read(at: number, end: number): Promise<ArrayBuffer>
+  destroy(): void
+}
+```
+
+2. Renomeie `startTorrentTransfer` para `startRemoteTransfer` e troque a assinatura de `source: { file, session }` para `source: ChunkSource`. Dentro do corpo, `file.size` vira `source.size`, `file.name` vira `source.name`, `file.read(at, end)` vira `source.read(at, end)`, `session.destroy` vira `source.destroy`, `session.subtitleFiles` vira `source.subtitleFiles`, e `isMatroska(file)` passa a olhar `source.name`. **Nada mais muda** — o laço de `PATCH`, o prefetch de um slot, o coletor de legendas e o `DELETE` de limpeza ficam idênticos.
+
+3. Devolva `startTorrentTransfer` como um adaptador fino, para que Home e Room não mudem:
+
+```ts
+export function startTorrentTransfer(
+  roomID: string, uploadEndpoint: string, startBytes: number, mediaGeneration: number,
+  source: { file: TorrentFile; session: TorrentSession }, onProgress?: (progress: UploadProgress) => void,
+): void {
+  const { file, session } = source
+  startRemoteTransfer(roomID, uploadEndpoint, startBytes, mediaGeneration, {
+    name: file.name,
+    size: file.size,
+    subtitleFiles: session.subtitleFiles.map((entry) => ({ name: entry.name, read: () => entry.read() })),
+    read: (at, end) => file.read(at, end),
+    destroy: () => session.destroy(),
+  }, onProgress)
+}
+```
+
+Leia os tipos reais de `TorrentFile`/`TorrentSession` no arquivo antes de escrever isto; use os nomes que estiverem lá. Se `subtitleFiles` já tiver a forma `{ name, read }`, passe a lista direto em vez de mapear.
+
+4. Acrescente a fonte de URL:
+
+```ts
+/**
+ * A ChunkSource backed by HTTP range requests.
+ *
+ * This is the path a Plex server on the local network takes: the VPS cannot
+ * reach 192.168.x.x, and the SSRF guard exists precisely so that it never
+ * will. The host's browser is already on that network, so it does the pumping.
+ */
+export function rangeSource(url: string, name: string, size: number): ChunkSource {
+  return {
+    name,
+    size,
+    subtitleFiles: [],
+    destroy: () => undefined,
+    async read(at: number, end: number): Promise<ArrayBuffer> {
+      const response = await fetch(url, { headers: { Range: `bytes=${at}-${end}` }, credentials: 'omit' })
+      if (response.status === 403) {
+        // Plex only hands over the original file to an account with
+        // "Allow Downloads" enabled. Reporting a bare 403 sends people to
+        // re-pair their account, which is not the problem.
+        throw new Error('plex refused the original file — enable Allow Downloads for this user')
+      }
+      if (!response.ok) throw new Error(`source read failed (${response.status})`)
+      if (response.status !== 206 && at > 0) {
+        throw new Error('source ignored the range request')
+      }
+      return await response.arrayBuffer()
+    },
+  }
+}
+```
+
+- [ ] **Step 5: Write the decision**
+
+```ts
+// web/src/plex/open.ts
+import { rangeSource, type ChunkSource } from '../upload'
+import { partUrl, type PlexItem } from './library'
+import type { PlexConnection } from './server'
+
+export type PlexOpen =
+  | { kind: 'server-pull'; url: string; fileName: string; size: number }
+  | { kind: 'browser-pump'; source: ChunkSource; fileName: string; size: number }
+
+/**
+ * Decides who fetches the bytes.
+ *
+ * A public connection goes to the server, which means the transfer survives
+ * the host closing the tab. A LAN connection cannot: the server has no route
+ * to a private address and is not going to be given one. A relay could go
+ * either way and goes to the browser on purpose — relay bandwidth belongs to
+ * the account holder, and it is not ours to spend on their behalf.
+ */
+export function openPlexItem(connection: PlexConnection, item: PlexItem, token: string): PlexOpen {
+  const url = partUrl(connection.uri, item.partKey, token)
+  const fileName = `${item.title}.${item.container}`
+  if (connection.local || connection.relay) {
+    return { kind: 'browser-pump', source: rangeSource(url, fileName, item.size), fileName, size: item.size }
+  }
+  return { kind: 'server-pull', url, fileName, size: item.size }
+}
+```
+
+- [ ] **Step 6: Run everything and commit**
+
+Run: `cd web && npm run test && npx tsc -b && npm run lint`
+Expected: verde. A suíte inteira, não só os arquivos novos: o passo 4 mexeu no caminho de torrent, que tem testes próprios.
+
+```bash
+git add web/src/upload.ts web/src/upload.test.ts web/src/plex/open.ts web/src/plex/open.test.ts
+git commit -m "feat: pump bytes from a plex server, from wherever can reach it"
+```
+
+---
+
+### Task 20: O Plex na interface
+
+**Files:**
+- Create: `web/src/plex/PlexSection.tsx`
+- Test: `web/src/plex/PlexSection.test.tsx`
+- Modify: `web/src/plugins/PluginsPanel.tsx`
+- Modify: `web/src/pages/Home.tsx`, `web/src/pages/Room.tsx`
+- Modify: `web/src/i18n/pt-BR.ts`, `web/src/i18n/en.ts`
+- Modify: `web/src/theme.css`
+
+**Interfaces:**
+- Consumes: tudo das Tasks 17 a 19, mais `createRoomAndIngestUrl`/`startUrlTransfer` (Task 14).
+- Produces: `<PlexSection onPlay={(open: PlexOpen) => void} />`.
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// web/src/plex/PlexSection.test.tsx
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PlexSection } from './PlexSection'
+import { clearToken, setToken } from './account'
+
+vi.mock('./server', () => ({
+  listServers: vi.fn(async () => [{
+    name: 'Casa', clientIdentifier: 'srv1',
+    connections: [{ uri: 'https://10-0-0-5.hash.plex.direct:32400', local: true, relay: false }],
+  }]),
+  pickConnection: vi.fn(async () => ({ uri: 'https://10-0-0-5.hash.plex.direct:32400', local: true, relay: false })),
+}))
+
+vi.mock('./library', async () => {
+  const actual = await vi.importActual<typeof import('./library')>('./library')
+  return {
+    ...actual,
+    searchLibrary: vi.fn(async () => [{ ratingKey: '11', title: 'Duna', year: 2021, type: 'movie' as const }]),
+    itemDetails: vi.fn(async () => ({
+      ratingKey: '11', title: 'Duna', year: 2021, type: 'movie' as const,
+      partKey: '/library/parts/9/1600/file.mkv', size: 1234567, container: 'mkv',
+    })),
+  }
+})
+
+describe('PlexSection', () => {
+  beforeEach(async () => { await clearToken() })
+
+  it('offers to connect when no account is paired', async () => {
+    render(<PlexSection onPlay={() => undefined} />)
+    expect(await screen.findByRole('button', { name: /conectar/i })).toBeInTheDocument()
+  })
+
+  it('shows the server it settled on once an account is paired', async () => {
+    await setToken('tok')
+    render(<PlexSection onPlay={() => undefined} />)
+    expect(await screen.findByText('Casa')).toBeInTheDocument()
+  })
+
+  it('hands the pick up, with the route already decided', async () => {
+    await setToken('tok')
+    const onPlay = vi.fn()
+    render(<PlexSection onPlay={onPlay} />)
+    await userEvent.type(await screen.findByLabelText(/buscar na biblioteca/i), 'duna')
+    await userEvent.click(await screen.findByRole('button', { name: /duna/i }))
+    // A LAN connection: the browser pumps, because the server cannot reach it.
+    await waitFor(() => expect(onPlay).toHaveBeenCalledWith(expect.objectContaining({ kind: 'browser-pump' })))
+  })
+
+  it('forgets the account when asked, because a token is not a preference', async () => {
+    await setToken('tok')
+    render(<PlexSection onPlay={() => undefined} />)
+    await userEvent.click(await screen.findByRole('button', { name: /desconectar/i }))
+    expect(await screen.findByRole('button', { name: /conectar/i })).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd web && npx vitest run src/plex/PlexSection.test.tsx`
+Expected: FAIL — módulo não encontrado.
+
+- [ ] **Step 3: Write the component**
+
+`PlexSection` é um componente de estados, e são cinco: sem conta, pareando (mostra o código e a instrução, faz poll a cada 2 s), procurando servidor, pronto (nome do servidor, campo de busca, resultados) e erro. Escreva-o com o mesmo vocabulário visual das outras telas — `empty-copy` para os vazios, `primary-button raised` para a ação principal, `plugins-list` para a lista.
+
+Três coisas que precisam estar certas e não são óbvias:
+
+```tsx
+  // The pin poll has to stop. A pin expires in minutes and pollPin throws
+  // when it does; without this the interval outlives the panel and keeps
+  // hitting plex.tv for ever.
+  useEffect(() => {
+    if (!pin) return
+    let stopped = false
+    const timer = window.setInterval(async () => {
+      try {
+        const token = await pollPin(pin.id)
+        if (token && !stopped) {
+          await setToken(token)
+          setPin(null)
+        }
+      } catch (cause) {
+        if (!stopped) {
+          setPin(null)
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      }
+    }, 2_000)
+    return () => { stopped = true; window.clearInterval(timer) }
+  }, [pin])
+```
+
+```tsx
+  // Opening the approval page is the person's move, not ours: a popup opened
+  // from an effect is blocked by every browser. It hangs off the button.
+  <a href={pin.authUrl} target="_blank" rel="noopener noreferrer">{t('plex.approve')}</a>
+```
+
+```tsx
+  // Every connection to this server was probed and this one answered. Saying
+  // which kind it is matters: on a LAN connection the transfer needs this tab
+  // to stay open, and on a public one it does not.
+  <p className="empty-copy">{t(connection.local ? 'plex.viaLan' : 'plex.viaInternet')}</p>
+```
+
+- [ ] **Step 4: Add the strings**
+
+`web/src/i18n/pt-BR.ts`, e as equivalentes em `en.ts`:
+
+```ts
+  'plex.title': 'Plex',
+  'plex.connect': 'Conectar conta Plex',
+  'plex.disconnect': 'Desconectar',
+  'plex.approve': 'Aprovar no Plex',
+  'plex.code': 'Aprove este código no Plex:',
+  'plex.finding': 'Procurando o servidor…',
+  'plex.unreachable': 'Nenhum servidor Plex respondeu. Se ele está na sua rede, verifique se o roteador não bloqueia respostas de DNS que apontam para endereços locais.',
+  'plex.search': 'Buscar na biblioteca',
+  'plex.viaLan': 'Pela rede local — mantenha esta aba aberta até a transferência terminar.',
+  'plex.viaInternet': 'Pela internet — o servidor busca sozinho, você pode fechar a aba.',
+  'plex.noDownloads': 'O Plex recusou o arquivo original. Habilite "Allow Downloads" para este usuário nas configurações do servidor.',
+```
+
+- [ ] **Step 5: Mount it**
+
+Em `web/src/plugins/PluginsPanel.tsx`, na etapa `list`, acima da lista de plugins:
+
+```tsx
+                <PlexSection onPlay={onPlexPlay} />
+                <h2>{t('plugins.title')}</h2>
+```
+
+O Plex fica numa seção própria, acima e visivelmente separada. Ele não é um plugin, e listá-lo junto ensinaria a coisa errada para quem vier escrever um.
+
+`onPlexPlay` vem de fora, porque o que fazer com a escolha depende de onde o painel está aberto. Em `Home.tsx` é criar a sala; em `Room.tsx` é trocar a fonte:
+
+```tsx
+// Home.tsx
+  const onPlexPlay = async (open: PlexOpen) => {
+    setPluginsOpen(false)
+    if (open.kind === 'server-pull') {
+      const created = await createRoomAndIngestUrl(open.url, open.fileName, open.size, draftNickname.trim())
+      navigate(`/room/${created.roomID}`)
+      return
+    }
+    const created = await createRoom(open.fileName, draftNickname.trim())
+    startRemoteTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), 0, open.source)
+    navigate(`/room/${created.id}`)
+  }
+```
+
+```tsx
+// Room.tsx
+  const onPlexPlay = (open: PlexOpen) => {
+    setPluginsOpen(false)
+    void swapSource(async () => {
+      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', open.fileName)
+      if (open.kind === 'server-pull') {
+        await startUrlTransfer(room.id, open.url, open.fileName, open.size)
+        return
+      }
+      startRemoteTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, open.source)
+    })
+  }
+```
+
+Confira `createRoom` e `streamStartBytes` em `web/src/upload.ts` antes de escrever o ramo da Home: se `createRoom` não for exportado, exporte-o ou acrescente um `createRoomAndPump` ao lado de `createRoomAndIngestUrl`, seguindo a forma dos outros.
+
+- [ ] **Step 6: Run everything and commit**
+
+Run: `cd web && npm run test && npx tsc -b && npm run lint`
+Expected: verde.
+
+```bash
+git add web/src/plex web/src/plugins/PluginsPanel.tsx web/src/pages/Home.tsx web/src/pages/Room.tsx \
+  web/src/i18n/pt-BR.ts web/src/i18n/en.ts web/src/theme.css
+git commit -m "feat: play a title from a plex server"
+```
+
+---
+
 ## Notas de revisão
 
 Três coisas que quem executar vai encontrar e que estão aqui de propósito:
 
 1. **A Task 8 deixa `fetchStreams` e `ADDON_BASE` vivos de propósito.** Eles só morrem na Task 9. Se você chegar na Task 9 e encontrá-los já removidos, alguém quebrou a Task 8 pela metade.
-2. **`web/src/plugins/worker.ts` (Task 4) não tem teste automatizado.** jsdom não tem `Worker`. A verificação é manual e os passos estão escritos na própria task; não pule pensando que a suíte cobre.
-3. **`newServerWithWebDir` (Task 16) não está escrito aqui.** Leia `internal/httpapi/server_test.go` e reaproveite a montagem que já existe.
+2. **`web/src/plugins/worker.ts` (Task 4) não tem teste automatizado.** jsdom não tem `Worker`. A verificação é manual, os quatro casos do passo 5 são o teste, e os dois últimos — a fuga pelo protótipo e o worker aninhado — são a razão de a task existir na forma em que está. Não pule pensando que a suíte cobre.
+3. **A Task 4 e a Task 16 são duas metades de uma coisa só.** O bootstrap do worker remove nomes; o cabeçalho `Content-Security-Policy` da Task 16 é o que fecha o `import()` remoto, que de dentro do worker nada consegue remover. Fazer só uma das duas deixa o isolamento pela metade sem que nada falhe visivelmente.
+4. **A Task 19 mexe no caminho de torrent.** Ela generaliza `startTorrentTransfer` em `startRemoteTransfer` e deixa um adaptador no lugar. Rode a suíte inteira, não só os arquivos novos.
+5. **As Tasks 17 a 20 dependem do polyfill de `webcrypto` que a Task 5 acrescenta ao `setup.ts`** — `crypto.randomUUID` também não existe no jsdom sem ele.
