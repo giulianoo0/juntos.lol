@@ -30,6 +30,9 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 folder_title="${GRAFANA_FOLDER:-ss}"
+# The folder is addressed by a uid this repository owns, so every run targets
+# the same one; see ensure_folder.
+folder_uid="${GRAFANA_FOLDER_UID:-ss}"
 command="${1:-all}"
 
 die() { printf 'grafana-sync: %s\n' "$1" >&2; exit 1; }
@@ -68,14 +71,18 @@ grafana() {
 	printf '%s' "$body"
 }
 
-# grafana_status is the same call for the one case where a 404 is an answer
-# rather than a failure: asking whether something exists yet.
+# grafana_status is the same call for the cases where the status is the answer
+# rather than a failure: asking whether something exists yet, or creating
+# something that may already be there.
 grafana_status() {
 	local method="$1" path="$2"
+	shift 2
 	curl -sS -o /dev/null -w '%{http_code}' \
 		-X "$method" "${GRAFANA_URL%/}$path" \
 		-H "Authorization: Bearer $GRAFANA_SA_TOKEN" \
-		-H "Accept: application/json"
+		-H "Content-Type: application/json" \
+		-H "Accept: application/json" \
+		"$@"
 }
 
 check_token() {
@@ -89,28 +96,40 @@ check_token() {
 }
 
 # ensure_folder prints the folder's uid, creating the folder the first time.
+#
+# The uid is chosen here rather than looked up by title. Finding it by title
+# means listing folders, and a token that cannot list the folder it just made
+# finds nothing and makes another one — Grafana Cloud scopes folder reads, and
+# a service account does not necessarily gain read on what it creates, so this
+# happened on the first real run: two folders called ss, and rules that landed
+# in whichever was newest. A uid this repository owns is the same folder on
+# every run, for any token that can write at all.
 ensure_folder() {
-	local existing
-	existing="$(grafana GET /api/folders | jq -r --arg title "$folder_title" \
-		'map(select(.title == $title)) | .[0].uid // empty')"
-	if [ -n "$existing" ]; then
-		printf '%s' "$existing"
+	local status
+	if [ "$(grafana_status GET "/api/folders/$folder_uid")" = "200" ]; then
+		printf '%s' "$folder_uid"
 		return
 	fi
-	grafana POST /api/folders --data "$(jq -nc --arg title "$folder_title" '{title: $title}')" \
-		| jq -r '.uid'
+	# 409 is the folder already existing, which is the outcome being asked for
+	# — including when the token cannot read it back.
+	status="$(grafana_status POST /api/folders \
+		--data "$(jq -nc --arg uid "$folder_uid" --arg title "$folder_title" '{uid: $uid, title: $title}')")"
+	case "$status" in
+	200 | 201 | 409) printf '%s' "$folder_uid" ;;
+	*) die "creating folder $folder_title returned $status" ;;
+	esac
 }
 
 push_dashboards() {
 	check_token
-	local folder_uid dashboard payload url
-	folder_uid="$(ensure_folder)"
-	note "folder $folder_title ($folder_uid)"
+	local folder dashboard payload url
+	folder="$(ensure_folder)"
+	note "folder $folder_title ($folder)"
 	for dashboard in "$here"/dashboards/*.json; do
 		# version and id are dropped so the stack's own history decides them:
 		# sending a stale version is how a push fails with a version conflict
 		# on a dashboard nobody has touched.
-		payload="$(jq -c --arg folder "$folder_uid" \
+		payload="$(jq -c --arg folder "$folder" \
 			'{dashboard: (. + {id: null, version: null}), folderUid: $folder,
 			  overwrite: true, message: "pushed from the repository"}' "$dashboard")"
 		url="$(grafana POST /api/dashboards/db --data "$payload" | jq -r '.url')"
@@ -135,13 +154,13 @@ datasource_uid() {
 
 push_alerts() {
 	check_token
-	local folder_uid ds_uid count index payload uid title status
-	folder_uid="$(ensure_folder)"
+	local folder ds_uid count index payload uid title status
+	folder="$(ensure_folder)"
 	ds_uid="$(datasource_uid)"
 	note "data source $ds_uid"
 	count="$(jq 'length' "$here/alerts/ss-alerts.json")"
 	for ((index = 0; index < count; index++)); do
-		payload="$(jq -c --argjson i "$index" --arg folder "$folder_uid" --arg ds "$ds_uid" \
+		payload="$(jq -c --argjson i "$index" --arg folder "$folder" --arg ds "$ds_uid" \
 			'.[$i]
 			 | .folderUID = $folder
 			 | (.data[] | select(.datasourceUid == "${DATASOURCE_UID}")).datasourceUid = $ds
