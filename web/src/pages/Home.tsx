@@ -261,7 +261,7 @@ export function Home() {
         </section>
       ) : (
         <section className="catalog-stage">
-          <CatalogBrowser onOpenTitle={openTitle} />
+          <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
           {progress?.phase === 'converting' ? (
             <div className="progress-wrap" aria-label={t('home.preparing')}>
               <div className="progress-copy"><span>{t('home.preparing')}</span><span>{progress.pct}%</span></div>

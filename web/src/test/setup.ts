@@ -30,3 +30,24 @@ Object.defineProperty(window, 'matchMedia', {
     dispatchEvent: () => false,
   }),
 })
+
+// Embla measures its viewport with ResizeObserver, which jsdom lacks; the
+// carousels only need it to exist to mount.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (!('ResizeObserver' in globalThis)) {
+  Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, value: ResizeObserverStub })
+}
+
+class IntersectionObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() { return [] }
+}
+if (!('IntersectionObserver' in globalThis)) {
+  Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, value: IntersectionObserverStub })
+}

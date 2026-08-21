@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { animate } from 'motion'
 import { motion, useReducedMotion } from 'motion/react'
-import { Loader2, MessageSquareShare, Star, X } from 'lucide-react'
+import { MessageSquareShare, Play, Star, X } from 'lucide-react'
+import { Dropdown } from './Dropdown'
+import { languageName } from './languages'
+import { Carousel } from './Carousel'
+import { FadeImg } from './FadeImg'
 import { useT } from '../i18n/useT'
 import { fetchMeta, type MetaDetail, type MetaVideo } from './cinemeta'
 import { fetchStreams, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
@@ -116,6 +120,10 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
     const panel = panelRef.current
     const backdrop = backdropRef.current
     if (!panel || !backdrop) return
+    // StrictMode mounts effects twice: the first run leaves the panel pinned
+    // to the poster rect, and measuring through those inline styles would
+    // make the "final" layout equal the origin. Start from a clean slate.
+    panel.removeAttribute('style')
     const backdropIn = animate(backdrop, { opacity: [0, 1] }, { duration: 0.25, ease: REVEAL_EASE })
     if (!morphs || !open.rect) {
       const fade = reduceMotion
@@ -187,6 +195,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
       borderRadius: radius,
       overflow: 'hidden',
     })
+    // The copy lifts away first; only then does the bare panel shrink back
+    // into the card, fully opaque the whole way — a translucent ghost mixing
+    // with the board underneath reads as a glitch, not a morph.
     setRevealed(false)
     const origin = open.rect
     void fadeOut
@@ -198,9 +209,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
         width: `${origin.width}px`,
         height: `${origin.height}px`,
         borderRadius: CARD_RADIUS,
-        opacity: [1, 1, 0.6],
       },
-      { duration: 0.32, ease: MORPH_EASE },
+      { duration: 0.32, ease: MORPH_EASE, delay: 0.1 },
     ).then(onClose)
   }, [morphs, onClose, open.rect])
 
@@ -253,16 +263,33 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   return (
     <div className="details-layer" role="presentation">
       <div ref={backdropRef} className="details-backdrop" onClick={requestClose} />
-      <div ref={panelRef} className="details-panel raised" role="dialog" aria-modal="true" aria-label={meta.name} tabIndex={-1}>
-        <div className="details-hero" style={background ? { backgroundImage: `url(${background})` } : undefined}>
-          {!background && meta.poster ? <img className="details-hero-poster" src={meta.poster} alt="" /> : null}
+      <div
+        ref={panelRef}
+        className="details-panel raised"
+        role="dialog"
+        aria-modal="true"
+        aria-label={meta.name}
+        tabIndex={-1}
+        // Scrolling the sources reads over the hero; blurring it with the
+        // scroll keeps the copy legible without a heavy static scrim.
+        onScroll={(event) => {
+          const panel = event.currentTarget
+          panel.style.setProperty('--hero-blur', `${Math.min(panel.scrollTop / 24, 16)}px`)
+        }}
+      >
+        <div className="details-hero">
+          {background ? (
+            <FadeImg className="details-hero-img" src={background} alt="" />
+          ) : meta.poster ? (
+            <FadeImg className="details-hero-poster" src={meta.poster} alt="" />
+          ) : null}
           <div className="details-hero-scrim" />
         </div>
         <motion.div
           className="details-content"
           initial={false}
           animate={reveal}
-          transition={{ duration: 0.3, ease: REVEAL_EASE }}
+          transition={{ duration: revealed ? 0.3 : 0.15, ease: REVEAL_EASE }}
         >
           <button type="button" className="dialog-close details-close" aria-label={t('details.close')} onClick={requestClose}>
             <X size={16} aria-hidden="true" />
@@ -285,31 +312,40 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
           {meta.type === 'series' ? (
             <div className="details-episodes">
               <div className="details-season-row">
-                <label htmlFor="details-season">{t('details.season')}</label>
-                <select
-                  id="details-season"
-                  value={season}
-                  onChange={(event) => { setSeason(Number(event.target.value)); setSelected(null) }}
-                >
-                  {(seasons.length > 0 ? seasons : [season]).map((value) => (
-                    <option key={value} value={value}>{t('details.seasonN')} {value}</option>
+                <span className="details-season-label">{t('details.season')}</span>
+                <Dropdown
+                  label={t('details.season')}
+                  value={String(season)}
+                  options={(seasons.length > 0 ? seasons : [season]).map((value) => ({
+                    value: String(value),
+                    label: `${t('details.seasonN')} ${value}`,
+                  }))}
+                  onChange={(value) => { setSeason(Number(value)); setSelected(null) }}
+                />
+              </div>
+              {episodes.length > 0 ? (
+                <Carousel className="details-episode-carousel" prevLabel={t('catalog.scrollBack')} nextLabel={t('catalog.scrollForward')}>
+                  {episodes.map((video) => (
+                    <button
+                      key={video.id}
+                      type="button"
+                      className={`episode-card ${selected?.id === video.id ? 'is-selected' : ''}`}
+                      onClick={() => setSelected(video)}
+                    >
+                      {video.thumbnail ? <FadeImg className="episode-art" src={video.thumbnail} alt="" loading="lazy" /> : null}
+                      <span className="episode-scrim" />
+                      <span className="episode-body">
+                        <span className="episode-kicker">{t('details.episode')} {video.episode}</span>
+                        <strong className="episode-title">{video.name || `${t('details.episode')} ${video.episode}`}</strong>
+                        {video.overview ? <span className="episode-overview">{video.overview}</span> : null}
+                        {detail?.runtime ? (
+                          <span className="episode-foot"><Play size={11} aria-hidden="true" />{detail.runtime}</span>
+                        ) : null}
+                      </span>
+                    </button>
                   ))}
-                </select>
-              </div>
-              <div className="details-episode-list">
-                {episodes.map((video) => (
-                  <button
-                    key={video.id}
-                    type="button"
-                    className={selected?.id === video.id ? 'is-selected' : ''}
-                    onClick={() => setSelected(video)}
-                  >
-                    <span className="episode-number">{video.episode}</span>
-                    <span className="episode-name">{video.name || `${t('details.episode')} ${video.episode}`}</span>
-                  </button>
-                ))}
-                {detail && episodes.length === 0 ? <p className="empty-copy">{t('details.noEpisodes')}</p> : null}
-              </div>
+                </Carousel>
+              ) : detail ? <p className="empty-copy">{t('details.noEpisodes')}</p> : null}
             </div>
           ) : null}
 
@@ -332,31 +368,50 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                 <h3>{t('details.sources')}</h3>
                 {streams && streams.length > 0 ? (
                   <div className="stream-filters">
-                    <label>
-                      <span className="sr-only">{t('details.quality')}</span>
-                      <select value={resolutionFilter} onChange={(event) => setResolutionFilter(event.target.value as 'all' | StreamResolution)}>
-                        <option value="all">{t('details.allQualities')}</option>
-                        {resolutionOptions.map((value) => (
-                          <option key={value} value={value}>{value === 'sd' ? 'SD' : value}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <Dropdown
+                      label={t('details.quality')}
+                      value={resolutionFilter}
+                      options={[
+                        { value: 'all', label: t('details.allQualities'), detail: `(${streams.length})` },
+                        ...resolutionOptions.map((value) => ({
+                          value,
+                          label: value === 'sd' ? 'SD' : value,
+                          detail: `(${streams.filter((stream) => stream.resolution === value).length})`,
+                        })),
+                      ]}
+                      onChange={(value) => setResolutionFilter(value as 'all' | StreamResolution)}
+                      align="end"
+                    />
                     {languageOptions.length > 0 ? (
-                      <label>
-                        <span className="sr-only">{t('details.language')}</span>
-                        <select value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)}>
-                          <option value="all">{t('details.allLanguages')}</option>
-                          {languageOptions.map((flag) => (
-                            <option key={flag} value={flag}>{flag} {t('details.dubOrSub')}</option>
-                          ))}
-                        </select>
-                      </label>
+                      <Dropdown
+                        label={t('details.language')}
+                        value={languageFilter}
+                        options={[
+                          { value: 'all', label: t('details.allLanguages'), detail: `(${streams.length})` },
+                          ...languageOptions.map((flag) => ({
+                            value: flag,
+                            label: `${flag} ${languageName(flag, t.language)}`,
+                            detail: `(${streams.filter((stream) => stream.languages.includes(flag)).length})`,
+                          })),
+                        ]}
+                        onChange={setLanguageFilter}
+                        align="end"
+                      />
                     ) : null}
                   </div>
                 ) : null}
               </div>
               {streams === null && !streamsFailed ? (
-                <p className="details-streams-loading"><Loader2 className="details-spin" size={15} aria-hidden="true" />{t('details.loadingSources')}</p>
+                <motion.div
+                  key={`skeleton:${target.season ?? 0}:${target.episode ?? 0}`}
+                  className="stream-list"
+                  aria-label={t('details.loadingSources')}
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
+                  animate={{ opacity: 1, filter: 'blur(0px)' }}
+                  transition={{ duration: 0.25, ease: REVEAL_EASE }}
+                >
+                  {Array.from({ length: 5 }, (_, index) => <span key={index} className="stream-skeleton" />)}
+                </motion.div>
               ) : streamsFailed || streams === null ? (
                 <p className="empty-copy">{t('details.sourcesFailed')}</p>
               ) : streams.length === 0 ? (
@@ -364,7 +419,13 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
               ) : visibleStreams.length === 0 ? (
                 <p className="empty-copy">{t('details.noFilteredSources')}</p>
               ) : (
-                <div className="stream-list">
+                <motion.div
+                  key={`streams:${target.season ?? 0}:${target.episode ?? 0}`}
+                  className="stream-list"
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
+                  animate={{ opacity: 1, filter: 'blur(0px)' }}
+                  transition={{ duration: 0.25, ease: REVEAL_EASE }}
+                >
                   {visibleStreams.slice(0, 30).map((stream) => (
                     <button
                       key={stream.infoHash + stream.fileName}
@@ -377,17 +438,17 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                           : meta.name,
                       })}
                     >
-                      <span className="stream-quality">{stream.quality}</span>
                       <span className="stream-label">{stream.label}</span>
-                      <span className="stream-facts">
-                        {stream.languages.length > 0 ? <span>{stream.languages.slice(0, 6).join(' ')}</span> : null}
+                      <span className="stream-meta">
+                        <span className="stream-quality">{stream.quality}</span>
+                        {stream.languages.length > 0 ? <span className="stream-langs">{stream.languages.slice(0, 6).join(' ')}</span> : null}
                         {stream.seeders !== null ? <span>{stream.seeders} seeds</span> : null}
                         {stream.size ? <span>{stream.size}</span> : null}
-                        {stream.source ? <span>{stream.source}</span> : null}
+                        {stream.source ? <span className="stream-source">{stream.source}</span> : null}
                       </span>
                     </button>
                   ))}
-                </div>
+                </motion.div>
               )}
             </div>
           ) : meta.type === 'series' ? (

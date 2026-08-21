@@ -147,7 +147,6 @@ export const ptBR: Record<string, string> = {
   'details.allQualities': 'Todas as qualidades',
   'details.language': 'Idioma',
   'details.allLanguages': 'Qualquer idioma',
-  'details.dubOrSub': 'dublado ou legendado',
   'details.requestHost': 'Pedir ao líder',
   'details.requested': 'Pedido enviado',
   'home.uploadManually': 'Upload manualmente',
@@ -156,4 +155,8 @@ export const ptBR: Record<string, string> = {
   'request.asked': 'pediu',
   'request.viewSources': 'Ver fontes',
   'request.dismiss': 'Dispensar pedido',
+  'catalog.scrollBack': 'Voltar',
+  'catalog.scrollForward': 'Avançar',
+  'catalog.movies': 'Filmes',
+  'catalog.series': 'Séries',
 }

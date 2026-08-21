@@ -147,7 +147,6 @@ export const en: Record<string, string> = {
   'details.allQualities': 'All qualities',
   'details.language': 'Language',
   'details.allLanguages': 'Any language',
-  'details.dubOrSub': 'dubbed or subtitled',
   'details.requestHost': 'Ask the leader',
   'details.requested': 'Request sent',
   'home.uploadManually': 'Manual upload',
@@ -156,4 +155,8 @@ export const en: Record<string, string> = {
   'request.asked': 'asked for',
   'request.viewSources': 'View sources',
   'request.dismiss': 'Dismiss request',
+  'catalog.scrollBack': 'Scroll back',
+  'catalog.scrollForward': 'Scroll forward',
+  'catalog.movies': 'Movies',
+  'catalog.series': 'Series',
 }

@@ -61,7 +61,7 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
         </button>
       </header>
       <div className="catalog-overlay-body">
-        <CatalogBrowser compact onOpenTitle={setDetails} />
+        <CatalogBrowser compact onOpenTitle={setDetails} hideSearch={details !== null} />
       </div>
       {details ? (
         <MetaDetails

@@ -1,6 +1,7 @@
 import { memo, useRef, type KeyboardEvent, type MouseEvent } from 'react'
 import { Film, Tv } from 'lucide-react'
 import type { CatalogMeta } from './cinemeta'
+import { FadeImg } from './FadeImg'
 
 export interface TitleOpen {
   meta: CatalogMeta
@@ -30,7 +31,7 @@ export const PosterCard = memo(function PosterCard({ meta, onOpen }: PosterCardP
     <button type="button" className="poster-card" onClick={open} aria-label={meta.name}>
       <span ref={artRef} className="poster-art">
         {meta.poster ? (
-          <img src={meta.poster} alt="" loading="lazy" />
+          <FadeImg src={meta.poster} alt="" loading="lazy" />
         ) : (
           meta.type === 'movie' ? <Film size={28} aria-hidden="true" /> : <Tv size={28} aria-hidden="true" />
         )}
