@@ -1,0 +1,96 @@
+import type { MetaType } from './cinemeta'
+
+// Any Stremio-protocol stream addon works here; Torrentio is the default. The
+// addon only returns torrent identifiers (infoHash + file hints) — the bytes
+// flow through the room's existing torrent pipeline, never through the addon.
+const ADDON_BASE = (import.meta.env.VITE_STREAM_ADDON as string | undefined)?.replace(/\/$/, '')
+  ?? 'https://torrentio.strem.fun'
+
+// The magnet alone identifies the torrent; these public trackers are the same
+// kind the manual magnet flow relies on for peer discovery.
+const TRACKERS = [
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://open.demonii.com:1337/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'wss://tracker.openwebtorrent.com',
+]
+
+export interface CatalogStream {
+  // First line of the addon's name field, e.g. "Torrentio 1080p".
+  quality: string
+  // The release name, cleaned of the stats line.
+  label: string
+  seeders: number | null
+  size: string
+  source: string
+  infoHash: string
+  fileName: string
+}
+
+export interface StreamTarget {
+  type: MetaType
+  id: string
+  season?: number
+  episode?: number
+}
+
+// Torrentio packs the release name plus a stats line ("👤 12 💾 1.4 GB ⚙️ x")
+// into `title`, newline-separated. Pull the stats out so the list can render
+// them as fields instead of emoji soup.
+export function parseStreamTitle(title: string): { label: string; seeders: number | null; size: string; source: string } {
+  const lines = title.split('\n')
+  const statsLine = lines.find((line) => line.includes('👤') || line.includes('💾')) ?? ''
+  const seeders = /👤\s*(\d+)/.exec(statsLine)
+  const size = /💾\s*([\d.,]+\s*[KMGT]?B)/.exec(statsLine)
+  const source = /⚙️\s*(.+?)\s*$/.exec(statsLine)
+  const label = lines.filter((line) => line !== statsLine && line.trim() !== '').join(' ')
+  return {
+    label,
+    seeders: seeders ? Number(seeders[1]) : null,
+    size: size ? size[1] : '',
+    source: source ? source[1] : '',
+  }
+}
+
+export function parseStreams(payload: unknown): CatalogStream[] {
+  if (typeof payload !== 'object' || payload === null) return []
+  const streams = (payload as { streams?: unknown }).streams
+  if (!Array.isArray(streams)) return []
+  const result: CatalogStream[] = []
+  for (const value of streams) {
+    if (typeof value !== 'object' || value === null) continue
+    const stream = value as Record<string, unknown>
+    if (typeof stream.infoHash !== 'string' || !/^[0-9a-f]{40}$/i.test(stream.infoHash)) continue
+    const title = typeof stream.title === 'string' ? stream.title : ''
+    const hints = typeof stream.behaviorHints === 'object' && stream.behaviorHints !== null
+      ? stream.behaviorHints as Record<string, unknown>
+      : {}
+    const parsed = parseStreamTitle(title)
+    result.push({
+      quality: typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : '',
+      label: parsed.label,
+      seeders: parsed.seeders,
+      size: parsed.size,
+      source: parsed.source,
+      infoHash: stream.infoHash.toLowerCase(),
+      fileName: typeof hints.filename === 'string' ? hints.filename : '',
+    })
+  }
+  return result
+}
+
+export async function fetchStreams(target: StreamTarget): Promise<CatalogStream[]> {
+  const id = target.type === 'series' && target.season != null && target.episode != null
+    ? `${target.id}:${target.season}:${target.episode}`
+    : target.id
+  const response = await fetch(`${ADDON_BASE}/stream/${target.type}/${encodeURIComponent(id)}.json`)
+  if (!response.ok) throw new Error(`stream addon ${response.status}`)
+  return parseStreams(await response.json())
+}
+
+export function buildMagnet(stream: CatalogStream): string {
+  const name = stream.fileName || stream.label
+  const dn = name ? `&dn=${encodeURIComponent(name)}` : ''
+  const trackers = TRACKERS.map((tracker) => `&tr=${encodeURIComponent(tracker)}`).join('')
+  return `magnet:?xt=urn:btih:${stream.infoHash}${dn}${trackers}`
+}
