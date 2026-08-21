@@ -710,11 +710,11 @@ h1, h2, p { margin-top: 0; }
 /* The ramp runs past the header's own box, so it finishes in clear air. */
 .progressive-blur { position: absolute; inset: 0 0 -60% 0; z-index: -1; pointer-events: none; }
 .progressive-blur span { position: absolute; inset: 0; display: block; }
-.progressive-blur span:nth-child(1) { backdrop-filter: blur(0.9px); -webkit-backdrop-filter: blur(0.9px); mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); }
-.progressive-blur span:nth-child(2) { backdrop-filter: blur(1.8px); -webkit-backdrop-filter: blur(1.8px); mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); }
-.progressive-blur span:nth-child(3) { backdrop-filter: blur(3.6px); -webkit-backdrop-filter: blur(3.6px); mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); }
-.progressive-blur span:nth-child(4) { backdrop-filter: blur(7.2px); -webkit-backdrop-filter: blur(7.2px); mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); }
-.progressive-blur span:nth-child(5) { backdrop-filter: blur(14.4px); -webkit-backdrop-filter: blur(14.4px); mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); }
+.progressive-blur span:nth-child(1) { backdrop-filter: blur(0.9px); mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); }
+.progressive-blur span:nth-child(2) { backdrop-filter: blur(1.8px); mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); }
+.progressive-blur span:nth-child(3) { backdrop-filter: blur(3.6px); mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); }
+.progressive-blur span:nth-child(4) { backdrop-filter: blur(7.2px); mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); }
+.progressive-blur span:nth-child(5) { backdrop-filter: blur(14.4px); mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); }
 
 /* --- catalog header ----------------------------------------------------- */
 /* Identity and language on the left, the way in for your own media on the
