@@ -536,9 +536,7 @@ h1, h2, p { margin-top: 0; }
 .poster-card:focus-visible .poster-art { outline: 2px solid color-mix(in srgb, var(--primary) 72%, white); outline-offset: 2px; }
 .poster-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 550; }
 .poster-year { color: var(--text-faint); font-size: 11px; }
-.poster-skeleton { aspect-ratio: 2 / 3; border-radius: 14px; background: linear-gradient(110deg, var(--card) 40%, var(--card-hover) 50%, var(--card) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
-@keyframes skeleton-sweep { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) { .poster-skeleton { animation: none; } }
+.poster-skeleton { aspect-ratio: 2 / 3; border-radius: 14px; }
 
 /* --- title details ------------------------------------------------------ */
 /* The panel that morphs out of a poster. Its resting geometry lives here in
@@ -588,8 +586,7 @@ h1, h2, p { margin-top: 0; }
 .details-streams-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .details-streams h3 { margin: 0; font-size: 15px; }
 .stream-filters { display: flex; gap: 8px; }
-.stream-skeleton { height: 42px; border-radius: 13px; background: linear-gradient(110deg, rgba(255,255,255,.04) 40%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.04) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .stream-skeleton { animation: none; } }
+.stream-skeleton { height: 44px; border-radius: 13px; }
 .stream-list { display: grid; gap: 8px; }
 .stream-list > button { display: grid; gap: 7px; width: 100%; padding: 12px 15px; border: 0; border-radius: 14px; background: rgba(255,255,255,.04); text-align: left; }
 .stream-list > button:hover { background: rgba(120,127,250,.13); }
@@ -680,10 +677,9 @@ h1, h2, p { margin-top: 0; }
 
 /* --- slow-connection skeletons ------------------------------------------ */
 .details-skeleton { display: grid; gap: 10px; margin-top: 16px; }
-.text-skeleton { height: 13px; border-radius: 7px; background: linear-gradient(110deg, rgba(255,255,255,.05) 40%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.05) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+.text-skeleton { height: 13px; border-radius: 7px; }
 .details-skeleton-episodes { display: flex; gap: 12px; margin-top: 10px; overflow: hidden; }
-.episode-skeleton { flex: 0 0 clamp(220px, 26vw, 300px); aspect-ratio: 1 / 1.02; border-radius: 20px; background: linear-gradient(110deg, var(--card) 40%, var(--card-hover) 50%, var(--card) 60%) 0 0 / 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .text-skeleton, .episode-skeleton { animation: none; } }
+.episode-skeleton { flex: 0 0 clamp(220px, 26vw, 300px); aspect-ratio: 1 / 1.02; border-radius: 20px; }
 
 /* Phone header: the nav collapses to bare icons and the build link steps
    aside, so the wordmark and the language never overlap it. */
@@ -789,3 +785,44 @@ h1, h2, p { margin-top: 0; }
 .upload-morph .dialog-drop > span { margin: 0; color: var(--text-faint); font-size: 12px; }
 .upload-morph .dialog-drop .drop-icon { margin: 0; }
 .upload-morph .morph-head { margin-bottom: 4px; }
+
+/* --- skeletons ---------------------------------------------------------- */
+/* A placeholder should read as the shape of the thing arriving, not as a grey
+   box blinking. Each one is a faintly lit surface with a narrow highlight
+   raked across it: the band is a rotated pseudo-element driven by transform,
+   so the sweep composites instead of repainting the fill every frame. */
+.poster-skeleton, .episode-skeleton, .stream-skeleton, .text-skeleton {
+  position: relative; overflow: hidden; isolation: isolate;
+  background: linear-gradient(158deg, rgba(255,255,255,.062), rgba(255,255,255,.022) 62%);
+  box-shadow: inset 0 1px rgba(255,255,255,.05);
+}
+.poster-skeleton::after, .episode-skeleton::after, .stream-skeleton::after, .text-skeleton::after {
+  content: ''; position: absolute; inset: -60% -85%; z-index: 1;
+  /* Soft shoulders on both sides: a hard-edged band reads as a glitch. */
+  background: linear-gradient(90deg,
+    transparent 0%, rgba(255,255,255,.03) 34%, rgba(255,255,255,.085) 46%,
+    rgba(255,255,255,.13) 50%, rgba(255,255,255,.085) 54%, rgba(255,255,255,.03) 66%, transparent 100%);
+  animation: skeleton-rake 1.9s cubic-bezier(.45, 0, .25, 1) infinite;
+}
+/* The rake is held off-frame at both ends, so the pause between passes is
+   part of the loop rather than the band sitting parked in view. */
+@keyframes skeleton-rake {
+  0% { transform: rotate(14deg) translate3d(-85%, 0, 0); }
+  70%, 100% { transform: rotate(14deg) translate3d(85%, 0, 0); }
+}
+/* Dealt across the row, so the highlight travels the strip as one wave. */
+.catalog-strip > .poster-skeleton:nth-child(2)::after, .details-skeleton-episodes > .episode-skeleton:nth-child(2)::after { animation-delay: 90ms; }
+.catalog-strip > .poster-skeleton:nth-child(3)::after, .details-skeleton-episodes > .episode-skeleton:nth-child(3)::after { animation-delay: 180ms; }
+.catalog-strip > .poster-skeleton:nth-child(4)::after, .details-skeleton-episodes > .episode-skeleton:nth-child(4)::after { animation-delay: 270ms; }
+.catalog-strip > .poster-skeleton:nth-child(5)::after { animation-delay: 360ms; }
+.catalog-strip > .poster-skeleton:nth-child(6)::after { animation-delay: 450ms; }
+.catalog-strip > .poster-skeleton:nth-child(7)::after { animation-delay: 540ms; }
+.catalog-strip > .poster-skeleton:nth-child(8)::after { animation-delay: 630ms; }
+.stream-list > .stream-skeleton:nth-child(2)::after { animation-delay: 80ms; }
+.stream-list > .stream-skeleton:nth-child(3)::after { animation-delay: 160ms; }
+.stream-list > .stream-skeleton:nth-child(4)::after { animation-delay: 240ms; }
+.stream-list > .stream-skeleton:nth-child(5)::after { animation-delay: 320ms; }
+.details-skeleton > .text-skeleton:nth-child(2)::after { animation-delay: 90ms; }
+@media (prefers-reduced-motion: reduce) {
+  .poster-skeleton::after, .episode-skeleton::after, .stream-skeleton::after, .text-skeleton::after { animation: none; opacity: .5; }
+}

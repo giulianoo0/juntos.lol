@@ -138,6 +138,8 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
     return () => window.clearTimeout(timer)
   }, [query])
 
+  const typing = query.trim() !== ''
+
   const enter = reduceMotion
     ? { initial: { opacity: 0 }, animate: { opacity: 1 } }
     : { initial: { opacity: 0, transform: 'translateY(10px)' }, animate: { opacity: 1, transform: 'translateY(0px)' } }
@@ -178,7 +180,19 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
         ) : null}
       </motion.div>
 
-      {results !== null ? (
+      {/* The first keystroke swaps the board for the shape of an answer:
+          waiting on the debounce and the request with the rows still up reads
+          as the search having done nothing. */}
+      {typing && results === null ? (
+        ['catalog.movies', 'catalog.series'].map((labelKey) => (
+          <section key={labelKey} className="catalog-row" aria-hidden="true">
+            <h2>{t(labelKey)}</h2>
+            <div className="catalog-strip">
+              {Array.from({ length: 8 }, (_, index) => <span key={index} className="poster-skeleton" />)}
+            </div>
+          </section>
+        ))
+      ) : results !== null ? (
         results.length > 0 ? (
           // Results keep the board's own shape: one Filmes row, one Séries
           // row, each on the same carousel as everywhere else.
