@@ -1238,7 +1238,7 @@ Expected: FAIL — módulo não encontrado.
 ```ts
 // web/src/plugins/update.ts
 import { fetchGitPlugin, readManifestFromSource, type InstallDeps } from './install'
-import { listPlugins, putPlugin, sha256Hex, type InstalledPlugin, type PluginManifest } from './store'
+import { listPlugins, putPlugin, sha256Hex, type InstalledPlugin } from './store'
 import type { PluginManifest as Manifest } from './manifest'
 
 export interface UpdateDeps extends InstallDeps {
@@ -1346,15 +1346,12 @@ export async function updateAll(deps: UpdateDeps = {}): Promise<Record<string, U
   return Object.fromEntries(entries)
 }
 
-export type { PluginManifest }
 ```
-
-> Nota para quem implementar: `store.ts` não exporta `PluginManifest`. Remova o `import type { ... PluginManifest } from './store'` e o `export type { PluginManifest }` do fim, e importe o tipo de `./manifest` — o alias `Manifest` já faz isso. Isto está aqui de propósito: o compilador vai apontar, e a correção é deletar as duas linhas.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd web && npx vitest run src/plugins/update.test.ts && npx tsc -b`
-Expected: PASS, 11 testes, e `tsc` limpo depois de remover as duas linhas da nota.
+Expected: PASS, 11 testes, e `tsc` limpo.
 
 - [ ] **Step 5: Commit**
 
@@ -1434,11 +1431,11 @@ Expected: FAIL — `parseStreams` recebe dois argumentos e `stream.location` nã
 
 - [ ] **Step 3: Write the implementation**
 
-Em `web/src/catalog/streams.ts`, troque `ADDON_BASE`, a interface e as duas funções finais:
+Em `web/src/catalog/streams.ts`, troque a interface e as duas funções finais.
+
+`ADDON_BASE` e `fetchStreams` **ficam onde estão nesta task**, com uma única mudança: a chamada de `parseStreams` dentro de `fetchStreams` passa a receber `'torrentio'` como segundo argumento. Eles são o que o sistema de plugins substitui, e a Task 9 os deleta — mas deletá-los aqui quebraria `MetaDetails.tsx` numa task que ainda não tem com o que consertá-lo, e uma task que não compila não é uma task.
 
 ```ts
-// Remova a constante ADDON_BASE inteira e a função fetchStreams: um endereço
-// de addon embutido é exatamente o que o sistema de plugins substitui.
 
 /** Where a stream's bytes actually are. */
 export type StreamLocation =
@@ -1555,11 +1552,15 @@ Em `web/src/catalog/MetaDetails.tsx`, linha 504, troque a chave por `key={`${str
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cd web && npx vitest run src/catalog/streams.test.ts && npx tsc -b`
-Expected: os testes de `streams` passam. `tsc` vai apontar `fetchStreams` ausente em `MetaDetails.tsx` e o `openCatalogStream` em `Home.tsx`/`Room.tsx` — esses são o objeto das Tasks 9 e 12; deixe-os quebrados apenas se for seguir direto, ou comente `// TODO(task 9)` e recomponha lá. Prefira encadear: não commite com `tsc` vermelho.
+Run: `cd web && npx vitest run && npx tsc -b && npx oxlint src`
+Expected: verde. `MetaDetails.tsx` continua compilando porque `fetchStreams` continua existindo e a linha 504 agora usa `streamKey`.
 
-- [ ] **Step 5: Hold the commit until Task 9**
+- [ ] **Step 5: Commit**
 
-Este passo não commita. `parseStreams` sem um chamador é meio caminho; a Task 9 fecha e as duas entram juntas.
+```bash
+git add web/src/catalog/streams.ts web/src/catalog/streams.test.ts web/src/catalog/openStream.ts web/src/catalog/MetaDetails.tsx
+git commit -m "feat: describe a stream by where its bytes are"
+```
 
 ---
 
@@ -1568,6 +1569,7 @@ Este passo não commita. `parseStreams` sem um chamador é meio caminho; a Task 
 **Files:**
 - Create: `web/src/plugins/resolve.ts`
 - Test: `web/src/plugins/resolve.test.ts`
+- Modify: `web/src/catalog/streams.ts` (remover `ADDON_BASE` e `fetchStreams`)
 - Modify: `web/src/catalog/MetaDetails.tsx` (linhas 88-97 e 477-495)
 - Modify: `web/src/i18n/pt-BR.ts`, `web/src/i18n/en.ts`
 
@@ -1688,9 +1690,11 @@ export async function resolveStreams(target: StreamTarget, deps: ResolveDeps = {
 
 Note que `run` devolve o array cru do plugin e `parseStreams` espera `{ streams }` — o embrulho acontece aqui, o que deixa o plugin devolvendo simplesmente um array.
 
-- [ ] **Step 4: Wire MetaDetails**
+- [ ] **Step 4: Wire MetaDetails and delete the hardcoded addon**
 
-Em `web/src/catalog/MetaDetails.tsx`:
+Primeiro, em `web/src/catalog/streams.ts`, apague a constante `ADDON_BASE` e a função `fetchStreams` inteiras, junto com o comentário do topo que fala do addon. Agora existe um chamador melhor, e um endereço de addon embutido é exatamente o que este sistema substitui. `MetaDetails.tsx` é o único importador de `fetchStreams`, e os passos abaixo o reescrevem.
+
+Depois, em `web/src/catalog/MetaDetails.tsx`:
 
 1. Troque o import `fetchStreams` por `import { resolveStreams } from '../plugins/resolve'` e mantenha os tipos vindos de `./streams`.
 2. Acrescente o estado `const [noPlugins, setNoPlugins] = useState(false)`.
@@ -2520,6 +2524,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -2537,13 +2542,13 @@ func fakeTus(t *testing.T, received *strings.Builder, mu *sync.Mutex) *httptest.
 		case http.MethodHead:
 			mu.Lock()
 			defer mu.Unlock()
-			w.Header().Set("Upload-Offset", itoa(received.Len()))
+			w.Header().Set("Upload-Offset", strconv.Itoa(received.Len()))
 			w.WriteHeader(http.StatusOK)
 		case http.MethodPatch:
 			body, _ := io.ReadAll(r.Body)
 			mu.Lock()
 			received.Write(body)
-			w.Header().Set("Upload-Offset", itoa(received.Len()))
+			w.Header().Set("Upload-Offset", strconv.Itoa(received.Len()))
 			mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -2597,18 +2602,6 @@ func TestIngestRefusesAPrivateURL(t *testing.T) {
 		t.Fatal("expected a private url to be refused at submit")
 	}
 }
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits []byte
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
-}
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -2618,34 +2611,462 @@ Expected: FAIL — `NewIngestor`, `Job` e `Hooks` não existem.
 
 - [ ] **Step 4: Write the ingestor**
 
-Escreva `internal/urlingest/ingest.go` espelhando `internal/torrent/ingest.go`: uma fila com `maxJobs`, um `Submit` que valida com `CheckURL` antes de enfileirar e devolve `ErrBusy` quando cheia, um `run` que cria o upload tus, um `pump` que faz `GET` com cabeçalho `Range: bytes=<offset>-` e copia a resposta para um `PATCH` tus, e a mesma política de `resumeAttempts`/`resumeBackoff`. Requisitos que não vêm do arquivo de referência:
+Este é `internal/torrent/ingest.go` com outra fonte de bytes. O que muda em relação ao arquivo de referência, e por quê:
 
-- O campo `client *http.Client` é inicializado com `SafeClient(0)` em `NewIngestor` e é substituível em testes.
-- Um `Content-Type` de resposta que não comece com `video/` e não seja vazio faz o job falhar com um erro nomeado — seguir para uma página de HTML e gravá-la como se fosse um filme é pior do que falhar.
-- Um corpo maior que `Job.Size` é truncado e o job falha: o tamanho anunciado é o que a sala reservou.
-- `Hooks` ganha `OnDone func(roomID string)` além do `OnFailed` que o torrent já tem, porque o teste precisa de um sinal de sucesso.
+- O `client` sai de `SafeClient(0)` e é um campo substituível, porque `httptest` serve em loopback e a guarda recusa loopback. A guarda tem os testes dela na Task 12; este teste é sobre a bomba.
+- Um `Content-Type` que não seja de vídeo derruba o job. Seguir um redirect até uma página de erro em HTML e gravá-la como se fosse um filme é pior do que falhar.
+- Um `Content-Length` que estoure `Job.Size` derruba o job antes de qualquer byte ser gravado: o tamanho anunciado é o que a sala reservou no tus, e um upload com o comprimento errado nunca completa.
+- Um `200` quando pedimos `Range` a partir de um offset maior que zero derruba o job. O servidor está mandando o arquivo do começo; aceitar isso grava bytes duplicados no meio do arquivo.
+- Não há métricas. As do torrent são específicas dele (`TorrentPeers`, `TorrentIngests`), e inventar um espelho delas aqui é escopo que ninguém pediu — `slog` cobre o que precisa ser visto.
+- `Hooks` ganha `OnDone`, porque o teste precisa de um sinal de sucesso e a sala não tem outro.
+
+```go
+// internal/urlingest/ingest.go
+package urlingest
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	// resumeAttempts bounds how many times a broken stream is picked up again
+	// without a single byte being stored. A slow origin stalls rather than
+	// fails, so only a run that makes no progress counts against this.
+	resumeAttempts = 5
+	// resumeBackoff spaces out those retries.
+	resumeBackoff = 3 * time.Second
+	// tusVersion is the only protocol version the server speaks.
+	tusVersion = "1.0.0"
+)
+
+// Job is one remote file to pull into one room.
+type Job struct {
+	RoomID   string
+	URL      string
+	FileName string
+	Size     int64
+}
+
+// Hooks lets the ingest report into the rest of the server without depending
+// on it. Both are optional.
+type Hooks struct {
+	// OnFailed reports an ingest that gave up, so the room can stop showing a
+	// transfer that is not happening.
+	OnFailed func(roomID string, err error)
+	// OnDone reports one that finished.
+	OnDone func(roomID string)
+}
+
+var (
+	// ErrBusy reports that too many ingests are already running.
+	ErrBusy = errors.New("too many url ingests in flight")
+	// ErrNotVideo reports a source that answered with something other than a
+	// video — an HTML error page, most likely.
+	ErrNotVideo = errors.New("source did not return a video")
+	// ErrTooLarge reports a source bigger than the size the room reserved.
+	ErrTooLarge = errors.New("source is larger than the announced size")
+	// ErrNoRange reports a source that ignored a Range request, which makes a
+	// resumed transfer impossible.
+	ErrNoRange = errors.New("source does not support resuming")
+)
+
+// Ingestor pulls remote files into rooms through the server's own tus
+// endpoint, for the same reason the torrent ingestor does: the upload
+// reservation, the progress ticks that start the preview, the completion
+// hand-off and the sweeper all already exist on that path.
+type Ingestor struct {
+	uploadURL string
+	client    *http.Client
+	hooks     Hooks
+
+	// backoff spaces out resumed streams. A field rather than a constant so
+	// tests can exercise the stall path without waiting out real seconds.
+	backoff time.Duration
+
+	mu      sync.Mutex
+	ctx     context.Context
+	started bool
+	running map[string]context.CancelFunc
+	maxJobs int
+}
+
+// NewIngestor wires an ingestor to the tus endpoint of this same server.
+// uploadURL is absolute and loopback.
+func NewIngestor(uploadURL string, maxJobs int, hooks Hooks) *Ingestor {
+	if maxJobs < 1 {
+		maxJobs = 1
+	}
+	return &Ingestor{
+		uploadURL: uploadURL,
+		client:    SafeClient(0),
+		hooks:     hooks,
+		backoff:   resumeBackoff,
+		running:   make(map[string]context.CancelFunc),
+		maxJobs:   maxJobs,
+	}
+}
+
+// Enabled reports whether url sources can be ingested at all.
+func (i *Ingestor) Enabled() bool { return i != nil && i.uploadURL != "" }
+
+// Start makes the ingestor accept jobs until ctx is cancelled.
+func (i *Ingestor) Start(ctx context.Context) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.ctx = ctx
+	i.started = true
+}
+
+// Submit starts pulling job in the background. One room can only have one
+// ingest, and starting a new one replaces whatever was running for it.
+//
+// The url is checked here rather than in the goroutine so that a caller who
+// hands over a private address learns about it in the response.
+func (i *Ingestor) Submit(job Job) error {
+	if _, err := CheckURL(job.URL); err != nil {
+		return err
+	}
+	if job.Size <= 0 {
+		return fmt.Errorf("%w: size must be positive", ErrBadURL)
+	}
+	i.mu.Lock()
+	if !i.started || i.ctx == nil || i.ctx.Err() != nil {
+		i.mu.Unlock()
+		return errors.New("ingestor not running")
+	}
+	if _, exists := i.running[job.RoomID]; !exists && len(i.running) >= i.maxJobs {
+		i.mu.Unlock()
+		return ErrBusy
+	}
+	if cancel, exists := i.running[job.RoomID]; exists {
+		cancel()
+	}
+	jobCtx, cancel := context.WithCancel(i.ctx)
+	i.running[job.RoomID] = cancel
+	i.mu.Unlock()
+
+	go func() {
+		defer i.finish(job.RoomID)
+		err := i.run(jobCtx, job)
+		if err == nil {
+			slog.Info("url ingest complete", "room_id", job.RoomID, "bytes", job.Size)
+			if i.hooks.OnDone != nil {
+				i.hooks.OnDone(job.RoomID)
+			}
+			return
+		}
+		if jobCtx.Err() != nil {
+			slog.Info("url ingest stopped", "room_id", job.RoomID)
+			return
+		}
+		slog.Error("url ingest failed", "room_id", job.RoomID, "error", err)
+		if i.hooks.OnFailed != nil {
+			i.hooks.OnFailed(job.RoomID, err)
+		}
+	}()
+	return nil
+}
+
+// Cancel stops the ingest feeding roomID, if any. Swapping a room's source
+// calls it before the previous media is deleted.
+func (i *Ingestor) Cancel(roomID string) {
+	i.mu.Lock()
+	cancel, ok := i.running[roomID]
+	i.mu.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
+func (i *Ingestor) finish(roomID string) {
+	i.mu.Lock()
+	delete(i.running, roomID)
+	i.mu.Unlock()
+}
+
+func (i *Ingestor) run(ctx context.Context, job Job) error {
+	uploadURL, err := i.createUpload(ctx, job)
+	if err != nil {
+		return err
+	}
+	slog.Info("url ingest started", "room_id", job.RoomID, "bytes", job.Size)
+
+	offset := int64(0)
+	for attempt := 0; offset < job.Size; {
+		written, err := i.pump(ctx, job, uploadURL, offset)
+		offset += written
+		if offset >= job.Size {
+			break
+		}
+		// A source that hands back something other than a video, or more bytes
+		// than the room reserved, will do it again on every retry.
+		if errors.Is(err, ErrNotVideo) || errors.Is(err, ErrTooLarge) || errors.Is(err, ErrNoRange) {
+			return err
+		}
+		if err == nil {
+			// A body that ended early without an error still leaves bytes to
+			// fetch; a fresh request picks up where the store did.
+			err = io.ErrUnexpectedEOF
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if written > 0 {
+			// Progress was made, so this is a hiccup rather than a broken
+			// pipeline: keep going without spending an attempt.
+			attempt = 0
+		} else {
+			attempt++
+			if attempt >= resumeAttempts {
+				return fmt.Errorf("url ingest stalled at %d/%d bytes: %w", offset, job.Size, err)
+			}
+		}
+		slog.Warn("url ingest resuming",
+			"room_id", job.RoomID, "offset", offset, "attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(i.backoff):
+		}
+	}
+	return nil
+}
+
+// fetch opens the source at offset and returns a body that stops at the
+// announced size.
+func (i *Ingestor) fetch(ctx context.Context, job Job, offset int64) (io.ReadCloser, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, job.URL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build source request: %w", err)
+	}
+	if offset > 0 {
+		request.Header.Set("Range", "bytes="+strconv.FormatInt(offset, 10)+"-")
+	}
+	response, err := i.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("fetch source: %w", err)
+	}
+	discard := func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
+		response.Body.Close()
+	}
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
+		discard()
+		return nil, fmt.Errorf("source answered %d", response.StatusCode)
+	}
+	if offset > 0 && response.StatusCode == http.StatusOK {
+		// The origin ignored the Range and is sending the file from the start.
+		// Writing that at this offset would corrupt the file silently.
+		discard()
+		return nil, ErrNoRange
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "" && !videoContentType(contentType) {
+		discard()
+		return nil, fmt.Errorf("%w: content-type %q", ErrNotVideo, contentType)
+	}
+	if response.ContentLength >= 0 && offset+response.ContentLength > job.Size {
+		discard()
+		return nil, fmt.Errorf("%w: %d bytes from offset %d, room reserved %d",
+			ErrTooLarge, response.ContentLength, offset, job.Size)
+	}
+	// The limit is the belt to the Content-Length braces above: a chunked
+	// response announces nothing, and the store must not receive more than the
+	// upload was created for.
+	return readCloser{Reader: io.LimitReader(response.Body, job.Size-offset), Closer: response.Body}, nil
+}
+
+type readCloser struct {
+	io.Reader
+	io.Closer
+}
+
+// videoContentType accepts what a media file is actually served as. Some
+// origins hand back application/octet-stream for an .mkv, which is not wrong.
+func videoContentType(value string) bool {
+	media := strings.TrimSpace(strings.ToLower(value))
+	if index := strings.IndexByte(media, ';'); index >= 0 {
+		media = strings.TrimSpace(media[:index])
+	}
+	return strings.HasPrefix(media, "video/") || media == "application/octet-stream" ||
+		media == "application/mp4" || media == "application/x-matroska"
+}
+
+// pump moves one stream of source bytes into one tus PATCH and reports how
+// many bytes the server confirmed it stored.
+func (i *Ingestor) pump(ctx context.Context, job Job, uploadURL string, offset int64) (int64, error) {
+	body, err := i.fetch(ctx, job, offset)
+	if err != nil {
+		return 0, err
+	}
+	defer body.Close()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPatch, uploadURL, body)
+	if err != nil {
+		return 0, fmt.Errorf("build upload request: %w", err)
+	}
+	request.Header.Set("Tus-Resumable", tusVersion)
+	request.Header.Set("Content-Type", "application/offset+octet-stream")
+	request.Header.Set("Upload-Offset", strconv.FormatInt(offset, 10))
+	// Declaring the length keeps the request out of chunked encoding and lets
+	// the store detect a truncated stream instead of accepting it as the end.
+	request.ContentLength = job.Size - offset
+
+	response, err := i.client.Do(request)
+	if err != nil {
+		// The bytes the server did store are still there; ask it how far it got.
+		stored, headErr := i.uploadOffset(ctx, uploadURL)
+		if headErr != nil {
+			return 0, errors.Join(fmt.Errorf("upload source bytes: %w", err), headErr)
+		}
+		return stored - offset, fmt.Errorf("upload source bytes: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
+		response.Body.Close()
+	}()
+	if response.StatusCode != http.StatusNoContent {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 1<<10))
+		stored, headErr := i.uploadOffset(ctx, uploadURL)
+		if headErr != nil {
+			stored = offset
+		}
+		return stored - offset, fmt.Errorf("upload rejected (%d): %s",
+			response.StatusCode, strings.TrimSpace(string(detail)))
+	}
+	next, err := strconv.ParseInt(response.Header.Get("Upload-Offset"), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("upload returned no offset: %w", err)
+	}
+	return next - offset, nil
+}
+
+func (i *Ingestor) createUpload(ctx context.Context, job Job) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, i.uploadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build upload creation: %w", err)
+	}
+	request.Header.Set("Tus-Resumable", tusVersion)
+	request.Header.Set("Upload-Length", strconv.FormatInt(job.Size, 10))
+	request.Header.Set("Upload-Metadata", encodeMetadata(map[string]string{
+		"roomID":   job.RoomID,
+		"filename": job.FileName,
+	}))
+	response, err := i.client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("create upload: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 1<<10))
+		return "", fmt.Errorf("create upload failed (%d): %s",
+			response.StatusCode, strings.TrimSpace(string(detail)))
+	}
+	location := response.Header.Get("Location")
+	if location == "" {
+		return "", errors.New("create upload returned no location")
+	}
+	return resolveLocation(i.uploadURL, location), nil
+}
+
+func (i *Ingestor) uploadOffset(ctx context.Context, uploadURL string) (int64, error) {
+	// The parent context may already be cancelled by the very failure that
+	// brought us here, and the answer is still needed to resume later.
+	headCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(headCtx, http.MethodHead, uploadURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("build offset request: %w", err)
+	}
+	request.Header.Set("Tus-Resumable", tusVersion)
+	response, err := i.client.Do(request)
+	if err != nil {
+		return 0, fmt.Errorf("read upload offset: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("read upload offset failed (%d)", response.StatusCode)
+	}
+	offset, err := strconv.ParseInt(response.Header.Get("Upload-Offset"), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse upload offset: %w", err)
+	}
+	return offset, nil
+}
+
+// encodeMetadata and resolveLocation are the tus helpers, copied rather than
+// exported from internal/torrent: they are six lines each, and making that
+// package export them to this one couples two ingests that have nothing else
+// in common.
+func encodeMetadata(values map[string]string) string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, key+" "+base64.StdEncoding.EncodeToString([]byte(values[key])))
+	}
+	return strings.Join(pairs, ",")
+}
+
+func resolveLocation(endpoint, location string) string {
+	base, err := url.Parse(endpoint)
+	if err != nil {
+		return location
+	}
+	resolved, err := base.Parse(location)
+	if err != nil {
+		return location
+	}
+	return resolved.String()
+}
+```
+
+`SafeClient(0)` é deliberado. Um `http.Client.Timeout` cobre a leitura inteira do corpo, e um filme de duas horas é uma leitura longa e legítima — um teto ali mataria transferências boas. O timeout que protege é o do dial, e o `net.Dialer` da Task 12 já o tem.
 
 - [ ] **Step 5: Write the failing test for the route**
+
+Os helpers `newTestStore`, `testCfg` e `newUploadingRoom` já existem no pacote — `newUploadingRoom` está em `internal/httpapi/torrent_test.go:43`. Este arquivo os reusa; não escreva outros.
 
 ```go
 // internal/httpapi/urlsource_test.go
 package httpapi
 
 import (
-	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+
+	"github.com/giulianoo0/ss/internal/room"
 	"github.com/giulianoo0/ss/internal/urlingest"
 )
 
 type fakeURLIngestor struct {
-	jobs []urlingest.Job
-	err  error
+	enabled bool
+	jobs    []urlingest.Job
+	err     error
 }
 
-func (f *fakeURLIngestor) Enabled() bool { return true }
+func (f *fakeURLIngestor) Enabled() bool { return f.enabled }
+
 func (f *fakeURLIngestor) Submit(job urlingest.Job) error {
 	if f.err != nil {
 		return f.err
@@ -2654,39 +3075,222 @@ func (f *fakeURLIngestor) Submit(job urlingest.Job) error {
 	return nil
 }
 
-func TestIngestURLRejectsANonHTTPSSource(t *testing.T) {
-	server, _, roomID := newTestServerWithUploadingRoom(t)
-	body := bytes.NewBufferString(`{"url":"http://cdn.example.com/m.mkv","fileName":"m.mkv","size":1024}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/url", body)
+func urlEngine(t *testing.T, ingestor URLIngestor) (*gin.Engine, *room.Store) {
+	t.Helper()
+	s := newTestStore(t)
+	e := gin.New()
+	RegisterURLSourceRoute(e.Group("/api"), s, testCfg(t), ingestor)
+	return e, s
+}
+
+func postURL(t *testing.T, e *gin.Engine, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/rooms/"+id+"/url", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	e.ServeHTTP(w, req)
+	return w
+}
+
+const validURLBody = `{"url":"https://cdn.example.com/movie.mkv","fileName":"movie.mkv","size":1048576}`
+
+func TestIngestURLHandsTheSourceToTheServer(t *testing.T) {
+	ingestor := &fakeURLIngestor{enabled: true}
+	e, s := urlEngine(t, ingestor)
+	newUploadingRoom(t, s, "room-url-1")
+
+	w := postURL(t, e, "room-url-1", validURLBody)
+
+	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
+	require.Len(t, ingestor.jobs, 1)
+	require.Equal(t, "https://cdn.example.com/movie.mkv", ingestor.jobs[0].URL)
+	require.Equal(t, "room-url-1", ingestor.jobs[0].RoomID)
+	require.Equal(t, int64(1048576), ingestor.jobs[0].Size)
+}
+
+// The guard's own tests cover every shape of address; this one only proves the
+// route asks it at all, and answers with the reason instead of a bare 400.
+func TestIngestURLRefusesAnUnsafeSource(t *testing.T) {
+	for name, body := range map[string]string{
+		"plain http": `{"url":"http://cdn.example.com/m.mkv","fileName":"m.mkv","size":1024}`,
+		"loopback":   `{"url":"https://127.0.0.1/m.mkv","fileName":"m.mkv","size":1024}`,
+		"private":    `{"url":"https://192.168.1.9/m.mkv","fileName":"m.mkv","size":1024}`,
+		"localhost":  `{"url":"https://localhost/m.mkv","fileName":"m.mkv","size":1024}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ingestor := &fakeURLIngestor{enabled: true}
+			e, s := urlEngine(t, ingestor)
+			newUploadingRoom(t, s, "room-url-2")
+
+			w := postURL(t, e, "room-url-2", body)
+
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			require.Empty(t, ingestor.jobs)
+		})
 	}
 }
 
-func TestIngestURLAcceptsAPublicHTTPSSource(t *testing.T) {
-	server, ingestor, roomID := newTestServerWithUploadingRoom(t)
-	body := bytes.NewBufferString(`{"url":"https://cdn.example.com/m.mkv","fileName":"m.mkv","size":1024}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/url", body)
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202: %s", rec.Code, rec.Body.String())
+func TestIngestURLRouteAbsentWithoutAnIngestor(t *testing.T) {
+	e, s := urlEngine(t, &fakeURLIngestor{enabled: false})
+	newUploadingRoom(t, s, "room-url-3")
+
+	require.Equal(t, http.StatusNotFound, postURL(t, e, "room-url-3", validURLBody).Code)
+}
+
+func TestIngestURLRejectsARoomNotWaitingForOne(t *testing.T) {
+	e, s := urlEngine(t, &fakeURLIngestor{enabled: true})
+	newUploadingRoom(t, s, "room-url-4")
+	require.NoError(t, s.SetStatus(context.Background(), "room-url-4", "ready"))
+
+	require.Equal(t, http.StatusForbidden, postURL(t, e, "room-url-4", validURLBody).Code)
+}
+
+func TestIngestURLReportsABusyIngest(t *testing.T) {
+	e, s := urlEngine(t, &fakeURLIngestor{enabled: true, err: urlingest.ErrBusy})
+	newUploadingRoom(t, s, "room-url-5")
+
+	require.Equal(t, http.StatusServiceUnavailable, postURL(t, e, "room-url-5", validURLBody).Code)
+}
+```
+
+`s.SetStatus` é o mesmo método que `internal/httpapi/torrent_test.go:95` usa para tirar a sala de `uploading`.
+
+- [ ] **Step 6: Write the route**
+
+```go
+// internal/httpapi/urlsource.go
+package httpapi
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/room"
+	"github.com/giulianoo0/ss/internal/urlingest"
+)
+
+const maxURLBodyBytes = 4 << 10
+
+// URLIngestor is the piece of the ingest the API needs: hand it a url and it
+// pulls the bytes in on its own.
+type URLIngestor interface {
+	Enabled() bool
+	Submit(job urlingest.Job) error
+}
+
+type ingestURLRequest struct {
+	URL      string `json:"url" binding:"required"`
+	FileName string `json:"fileName" binding:"required"`
+	Size     int64  `json:"size" binding:"required"`
+}
+
+// RegisterURLSourceRoute mounts the endpoint that hands a plugin-supplied url
+// to the server-side ingest.
+//
+// It is guarded exactly like the torrent route it sits next to, and for the
+// same reason: this is a request for the server to perform the upload the
+// browser would otherwise perform itself. What it adds is the address check —
+// the url came from a plugin, so it is the least trusted input the server
+// takes, and it is checked before the room is touched at all.
+func RegisterURLSourceRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config, ingestor URLIngestor) {
+	if ingestor == nil || !ingestor.Enabled() {
+		return
 	}
-	if len(ingestor.jobs) != 1 || ingestor.jobs[0].URL != "https://cdn.example.com/m.mkv" {
-		t.Fatalf("job = %+v", ingestor.jobs)
+	rg.POST("/rooms/:id/url", ingestURL(store, cfg, ingestor))
+}
+
+func ingestURL(store *room.Store, cfg config.Config, ingestor URLIngestor) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxURLBodyBytes)
+		var req ingestURLRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if !validFileName(req.FileName) || req.Size <= 0 || req.Size > cfg.MaxUploadMB<<20 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		// The reason travels back because the person who has to act on it is
+		// the one who installed the plugin: "not https" and "points at a
+		// private address" are different problems with different fixes.
+		if _, err := urlingest.CheckURL(req.URL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsafe_source", "reason": err.Error()})
+			return
+		}
+
+		storedRoom, err := store.Get(c.Request.Context(), roomID)
+		if errors.Is(err, room.ErrNotFound) || err == nil && !storedRoom.ExpiresAt.After(time.Now()) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
+			return
+		}
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "load room for url ingest", "room_id", roomID, "error", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if storedRoom.Status != "uploading" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "room is not accepting uploads"})
+			return
+		}
+		uploadID, err := store.UploadID(c.Request.Context(), roomID)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "read upload reservation", "room_id", roomID, "error", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if uploadID != "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "room already has an upload"})
+			return
+		}
+
+		if err := store.SetIngestProgress(c.Request.Context(), roomID, 0, req.Size); err != nil {
+			slog.ErrorContext(c.Request.Context(), "record ingest size", "room_id", roomID, "error", err)
+		}
+		if err := store.SetPreviewPhase(c.Request.Context(), roomID, room.PreviewReceiving, 0); err != nil {
+			slog.ErrorContext(c.Request.Context(), "record preview phase", "room_id", roomID, "error", err)
+		}
+
+		err = ingestor.Submit(urlingest.Job{
+			RoomID:   roomID,
+			URL:      req.URL,
+			FileName: req.FileName,
+			Size:     req.Size,
+		})
+		if errors.Is(err, urlingest.ErrBusy) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "url ingest busy"})
+			return
+		}
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "submit url ingest", "room_id", roomID, "error", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"status": "uploading", "sourceBytes": req.Size})
 	}
 }
 ```
 
-`newTestServerWithUploadingRoom` é um helper que você escreve neste arquivo, modelado no que `internal/httpapi/torrent_test.go` já faz para montar um servidor com uma sala em `uploading` — leia esse arquivo e reaproveite a montagem em vez de inventar outra.
+O `CheckURL` roda duas vezes: aqui e no `Submit` do ingestor. Isso é de propósito. A rota precisa dele para responder 400 com a razão; o ingestor precisa dele porque nada garante que a única porta de entrada dele seja esta rota.
 
-- [ ] **Step 6: Write the route**
+Em `internal/httpapi/server.go`, registre ao lado da chamada de `RegisterTorrentRoute`, com o mesmo grupo e a mesma `cfg`:
 
-`internal/httpapi/urlsource.go` é `internal/httpapi/torrent.go` com três diferenças: o corpo é `{ url, fileName, size }`, a validação chama `urlingest.CheckURL` e devolve 400 com a razão, e o `Submit` recebe `urlingest.Job`. Toda a guarda de estado da sala — existe, não expirou, está em `uploading`, não tem reserva de upload — é copiada tal e qual, porque é exatamente a mesma pergunta. Registre em `internal/httpapi/server.go`, ao lado da chamada de `RegisterTorrentRoute`.
+```go
+RegisterURLSourceRoute(api, store, cfg, urlIngestor)
+```
+
+O `urlIngestor` vem de onde o `torrent.Ingestor` já é construído e iniciado — encontre a chamada de `NewIngestor` do torrent no wiring (`cmd/` ou o construtor do servidor), construa `urlingest.NewIngestor(uploadURL, maxJobs, urlingest.Hooks{OnFailed: <o mesmo hook que o torrent usa para derrubar a transferência da sala>})` com o **mesmo** `uploadURL` de loopback, e chame `Start(ctx)` no mesmo lugar.
 
 - [ ] **Step 7: Run everything and commit**
 
@@ -3020,6 +3624,6 @@ git commit -m "feat: serve the documentation at /docs"
 
 Três coisas que quem executar vai encontrar e que estão aqui de propósito:
 
-1. **A Task 8 não commita.** Ela quebra `MetaDetails`, `Home` e `Room` de propósito, e a Task 9 conserta. Executar as duas em sequência é obrigatório; parar no meio deixa a árvore vermelha.
-2. **A Task 7 tem um import errado plantado.** O `import type { ... PluginManifest } from './store'` não resolve, e a nota logo abaixo do código diz o que fazer. É um lembrete de que o tipo mora em `manifest.ts`.
-3. **Os helpers de teste em Go não estão escritos aqui.** `newTestServerWithUploadingRoom` e `newServerWithWebDir` pedem que você leia `internal/httpapi/torrent_test.go` e `internal/httpapi/server_test.go` e reaproveite a montagem que já existe, em vez de inventar uma segunda.
+1. **A Task 8 deixa `fetchStreams` e `ADDON_BASE` vivos de propósito.** Eles só morrem na Task 9. Se você chegar na Task 9 e encontrá-los já removidos, alguém quebrou a Task 8 pela metade.
+2. **`web/src/plugins/worker.ts` (Task 4) não tem teste automatizado.** jsdom não tem `Worker`. A verificação é manual e os passos estão escritos na própria task; não pule pensando que a suíte cobre.
+3. **`newServerWithWebDir` (Task 16) não está escrito aqui.** Leia `internal/httpapi/server_test.go` e reaproveite a montagem que já existe.
