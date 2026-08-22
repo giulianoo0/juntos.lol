@@ -21,13 +21,43 @@ import (
 )
 
 type pipelineFunc func(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
-	audio, subs []room.TrackInfo, bitmapSkipped int, err error,
+	audio, subs []room.TrackInfo, chapters []room.Chapter, bitmapSkipped int, err error,
 )
 
 func (f pipelineFunc) Run(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
-	[]room.TrackInfo, []room.TrackInfo, int, error,
+	[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 ) {
 	return f(ctx, roomID, srcPath, outDir, skipSubs)
+}
+
+func TestFailNamesAndPurgesAnUnsupportedSource(t *testing.T) {
+	store, dataDir := newQueueTestStore(t, "r1")
+	purged := make(chan string, 1)
+	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
+	) {
+		return nil, nil, nil, 0, fmt.Errorf("probe source: %w", ErrUnsupportedVideo)
+	})
+	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
+	q.SetPurge(func(roomID string) { purged <- roomID })
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	q.Start(ctx)
+
+	q.Submit("r1")
+
+	select {
+	case roomID := <-purged:
+		require.Equal(t, "r1", roomID)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the purge")
+	}
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "error", got.Status)
+	// The message names the actual problem: "processing failed" would send
+	// whoever hit this off to retry a file that can never work.
+	require.Equal(t, PublicUnsupportedVideo, got.ErrorMessage)
 }
 
 func TestQueueProcessesRoomAndNotifiesReady(t *testing.T) {
@@ -38,10 +68,10 @@ func TestQueueProcessesRoomAndNotifiesReady(t *testing.T) {
 	type pipelineCall struct{ roomID, srcPath, outDir string }
 	calls := make(chan pipelineCall, 1)
 	pipe := pipelineFunc(func(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		calls <- pipelineCall{roomID: roomID, srcPath: srcPath, outDir: outDir}
-		return wantAudio, wantSubs, 2, nil
+		return wantAudio, wantSubs, nil, 2, nil
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -84,7 +114,7 @@ func TestQueuePublishesSubtitlesBeforeTheFinalMediaUpload(t *testing.T) {
 	wantSubs := []room.TrackInfo{{Index: 0, Language: "por", Codec: "webvtt"}}
 	updated := make(chan string, 4)
 	pipe := pipelineFunc(func(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		hlsDir := filepath.Join(outDir, "hls")
 		require.NoError(t, os.MkdirAll(hlsDir, 0o755))
@@ -95,7 +125,7 @@ func TestQueuePublishesSubtitlesBeforeTheFinalMediaUpload(t *testing.T) {
 		require.NoError(t, os.MkdirAll(subsDir, 0o755))
 		require.NoError(t, os.WriteFile(filepath.Join(subsDir, "sub_0_por.vtt"),
 			[]byte("WEBVTT\n\n00:23:00.000 --> 00:23:02.000\no final\n"), 0o644))
-		return nil, wantSubs, 0, nil
+		return nil, wantSubs, nil, 0, nil
 	})
 	q := newQueue(1, store, dataDir, publisher, nil,
 		func(roomID string) { updated <- roomID }, pipe)
@@ -129,8 +159,8 @@ func TestQueueRecoversInterruptedCompleteUpload(t *testing.T) {
 	require.NoError(t, store.SetStatus(t.Context(), "recover", "processing"))
 	ready := make(chan string, 1)
 	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil, pipelineFunc(
-		func(context.Context, string, string, string, bool) ([]room.TrackInfo, []room.TrackInfo, int, error) {
-			return nil, nil, 0, nil
+		func(context.Context, string, string, string, bool) ([]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error) {
+			return nil, nil, nil, 0, nil
 		},
 	))
 	ctx, cancel := context.WithCancel(t.Context())
@@ -163,10 +193,10 @@ func TestQueueKeepsPlayablePreviewReadyDuringFinalRemux(t *testing.T) {
 	release := make(chan struct{})
 	ready := make(chan string, 2)
 	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil, pipelineFunc(
-		func(context.Context, string, string, string, bool) ([]room.TrackInfo, []room.TrackInfo, int, error) {
+		func(context.Context, string, string, string, bool) ([]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error) {
 			started <- struct{}{}
 			<-release
-			return nil, nil, 0, nil
+			return nil, nil, nil, 0, nil
 		},
 	))
 	ctx, cancel := context.WithCancel(t.Context())
@@ -211,10 +241,10 @@ func TestQueuePreservesClientSubtitles(t *testing.T) {
 	wantAudio := []room.TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}
 	ready := make(chan string, 1)
 	pipe := pipelineFunc(func(_ context.Context, _, _, _ string, skipSubs bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		require.True(t, skipSubs)
-		return wantAudio, nil, 1, nil
+		return wantAudio, nil, nil, 1, nil
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -244,9 +274,9 @@ func TestQueuePersistsPipelineError(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(originalLogger) })
 	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
-		return nil, nil, 0, errors.New("probe failed")
+		return nil, nil, nil, 0, errors.New("probe failed")
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -272,11 +302,11 @@ func TestQueueSubmitDoesNotBlockWhenWorkersAreBusy(t *testing.T) {
 	addQueueTestRoom(t, store, dataDir, "overflow")
 	started := make(chan struct{}, 1)
 	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string, _ bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		started <- struct{}{}
 		<-ctx.Done()
-		return nil, nil, 0, ctx.Err()
+		return nil, nil, nil, 0, ctx.Err()
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -322,13 +352,13 @@ func TestQueueHoldsRoomsPastTheWorkerCount(t *testing.T) {
 	release := make(chan struct{})
 	ready := make(chan string, len(waiting)+1)
 	pipe := pipelineFunc(func(_ context.Context, roomID, _, _ string, _ bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		if roomID == "busy" {
 			started <- struct{}{}
 			<-release
 		}
-		return nil, nil, 0, nil
+		return nil, nil, nil, 0, nil
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -379,9 +409,9 @@ func TestRecoverResubmitsARoomTurnedAwayByAFullQueue(t *testing.T) {
 	ready := make(chan string, 2)
 	q := newQueue(1, store, dataDir, testPublisher(store), func(roomID string) { ready <- roomID }, nil,
 		pipelineFunc(func(context.Context, string, string, string, bool) (
-			[]room.TrackInfo, []room.TrackInfo, int, error,
+			[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 		) {
-			return nil, nil, 0, nil
+			return nil, nil, nil, 0, nil
 		}))
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -416,9 +446,9 @@ func TestRecoverResubmitsARoomTurnedAwayByAFullQueue(t *testing.T) {
 func TestQueueFullRejectionPersistsAfterCancellation(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "overflow")
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipelineFunc(func(context.Context, string, string, string, bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
-		return nil, nil, 0, nil
+		return nil, nil, nil, 0, nil
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -436,11 +466,11 @@ func TestQueueDeduplicatesActiveRoom(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		started <- struct{}{}
 		<-release
-		return nil, nil, 0, nil
+		return nil, nil, nil, 0, nil
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -477,11 +507,11 @@ func TestQueueReportsWhetherARoomIsStillBeingWorkedOn(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	pipe := pipelineFunc(func(context.Context, string, string, string, bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		started <- struct{}{}
 		<-release
-		return nil, nil, 0, nil
+		return nil, nil, nil, 0, nil
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -507,11 +537,11 @@ func TestQueueCancellationMarksActiveAndBufferedJobs(t *testing.T) {
 	addQueueTestRoom(t, store, dataDir, "buffered")
 	started := make(chan struct{}, 1)
 	pipe := pipelineFunc(func(ctx context.Context, _, _, _ string, _ bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		started <- struct{}{}
 		<-ctx.Done()
-		return nil, nil, 0, ctx.Err()
+		return nil, nil, nil, 0, ctx.Err()
 	})
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipe)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -563,10 +593,10 @@ func TestQueueRejectsSubmissionsAfterCancellation(t *testing.T) {
 	store, dataDir := newQueueTestStore(t, "stopped")
 	called := make(chan struct{}, 1)
 	q := newQueue(1, store, dataDir, testPublisher(store), nil, nil, pipelineFunc(func(context.Context, string, string, string, bool) (
-		[]room.TrackInfo, []room.TrackInfo, int, error,
+		[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 	) {
 		called <- struct{}{}
-		return nil, nil, 0, nil
+		return nil, nil, nil, 0, nil
 	}))
 	ctx, cancel := context.WithCancel(t.Context())
 	q.Start(ctx)

@@ -39,7 +39,7 @@ const (
 // supplied WebVTT tracks.
 type Pipeline interface {
 	Run(ctx context.Context, roomID, srcPath, outDir string, skipSubs bool) (
-		audio, subs []room.TrackInfo, bitmapSkipped int, err error,
+		audio, subs []room.TrackInfo, chapters []room.Chapter, bitmapSkipped int, err error,
 	)
 }
 
@@ -54,7 +54,10 @@ type Queue struct {
 	// status changed — the signal clients refetch subtitle versions on.
 	onUpdated func(roomID string)
 	pipeline  Pipeline
-	jobs      chan string
+	// purge strips a refused room of every byte it accumulated. Wired late,
+	// by whoever owns the bucket and the ingest hooks.
+	purge func(roomID string)
+	jobs  chan string
 	done      chan struct{}
 	start     sync.Once
 	mu        sync.Mutex
@@ -313,7 +316,7 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		q.publisher.Run(publishCtx, roomID, hlsDir, finalPublishPatterns)
 	}()
 
-	audio, subs, bitmapSkipped, err := q.pipeline.Run(ctx, roomID, srcPath, roomDir, skipSubs)
+	audio, subs, chapters, bitmapSkipped, err := q.pipeline.Run(ctx, roomID, srcPath, roomDir, skipSubs)
 	stopPublishing()
 	<-publishing
 	if err != nil {
@@ -321,6 +324,18 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 			q.fail(ctx, roomID, err)
 		}
 		return false
+	}
+	// Chapters land before the track announcement below, so the one refetch
+	// it triggers picks them up too. The progressive probe usually stored
+	// them already; this is the authoritative pass and the only one for a
+	// source that had no streamable prefix.
+	if len(chapters) > 0 {
+		if err := q.store.SetChapters(ctx, roomID, chapters); err != nil {
+			if ctx.Err() == nil {
+				q.fail(ctx, roomID, fmt.Errorf("store chapters: %w", err))
+			}
+			return false
+		}
 	}
 	// Subtitles go out before the media: they are kilobytes where the media is
 	// gigabytes, and the room is at its oldest cues exactly now — a viewer who
@@ -438,14 +453,37 @@ func (q *Queue) markCanceled(ctx context.Context, roomID string) {
 	}
 }
 
+// SetPurge installs the cleanup a refused source triggers. Late-bound because
+// the queue exists before the ingest hooks and the bucket wiring do, and the
+// workers are already running by then — hence the lock.
+func (q *Queue) SetPurge(purge func(roomID string)) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.purge = purge
+}
+
 func (q *Queue) fail(ctx context.Context, roomID string, err error) {
 	slog.ErrorContext(ctx, "media pipeline failed", "room_id", roomID, "error", err)
-	if storeErr := q.store.SetError(ctx, roomID, publicPipelineError); storeErr != nil {
+	message := publicPipelineError
+	if errors.Is(err, ErrUnsupportedVideo) {
+		message = PublicUnsupportedVideo
+	}
+	if storeErr := q.store.SetError(ctx, roomID, message); storeErr != nil {
 		slog.ErrorContext(ctx, "persist media pipeline error failed",
 			"room_id", roomID,
 			"pipeline_error", err,
 			"store_error", storeErr,
 		)
+	}
+	// A refused source is not merely failed: it can never play, so nothing it
+	// accumulated — upload bytes, working dir, published media — is kept.
+	if errors.Is(err, ErrUnsupportedVideo) {
+		q.mu.Lock()
+		purge := q.purge
+		q.mu.Unlock()
+		if purge != nil {
+			purge(roomID)
+		}
 	}
 }
 
@@ -505,11 +543,16 @@ func sourcePath(dataDir, roomID string) (roomDir, srcPath string, err error) {
 type realPipeline struct{}
 
 func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir string, skipSubs bool) (
-	[]room.TrackInfo, []room.TrackInfo, int, error,
+	[]room.TrackInfo, []room.TrackInfo, []room.Chapter, int, error,
 ) {
 	probe, err := Probe(ctx, srcPath)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, nil, 0, err
+	}
+	// The progressive probe already refuses these, but a source with no
+	// streamable prefix is only probed here, once the upload has landed.
+	if err := CheckVideoSupported(probe); err != nil {
+		return nil, nil, nil, 0, fmt.Errorf("probe source: %w", err)
 	}
 	metrics.VideoHandling.WithLabelValues(metrics.PipelineFinal, videoHandling(probe)).Inc()
 	slog.InfoContext(ctx, "final remux starting",
@@ -521,10 +564,10 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 	)
 	hlsDir := filepath.Join(outDir, "hls")
 	if err := os.MkdirAll(hlsDir, 0o755); err != nil {
-		return nil, nil, 0, fmt.Errorf("create HLS directory: %w", err)
+		return nil, nil, nil, 0, fmt.Errorf("create HLS directory: %w", err)
 	}
 	if err := Remux(ctx, srcPath, hlsDir, probe); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, nil, 0, err
 	}
 	slog.InfoContext(ctx, "final HLS master published", "room_id", roomID)
 	if err := finalizeProgressiveOutputs(hlsDir); err != nil {
@@ -534,10 +577,10 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 	}
 	subsDir := filepath.Join(outDir, "subs")
 	if skipSubs {
-		return probe.Audio, nil, probe.BitmapSubs, nil
+		return probe.Audio, nil, probe.Chapters, probe.BitmapSubs, nil
 	}
 	if _, err := ExtractSubtitles(ctx, srcPath, subsDir, probe); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, nil, 0, err
 	}
 	// Sibling subtitle files published while the source was still arriving sit
 	// after the embedded ones in the final list, and their files are renumbered
@@ -547,7 +590,7 @@ func (realPipeline) Run(ctx context.Context, roomID string, srcPath, outDir stri
 		slog.WarnContext(ctx, "merge external subtitles failed", "room_id", roomID, "error", err)
 		subtitles = probe.Subtitles
 	}
-	return probe.Audio, subtitles, probe.BitmapSubs, nil
+	return probe.Audio, subtitles, probe.Chapters, probe.BitmapSubs, nil
 }
 
 // videoHandling says whether a job will copy the video track or re-encode it.

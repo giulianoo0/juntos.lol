@@ -212,6 +212,11 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 			return nil, fmt.Errorf("unmarshal subtitle tracks: %w", err)
 		}
 	}
+	if v := fields["chapters"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.Chapters); err != nil {
+			return nil, fmt.Errorf("unmarshal chapters: %w", err)
+		}
+	}
 	if v := fields["bitmap_subs_skipped"]; v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -341,6 +346,15 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 	)
 }
 
+// SetChapters stores the source's authored chapter spans.
+func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) error {
+	c, err := json.Marshal(chapters)
+	if err != nil {
+		return fmt.Errorf("marshal chapters: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "chapters", string(c))
+}
+
 // BumpMediaVersion announces that the media behind the current generation was
 // republished in place, telling players to reload the unchanged source URL.
 func (s *Store) BumpMediaVersion(ctx context.Context, id string) error {
@@ -413,7 +427,7 @@ redis.call('HSET', KEYS[1],
   'audio_tracks', 'null',
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
-redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs',
+redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
   'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])

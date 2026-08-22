@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/giulianoo0/ss/internal/room"
 )
 
 func TestParseProbe(t *testing.T) {
@@ -40,7 +42,11 @@ func TestParseProbeClassifiesVideoAndSubtitleCodecs(t *testing.T) {
 		// that reaches this pipeline decodes it. Transcoding it instead costs
 		// the room roughly its own running time in CPU for no gain.
 		{name: "av1 is copyable", videoCodec: "av1", wantCopyable: true, wantSubtitleIndex: 1},
-		{name: "vp9 needs transcoding", videoCodec: "vp9", wantCopyable: false, wantSubtitleIndex: 1},
+		{name: "vp9 is copyable", videoCodec: "vp9", wantCopyable: true, wantSubtitleIndex: 1},
+		// There is no transcode fallback any more: a codec outside the
+		// copyable set can never become playable media, so "not copyable"
+		// now means the room is refused outright.
+		{name: "mpeg4 cannot be served", videoCodec: "mpeg4", wantCopyable: false, wantSubtitleIndex: 1},
 	}
 
 	for _, tt := range tests {
@@ -67,6 +73,57 @@ func TestParseProbeClassifiesVideoAndSubtitleCodecs(t *testing.T) {
 			require.Equal(t, 2, got.Subtitles[1].Index)
 		})
 	}
+}
+
+func TestParseProbeReadsChapters(t *testing.T) {
+	data := []byte(`{
+		"streams": [{"codec_name":"h264","codec_type":"video"}],
+		"chapters": [
+			{"start_time":"0.000000","end_time":"90.500000","tags":{"title":"Abertura"}},
+			{"start_time":"90.500000","end_time":"1200.000000","tags":{"title":""}},
+			{"start_time":"1200.000000","end_time":"1290.000000"}
+		],
+		"format":{"duration":"1290.0"}
+	}`)
+
+	p, err := parseProbe(data)
+	require.NoError(t, err)
+	require.Equal(t, []room.Chapter{
+		{StartMs: 0, EndMs: 90_500, Title: "Abertura"},
+		{StartMs: 90_500, EndMs: 1_200_000},
+		{StartMs: 1_200_000, EndMs: 1_290_000},
+	}, p.Chapters)
+}
+
+func TestParseProbeDropsChaptersItCannotPlace(t *testing.T) {
+	// A chapter whose times do not parse, or that spans nothing, is noise from
+	// a broken muxer: better no marker than one pointing nowhere.
+	data := []byte(`{
+		"streams": [{"codec_name":"h264","codec_type":"video"}],
+		"chapters": [
+			{"start_time":"abc","end_time":"90.0","tags":{"title":"broken"}},
+			{"start_time":"10.0","end_time":"10.0","tags":{"title":"empty"}},
+			{"start_time":"0.0","end_time":"5.0","tags":{"title":"ok"}}
+		],
+		"format":{"duration":"90.0"}
+	}`)
+
+	p, err := parseProbe(data)
+	require.NoError(t, err)
+	require.Equal(t, []room.Chapter{{StartMs: 0, EndMs: 5_000, Title: "ok"}}, p.Chapters)
+}
+
+func TestCheckVideoSupported(t *testing.T) {
+	require.NoError(t, CheckVideoSupported(&ProbeResult{VideoCodec: "vp9", VideoCopyable: true}))
+
+	err := CheckVideoSupported(&ProbeResult{VideoCodec: "mpeg2video"})
+	require.ErrorIs(t, err, ErrUnsupportedVideo)
+	require.ErrorContains(t, err, "mpeg2video")
+
+	// A source with no video track at all is refused the same way: nothing
+	// this pipeline could publish would ever show a picture.
+	require.ErrorIs(t, CheckVideoSupported(&ProbeResult{}), ErrUnsupportedVideo)
+	require.ErrorIs(t, CheckVideoSupported(nil), ErrUnsupportedVideo)
 }
 
 func TestParseProbeToleratesMissingDuration(t *testing.T) {

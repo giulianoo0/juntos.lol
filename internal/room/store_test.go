@@ -26,6 +26,28 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	require.Greater(t, ttl, 4*time.Hour)
 }
 
+func TestSetChaptersRoundTripsAndSwapClearsThem(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "abc", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	chapters := []Chapter{{StartMs: 0, EndMs: 90_000, Title: "Abertura"}, {StartMs: 90_000, EndMs: 1_200_000}}
+
+	require.NoError(t, s.SetChapters(t.Context(), "abc", chapters))
+	got, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, chapters, got.Chapters)
+
+	// The chapters describe the old recording; the next source starts clean.
+	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
+	require.NoError(t, err)
+	got, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Empty(t, got.Chapters)
+}
+
 func TestSetErrorPersistsStatusAndMessage(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

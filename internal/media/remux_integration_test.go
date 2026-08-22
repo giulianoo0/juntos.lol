@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,51 @@ func TestRemuxIntegration(t *testing.T) {
 	require.NotEmpty(t, matches)
 }
 
+func TestRemuxIntegrationCopiesVP9(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "in.mkv")
+	gen := exec.CommandContext(t.Context(), "ffmpeg",
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=2:size=320x240:rate=10",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+		"-map", "0:v", "-map", "1:a",
+		"-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8",
+		"-c:a", "aac", "-shortest", src,
+	)
+	if output, err := gen.CombinedOutput(); err != nil {
+		if strings.Contains(string(output), "Unknown encoder") {
+			t.Skip("ffmpeg built without libvpx-vp9")
+		}
+		require.NoError(t, err, string(output))
+	}
+
+	p, err := Probe(t.Context(), src)
+	require.NoError(t, err)
+	require.Equal(t, "vp9", p.VideoCodec)
+	// VP9 is served by copy like the other three; there is no transcode
+	// fallback left for it to fall into.
+	require.True(t, p.VideoCopyable)
+	require.NoError(t, CheckVideoSupported(p))
+
+	out := filepath.Join(dir, "hls")
+	require.NoError(t, os.MkdirAll(out, 0o755))
+	require.NoError(t, Remux(t.Context(), src, out, p))
+
+	master, err := os.ReadFile(filepath.Join(out, "master.m3u8"))
+	require.NoError(t, err)
+	require.Contains(t, string(master), "EXT-X-STREAM-INF")
+	matches, err := filepath.Glob(filepath.Join(out, "*.m4s"))
+	require.NoError(t, err)
+	require.NotEmpty(t, matches)
+}
+
 func TestProgressiveRemuxIntegration(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
@@ -85,7 +131,7 @@ func TestProgressiveRemuxIntegration(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	inputDone := make(chan error, 1)
 	go func() {
-		inputDone <- streamGrowingFile(ctx, src, stdin, time.Millisecond)
+		inputDone <- streamGrowingFile(ctx, src, stdin, time.Millisecond, nil)
 	}()
 
 	// This test drives ffmpeg directly, with no publisher behind it, so what
@@ -177,7 +223,7 @@ func TestProgressiveRemuxIntegrationDualAudio(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	inputDone := make(chan error, 1)
 	go func() {
-		inputDone <- streamGrowingFile(ctx, src, stdin, time.Millisecond)
+		inputDone <- streamGrowingFile(ctx, src, stdin, time.Millisecond, nil)
 	}()
 
 	require.Eventually(t, func() bool { return ffmpegWroteAPlayableSet(out) }, 10*time.Second, 50*time.Millisecond)

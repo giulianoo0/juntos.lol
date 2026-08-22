@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os/exec"
@@ -36,7 +37,10 @@ type ProbeResult struct {
 	VideoHeight int
 	Audio       []room.TrackInfo
 	Subtitles   []room.TrackInfo
-	BitmapSubs  int
+	// Chapters are the source's authored spans (openings, recaps), in play
+	// order as the container declares them.
+	Chapters   []room.Chapter
+	BitmapSubs int
 }
 
 type probeOutput struct {
@@ -50,9 +54,39 @@ type probeOutput struct {
 			Title    string `json:"title"`
 		} `json:"tags"`
 	} `json:"streams"`
+	Chapters []struct {
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		Tags      struct {
+			Title string `json:"title"`
+		} `json:"tags"`
+	} `json:"chapters"`
 	Format struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
+}
+
+// ErrUnsupportedVideo marks a source whose video the pipeline refuses to
+// serve. Nothing is transcoded any more, so a codec outside the copyable set
+// can never become playable media — the room is killed instead of spending a
+// download and an encode on a file that ends as a black screen.
+var ErrUnsupportedVideo = errors.New("unsupported video codec")
+
+// PublicUnsupportedVideo is the user-visible verdict for those rooms. It
+// names the actual problem: "processing failed" would send whoever hit it off
+// to retry a file that can never work.
+const PublicUnsupportedVideo = "this video format is not supported"
+
+// CheckVideoSupported reports whether the probed source is one the pipeline
+// will serve: video in the copyable set, since copy is all it does now.
+func CheckVideoSupported(p *ProbeResult) error {
+	if p == nil || p.VideoCodec == "" {
+		return fmt.Errorf("%w: no video track", ErrUnsupportedVideo)
+	}
+	if !p.VideoCopyable {
+		return fmt.Errorf("%w: %s", ErrUnsupportedVideo, p.VideoCodec)
+	}
+	return nil
 }
 
 // Probe runs ffprobe and parses its JSON stream inventory.
@@ -62,6 +96,7 @@ func Probe(ctx context.Context, path string) (*ProbeResult, error) {
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
+		"-show_chapters",
 		path,
 	)
 	var stderr bytes.Buffer
@@ -97,6 +132,20 @@ func parseProbe(data []byte) (*ProbeResult, error) {
 		}
 		result.DurationMs = int64(math.Round(durationSeconds * 1000))
 	}
+	for _, chapter := range raw.Chapters {
+		start, startErr := strconv.ParseFloat(chapter.StartTime, 64)
+		end, endErr := strconv.ParseFloat(chapter.EndTime, 64)
+		// A chapter whose times do not parse, or that spans nothing, is noise
+		// from a broken muxer: better no marker than one pointing nowhere.
+		if startErr != nil || endErr != nil || end <= start {
+			continue
+		}
+		result.Chapters = append(result.Chapters, room.Chapter{
+			StartMs: int64(math.Round(start * 1000)),
+			EndMs:   int64(math.Round(end * 1000)),
+			Title:   chapter.Tags.Title,
+		})
+	}
 	audioIndex := 0
 	subtitleIndex := 0
 	for _, stream := range raw.Streams {
@@ -106,10 +155,12 @@ func parseProbe(data []byte) (*ProbeResult, error) {
 				result.VideoCodec = stream.CodecName
 				// Everything here packs into fMP4 and is decoded natively by
 				// the browsers that reach this pipeline, so the encode is a
-				// remux. Anything else is transcoded, which costs a room
-				// roughly its own running time in CPU.
+				// remux. There is no transcode fallback: a codec outside this
+				// set is refused outright (see CheckVideoSupported), because
+				// transcoding cost a room roughly its own running time in CPU.
 				result.VideoCopyable = stream.CodecName == "h264" ||
-					stream.CodecName == "hevc" || stream.CodecName == "av1"
+					stream.CodecName == "hevc" || stream.CodecName == "av1" ||
+					stream.CodecName == "vp9"
 				result.VideoHeight = stream.Height
 			}
 		case "audio":

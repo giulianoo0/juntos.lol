@@ -15,6 +15,48 @@ import (
 	"github.com/giulianoo0/ss/internal/objectstore"
 )
 
+func TestPurgeDataStripsARoomButKeepsItsRecord(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	dir := t.TempDir()
+	bucket := objectstore.NewFake()
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "bad", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	require.NoError(t, s.ReserveUpload(t.Context(), "bad", "up1", now))
+	incoming := filepath.Join(dir, "tus-incoming")
+	require.NoError(t, os.MkdirAll(incoming, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(incoming, "up1"), []byte("bytes"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(incoming, "up1.info"), []byte("{}"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "rooms", "bad", "hls"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rooms", "bad", "original.mkv"), []byte("x"), 0o644))
+	for _, key := range []string{"rooms/bad/g0/hls/seg.m4s", "rooms/live/g0/hls/seg.m4s"} {
+		require.NoError(t, bucket.Put(t.Context(), key, strings.NewReader("x"), 1, "", ""))
+	}
+
+	require.NoError(t, PurgeData(t.Context(), s, dir, bucket, "bad"))
+
+	// Every byte is gone — upload, working directory, published media —
+	// but never a neighbour's.
+	for _, path := range []string{
+		filepath.Join(incoming, "up1"),
+		filepath.Join(incoming, "up1.info"),
+		filepath.Join(dir, "rooms", "bad"),
+	} {
+		_, err := os.Stat(path)
+		require.True(t, os.IsNotExist(err), path)
+	}
+	require.Equal(t, []string{"rooms/live/g0/hls/seg.m4s"}, bucket.Keys())
+	// The record survives, so whoever is in the room still reads why it died.
+	got, err := s.Get(t.Context(), "bad")
+	require.NoError(t, err)
+	require.Equal(t, "uploading", got.Status)
+	uploadID, err := s.UploadID(t.Context(), "bad")
+	require.NoError(t, err)
+	require.Empty(t, uploadID)
+}
+
 func TestSweeperRemovesExpiredRoom(t *testing.T) {
 	mr := miniredis.RunT(t)
 	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)

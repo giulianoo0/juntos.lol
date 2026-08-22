@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -168,6 +169,34 @@ func uploadRoomID(infoPath string) string {
 		return ""
 	}
 	return info.MetaData["roomID"]
+}
+
+// PurgeData removes everything a room has accumulated — the tus upload bytes
+// and sidecar, its working directory, and the media it published — while
+// leaving the record itself in place: the error that killed the room stays
+// readable until it expires, but not one byte of a source that will never
+// play stays paid for. Releasing the upload reservation is what makes further
+// tus writes land nowhere instead of quietly rebuilding the file.
+func PurgeData(ctx context.Context, store *Store, dataDir string, bucket MediaStore, id string) error {
+	uploadID, err := store.UploadID(ctx, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("get reserved upload: %w", err)
+	}
+	if uploadID != "" {
+		incoming := filepath.Join(dataDir, "tus-incoming")
+		for _, path := range []string{filepath.Join(incoming, uploadID), filepath.Join(incoming, uploadID+".info")} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove upload bytes: %w", err)
+			}
+		}
+		if err := store.ReleaseUpload(ctx, id, uploadID); err != nil {
+			return err
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(dataDir, "rooms", id)); err != nil {
+		return fmt.Errorf("remove room dir: %w", err)
+	}
+	return removeRoomMedia(ctx, bucket, id)
 }
 
 // removeRoomMedia gives a room's published objects back to the bucket.

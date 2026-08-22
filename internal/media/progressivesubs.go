@@ -116,7 +116,8 @@ func (p *Progressive) extractSubtitles(ctx, jobCtx context.Context, job progress
 	inputCtx, stopInput := context.WithCancel(jobCtx)
 	defer stopInput()
 	go func() {
-		err := streamGrowingFile(inputCtx, job.srcPath, stdin, inputPollInterval)
+		err := streamGrowingFile(inputCtx, job.srcPath, stdin, inputPollInterval,
+			func() bool { return p.isComplete(job.roomID) })
 		if closeErr := stdin.Close(); err == nil {
 			err = closeErr
 		}

@@ -10,6 +10,14 @@ type TrackInfo struct {
 	Codec    string `json:"codec"`
 }
 
+// Chapter is one authored span of the media — an opening, a recap, the
+// episode itself — read from the container's own chapter atoms.
+type Chapter struct {
+	StartMs int64  `json:"startMs"`
+	EndMs   int64  `json:"endMs"`
+	Title   string `json:"title,omitempty"`
+}
+
 // ChatMessage is a single chat entry in a room.
 type ChatMessage struct {
 	Author string    `json:"author"`
@@ -69,7 +77,10 @@ type Room struct {
 	ControllerID      string      `json:"controllerId"`
 	AudioTracks       []TrackInfo `json:"audioTracks"`
 	SubtitleTracks    []TrackInfo `json:"subtitleTracks"`
-	BitmapSubsSkipped int         `json:"bitmapSubsSkipped"`
+	// Chapters are the source's authored spans, when it carries any: the
+	// player draws them on the timeline so "the opening" is a place.
+	Chapters          []Chapter `json:"chapters,omitempty"`
+	BitmapSubsSkipped int       `json:"bitmapSubsSkipped"`
 	ClientSubs        bool        `json:"clientSubs,omitempty"`
 	// Preparation is how far the room is from being playable. It exists so a
 	// viewer waiting on a source is told what is happening and roughly how

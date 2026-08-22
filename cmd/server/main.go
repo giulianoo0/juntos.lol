@@ -74,9 +74,18 @@ func main() {
 		log.Printf("recover interrupted media jobs: %v", err)
 	}
 	streamStartBytes := cfg.StreamStartMB << 20
+	// killRoom is how a room dies before its time: told why, cut off from
+	// whatever is still feeding it, and stripped of every byte it accumulated.
+	// Late-bound because the ingestors it must stop are built further down.
+	var killRoom func(roomID string)
 	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, publisher, streamStartBytes,
 		func(roomID string) { hub.NotifyStatus(roomID, "ready") },
 		hub.NotifyRoomUpdated,
+		func(roomID string) {
+			if killRoom != nil {
+				killRoom(roomID)
+			}
+		},
 	)
 	progressive.Start(ctx)
 
@@ -123,6 +132,26 @@ func main() {
 	)
 	urlIngestor.Start(ctx)
 
+	killRoom = func(roomID string) {
+		// The pumps stop first, so nothing rebuilds what the purge removes.
+		ingestor.Cancel(roomID)
+		urlIngestor.Cancel(roomID)
+		progressive.Cancel(roomID)
+		killCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := store.SetError(killCtx, roomID, media.PublicUnsupportedVideo); err != nil {
+			log.Printf("mark refused room %s: %v", roomID, err)
+		}
+		hub.NotifyStatus(roomID, "error")
+		if err := room.PurgeData(killCtx, store, cfg.DataDir, bucket, roomID); err != nil {
+			log.Printf("purge refused room %s: %v", roomID, err)
+		}
+	}
+	// The queue reaches the same verdict for sources that could only be
+	// probed after the upload landed; it marks the room itself and hands the
+	// teardown here.
+	queue.SetPurge(func(roomID string) { killRoom(roomID) })
+
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),
 		httpapi.WithURLIngestor(urlIngestor),
@@ -142,7 +171,10 @@ func main() {
 
 	tusHandler, err := upload.NewTusHandler(cfg, store, upload.Callbacks{
 		OnComplete: func(roomID string) {
-			progressive.Cancel(roomID)
+			// The preview is not cut off when the upload lands: it drains to
+			// the file's end and keeps publishing, so nobody hits a frozen
+			// playlist while the slower final encode replaces it from behind.
+			progressive.Complete(roomID)
 			queue.Submit(roomID)
 		},
 		OnStreamStart: progressive.Submit,

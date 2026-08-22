@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
+	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -55,7 +57,7 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 	var output lockedBuffer
 	done := make(chan error, 1)
 	go func() {
-		done <- streamGrowingFile(ctx, path, &output, time.Millisecond)
+		done <- streamGrowingFile(ctx, path, &output, time.Millisecond, nil)
 	}()
 
 	require.Eventually(t, func() bool { return output.String() == "first" }, time.Second, time.Millisecond)
@@ -68,6 +70,59 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestStreamGrowingFileEndsAtTrueEOFOnceComplete(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "growing.mkv")
+	require.NoError(t, os.WriteFile(path, []byte("first"), 0o644))
+
+	var complete atomic.Bool
+	var output lockedBuffer
+	done := make(chan error, 1)
+	go func() {
+		done <- streamGrowingFile(t.Context(), path, &output, time.Millisecond, complete.Load)
+	}()
+
+	// Everything on disk is consumed, but the upload has not finished: the
+	// feeder keeps following rather than ending.
+	require.Eventually(t, func() bool { return output.String() == "first" }, time.Second, time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("feeder ended while the upload was still growing: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// The tail lands and then the upload completes: the feeder drains what
+	// arrived and ends cleanly, instead of waiting for a cancellation.
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = file.WriteString("-last")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	complete.Store(true)
+
+	require.NoError(t, <-done)
+	require.Equal(t, "first-last", output.String())
+}
+
+func TestCompleteMarksOnlyRoomsWithAJob(t *testing.T) {
+	p := NewProgressive(1, nil, t.TempDir(), nil, 1<<20, nil, nil, nil)
+	p.ctx = t.Context()
+	p.started = true
+
+	// Without a preview in flight there is nothing to finish; a mark stored
+	// anyway would outlive the room.
+	p.Complete("r1")
+	require.False(t, p.isComplete("r1"))
+
+	p.Submit("r1", "/tmp/growing.mkv", 0)
+	p.Complete("r1")
+	require.True(t, p.isComplete("r1"))
+
+	// A retired source takes its completion with it: the replacement upload
+	// must not inherit a "finished" verdict it never earned.
+	p.Cancel("r1")
+	require.False(t, p.isComplete("r1"))
 }
 
 func TestPreviewVideoVariantPlaylistFollowsTheDubs(t *testing.T) {
@@ -87,7 +142,7 @@ func TestPreviewVideoVariantPlaylistFollowsTheDubs(t *testing.T) {
 }
 
 func TestProgressiveCancelKeepsQueuedJobCanceled(t *testing.T) {
-	p := NewProgressive(1, nil, t.TempDir(), nil, 1<<20, nil, nil)
+	p := NewProgressive(1, nil, t.TempDir(), nil, 1<<20, nil, nil, nil)
 	p.ctx = t.Context()
 	p.started = true
 
@@ -158,6 +213,35 @@ func TestProbeGrowingFileKeepsWaitingForAStreamableSource(t *testing.T) {
 	require.Same(t, want, got)
 }
 
+func TestProcessKillsARoomWhoseVideoCannotBeServed(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	failed := make(chan string, 1)
+	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, nil, nil, func(id string) { failed <- id })
+	p.probe = func(context.Context, string) (*ProbeResult, error) {
+		return &ProbeResult{VideoCodec: "mpeg2video"}, nil
+	}
+
+	outcome := p.process(t.Context(), t.Context(), progressiveJob{roomID: "r1", srcPath: "/nowhere"})
+
+	// A refusal is a verdict, not a pipeline failure.
+	require.Equal(t, metrics.JobSucceeded, outcome)
+	select {
+	case id := <-failed:
+		require.Equal(t, "r1", id)
+	case <-time.After(time.Second):
+		t.Fatal("failed callback not fired")
+	}
+	// Upload progress keeps ticking for as long as the download takes to shut
+	// down; a dead room must not be re-previewed on every tick.
+	p.Submit("r1", "/nowhere", 0)
+	require.Empty(t, p.jobs)
+}
+
 func TestAnnouncePreviewMakesTheRoomReadyAfterTheLastPublish(t *testing.T) {
 	mr := miniredis.RunT(t)
 	store := room.NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
@@ -166,7 +250,7 @@ func TestAnnouncePreviewMakesTheRoomReadyAfterTheLastPublish(t *testing.T) {
 		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	ready := make(chan string, 1)
-	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, func(id string) { ready <- id }, nil)
+	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, func(id string) { ready <- id }, nil, nil)
 	probe := &ProbeResult{VideoCopyable: true, Audio: []room.TrackInfo{{Index: 0}, {Index: 1}}}
 
 	// A source that arrives all at once stops the remux within seconds, and the
@@ -202,7 +286,7 @@ func TestAnnouncePreviewLeavesARoomWithoutAPlayablePreviewAlone(t *testing.T) {
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: "r1", Status: "processing", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
-	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, nil, nil)
+	p := NewProgressive(1, store, t.TempDir(), nil, 1<<20, nil, nil, nil)
 
 	p.announcePreview(t.Context(), "r1", &ProbeResult{VideoCopyable: true})
 

@@ -271,7 +271,7 @@ func startServer(t *testing.T, bridgeURL string) *testServer {
 	queue := media.NewQueue(cfg.FFmpegJobs, store, cfg.DataDir, publisher, func(string) {}, nil)
 	queue.Start(ctx)
 	progressive := media.NewProgressive(cfg.FFmpegJobs, store, cfg.DataDir, publisher,
-		cfg.StreamStartMB<<20, func(string) {}, func(string) {})
+		cfg.StreamStartMB<<20, func(string) {}, func(string) {}, nil)
 	progressive.Start(ctx)
 
 	ingestor := torrent.NewIngestor(torrent.NewBridge(bridgeURL),
@@ -297,7 +297,9 @@ func startServer(t *testing.T, bridgeURL string) *testServer {
 	engine := httpapi.NewServer(cfg, store, nil, httpapi.WithTorrentIngestor(ingestor))
 	tusHandler, err := upload.NewTusHandler(cfg, store, upload.Callbacks{
 		OnComplete: func(roomID string) {
-			progressive.Cancel(roomID)
+			// Mirrors production wiring: the preview drains to the end of the
+			// file instead of being cancelled when the upload completes.
+			progressive.Complete(roomID)
 			queue.Submit(roomID)
 		},
 		OnStreamStart: progressive.Submit,

@@ -56,6 +56,9 @@ type Progressive struct {
 	// onUpdated tells clients the room's preparation metadata moved, without
 	// claiming its media status changed.
 	onUpdated func(roomID string)
+	// onFailed reports a source the pipeline refuses to serve at all, so the
+	// caller can kill the room instead of letting the download run on.
+	onFailed func(roomID string)
 	probe     probeFunc
 	jobs      chan progressiveJob
 	done      chan struct{}
@@ -67,6 +70,9 @@ type Progressive struct {
 	queued    map[string]struct{}
 	active    map[string]context.CancelFunc
 	canceled  map[string]struct{}
+	// completed marks rooms whose upload has fully landed, so the feeder can
+	// stop at true EOF and let ffmpeg finish the whole file naturally.
+	completed map[string]struct{}
 	// previewStarted is when each accepted job was submitted, which is the
 	// moment the wait a viewer actually feels begins: the upload has just
 	// crossed the threshold and the waiting screen is up. It is consumed by
@@ -81,9 +87,10 @@ type Progressive struct {
 
 // NewProgressive creates a preview worker pool. onReady fires once per room
 // when its first complete HLS segment is playable; onUpdated fires whenever
-// the preview phase or its estimate changes.
+// the preview phase or its estimate changes; onFailed fires when the source
+// turns out to be one the pipeline refuses to serve.
 func NewProgressive(workers int, store *room.Store, dataDir string, publisher *Publisher,
-	previewFloorBytes int64, onReady, onUpdated func(roomID string)) *Progressive {
+	previewFloorBytes int64, onReady, onUpdated, onFailed func(roomID string)) *Progressive {
 	if workers < 1 {
 		workers = 1
 	}
@@ -95,12 +102,14 @@ func NewProgressive(workers int, store *room.Store, dataDir string, publisher *P
 		previewFloorBytes: previewFloorBytes,
 		onReady:           onReady,
 		onUpdated:         onUpdated,
+		onFailed:          onFailed,
 		probe:             Probe,
 		jobs:              make(chan progressiveJob, workers),
 		done:              make(chan struct{}),
 		queued:            make(map[string]struct{}),
 		active:            make(map[string]context.CancelFunc),
 		canceled:          make(map[string]struct{}),
+		completed:         make(map[string]struct{}),
 		previewStarted:    make(map[string]time.Time),
 		unpreviewable:     make(map[string]struct{}),
 	}
@@ -171,7 +180,7 @@ func (p *Progressive) Submit(roomID, srcPath string, size int64) {
 }
 
 // Cancel stops a running preview for roomID and drops a queued one. The
-// upload completion and termination paths call this once the partial file is
+// source swap and upload termination paths call this once the partial file is
 // no longer valid input.
 func (p *Progressive) Cancel(roomID string) {
 	p.mu.Lock()
@@ -182,9 +191,39 @@ func (p *Progressive) Cancel(roomID string) {
 	if _, ok := p.queued[roomID]; ok {
 		p.canceled[roomID] = struct{}{}
 	}
-	// The source is being retired, so its verdict goes with it: a replacement
-	// deserves to be judged on its own.
+	// The source is being retired, so its verdicts go with it: a replacement
+	// deserves to be judged on its own, and must not inherit a "finished"
+	// mark from an upload it never was.
 	delete(p.unpreviewable, roomID)
+	delete(p.completed, roomID)
+}
+
+// Complete tells a preview that its source has stopped growing: the upload
+// landed in full. The feeder drains what is on disk, closes ffmpeg's stdin and
+// the preview runs to the end of the episode — instead of being cut off at
+// wherever it had reached, which left viewers frozen at that frontier for the
+// whole of the (slower) final encode. The final remux stays authoritative and
+// replaces the preview when it lands.
+func (p *Progressive) Complete(roomID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, queued := p.queued[roomID]
+	_, active := p.active[roomID]
+	// Without a preview in flight there is nothing to finish; a mark stored
+	// anyway would outlive the room.
+	if !queued && !active {
+		return
+	}
+	p.completed[roomID] = struct{}{}
+}
+
+// isComplete reports whether the room's current upload has fully landed. The
+// feeder asks this at every temporary EOF.
+func (p *Progressive) isComplete(roomID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.completed[roomID]
+	return ok
 }
 
 func (p *Progressive) worker(ctx context.Context) {
@@ -233,8 +272,9 @@ func (p *Progressive) finishJob(roomID string) {
 	delete(p.active, roomID)
 	// A job that ended without the room ever becoming playable leaves its
 	// start time behind, and the map would otherwise hold one per room the
-	// server ever previewed.
+	// server ever previewed. The completion mark is consumed the same way.
 	delete(p.previewStarted, roomID)
+	delete(p.completed, roomID)
 	p.mu.Unlock()
 	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelinePreview).Dec()
 }
@@ -273,6 +313,27 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) s
 				"room_id", job.roomID, "error", err)
 		}
 		return outcomeFor(jobCtx, metrics.JobFailed)
+	}
+	if err := CheckVideoSupported(probe); err != nil {
+		// The verdict lands as early as it can be reached — often minutes
+		// before the download would have finished paying for a file that can
+		// never play. Marking the room unpreviewable stops the progress ticks
+		// resubmitting it while the ingest shuts down.
+		slog.InfoContext(ctx, "progressive: source video refused",
+			"room_id", job.roomID, "codec", probe.VideoCodec)
+		p.markUnpreviewable(job.roomID)
+		p.notifyFailed(job.roomID)
+		// A refusal is a verdict, not a pipeline failure.
+		return metrics.JobSucceeded
+	}
+	// Chapters are known from this very first probe, so the timeline can show
+	// them while the preview is still being cut. The setPhase below already
+	// tells clients the room moved; the chapters ride that same announcement.
+	if len(probe.Chapters) > 0 {
+		if err := p.store.SetChapters(jobCtx, job.roomID, probe.Chapters); err != nil {
+			slog.WarnContext(ctx, "progressive: store chapters failed",
+				"room_id", job.roomID, "error", err)
+		}
 	}
 	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewSegmenting,
 		PreviewTargetBytes(job.size, probe.DurationMs, p.previewFloorBytes))
@@ -361,7 +422,8 @@ func (p *Progressive) remux(ctx, jobCtx context.Context, job progressiveJob, hls
 	defer stopInput()
 	inputErr := make(chan error, 1)
 	go func() {
-		err := streamGrowingFile(inputCtx, job.srcPath, stdin, inputPollInterval)
+		err := streamGrowingFile(inputCtx, job.srcPath, stdin, inputPollInterval,
+			func() bool { return p.isComplete(job.roomID) })
 		if closeErr := stdin.Close(); err == nil {
 			err = closeErr
 		}
@@ -485,7 +547,13 @@ func probeGrowingFile(ctx context.Context, path string, retryInterval time.Durat
 // streamGrowingFile copies bytes already present and then waits at temporary
 // EOF for appended upload bytes. Keeping ffmpeg's stdin open is what turns a
 // regular tus file into an actual streaming input.
-func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInterval time.Duration) error {
+//
+// complete reports whether the upload has fully landed; it is consulted at
+// every EOF, so a completed file is drained to its true end and the copy
+// returns nil rather than following forever. Nil means the file never
+// completes and only cancellation ends the copy.
+func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInterval time.Duration,
+	complete func() bool) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -505,6 +573,11 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 		}
 		if !errors.Is(readErr, io.EOF) {
 			return readErr
+		}
+		// Completion is only trusted at EOF: everything the upload wrote is
+		// already behind the read position by the time the mark can be set.
+		if complete != nil && complete() {
+			return nil
 		}
 
 		timer := time.NewTimer(pollInterval)
@@ -584,6 +657,19 @@ func (p *Progressive) notifyUpdated(roomID string) {
 		}
 	}()
 	p.onUpdated(roomID)
+}
+
+// notifyFailed hands a refused source to whoever kills rooms.
+func (p *Progressive) notifyFailed(roomID string) {
+	if p.onFailed == nil {
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			slog.Error("progressive failed callback panicked", "room_id", roomID, "panic", recovered)
+		}
+	}()
+	p.onFailed(roomID)
 }
 
 func (p *Progressive) notifyReady(roomID string) {

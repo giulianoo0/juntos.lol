@@ -177,6 +177,7 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"controllerId":      r.ControllerID,
 			"audioTracks":       r.AudioTracks,
 			"subtitleTracks":    r.SubtitleTracks,
+			"chapters":          r.Chapters,
 			"bitmapSubsSkipped": r.BitmapSubsSkipped,
 			"preparation":       r.Preparation,
 			"memberCount":       len(members),
