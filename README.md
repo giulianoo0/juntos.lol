@@ -200,13 +200,17 @@ GRAFANA_CLOUD_PROM_TOKEN=token-da-politica-de-acesso
 
 O arquivo de configuração do LiveKit e segredos deve ser montado com um override do Compose mantido fora do repositório.
 
-Atualização manual da aplicação:
+Atualização manual da aplicação. O diretório no servidor **não é um clone git** — é uma cópia publicada via `rsync`, então `git pull` lá não existe. Os excludes protegem os três arquivos que só existem no servidor (`.env`, `docker-compose.override.yml`, `livekit.yaml`); sem eles o `--delete` os apagaria e a stack subiria sem credenciais:
 
 ```bash
-git pull --ff-only
-docker compose build app torrent-bridge
-docker compose up -d app torrent-bridge
-docker compose ps
+rsync -az --delete \
+  --exclude .git/ --exclude web/node_modules/ --exclude web/dist/ --exclude data/ \
+  --exclude .env --exclude docker-compose.override.yml --exclude livekit.yaml \
+  ./ usuario@servidor:/opt/ss/
+ssh usuario@servidor 'cd /opt/ss \
+  && docker compose build app torrent-bridge \
+  && docker compose up -d app torrent-bridge \
+  && docker compose ps'
 ```
 
 ## Observabilidade
