@@ -140,3 +140,78 @@ func ffmpegWroteAPlayableSet(hlsDir string) bool {
 	}
 	return true
 }
+
+func TestProgressiveRemuxIntegrationDualAudio(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "growing.mkv")
+	gen := exec.CommandContext(t.Context(), "ffmpeg",
+		"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=8:size=320x240:rate=10",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+		"-f", "lavfi", "-i", "sine=frequency=880:duration=8",
+		"-map", "0:v", "-map", "1:a", "-map", "2:a",
+		"-metadata:s:a:0", "language=por", "-metadata:s:a:1", "language=jpn",
+		"-c:v", "libx264", "-g", "10", "-keyint_min", "10", "-sc_threshold", "0",
+		"-c:a", "aac", "-shortest", src,
+	)
+	output, err := gen.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	probe, err := Probe(t.Context(), src)
+	require.NoError(t, err)
+	require.Len(t, probe.Audio, 2)
+	out := filepath.Join(dir, "hls")
+	require.NoError(t, os.MkdirAll(out, 0o755))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cmd := exec.CommandContext(ctx, "ffmpeg", BuildProgressiveRemuxArgs("pipe:0", out, probe)...)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	inputDone := make(chan error, 1)
+	go func() {
+		inputDone <- streamGrowingFile(ctx, src, stdin, time.Millisecond)
+	}()
+
+	require.Eventually(t, func() bool { return ffmpegWroteAPlayableSet(out) }, 10*time.Second, 50*time.Millisecond)
+	cancel()
+	_ = stdin.Close()
+	_ = cmd.Wait()
+	require.Error(t, <-inputDone)
+
+	// The point of the whole change: a viewer can switch dubs while the room is
+	// still on the preview, instead of waiting out the final encode.
+	master, err := os.ReadFile(filepath.Join(out, "master.m3u8"))
+	require.NoError(t, err)
+	require.Contains(t, string(master), "TYPE=AUDIO")
+	require.Contains(t, string(master), `LANGUAGE="por"`)
+	require.Contains(t, string(master), `LANGUAGE="jpn"`)
+	require.Contains(t, string(master), `AUDIO="group_audio"`)
+
+	// Two dubs and one video rendition, each its own stream of segments.
+	playlists, err := filepath.Glob(filepath.Join(out, "preview_stream_*.m3u8"))
+	require.NoError(t, err)
+	require.Len(t, playlists, 3)
+
+	// What previewPlayable will inspect has to be the variant ffmpeg actually
+	// filled with video. Asking a dub instead announces the room while the
+	// video is still empty.
+	videoVariant := previewVideoVariantPlaylist(probe)
+	require.Equal(t, "preview_stream_2.m3u8", videoVariant)
+	require.Contains(t, string(master), videoVariant)
+	variant, err := os.ReadFile(filepath.Join(out, videoVariant))
+	require.NoError(t, err)
+	require.Contains(t, string(variant), "#EXTINF")
+	require.Contains(t, string(variant), `#EXT-X-MAP:URI="preview_init_2.mp4"`)
+
+	// Several variants, so ffmpeg expands %v itself and the init names are real.
+	require.NotContains(t, string(variant), "%v")
+	require.FileExists(t, filepath.Join(out, "preview_init_2.mp4"))
+}

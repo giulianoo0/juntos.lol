@@ -104,7 +104,7 @@ func TestBuildProgressiveRemuxArgs(t *testing.T) {
 	require.NotContains(t, final, "-re")
 }
 
-func TestBuildProgressiveRemuxArgsCarriesOnlyTheDefaultAudioTrack(t *testing.T) {
+func TestBuildProgressiveRemuxArgsCarriesEveryDub(t *testing.T) {
 	p := &ProbeResult{
 		VideoCopyable: true,
 		Audio: []room.TrackInfo{
@@ -113,13 +113,24 @@ func TestBuildProgressiveRemuxArgsCarriesOnlyTheDefaultAudioTrack(t *testing.T) 
 	}
 
 	preview := strings.Join(BuildProgressiveRemuxArgs("pipe:0", "/x/hls", p), " ")
-	// Every extra dub is another AAC encode and another segment stream before
-	// the room can play at all. The preview exists to start playback; the rest
-	// of the dubs arrive with the final ladder.
+	// Holding the dubs back until the final ladder means holding them back for
+	// the length of the encode — tens of minutes on a feature. The preview
+	// gives them their own group, so the switch is there as soon as the room is.
 	require.Contains(t, preview, "-map 0:a:0")
-	require.NotContains(t, preview, "-map 0:a:1")
-	require.NotContains(t, preview, "-map 0:a:2")
-	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(p))
+	require.Contains(t, preview, "-map 0:a:1")
+	require.Contains(t, preview, "-map 0:a:2")
+	require.Contains(t, preview, "-var_stream_map a:0,agroup:audio,default:yes,language:jpn")
+	require.Contains(t, preview, "a:1,agroup:audio,language:eng")
+	require.Contains(t, preview, "a:2,agroup:audio,language:ger")
+
+	// The dubs take the leading variant slots, so the video is no longer
+	// variant 0. Asking the wrong playlist announces the room as ready while
+	// the video is still empty.
+	require.Contains(t, preview, "v:0,agroup:audio")
+	require.Equal(t, "preview_stream_3.m3u8", previewVideoVariantPlaylist(p))
+
+	// The preview stays one video rendition; only the final pass gets a ladder.
+	require.NotContains(t, preview, "v:1")
 
 	// The final pass still carries all of them.
 	final := strings.Join(BuildRemuxArgs("/x/partial", "/x/hls", p), " ")
@@ -140,6 +151,7 @@ func TestBuildProgressiveRemuxArgsMuxesAudioIntoTheOnlyVariant(t *testing.T) {
 	// rendition and one dub, so there is no switch for the group to survive.
 	require.Contains(t, preview, "-var_stream_map v:0,a:0")
 	require.NotContains(t, preview, "agroup")
+	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(p))
 
 	// The final ladder keeps its group: switching picture quality there must
 	// not reopen the audio the viewer chose.
