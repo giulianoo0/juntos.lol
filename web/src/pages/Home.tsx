@@ -7,6 +7,8 @@ import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '
 import { createRoomAndIngestUrl, createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { PluginsPanel } from '../plugins/PluginsPanel'
+import { Onboarding } from '../onboarding/Onboarding'
+import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
@@ -87,6 +89,9 @@ export function Home() {
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
   const reduceMotion = useReducedMotion()
+  // Read once, at mount: this decides whether the very first paint carries the
+  // explanation, and it must not flip under a re-render.
+  const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
   // Which of the two ways in is on screen. The manual flow keeps its own step
   // machine; this only decides whether it is the thing being shown.
@@ -280,8 +285,11 @@ export function Home() {
   const MANUAL_STEPS = (<>
       {shownManual === 'menu' ? (
         <div className="morph-step" data-step="menu">
-          <h2 className="stage-title">{t('home.uploadManually')}</h2>
-          <p className="stage-description">{t('home.uploadGuide')}</p>
+          {/* The tab above already says what this is, so the panel says what
+              it is for. The old wording named the mechanism; this names the
+              thing you are about to have. */}
+          <h2 className="stage-title">{t('home.title')}</h2>
+          <p className="stage-description">{t('home.guide')}</p>
           <div className="source-options">
             <button onClick={() => setManualOpen('file')}>
               <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
@@ -444,6 +452,11 @@ export function Home() {
           onPickStream={pickStream}
         />
       ) : null}
+
+      {/* Shown once, before anything else, because neither tab name explains
+          itself and learning that by clicking around is learning it as a
+          failure. */}
+      {onboarding ? <Onboarding onDone={() => setOnboarding(false)} /> : null}
 
       <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
 

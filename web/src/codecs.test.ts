@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { detectCodecSupport, supportSignature, unsupportedCodecs, CODEC_PROBES } from './codecs'
+import {
+  detectCodecSupport, dismissalRecord, dismissedCodecs, unacknowledgedCodecs, unsupportedCodecs,
+  CODEC_PROBES,
+} from './codecs'
 
 describe('codec support', () => {
   it('reports every codec the browser accepts', () => {
@@ -40,14 +43,38 @@ describe('codec support', () => {
     expect(unsupportedCodecs(support)).toEqual([])
   })
 
-  // The dismissal is remembered against the answer, not against the browser,
-  // so the same person on a machine that cannot decode something is warned
-  // again rather than silenced by a dismissal they made elsewhere.
-  it('signs the result so a different answer warns again', () => {
-    const all = detectCodecSupport(() => true)
-    const noHevc = detectCodecSupport((mimeType) => !mimeType.includes('hvc1'))
+  // A dismissal covers the codecs it named, so a codec that breaks later is
+  // still worth saying once.
+  it('holds back only the codecs a dismissal already named', () => {
+    const support = detectCodecSupport((mimeType) => mimeType.includes('avc1'))
 
-    expect(supportSignature(all)).toBe(supportSignature(detectCodecSupport(() => true)))
-    expect(supportSignature(all)).not.toBe(supportSignature(noHevc))
+    expect(unacknowledgedCodecs(support, dismissedCodecs('')).map((codec) => codec.id))
+      .toEqual(['hevc', 'av1'])
+    expect(unacknowledgedCodecs(support, dismissedCodecs('hevc')).map((codec) => codec.id))
+      .toEqual(['av1'])
+    expect(unacknowledgedCodecs(support, dismissedCodecs('hevc,av1'))).toEqual([])
+  })
+
+  // Chrome answers for HEVC out of the machine's hardware video decoding, so
+  // the same browser says different things on different days. Every codec ever
+  // reported stays reported; otherwise one flap undoes the dismissal.
+  it('keeps every codec it has already reported', () => {
+    const noHevc = detectCodecSupport((mimeType) => !mimeType.includes('hvc1'))
+    const noAv1 = detectCodecSupport((mimeType) => !mimeType.includes('av01'))
+
+    expect(dismissalRecord('', noHevc)).toBe('hevc')
+    expect(dismissalRecord('hevc', noAv1)).toBe('hevc,av1')
+    // A browser that plays everything adds nothing and forgets nothing.
+    expect(dismissalRecord('hevc,av1', detectCodecSupport(() => true))).toBe('hevc,av1')
+  })
+
+  // The first version of this stored the whole answer, supported codecs
+  // included. Those entries were never a complaint, so they were never
+  // dismissed; the ones marked unsupported were.
+  it('reads a dismissal stored in the old whole-answer form', () => {
+    expect([...dismissedCodecs('h264:1,hevc:0,av1:1')]).toEqual(['hevc'])
+    expect([...dismissedCodecs('h264:1,hevc:1,av1:1')]).toEqual([])
+    expect([...dismissedCodecs('')]).toEqual([])
+    expect([...dismissedCodecs('vp9,hevc')]).toEqual(['hevc'])
   })
 })

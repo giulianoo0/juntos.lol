@@ -84,10 +84,45 @@ export function unsupportedCodecs(support: CodecSupport[]): CodecSupport[] {
 }
 
 /**
- * Identifies one answer, so a dismissal is remembered against what was
- * dismissed. The same person on a machine that cannot decode something is
- * warned again rather than silenced by a dismissal made elsewhere.
+ * The codecs a stored dismissal covered.
+ *
+ * Reads the list this app writes, and the older whole-answer form
+ * (`h264:1,hevc:0`) it used to write, where only the entries marked
+ * unsupported were ever a complaint. Anything unrecognised is ignored, so a
+ * record written by a future version costs a repeat warning at worst.
  */
-export function supportSignature(support: CodecSupport[]): string {
-  return support.map((codec) => `${codec.id}:${codec.supported ? 1 : 0}`).join(',')
+export function dismissedCodecs(stored: string): Set<CodecID> {
+  const known = new Set<string>(CODEC_PROBES.map((probe) => probe.id))
+  const ids = new Set<CodecID>()
+  for (const entry of stored.split(',')) {
+    const [id, reported] = entry.split(':')
+    if (reported === '1') continue
+    if (known.has(id)) ids.add(id as CodecID)
+  }
+  return ids
+}
+
+/**
+ * What will not play and has not already been said.
+ *
+ * The probe is not a fixed property of a browser. Chrome answers for HEVC out
+ * of the machine's hardware video decoding, which switches off and on by
+ * itself — a GPU process that crashed, a driver the blocklist started
+ * refusing, the acceleration setting. So the same browser gives different
+ * answers on different days, and a viewer who is told twice about the same
+ * codec learns only that the app nags.
+ */
+export function unacknowledgedCodecs(support: CodecSupport[], dismissed: Set<CodecID>): CodecSupport[] {
+  return unsupportedCodecs(support).filter((codec) => !dismissed.has(codec.id))
+}
+
+/**
+ * What to store when this answer is dismissed: every codec ever reported, not
+ * merely the ones reported now. A codec that comes back is not news, and a
+ * browser that gained one back has not grown a problem worth a modal.
+ */
+export function dismissalRecord(stored: string, support: CodecSupport[]): string {
+  const ids = dismissedCodecs(stored)
+  for (const codec of unsupportedCodecs(support)) ids.add(codec.id)
+  return CODEC_PROBES.filter((probe) => ids.has(probe.id)).map((probe) => probe.id).join(',')
 }

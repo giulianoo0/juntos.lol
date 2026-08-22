@@ -56,9 +56,45 @@ describe('CodecSupportNotice', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  // A dismissal is about one answer. Carrying it to a browser that cannot play
-  // something else would silence the warning exactly where it matters.
-  it('warns again when the browser gives a different answer', () => {
+  // The reported symptom: the notice arriving out of nowhere. Chrome answers
+  // for HEVC out of the machine's hardware video decoding, which turns itself
+  // off and on — a GPU process that crashed, a driver the blocklist started
+  // refusing — so the same browser gives different answers on different days.
+  // Gaining a codec back is the browser getting better; there is nothing to
+  // say, least of all about a codec the viewer has already been told about.
+  it('says nothing when the browser gains a codec back', () => {
+    browserPlaying({ hevc: false, av1: false })
+    const { unmount } = render(<CodecSupportNotice />)
+    fireEvent.click(screen.getByRole('button', { name: /got it|entendi/i }))
+    unmount()
+
+    browserPlaying({ hevc: false, av1: true })
+    render(<CodecSupportNotice />)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // And it must not come back when that codec drops out again, which is the
+  // same flap in the other direction.
+  it('stays shut when a codec it already reported drops out again', () => {
+    browserPlaying({ hevc: false, av1: true })
+    const { unmount: first } = render(<CodecSupportNotice />)
+    fireEvent.click(screen.getByRole('button', { name: /got it|entendi/i }))
+    first()
+
+    browserPlaying({ hevc: true, av1: true })
+    const { unmount: second } = render(<CodecSupportNotice />)
+    second()
+
+    browserPlaying({ hevc: false, av1: true })
+    render(<CodecSupportNotice />)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  // A dismissal covers the codecs it named. A codec that was playing and stops
+  // is news, and silencing that would lose the warning exactly where it counts.
+  it('warns again when a codec it never reported stops playing', () => {
     browserPlaying({ hevc: false, av1: true })
     const { unmount } = render(<CodecSupportNotice />)
     fireEvent.click(screen.getByRole('button', { name: /got it|entendi/i }))

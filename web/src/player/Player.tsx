@@ -10,6 +10,7 @@ import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { Settings, type SettingGroup } from './Settings'
+import { SubtitleLayer } from './SubtitleLayer'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { useToast } from '../ui/toastContext'
 
@@ -367,8 +368,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const textTracks = videoRef.current?.textTracks
     if (!textTracks) return
     for (let position = 0; position < Math.min(textTracks.length, subtitleCount); position += 1) {
-      const chosen = subtitleTracks[position]?.index === subtitle
-      textTracks[position].mode = chosen ? 'showing' : subtitle === -1 ? 'disabled' : 'hidden'
+      // "hidden", never "showing": a hidden track still parses its file and
+      // still reports which cues are active, but the browser does not draw it.
+      // SubtitleLayer draws the chosen one, because Chrome renders a native
+      // track in the operating system's caption style and ignores the page's
+      // ::cue rules — the black slab and the clipped descenders come from there
+      // and cannot be styled away.
+      textTracks[position].mode = subtitle === -1 ? 'disabled' : 'hidden'
     }
   }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
 
@@ -740,6 +746,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           />
         ))}
       </video>
+      <SubtitleLayer
+        videoRef={videoRef}
+        position={subtitleTracks.findIndex((track) => track.index === subtitle)}
+        revision={`${room.mediaGeneration}-${room.mediaVersion ?? 0}-${room.subsVersion ?? 0}-${subtitleCount}`}
+      />
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       {unplayable ? <div className="player-unplayable" role="alert">{t('room.unplayable')}</div> : null}
       <div className="player-controls">

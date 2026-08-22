@@ -307,13 +307,23 @@ describe('Player HLS lifecycle', () => {
     const subtitleTracks = [{ index: 0, language: 'en', title: 'English', codec: 'webvtt' }]
     const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
     const video = videoRef.current!
-    const textTracks = [{ mode: 'disabled' }]
+    // A real TextTrack is an EventTarget carrying its active cues; SubtitleLayer
+    // subscribes to it, so the stub has to be one too.
+    const textTracks = [{
+      mode: 'disabled',
+      activeCues: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }]
     Object.defineProperty(video, 'textTracks', { configurable: true, value: textTracks })
 
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
     fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
     fireEvent.click(await screen.findByRole('button', { name: 'English' }))
-    expect(textTracks[0].mode).toBe('showing')
+    // "hidden", not "showing": the track parses and reports its cues, and
+    // SubtitleLayer draws them. A shown track is drawn by the browser in the
+    // system caption style, which the page cannot override.
+    expect(textTracks[0].mode).toBe('hidden')
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=1')
 
     // The extraction publishing more cues bumps the version: the URL must
@@ -322,7 +332,7 @@ describe('Player HLS lifecycle', () => {
       <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
     )
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=2')
-    expect(textTracks[0].mode).toBe('showing')
+    expect(textTracks[0].mode).toBe('hidden')
   })
 
   it('replaces the track element when the subtitles grow, so the browser reloads the cues', async () => {
