@@ -50,7 +50,7 @@ func Load() (Config, error) {
 		DataDir:           "/data",
 		WebDir:            "web/dist",
 		RedisURL:          "redis://localhost:6379",
-		MaxUploadMB:       10240,
+		MaxUploadMB:       51200,
 		StreamStartMB:     1,
 		RoomTTLHours:      5,
 		MaxParticipants:   20,

@@ -22,7 +22,7 @@ import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024
 
 // The manual-upload panel's steps; false is the panel being shut.
 type ManualStep = false | 'menu' | 'file' | 'magnet'

@@ -223,7 +223,7 @@ export function uploadFileToRoom(
   const room = { id: roomID, uploadEndpoint }
   const uppy = new Uppy({ autoProceed: false })
   // Keep each PATCH below the common reverse-proxy upload cap while still
-  // allowing the server's 10 GB room limit to be reached resumably.
+  // allowing the server's 50 GB room limit to be reached resumably.
   uppy.use(Tus, { endpoint: room.uploadEndpoint, chunkSize: TUS_CHUNK_BYTES })
   uppy.setMeta({ roomID: room.id })
   uppy.addFile({ name: uploadFile.name, type: uploadFile.type, data: uploadFile })

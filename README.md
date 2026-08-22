@@ -6,7 +6,7 @@
 
 ## O que está pronto
 
-- upload resumível com [tus](https://tus.io/) para arquivos de até 10 GB;
+- upload resumível com [tus](https://tus.io/) para arquivos de até 50 GB;
 - início progressivo: o servidor começa a preparar HLS quando recebe o primeiro bloco configurado, sem esperar o upload inteiro;
 - player responsivo com tela cheia, controles que somem durante a reprodução e suporte a HLS nativo ou `hls.js`;
 - sincronização de play, pause, seek e velocidade por WebSocket;
@@ -159,7 +159,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `DATA_DIR` | `/data` | Diretório de uploads, HLS e legendas. |
 | `WEB_DIR` | `web/dist` | Diretório dos arquivos estáticos compilados. |
 | `REDIS_URL` | `redis://localhost:6379` | Conexão Redis. |
-| `MAX_UPLOAD_MB` | `10240` | Limite máximo por arquivo, em MiB. |
+| `MAX_UPLOAD_MB` | `51200` | Limite máximo por arquivo, em MiB. |
 | `STREAM_START_MB` | `1` | Quantidade recebida antes de iniciar a prévia progressiva. |
 | `ROOM_TTL_HOURS` | `5` | Vida útil da sala e da mídia. |
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
