@@ -28,6 +28,7 @@ import { registerAc3Decoder } from '@mediabunny/ac3'
 import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
 import { readMkvChapters } from './mkvChapters'
+import { codecsFromMaster, createLocalPlayback } from './localPlayback'
 
 // The WASM decoders register lazily: nothing loads until a file actually
 // carries one of these codecs.
@@ -228,6 +229,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // ticker stops publishing, and execute() throws so the caller falls back
     // to tus — instead of paying to upload the rest of a doomed run.
     failure ??= error
+    local?.dispose()
+    local = null
     void conversion.cancel().catch(() => {})
   }
 
@@ -236,6 +239,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // a huge file over a slow connection — the OOM the 50 GB ceiling would
   // otherwise invite.
   const inflight = new Set<Promise<void>>()
+  // A finished object's bytes, read from its BufferTarget. Two independent
+  // views of the same buffer are fine: the MSE append and the upload PUT each
+  // copy what they are handed.
+  const segmentBytes = (target: unknown): Uint8Array =>
+    new Uint8Array((target as BufferTarget).buffer ?? new ArrayBuffer(0))
   const enqueue = async (name: string, target: unknown): Promise<void> => {
     if (failure) return
     const buffer = (target as BufferTarget).buffer
@@ -303,6 +311,37 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     return ready
   }
 
+  // Local playback for the host: single-variant only (one video track with at
+  // most one muxed audio). A multi-dub source splits into separate audio
+  // playlists, which the simple one-SourceBuffer path cannot feed, so it is
+  // left to the bucket/hls.js path where alternate audio already works.
+  const localSingleVariant = plan.audioTracks.length <= 1
+  let local = localSingleVariant ? createLocalPlayback(roomID) : null
+  let localInit: Uint8Array | null = null
+  const localPre: Uint8Array[] = []
+  let localStarted = false
+  // The init segment names the codec, but the CODECS string comes from the
+  // master, which the muxer only emits after the first segment. So the init
+  // and the first segments are held until the master arrives, then drained.
+  const feedLocal = (name: string, bytes: Uint8Array) => {
+    if (!local) return
+    // A second playlist appearing means multi-variant after all — abandon
+    // local playback and keep to the bucket.
+    if (/^cinit_(?!1\.)/.test(name) || /^cs_(?!1_)/.test(name)) { local.dispose(); local = null; return }
+    if (name === 'cinit_1.mp4') { localInit = bytes; return }
+    if (!localStarted) { localPre.push(bytes); return }
+    local.pushSegment(bytes)
+  }
+  const startLocal = () => {
+    if (!local || localStarted || !localInit) return
+    const codecs = codecsFromMaster(playlists.get('master.m3u8') ?? '')
+    if (!codecs) return
+    localStarted = true
+    local.pushInit(localInit, codecs)
+    for (const segment of localPre) local.pushSegment(segment)
+    localPre.length = 0
+  }
+
   const output = new Output({
     format: new HlsOutputFormat({
       segmentFormat: new CmafOutputFormat(),
@@ -311,10 +350,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       getPlaylistPath: ({ n }) => `client_stream_${n}.m3u8`,
       getSegmentPath: ({ playlist, n }) => `cs_${playlist.n}_${n}.m4s`,
       getInitPath: ({ n }) => `cinit_${n}.mp4`,
-      onMaster: (content) => { playlists.set('master.m3u8', content) },
+      onMaster: (content) => { playlists.set('master.m3u8', content); startLocal() },
       onPlaylist: (content, info) => { playlists.set(`client_stream_${info.n}.m3u8`, content) },
-      onInit: (target, info) => enqueue(`cinit_${info.n}.mp4`, target),
-      onSegment: (target, info) => enqueue(`cs_${info.playlist.n}_${info.n}.m4s`, target),
+      onInit: (target, info) => { const name = `cinit_${info.n}.mp4`; feedLocal(name, segmentBytes(target)); enqueue(name, target) },
+      onSegment: (target, info) => { const name = `cs_${info.playlist.n}_${info.n}.m4s`; feedLocal(name, segmentBytes(target)); enqueue(name, target) },
     }),
     target: new PathedTarget('master.m3u8', () => new BufferTarget()),
   })
@@ -347,6 +386,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   } finally {
     clearInterval(ticker)
   }
+  // The remux is done: no more fragments for the host's local buffer, so the
+  // MediaSource ends after what it holds and the host's timeline stops
+  // growing exactly where the file did.
+  local?.end()
   // Drain what the remux produced, bounded: an object the bucket never
   // vouches for must not spin here forever short of the complete pass.
   for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)
