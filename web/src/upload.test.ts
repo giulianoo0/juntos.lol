@@ -60,6 +60,11 @@ vi.mock('./convert', () => ({
   isMp4: vi.fn((file: File) => file.type === 'video/mp4' || /\.(mp4|m4v)$/i.test(file.name)),
   convertMp4ToMkv: vi.fn(),
 }))
+const clientPipeline = vi.hoisted(() => ({
+  planClientRemux: vi.fn().mockResolvedValue(null),
+  runClientRemux: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('./pipeline/clientMedia', () => clientPipeline)
 
 describe('upload registry', () => {
   let roomCounter = 0
@@ -69,6 +74,7 @@ describe('upload registry', () => {
     FakeUppy.instances = []
     subtitleFakes.reset()
     roomBodies = []
+    roomCounter = 0
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
       roomCounter += 1
       roomBodies.push(JSON.parse(init.body) as { fileName: string; nickname: string })
@@ -86,9 +92,37 @@ describe('upload registry', () => {
 
   const startUpload = async (file = new File(['video'], 'movie.mkv', { type: 'video/x-matroska' }), onProgress?: (progress: { phase: string; pct: number }) => void) => {
     const result = await createRoomAndUpload(file, 'giuli', onProgress)
+    // The dispatch asks the client pipeline first (asynchronously); with no
+    // plan, tus takes over one tick later.
+    await vi.waitFor(() => { if (FakeUppy.instances.length === 0) throw new Error('tus not started yet') })
     const uppy = FakeUppy.instances[0]
     return { result, uppy, file }
   }
+
+  it('lets a capable browser prepare the room itself, with no tus at all', async () => {
+    clientPipeline.planClientRemux.mockResolvedValueOnce({ input: {}, audioTracks: [], durationSeconds: 60 })
+    let resolveRun: () => void = () => {}
+    clientPipeline.runClientRemux.mockReturnValueOnce(new Promise<void>((resolve) => { resolveRun = resolve }))
+
+    const result = await createRoomAndUpload(new File(['video'], 'movie.mkv'), 'giuli')
+    await vi.waitFor(() => expect(clientPipeline.runClientRemux).toHaveBeenCalledOnce())
+    resolveRun()
+    await vi.waitFor(() => new Promise((resolve) => setTimeout(resolve, 0)))
+
+    expect(result.roomID).toBe('room1')
+    expect(FakeUppy.instances).toHaveLength(0)
+  })
+
+  it('falls back to tus when the client pipeline dies mid-flight', async () => {
+    clientPipeline.planClientRemux.mockResolvedValueOnce({ input: {}, audioTracks: [], durationSeconds: 60 })
+    clientPipeline.runClientRemux.mockRejectedValueOnce(new Error('encoder exploded'))
+
+    await createRoomAndUpload(new File(['video'], 'movie.mkv'), 'giuli')
+
+    // The room is exactly as it was, and tus carries it from zero.
+    await vi.waitFor(() => { if (FakeUppy.instances.length === 0) throw new Error('tus not started yet') })
+    expect(FakeUppy.instances[0].upload).toHaveBeenCalledOnce()
+  })
 
   it('resolves with the room id before the upload completes', async () => {
     const { result, uppy } = await startUpload()

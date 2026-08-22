@@ -172,6 +172,10 @@ func main() {
 
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),
+		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{
+			NotifyStatus:      hub.NotifyStatus,
+			NotifyRoomUpdated: hub.NotifyRoomUpdated,
+		}),
 		httpapi.WithURLIngestor(urlIngestor),
 		httpapi.WithSourceHooks(httpapi.SourceHooks{
 			// Swapping the source retires the previous media, so any preview

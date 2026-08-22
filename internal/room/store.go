@@ -346,6 +346,18 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 	)
 }
 
+// AddClientMediaBytes charges delta bytes against the room's client-upload
+// budget and returns the new total. The budget is what stands in for the tus
+// size limit on presigned uploads the server never relays: every presign is
+// charged for its declared size before the URL is handed out.
+func (s *Store) AddClientMediaBytes(ctx context.Context, id string, delta int64) (int64, error) {
+	total, err := s.rdb.HIncrBy(ctx, roomKey(id), "client_media_bytes", delta).Result()
+	if err != nil {
+		return 0, fmt.Errorf("charge client media bytes: %w", err)
+	}
+	return total, nil
+}
+
 // SetChapters stores the source's authored chapter spans.
 func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) error {
 	c, err := json.Marshal(chapters)
@@ -428,7 +440,7 @@ redis.call('HSET', KEYS[1],
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
-  'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
+  'client_media_bytes', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

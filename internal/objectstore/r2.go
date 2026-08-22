@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -94,6 +97,34 @@ func (r *R2) Put(ctx context.Context, key string, reader io.Reader, size int64,
 		return fmt.Errorf("objectstore: put %s: %w", key, err)
 	}
 	return nil
+}
+
+// Stat reports the size of the object under key. It exists for the client
+// media path: a browser claims it uploaded a segment through a presigned URL,
+// and this is how the claim is checked without ever reading the bytes back.
+func (r *R2) Stat(ctx context.Context, key string) (int64, error) {
+	info, err := r.client.StatObject(ctx, r.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("objectstore: stat %s: %w", key, err)
+	}
+	return info.Size, nil
+}
+
+// PresignPut signs a PUT for key that a browser can use directly, with the
+// content type and cache control pinned into the signature: the client must
+// send exactly these headers or the bucket refuses the write, which is what
+// keeps immutable caching honest on objects the server never touches.
+func (r *R2) PresignPut(ctx context.Context, key, contentType, cacheControl string,
+	expiry time.Duration) (string, http.Header, error) {
+	headers := http.Header{
+		"Content-Type":  []string{contentType},
+		"Cache-Control": []string{cacheControl},
+	}
+	signed, err := r.client.PresignHeader(ctx, http.MethodPut, r.bucket, key, expiry, url.Values{}, headers)
+	if err != nil {
+		return "", nil, fmt.Errorf("objectstore: presign %s: %w", key, err)
+	}
+	return signed.String(), headers, nil
 }
 
 // RemovePrefix deletes every object under prefix.

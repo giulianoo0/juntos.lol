@@ -39,7 +39,7 @@ import {
   prepareLocalFile,
   subscribeUploadDone,
   subscribeUploadProgress,
-  uploadFileToRoom,
+  startRoomUpload,
   startTorrentTransfer,
   startUrlTransfer,
   type RoomUploadProgress,
@@ -243,7 +243,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     void swapSource(async () => {
       const prepared = await prepareLocalFile(file)
       const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', prepared.name)
-      uploadFileToRoom(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, prepared)
+      startRoomUpload(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, prepared)
     })
   }
 

@@ -24,6 +24,8 @@ type serverOptions struct {
 	ingestor          TorrentIngestor
 	urlIngestor       URLIngestor
 	subtitlePublisher SubtitlePublisher
+	clientMediaBucket ClientMediaBucket
+	clientMediaHooks  ClientMediaHooks
 }
 
 // WithSourceHooks connects the room source endpoint to the media pipeline.
@@ -47,6 +49,17 @@ func WithURLIngestor(ingestor URLIngestor) ServerOption {
 // are served from. Without it they are stored but never delivered.
 func WithSubtitlePublisher(publisher SubtitlePublisher) ServerOption {
 	return func(o *serverOptions) { o.subtitlePublisher = publisher }
+}
+
+// WithClientMedia enables the client media pipeline: a capable browser
+// remuxes the source itself and writes segments straight into the bucket
+// through presigned URLs. Without it those routes do not exist and every
+// room prepares through the server's ffmpeg.
+func WithClientMedia(bucket ClientMediaBucket, hooks ClientMediaHooks) ServerOption {
+	return func(o *serverOptions) {
+		o.clientMediaBucket = bucket
+		o.clientMediaHooks = hooks
+	}
 }
 
 // NewServer assembles the HTTP engine: the health check plus the room API.
@@ -82,6 +95,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		authorizer = hub
 	}
 	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
+	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
 	RegisterTorrentRoute(r.Group("/api"), store, cfg, options.ingestor)
 	RegisterURLSourceRoute(r.Group("/api"), store, cfg, options.urlIngestor)
 	registerTorrentBridge(r, cfg.TorrentBridgeURL)

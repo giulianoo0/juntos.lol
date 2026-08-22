@@ -218,6 +218,24 @@ var (
 		Name:      "media_bytes_served_total",
 		Help:      "Media bytes served by the application itself, by kind.",
 	}, []string{"kind"})
+
+	// ClientMediaPresigned counts uploads the browser was authorized to make
+	// straight into the bucket. The metered transport never sees these
+	// writes — this counter at the issuance point is their billing record.
+	//
+	// PromQL: sum(rate(ss_client_media_presigned_total[5m]))
+	ClientMediaPresigned = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "client_media_presigned_total",
+		Help:      "Presigned client media uploads issued.",
+	})
+
+	// ClientMediaPresignedBytes counts the bytes those presigns declared.
+	ClientMediaPresignedBytes = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "client_media_presigned_bytes_total",
+		Help:      "Declared bytes of presigned client media uploads.",
+	})
 )
 
 // Uploads.

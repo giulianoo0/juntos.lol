@@ -206,8 +206,66 @@ export async function createRoomAndUpload(
   await assertReadable(file)
   const uploadFile = await prepareLocalFile(file, onProgress)
   const room = await createRoom(uploadFile.name, nickname)
-  uploadFileToRoom(room.id, room.uploadEndpoint, streamStartBytes(room), 0, uploadFile, onProgress)
+  startRoomUpload(room.id, room.uploadEndpoint, streamStartBytes(room), 0, uploadFile, onProgress)
   return { roomID: room.id, nickname: room.nickname }
+}
+
+/**
+ * Hands the file to whichever pipeline can carry it: a capable browser
+ * remuxes and publishes the media itself, straight into the bucket, and the
+ * server never runs ffmpeg for the room. Everything else — and any client
+ * pipeline failure, at any point — goes through tus exactly as before.
+ *
+ * The decision is asynchronous but the call is not: the room exists and the
+ * caller has already navigated into it either way.
+ */
+export function startRoomUpload(
+  roomID: string,
+  uploadEndpoint: string,
+  startBytes: number,
+  mediaGeneration: number,
+  uploadFile: File,
+  onProgress?: (progress: UploadProgress) => void,
+): void {
+  void (async () => {
+    let pipeline: typeof import('./pipeline/clientMedia') | null = null
+    let plan: Awaited<ReturnType<typeof import('./pipeline/clientMedia')['planClientRemux']>> = null
+    try {
+      // A dynamic import so the remuxer and its WASM audio decoders live in
+      // their own chunk, paid for only when an upload actually starts.
+      pipeline = await import('./pipeline/clientMedia')
+      plan = await pipeline.planClientRemux(uploadFile)
+    } catch {
+      plan = null
+    }
+    if (!pipeline || !plan) {
+      uploadFileToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, uploadFile, onProgress)
+      return
+    }
+
+    const entry = createEntry(uploadFile.size, startBytes)
+    uploads.set(roomID, entry)
+    if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+    // Server-side extraction never runs in client mode, so the browser's own
+    // subtitle pass is the only one; it already publishes progressively.
+    void extractAndUploadSubtitles(uploadFile, roomID, mediaGeneration)
+    try {
+      await pipeline.runClientRemux({
+        roomID,
+        mediaGeneration,
+        file: uploadFile,
+        plan,
+        onProgress: (pct) => updateEntry(entry, Math.round((pct / 100) * uploadFile.size)),
+      })
+      finishEntry(roomID, entry, null, () => {})
+    } catch (error) {
+      // The claim was released on the way out; the room is exactly as it
+      // was, and tus carries it from zero.
+      console.warn('client media pipeline failed; falling back to upload', error)
+      finishEntry(roomID, entry, null, () => {})
+      uploadFileToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, uploadFile, onProgress)
+    }
+  })()
 }
 
 // Streams a prepared file into a room that already exists, which is what a

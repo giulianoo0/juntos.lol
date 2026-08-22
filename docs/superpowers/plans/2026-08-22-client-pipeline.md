@@ -57,23 +57,33 @@ não-copiável — ambos caem no fallback da VPS.
 com purge; capítulos; preview drena até o fim; serialização preview→final;
 `R2_ENDPOINT` para stack local com MinIO (e2e completo na máquina).
 
-**Fase 1 — remux no cliente, arquivo local, sala nova (2-3 dias):**
-worker de mídia (caminho de chunk próprio + CSP própria, fora da política do
-plugin-worker); mediabunny lê o arquivo, copia vídeo, transcodifica áudio
-para AAC, emite fMP4 de 4s + playlists; endpoint de presign; endpoint de
-aceitação de playlist (validação = `playlistObjects` + corte por `Published`);
-`SetTracks`/`SetChapters` aceitos do cliente com a mesma validação de shape
-dos client-subs; progresso de preparação POSTado (o canal 2 do
-`UploadAvailability` não existe sem tus). Fallback: qualquer erro ⇒ tus.
+**Fase 1 — remux no cliente, arquivo local — FEITA (2026-08-22):**
+`web/src/pipeline/clientMedia.ts` (mediabunny `HlsOutputFormat` live +
+`CmafOutputFormat`, vídeo copiado, áudio → AAC via WebCodecs/extensões,
+chunk dinâmico próprio); servidor: claim/presign/publish/release em
+`internal/httpapi/clientmedia.go`, gramática de nomes `cs_*/cinit_*` em
+`internal/media/clientmedia.go`, `Stat`+`PresignPut` no objectstore, budget
+por sala no Redis, HEAD por lote na aceitação, playlists cortadas pelo
+`Published` como no publisher. Dispatch em `startRoomUpload` (criação e troca
+de fonte), fallback silencioso para tus em qualquer falha. Validado e2e
+local: h264+aac (remux puro) e vp9+opus→aac (transcode), zero ffmpeg no
+servidor, segmentos direto no MinIO.
 
-**Fase 2 — torrent no browser + fonte crescendo (3-5 dias):** mediabunny
-`Input` sobre o leitor sequencial que o tus-loop de torrent já tem
-(`upload.ts:410-462`, lookahead incluído); confirmação de PUT em lote;
-troca de fonte no meio (gerações já resolvem a colisão de nomes).
+Gaps aceitos e documentados: capítulos (mediabunny não lê chapters de MKV —
+salas em modo cliente ficam sem; parser EBML próprio fica no backlog),
+menu de áudio (saída muxa vídeo+áudio numa variante só; multi-dub cai no
+fallback de fato ou perde o menu), e o progresso server-side vem do POST de
+publish (2s) em vez do tick de 1s do tus.
+
+**Fase 2 — fonte crescendo (torrent no browser):** decidido NÃO fazer, pelo
+próprio princípio 4: os caminhos de torrent com bridge/url mantêm os bytes
+fora do browser de propósito (banda), e o webtorrent in-browser é candidato
+a remoção no plano da beta. Reavaliar só se o bridge sumir.
 
 **Fase 3 — decidir o resto (depois de medir):** renditions no cliente
 (provavelmente não: 1 qualidade basta, o preview já provou); legendas do
-cliente já existem; bridge server-side continua para hosts fracos.
+cliente já existem e rodam no modo cliente; bridge server-side continua
+para hosts fracos.
 
 ## Os 5 problemas duros (do levantamento) e a resposta
 

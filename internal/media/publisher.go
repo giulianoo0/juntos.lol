@@ -443,10 +443,15 @@ func (p *Publisher) dropUploadedSegments(hlsDir string, uploaded []string) {
 // is cut at the last segment the bucket has confirmed.
 func (p *Publisher) renderPlaylist(roomID string, generation int, body []byte,
 	published map[string]struct{}) (string, bool) {
+	return renderPlaylistWithBase(p.baseURL, roomID, generation, body, published)
+}
+
+func renderPlaylistWithBase(baseURL, roomID string, generation int, body []byte,
+	published map[string]struct{}) (string, bool) {
 	if isMasterPlaylist(body) {
 		return string(body), true
 	}
-	base := p.baseURL + "/" + hlsPrefix(roomID, generation)
+	base := baseURL + "/" + hlsPrefix(roomID, generation)
 	lines := strings.Split(strings.TrimSuffix(string(normalizeEventPlaylist(body)), "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	// pending holds tags read since the last emitted segment. They describe
