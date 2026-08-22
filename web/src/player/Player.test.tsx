@@ -36,6 +36,29 @@ const playingRoom = { playing: true, positionMs: 0, rate: 1, serverTimeMs: Date.
 afterEach(() => vi.restoreAllMocks())
 
 describe('Player', () => {
+  it('cuts the timeline at each chapter and names the one playing', () => {
+    const chaptered: RoomInfo = {
+      ...room,
+      chapters: [
+        { startMs: 0, endMs: 90_000, title: 'Abertura' },
+        { startMs: 90_000, endMs: 1_200_000 },
+      ],
+    }
+    const { container } = render(
+      <Player room={chaptered} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+    // Chapters clamp to the seekable range, and jsdom's <video> never reports
+    // one on its own: hand it the episode's duration.
+    const video = container.querySelector('video')!
+    Object.defineProperty(video, 'duration', { configurable: true, value: 1290 })
+    fireEvent.durationChange(video)
+
+    // One boundary between two chapters: a tick at 0 would cut nothing.
+    expect(container.querySelectorAll('.seek-chapter-tick')).toHaveLength(1)
+    // Playback sits at 0:00, inside the named opening.
+    expect(screen.getByText(/· Abertura/)).toBeInTheDocument()
+  })
+
   it('declares CORS on the media element so cross-origin tracks load', () => {
     // Subtitle files live on the media host. A browser refuses a cross-origin
     // text track unless the element itself declares CORS, and the failure is

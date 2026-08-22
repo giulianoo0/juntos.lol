@@ -15,6 +15,7 @@ const USE_KEYS: Record<CodecID, string> = {
   h264: 'codec.h264Use',
   hevc: 'codec.hevcUse',
   av1: 'codec.av1Use',
+  vp9: 'codec.vp9Use',
 }
 
 function readDismissed(): string {

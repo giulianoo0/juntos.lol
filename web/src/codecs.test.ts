@@ -8,7 +8,7 @@ describe('codec support', () => {
   it('reports every codec the browser accepts', () => {
     const support = detectCodecSupport(() => true)
 
-    expect(support.map((codec) => codec.id)).toEqual(['h264', 'hevc', 'av1'])
+    expect(support.map((codec) => codec.id)).toEqual(['h264', 'hevc', 'av1', 'vp9'])
     expect(support.every((codec) => codec.supported)).toBe(true)
     expect(unsupportedCodecs(support)).toEqual([])
   })
@@ -49,10 +49,12 @@ describe('codec support', () => {
     const support = detectCodecSupport((mimeType) => mimeType.includes('avc1'))
 
     expect(unacknowledgedCodecs(support, dismissedCodecs('')).map((codec) => codec.id))
-      .toEqual(['hevc', 'av1'])
+      .toEqual(['hevc', 'av1', 'vp9'])
     expect(unacknowledgedCodecs(support, dismissedCodecs('hevc')).map((codec) => codec.id))
-      .toEqual(['av1'])
-    expect(unacknowledgedCodecs(support, dismissedCodecs('hevc,av1'))).toEqual([])
+      .toEqual(['av1', 'vp9'])
+    expect(unacknowledgedCodecs(support, dismissedCodecs('hevc,av1')).map((codec) => codec.id))
+      .toEqual(['vp9'])
+    expect(unacknowledgedCodecs(support, dismissedCodecs('hevc,av1,vp9'))).toEqual([])
   })
 
   // Chrome answers for HEVC out of the machine's hardware video decoding, so
@@ -75,6 +77,6 @@ describe('codec support', () => {
     expect([...dismissedCodecs('h264:1,hevc:0,av1:1')]).toEqual(['hevc'])
     expect([...dismissedCodecs('h264:1,hevc:1,av1:1')]).toEqual([])
     expect([...dismissedCodecs('')]).toEqual([])
-    expect([...dismissedCodecs('vp9,hevc')]).toEqual(['hevc'])
+    expect([...dismissedCodecs('vp8,hevc')]).toEqual(['hevc'])
   })
 })

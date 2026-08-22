@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Search, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { fetchCatalog, searchCatalog, type CatalogMeta, type MetaType } from './cinemeta'
@@ -158,26 +158,42 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
         role={searchCompact ? 'button' : undefined}
         aria-label={searchCompact ? t('catalog.search') : undefined}
       >
-        <Search size={17} aria-hidden="true" />
-        {!searchCompact ? (
-          <>
-            <input
-              ref={inputRef}
-              type="search"
-              value={query}
-              placeholder={t('catalog.searchPlaceholder')}
-              aria-label={t('catalog.search')}
-              onFocus={() => { focusedRef.current = true }}
-              onBlur={() => { focusedRef.current = false }}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            {query ? (
-              <button type="button" className="catalog-search-clear" aria-label={t('catalog.clearSearch')} onClick={() => setQuery('')}>
-                <X size={15} aria-hidden="true" />
-              </button>
-            ) : null}
-          </>
-        ) : null}
+        {/* A layout child of a layout parent gets counter-scaled while the
+            pill travels, so the glyph glides instead of stretching with it. */}
+        <motion.span layout={!reduceMotion} className="catalog-search-icon" aria-hidden="true">
+          <Search size={17} />
+        </motion.span>
+        {/* popLayout lifts the leaving field out of the pill's layout, so the
+            shell starts shrinking at once and the text only fades — instead of
+            being squeezed along for the ride. */}
+        <AnimatePresence mode="popLayout" initial={false}>
+          {!searchCompact ? (
+            <motion.div
+              key="field"
+              className="catalog-search-field"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <input
+                ref={inputRef}
+                type="search"
+                value={query}
+                placeholder={t('catalog.searchPlaceholder')}
+                aria-label={t('catalog.search')}
+                onFocus={() => { focusedRef.current = true }}
+                onBlur={() => { focusedRef.current = false }}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              {query ? (
+                <button type="button" className="catalog-search-clear" aria-label={t('catalog.clearSearch')} onClick={() => setQuery('')}>
+                  <X size={15} aria-hidden="true" />
+                </button>
+              ) : null}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </motion.div>
 
       {/* The first keystroke swaps the board for the shape of an answer:

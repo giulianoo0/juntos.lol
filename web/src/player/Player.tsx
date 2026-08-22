@@ -646,6 +646,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 
   const seekMax = Math.max(duration, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
+  // The source's authored spans, clamped to what is seekable right now:
+  // during the preview the playable range is still growing, and a marker past
+  // its end would sit on the far edge pointing at nothing.
+  const chapters = (room.chapters ?? []).filter((chapter) => chapter.startMs / 1000 < seekMax)
+  const chapterLabel = (index: number) => chapters[index].title || `${t('player.chapter')} ${index + 1}`
+  const chapterIndexAt = (seconds: number) =>
+    chapters.findIndex((chapter) => seconds * 1000 >= chapter.startMs && seconds * 1000 < chapter.endMs)
+  const currentChapterIndex = chapterIndexAt(currentTime)
+  // What the pointer is over on the scrubber: a chapter and its span, or just
+  // the time, floating above the bar.
+  const [seekHover, setSeekHover] = useState<{ leftPct: number; text: string } | null>(null)
   // Each buffered range is split at the playhead: buffer kept behind it is a
   // different fact than buffer ready ahead of it, and both are drawn over the
   // played and unbuffered ground.
@@ -756,7 +767,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       <div className="player-controls">
         {/* The scrubber owns the full width of the bar; everything that acts on
             what it points at sits underneath it. */}
-        <div className="seek-control">
+        <div
+          className="seek-control"
+          onPointerMove={chapters.length > 0 ? (event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            if (rect.width <= 0) return
+            const frac = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
+            const seconds = frac * seekMax
+            const index = chapterIndexAt(seconds)
+            const text = index >= 0
+              ? `${chapterLabel(index)} · ${formatTime(chapters[index].startMs / 1000)}–${formatTime(Math.min(chapters[index].endMs / 1000, seekMax))}`
+              : formatTime(seconds)
+            setSeekHover({ leftPct: Math.min(Math.max(frac * 100, 6), 94), text })
+          } : undefined}
+          onPointerLeave={chapters.length > 0 ? () => setSeekHover(null) : undefined}
+        >
           <div className="seek-track" aria-hidden="true">
             <div className="seek-played" style={{ width: pct(currentTime) }} />
             {behindBands.map((band) => (
@@ -773,6 +798,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
                 style={{ left: pct(band.from), width: `${((band.to - band.from) / seekMax) * 100}%` }}
               />
             ))}
+            {/* Chapter boundaries read as gaps cut into the bar, whatever is
+                painted under them at that point. */}
+            {chapters.filter((chapter) => chapter.startMs > 0).map((chapter) => (
+              <div key={chapter.startMs} className="seek-chapter-tick" style={{ left: pct(chapter.startMs / 1000) }} />
+            ))}
           </div>
           <input
             aria-label="Seek"
@@ -783,6 +813,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             disabled={!isController}
             onChange={(event) => seek(Number(event.target.value))}
           />
+          {seekHover ? (
+            <span className="seek-tooltip" style={{ left: `${seekHover.leftPct}%` }}>{seekHover.text}</span>
+          ) : null}
         </div>
         {/* What is playing on the left, how it is played on the right. */}
         <div className="controls-row">
@@ -793,7 +826,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             onClick={togglePlay}
             onPointerUp={(event) => event.currentTarget.blur()}
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
-          <span className="timecode">{formatTime(currentTime)} / {formatTime(duration)}</span>
+          <span className="timecode">
+            {formatTime(currentTime)} / {formatTime(duration)}
+            {currentChapterIndex >= 0 ? (
+              <span className="timecode-chapter"> · {chapterLabel(currentChapterIndex)}</span>
+            ) : null}
+          </span>
           {expectedMs !== null ? (
             <button
               className={`live-button ${atLiveEdge ? 'is-live' : ''}`}

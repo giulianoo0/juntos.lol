@@ -1,13 +1,14 @@
 /**
  * What this browser can actually decode.
  *
- * The pipeline stream-copies H.264, HEVC and AV1 and transcodes everything
- * else to H.264, so those three are exactly the answers that decide whether a
- * given room will play. A viewer whose browser cannot decode one of them meets
- * that fact as a video that never starts, which reads as the app being broken.
+ * The pipeline stream-copies H.264, HEVC, AV1 and VP9 and refuses everything
+ * else outright — there is no transcode fallback — so those four are exactly
+ * the answers that decide whether a given room will play. A viewer whose
+ * browser cannot decode one of them meets that fact as a video that never
+ * starts, which reads as the app being broken.
  */
 
-export type CodecID = 'h264' | 'hevc' | 'av1'
+export type CodecID = 'h264' | 'hevc' | 'av1' | 'vp9'
 
 export interface CodecProbe {
   id: CodecID
@@ -47,6 +48,11 @@ export const CODEC_PROBES: CodecProbe[] = [
     id: 'av1',
     label: 'AV1',
     mimeTypes: ['video/mp4; codecs="av01.0.05M.08"', 'video/mp4; codecs="av01.0.05M.10"'],
+  },
+  {
+    id: 'vp9',
+    label: 'VP9',
+    mimeTypes: ['video/mp4; codecs="vp09.00.40.08"', 'video/mp4; codecs="vp09.02.40.10"'],
   },
 ]
 

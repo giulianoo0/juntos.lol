@@ -320,10 +320,14 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
         }}
       >
         <div className="details-hero">
-          {background ? (
-            <FadeImg className="details-hero-img" src={background} alt="" />
-          ) : meta.poster ? (
+          {/* Both layers stay mounted: the poster holds the hero from the
+              first frame, and the wide art fades in over it whenever it
+              arrives — never a swap, always a crossfade. */}
+          {meta.poster ? (
             <FadeImg className="details-hero-poster" src={meta.poster} alt="" />
+          ) : null}
+          {background ? (
+            <FadeImg className="details-hero-img" src={background} alt="" overlay />
           ) : null}
           <div className="details-hero-scrim" />
         </div>

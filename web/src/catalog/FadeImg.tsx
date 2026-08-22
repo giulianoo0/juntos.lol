@@ -15,9 +15,16 @@ function placeholderGradient(src: string): string {
 // An image that never pops in: its colour placeholder shows until the bytes
 // are decoded, then the picture fades over it. Swapping `src` fades out and
 // back in with the new picture, so hero and thumbnail changes stay soft.
-export function FadeImg({ src, className, style, ...props }: ImgHTMLAttributes<HTMLImageElement>) {
+//
+// `overlay` drops the colour placeholder: the frame stays transparent until
+// the picture arrives, for an image stacked over another that must crossfade
+// in rather than blot out what it is covering.
+export function FadeImg({ src, className, style, overlay = false, ...props }: ImgHTMLAttributes<HTMLImageElement> & { overlay?: boolean }) {
   const [shown, setShown] = useState<string | undefined>(undefined)
-  const gradient = useMemo(() => (typeof src === 'string' && src ? placeholderGradient(src) : undefined), [src])
+  const gradient = useMemo(
+    () => (!overlay && typeof src === 'string' && src ? placeholderGradient(src) : undefined),
+    [src, overlay],
+  )
 
   useEffect(() => {
     if (!src || typeof src !== 'string') {

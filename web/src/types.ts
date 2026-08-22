@@ -91,6 +91,13 @@ export interface RoomPreparation {
   previewTargetBytes?: number
 }
 
+// RoomChapter is one authored span of the media, in milliseconds.
+export interface RoomChapter {
+  startMs: number
+  endMs: number
+  title?: string
+}
+
 export interface RoomInfo {
   id: string
   fileName: string
@@ -114,6 +121,9 @@ export interface RoomInfo {
   controllerId: string
   audioTracks: TrackInfo[] | null
   subtitleTracks: TrackInfo[] | null
+  // The source's authored spans (openings, recaps), when the container
+  // carries any: the player draws them on the timeline.
+  chapters?: RoomChapter[] | null
   bitmapSubsSkipped: number
   preparation?: RoomPreparation
   memberCount: number

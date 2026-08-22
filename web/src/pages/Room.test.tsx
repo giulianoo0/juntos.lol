@@ -203,7 +203,7 @@ describe('RoomPage source swap', () => {
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
     welcome('m1')
 
-    expect(await screen.findByRole('button', { name: /change video|trocar vídeo/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /change media|trocar mídia/i })).toBeInTheDocument()
   })
 
   it('hides the swap from everyone who is not driving the room', async () => {
@@ -213,7 +213,7 @@ describe('RoomPage source swap', () => {
     welcome('m2')
 
     await screen.findByRole('button', { name: /copy link|copiar link/i })
-    expect(screen.queryByRole('button', { name: /change video|trocar vídeo/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /change media|trocar mídia/i })).not.toBeInTheDocument()
   })
 
   it('repoints the room at a shared screen without anyone leaving', async () => {
@@ -222,8 +222,8 @@ describe('RoomPage source swap', () => {
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
     welcome('m1')
 
-    fireEvent.click(await screen.findByRole('button', { name: /change video|trocar vídeo/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /share your screen|compartilhar sua tela/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
 
     // The screen is granted first, then carried into the room it will play in.
     await waitFor(() => expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'screen'))
@@ -239,8 +239,8 @@ describe('RoomPage source swap', () => {
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
     welcome('m1')
 
-    fireEvent.click(await screen.findByRole('button', { name: /change video|trocar vídeo/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /share your screen|compartilhar sua tela/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
 
     // Nothing was swapped, so the room still plays what it played before.
     await waitFor(() => expect(requestScreenStream).toHaveBeenCalled())

@@ -39,10 +39,11 @@ describe('CodecSupportNotice', () => {
     expect(screen.getByText('H.264 / AVC')).toBeInTheDocument()
     expect(screen.getByText('HEVC / H.265')).toBeInTheDocument()
     expect(screen.getByText('AV1')).toBeInTheDocument()
+    expect(screen.getByText('VP9')).toBeInTheDocument()
     // Anchored: unanchored, the row's own text contains the pill's and each
     // status would be found twice.
     expect(screen.getAllByText(/^(will not play|não reproduz)$/i)).toHaveLength(1)
-    expect(screen.getAllByText(/^(plays|reproduz)$/i)).toHaveLength(2)
+    expect(screen.getAllByText(/^(plays|reproduz)$/i)).toHaveLength(3)
   })
 
   it('stays shut once dismissed', () => {

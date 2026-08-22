@@ -19,6 +19,7 @@ import {
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
 import { MorphPanel } from '../ui/MorphPanel'
+import { MorphingMenu } from '../ui/MorphingMenu'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
@@ -191,7 +192,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
-  const [sourcePanel, setSourcePanel] = useState<'menu' | 'torrent' | null>(null)
+  const [sourcePanel, setSourcePanel] = useState<'torrent' | null>(null)
   // Messages that arrived while the chat was shut. Counting from a mark rather
   // than incrementing a tally keeps it right when history arrives at once.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
@@ -468,16 +469,20 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               {t('room.gating')}
             </Button>
           ) : null}
-          <Button onClick={() => { setCatalogFocus(null); setCatalogOpen(true) }}>
-            <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
-          </Button>
           {sync.isController ? (
-            <IconButton
-              icon={<Replace size={16} />}
-              label={t('room.changeSource')}
-              onClick={() => { setSourceError(false); setSourcePanel('menu') }}
+            <MediaSwitch
+              t={t}
+              onOpen={() => setSourceError(false)}
+              onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
+              onTorrent={() => setSourcePanel('torrent')}
+              onFile={() => fileInputRef.current?.click()}
+              onScreen={chooseScreen}
             />
-          ) : null}
+          ) : (
+            <Button className="catalog-open" onClick={() => { setCatalogFocus(null); setCatalogOpen(true) }}>
+              <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
+            </Button>
+          )}
           <IconButton
             icon={
               // The glyph is what confirms the copy; the button keeps naming
@@ -619,34 +624,63 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           <DialogContent
             className="torrent-dialog"
             closeLabel={t('home.closeDialog')}
-            hideTitle={sourcePanel === 'torrent'}
-            title={sourcePanel === 'menu' ? t('room.changeSourceTitle') : t('home.torrentTitle')}
-            description={sourcePanel === 'menu' ? t('room.changeSourceGuide') : undefined}
+            hideTitle
+            title={t('home.torrentTitle')}
           >
-            {sourcePanel === 'menu' ? (
-              <div className="source-options">
-                <Button onClick={() => { setSourcePanel(null); fileInputRef.current?.click() }}>
-                  <Upload size={17} aria-hidden="true" />{t('room.sourceFile')}
-                </Button>
-                <Button onClick={() => setSourcePanel('torrent')}>
-                  <span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.sourceTorrent')}
-                </Button>
-                <Button onClick={chooseScreen}>
-                  <MonitorUp size={17} aria-hidden="true" />{t('room.sourceScreen')}
-                </Button>
-              </div>
-            ) : (
-              <TorrentPicker
-                maxFileBytes={MAX_UPLOAD_BYTES}
-                t={t}
-                onExit={() => setSourcePanel('menu')}
-                onPicked={chooseTorrent}
-              />
-            )}
+            <TorrentPicker
+              maxFileBytes={MAX_UPLOAD_BYTES}
+              t={t}
+              onPicked={chooseTorrent}
+            />
           </DialogContent>
         ) : null}
       </Dialog>
     </main>
+  )
+}
+
+/**
+ * The controller's one entry point for putting something else on: a single
+ * "change media" pill that morphs downward into the four ways of doing it —
+ * catalog, torrent, file, screen — on the app's one menu surface
+ * (MorphingMenu), same as the catalog's dropdowns.
+ */
+function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
+  onOpen: () => void
+  onCatalog: () => void
+  onTorrent: () => void
+  onFile: () => void
+  onScreen: () => void
+  t: Translator
+}) {
+  const pick = (close: () => void, action: () => void) => () => { close(); action() }
+  return (
+    <MorphingMenu
+      align="end"
+      haspopup="menu"
+      minWidth={0}
+      onOpen={onOpen}
+      triggerClassName="media-switch-pill"
+      panelClassName="media-switch-panel"
+      trigger={() => <><Replace size={15} aria-hidden="true" />{t('room.changeMedia')}</>}
+    >
+      {(close) => (
+        <div className="media-switch-menu">
+          <button type="button" onClick={pick(close, onCatalog)}>
+            <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
+          </button>
+          <button type="button" onClick={pick(close, onTorrent)}>
+            <span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.switchTorrent')}
+          </button>
+          <button type="button" onClick={pick(close, onFile)}>
+            <Upload size={15} aria-hidden="true" />{t('room.switchFile')}
+          </button>
+          <button type="button" onClick={pick(close, onScreen)}>
+            <MonitorUp size={15} aria-hidden="true" />{t('room.switchScreen')}
+          </button>
+        </div>
+      )}
+    </MorphingMenu>
   )
 }
 
