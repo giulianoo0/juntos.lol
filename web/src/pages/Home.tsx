@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
-import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
+import { createRoomAndIngestUrl, createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { TorrentPicker } from '../components/TorrentPicker'
@@ -189,6 +189,20 @@ export function Home() {
       } else if (media.kind === 'torrent') {
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
         fileName = media.file.name
+      } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
+        // The details panel sits over the whole page; leaving it up would
+        // hide the progress (and any error) that comes next.
+        closeTitle()
+        const { url } = media.pick.stream.location
+        // A url source has no swarm to open and no file list to pick from.
+        // The size is zero because a stream object rarely carries one, and
+        // zero is how the server is told to ask the origin instead.
+        room = await createRoomAndIngestUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
+        fileName = media.pick.displayName
+        const playing = nowPlayingFromPick(media.pick)
+        try {
+          if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
+        } catch { /* private mode */ }
       } else if (media.kind === 'stream') {
         // The details panel sits over the whole page; leaving it up would
         // hide the progress (and any error) that comes next.

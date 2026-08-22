@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FILE_UNREADABLE, createRoomAndUpload, createRoomAndUploadTorrent, isUnreadableFile, startTorrentTransfer, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
+import { FILE_UNREADABLE, createRoomAndUpload, createRoomAndUploadTorrent, isUnreadableFile, startTorrentTransfer, startUrlTransfer, subscribeUploadDone, subscribeUploadProgress, type RoomUploadProgress } from './upload'
 import { convertMp4ToMkv } from './convert'
 import { createMatroskaSubtitleStream, extractAndUploadSubtitles } from './subtitles'
 
@@ -485,5 +485,36 @@ describe('torrent handover', () => {
     // A conflict means someone else is already feeding this room; silently
     // starting a second transfer from here would be the wrong repair.
     expect(file.read).not.toHaveBeenCalled()
+  })
+})
+
+describe('startUrlTransfer', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('hands the url to the room and lets the server pull it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 202 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await startUrlTransfer('room1', 'https://cdn.example.com/m.mkv', 'm.mkv', 1024)
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/room1/url', expect.objectContaining({ method: 'POST' }))
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      url: 'https://cdn.example.com/m.mkv', fileName: 'm.mkv', size: 1024,
+    })
+  })
+
+  it('carries the reason the server gave, not just the status', async () => {
+    // "not https" and "points at your own network" are different problems
+    // with different fixes, and the person who has to act on it is the one
+    // who installed the plugin.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('{"error":"unsafe_source","reason":"source url must be https"}', { status: 400 }),
+    ))
+    await expect(startUrlTransfer('room1', 'http://cdn.example.com/m.mkv', 'm.mkv', 1024))
+      .rejects.toThrow(/must be https/)
+  })
+
+  it('still says something useful when the body is not the shape it should be', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>502</html>', { status: 502 })))
+    await expect(startUrlTransfer('room1', 'https://cdn.example.com/m.mkv', 'm.mkv', 1024))
+      .rejects.toThrow(/502/)
   })
 })

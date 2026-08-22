@@ -140,11 +140,11 @@ describe('streamKey', () => {
 })
 
 describe('isPlayable', () => {
-  it('says no to a url source, which this build has nowhere to send', () => {
+  it('opens both kinds — a torrent through the swarm, a url through the server', () => {
     const [torrent] = parseStreams({ streams: [{ infoHash: 'a'.repeat(40) }] }, 'p')
     const [url] = parseStreams({ streams: [{ url: 'https://cdn.example.com/m.mkv' }] }, 'p')
     expect(isPlayable(torrent)).toBe(true)
-    expect(isPlayable(url)).toBe(false)
+    expect(isPlayable(url)).toBe(true)
   })
 })
 

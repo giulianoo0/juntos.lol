@@ -256,6 +256,43 @@ export function uploadFileToRoom(
   void extractAndUploadSubtitles(uploadFile, room.id, mediaGeneration)
 }
 
+/**
+ * Points a room at a url and lets the server fetch it. The bytes never touch
+ * this browser — the same trade the torrent hand-off makes, for the same
+ * reason, and it means the transfer survives the tab closing.
+ */
+export async function startUrlTransfer(roomID: string, url: string, fileName: string, size: number): Promise<void> {
+  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, fileName, size }),
+  })
+  if (response.ok) return
+  // The server names which rule barred the address. Dropping that and
+  // reporting a bare status would leave the host with nothing to act on:
+  // "not https" and "points at your own network" have different fixes.
+  let reason = ''
+  try {
+    const body = await response.json() as { reason?: unknown }
+    if (typeof body.reason === 'string') reason = body.reason
+  } catch { /* not JSON, which is not itself worth reporting */ }
+  throw new Error(reason
+    ? `url source refused (${response.status}): ${reason}`
+    : `url source refused (${response.status})`)
+}
+
+export async function createRoomAndIngestUrl(
+  url: string,
+  fileName: string,
+  size: number,
+  nickname: string,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(fileName, nickname)
+  await startUrlTransfer(created.id, url, fileName, size)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
 export async function createRoomAndUploadTorrent(
   source: TorrentUploadSource,
   nickname: string,

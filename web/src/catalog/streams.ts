@@ -189,10 +189,12 @@ export function streamKey(stream: CatalogStream): string {
 /**
  * Whether this build can open a source at all.
  *
- * A url stream has nowhere to go until the server-side ingest exists. Listing
- * one as if it were playable and throwing on click is worse than not offering
- * it — see openCatalogStream, which refuses url streams outright.
+ * Both kinds are openable now: a torrent through the swarm, a url through the
+ * server-side ingest. The function stays because the two paths are wired at
+ * three separate call sites, and a fourth source kind arriving would otherwise
+ * be listed as playable and throw on click — which is what url streams did
+ * before Task 14 existed.
  */
 export function isPlayable(stream: CatalogStream): boolean {
-  return stream.location.kind === 'torrent'
+  return stream.location.kind === 'torrent' || stream.location.kind === 'url'
 }

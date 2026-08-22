@@ -40,6 +40,7 @@ import {
   subscribeUploadProgress,
   uploadFileToRoom,
   startTorrentTransfer,
+  startUrlTransfer,
   type RoomUploadProgress,
 } from '../upload'
 
@@ -264,6 +265,17 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       else localStorage.removeItem(nowPlayingKey(room.id))
     } catch { /* private mode: the chain just will not survive a reload */ }
     void swapSource(async () => {
+      if (pick.stream.location.kind === 'url') {
+        const { url } = pick.stream.location
+        await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
+        // No mediaGeneration here, and that is deliberate. The torrent path
+        // needs it because the browser writes the tus PATCHes itself and has
+        // to say which generation it is writing to. A url source is handed to
+        // the server, which creates the upload on its own — exactly like the
+        // /rooms/:id/torrent route, which takes no generation either.
+        await startUrlTransfer(room.id, url, `${pick.displayName}.mkv`, 0)
+        return
+      }
       const opened = await openCatalogStream(pick.stream)
       try {
         const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
