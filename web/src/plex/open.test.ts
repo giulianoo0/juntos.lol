@@ -65,3 +65,23 @@ describe('the ranged source it hands over', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('an item whose size plex did not report', () => {
+  const sizeless = { ...item, size: 0 }
+
+  it('still lets the server pull, because the server asks the origin', () => {
+    const open = openPlexItem(
+      { uri: 'https://1-2-3-4.hash.plex.direct:32400', local: false, relay: false }, sizeless, 'tok',
+    )
+    expect(open.kind).toBe('server-pull')
+  })
+
+  it('refuses the browser pump, which has no way to learn the size', () => {
+    // The pump loops `while (offset < size)` and sends Upload-Length: 0, so a
+    // zero here uploads nothing and reports success — an empty file in the
+    // room with no error anywhere.
+    expect(() => openPlexItem(
+      { uri: 'https://10-0-0-5.hash.plex.direct:32400', local: true, relay: false }, sizeless, 'tok',
+    )).toThrow(/size/i)
+  })
+})
