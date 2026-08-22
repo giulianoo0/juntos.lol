@@ -33,6 +33,10 @@ services:
       MEDIA_PUBLIC_URL: ${MEDIA_PUBLIC_URL}
     volumes:
       - ss-data:/data
+      # The documentation is built from its own repository and rsynced here,
+      # so a built site never gets versioned inside this one. Read-only, and
+      # optional: the site works without it, /docs just 404s.
+      - ./web-docs:/web/docs:ro
     depends_on:
       - redis
       - livekit
