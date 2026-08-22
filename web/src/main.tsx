@@ -15,3 +15,8 @@ createRoot(document.getElementById('root')!).render(
     </ToastProvider>
   </StrictMode>,
 )
+
+// Plugins check their locked origin once per load. Deliberately not awaited
+// and deliberately silent: an update is never the reason the catalog takes
+// longer to appear, and a failed network call is not an event.
+void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined)
