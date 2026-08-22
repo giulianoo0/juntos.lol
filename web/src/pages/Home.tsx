@@ -4,7 +4,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
-import { createRoomAndIngestUrl, createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
+import { createRoom, createRoomAndIngestUrl, createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, startRemoteTransfer, streamStartBytes, type UploadProgress } from '../upload'
+import type { PlexOpen } from '../plex/open'
 import { BuildInfo } from '../components/BuildInfo'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { TorrentPicker } from '../components/TorrentPicker'
@@ -88,6 +89,25 @@ export function Home() {
   const [draftNickname, setDraftNickname] = useState(nickname)
   const [manualOpen, setManualOpen] = useState<ManualStep>(false)
   const [pluginsOpen, setPluginsOpen] = useState(false)
+
+  // A Plex pick opens a room the same way anything else does; which side
+  // fetches the bytes was already decided by which connection answered.
+  const playFromPlex = async (plexOpen: PlexOpen) => {
+    setPluginsOpen(false)
+    setError('')
+    try {
+      if (plexOpen.kind === 'server-pull') {
+        const created = await createRoomAndIngestUrl(plexOpen.url, plexOpen.fileName, plexOpen.size, draftNickname.trim())
+        navigate(`/room/${created.roomID}`)
+        return
+      }
+      const created = await createRoom(plexOpen.fileName, draftNickname.trim())
+      startRemoteTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), 0, plexOpen.source)
+      navigate(`/room/${created.id}`)
+    } catch {
+      setError(t('home.failed'))
+    }
+  }
   // The panel is held one beat behind the request so the outgoing step can
   // dissolve before the next one mounts — see useMorphingStep.
   const { shown: shownManual, morphing: morphingManual } = useMorphingStep(manualOpen)
@@ -331,7 +351,11 @@ export function Home() {
         />
       ) : null}
 
-      <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
+      <PluginsPanel
+        open={pluginsOpen}
+        onClose={() => setPluginsOpen(false)}
+        onPlexPlay={(plexOpen) => { void playFromPlex(plexOpen) }}
+      />
 
       {/* One surface that changes what it is asking: the menu grows into the
           drop zone or the magnet picker rather than stacking a second panel

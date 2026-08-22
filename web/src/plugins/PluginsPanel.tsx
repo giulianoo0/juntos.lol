@@ -9,6 +9,8 @@ import { buildInstall, canonicalRepoUrl, fetchGitPlugin, readManifestFromSource 
 import { deletePlugin, getPlugin, listPlugins, originId, putPlugin, type InstalledPlugin, type PluginOrigin } from './store'
 import { approvePendingUpdate, updateAll, updateUrlOf } from './update'
 import type { PluginManifest } from './manifest'
+import { PlexSection } from '../plex/PlexSection'
+import type { PlexOpen } from '../plex/open'
 
 type Step = 'list' | 'add'
 
@@ -21,7 +23,13 @@ interface Candidate {
   replaces: InstalledPlugin | null
 }
 
-export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PluginsPanel({ open, onClose, onPlexPlay }: {
+  open: boolean
+  onClose: () => void
+  // What to do with a Plex pick depends on where the panel was opened: at
+  // home it creates a room, in a room it swaps the source.
+  onPlexPlay?: (plexOpen: PlexOpen) => void
+}) {
   const t = useT()
   const [installed, setInstalled] = useState<InstalledPlugin[] | null>(null)
   const [step, setStep] = useState<Step>('list')
@@ -197,6 +205,7 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
               </motion.div>
             ) : (
               <motion.div key="list" className="plugins-step">
+                {onPlexPlay ? <PlexSection onPlay={onPlexPlay} /> : null}
                 <h2>{t('plugins.title')}</h2>
                 {installed === null ? null : installed.length === 0 ? (
                   <p className="empty-copy">{t('plugins.empty')}</p>

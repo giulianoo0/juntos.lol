@@ -757,6 +757,21 @@ h1, h2, p { margin-top: 0; }
 .plugins-actions { display: flex; align-items: center; gap: 10px; }
 .plugins-actions .primary-button { display: inline-flex; align-items: center; gap: 7px; }
 
+/* --- plex -------------------------------------------------------------- */
+/* Its own section, above the plugin list and visibly apart: Plex is not a
+   plugin, and listing it among them would teach the wrong thing. */
+.plex-section { display: flex; flex-direction: column; gap: 12px; padding-bottom: 18px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.plex-section h3 { margin: 0; font-size: 13px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+.plex-section .primary-button { align-self: flex-start; }
+.plex-section a.primary-button { padding: 10px 15px; text-align: center; }
+.plex-code { align-self: flex-start; padding: 10px 16px; border-radius: var(--r-field); background: var(--well); border: 1px solid var(--border); font-size: 21px; letter-spacing: .18em; }
+.plex-server { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plex-server button { padding: 6px 11px; font-size: 12px; color: var(--text-dim); }
+.plex-route { margin: 0; font-size: 12px; }
+.plex-results { max-height: 30vh; }
+.plex-results li { display: block; padding: 0; background: transparent; border: 0; }
+.plex-result { width: 100%; padding: 11px 13px; border-radius: var(--r-field); background: var(--card); border: 1px solid var(--border); text-align: left; font-size: 14px; }
+
 /* --- catalog header ----------------------------------------------------- */
 /* Identity and language on the left, the way in for your own media on the
    right, hard against the edge. Nothing in the middle: the catalog is the

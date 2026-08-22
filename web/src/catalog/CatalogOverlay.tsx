@@ -5,6 +5,7 @@ import { useT } from '../i18n/useT'
 import { CatalogBrowser } from './CatalogBrowser'
 import { ProgressiveBlur } from './ProgressiveBlur'
 import { PluginsPanel } from '../plugins/PluginsPanel'
+import type { PlexOpen } from '../plex/open'
 import { MetaDetails, type DetailsMode, type TitlePick } from './MetaDetails'
 import type { TitleOpen } from './PosterCard'
 
@@ -22,12 +23,14 @@ interface CatalogOverlayProps {
   onClose: () => void
   onPickStream: (pick: TitlePick) => void
   onRequestTitle: (open: TitleOpen, episode: { season?: number; episode?: number }) => void
+  // A Plex pick swaps the room's source; the room owns that, not the overlay.
+  onPlexPlay?: (plexOpen: PlexOpen) => void
 }
 
 // The in-room catalog: a full-screen layer over the player. Browsing here is
 // local — nothing about navigation crosses the wire; only the host's source
 // swap or a viewer's title request does.
-export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTitle }: CatalogOverlayProps) {
+export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTitle, onPlexPlay }: CatalogOverlayProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const [details, setDetails] = useState<TitleOpen | null>(focus?.open ?? null)
@@ -92,7 +95,7 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
         />
       ) : null}
 
-      <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
+      <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} onPlexPlay={onPlexPlay} />
     </motion.div>
   )
 }

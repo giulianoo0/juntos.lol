@@ -26,6 +26,7 @@ import { playJoinChime } from '../ui/chime'
 import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import { CatalogOverlay, type OverlayFocus } from '../catalog/CatalogOverlay'
 import { openCatalogStream } from '../catalog/openStream'
+import type { PlexOpen } from '../plex/open'
 import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
@@ -41,6 +42,7 @@ import {
   uploadFileToRoom,
   startTorrentTransfer,
   startUrlTransfer,
+  startRemoteTransfer,
   type RoomUploadProgress,
 } from '../upload'
 
@@ -255,6 +257,19 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   // A catalog pick swaps the room's source through the torrent path: open the
   // addon's torrent, point the room at it, start the transfer.
+  // A Plex pick swaps the source. Which side fetches the bytes was already
+  // decided by which connection answered when the account was connected.
+  const playFromPlex = (plexOpen: PlexOpen) => {
+    void swapSource(async () => {
+      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', plexOpen.fileName)
+      if (plexOpen.kind === 'server-pull') {
+        await startUrlTransfer(room.id, plexOpen.url, plexOpen.fileName, plexOpen.size)
+        return
+      }
+      startRemoteTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, plexOpen.source)
+    })
+  }
+
   const chooseCatalogStream = (pick: TitlePick) => {
     setCatalogOpen(false)
     setCatalogFocus(null)
@@ -600,6 +615,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           focus={catalogFocus}
           onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
           onPickStream={chooseCatalogStream}
+          onPlexPlay={sync.isController ? playFromPlex : undefined}
           onRequestTitle={(open, episode) => {
             sync.send('titleRequest', {
               title: {
