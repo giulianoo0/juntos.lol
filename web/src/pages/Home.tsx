@@ -103,6 +103,12 @@ export function Home() {
   const [view, setView] = useState<'catalog' | 'manual'>('manual')
 
   const showView = (next: 'catalog' | 'manual') => {
+    // The two sides scroll independently on the same page, so a catalog
+    // scrolled far down and then swapped for the short manual side would leave
+    // the browser clamping the scroll from where it was to the top — the
+    // background sliding up under the new content. Landing each side at its own
+    // top makes the swap a clean cut instead.
+    window.scrollTo({ top: 0 })
     setView(next)
     setError('')
     // Coming back to the manual side lands on its first step rather than
