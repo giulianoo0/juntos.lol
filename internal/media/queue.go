@@ -326,16 +326,12 @@ func (q *Queue) process(ctx context.Context, roomID string) bool {
 		return false
 	}
 	// Chapters land before the track announcement below, so the one refetch
-	// it triggers picks them up too. The progressive probe usually stored
-	// them already; this is the authoritative pass and the only one for a
-	// source that had no streamable prefix.
-	if len(chapters) > 0 {
-		if err := q.store.SetChapters(ctx, roomID, chapters); err != nil {
-			if ctx.Err() == nil {
-				q.fail(ctx, roomID, fmt.Errorf("store chapters: %w", err))
-			}
-			return false
-		}
+	// it triggers picks them up too. This is the authoritative pass — always
+	// written, so a final probe that found none also clears whatever the
+	// progressive probe guessed — and never worth failing a finished encode
+	// over: they are annotations, not media.
+	if err := q.store.SetChapters(ctx, roomID, chapters); err != nil && ctx.Err() == nil {
+		slog.WarnContext(ctx, "store chapters failed", "room_id", roomID, "error", err)
 	}
 	// Subtitles go out before the media: they are kilobytes where the media is
 	// gigabytes, and the room is at its oldest cues exactly now — a viewer who
@@ -467,6 +463,12 @@ func (q *Queue) fail(ctx context.Context, roomID string, err error) {
 	message := publicPipelineError
 	if errors.Is(err, ErrUnsupportedVideo) {
 		message = PublicUnsupportedVideo
+	} else if current, getErr := q.store.Get(ctx, roomID); getErr == nil &&
+		current.Status == "error" && current.ErrorMessage == PublicUnsupportedVideo {
+		// A refused room can fail again on the way down — its files are being
+		// purged under this very job — and the generic message must not
+		// overwrite the one that names the actual problem.
+		return
 	}
 	if storeErr := q.store.SetError(ctx, roomID, message); storeErr != nil {
 		slog.ErrorContext(ctx, "persist media pipeline error failed",

@@ -298,9 +298,9 @@ func startServer(t *testing.T, bridgeURL string) *testServer {
 	tusHandler, err := upload.NewTusHandler(cfg, store, upload.Callbacks{
 		OnComplete: func(roomID string) {
 			// Mirrors production wiring: the preview drains to the end of the
-			// file instead of being cancelled when the upload completes.
+			// file, and the final pass waits for it to fully wind down.
 			progressive.Complete(roomID)
-			queue.Submit(roomID)
+			go media.SubmitAfterPreview(ctx, progressive, queue, roomID)
 		},
 		OnStreamStart: progressive.Submit,
 		OnProgress: func(roomID string, received, total int64) {

@@ -75,6 +75,41 @@ func TestParseProbeClassifiesVideoAndSubtitleCodecs(t *testing.T) {
 	}
 }
 
+func TestParseProbeSkipsAttachedPictures(t *testing.T) {
+	// Embedded cover art is a video stream by codec type and nothing else.
+	// Reading it as "the video" would refuse a perfectly playable file — and
+	// the refusal path deletes the room.
+	data := []byte(`{
+		"streams": [
+			{"codec_name":"mjpeg","codec_type":"video","disposition":{"attached_pic":1}},
+			{"codec_name":"h264","codec_type":"video","height":1080}
+		],
+		"format":{"duration":"10.0"}
+	}`)
+
+	p, err := parseProbe(data)
+	require.NoError(t, err)
+	require.Equal(t, "h264", p.VideoCodec)
+	require.True(t, p.VideoCopyable)
+	require.Equal(t, 1080, p.VideoHeight)
+}
+
+func TestParseProbeOrdersAndBoundsChapters(t *testing.T) {
+	data := []byte(`{
+		"streams": [{"codec_name":"h264","codec_type":"video"}],
+		"chapters": [
+			{"start_time":"100.0","end_time":"200.0","tags":{"title":"second"}},
+			{"start_time":"0.0","end_time":"100.0","tags":{"title":"first"}}
+		],
+		"format":{"duration":"200.0"}
+	}`)
+
+	p, err := parseProbe(data)
+	require.NoError(t, err)
+	require.Equal(t, "first", p.Chapters[0].Title)
+	require.Equal(t, "second", p.Chapters[1].Title)
+}
+
 func TestParseProbeReadsChapters(t *testing.T) {
 	data := []byte(`{
 		"streams": [{"codec_name":"h264","codec_type":"video"}],

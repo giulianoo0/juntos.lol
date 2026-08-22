@@ -30,7 +30,7 @@ func TestProbeGrowingFileRetriesTransientPartialReads(t *testing.T) {
 				return nil, errors.New("file ended prematurely")
 			}
 			return want, nil
-		})
+		}, nil)
 
 	require.NoError(t, err)
 	require.Same(t, want, got)
@@ -44,7 +44,7 @@ func TestProbeGrowingFileStopsOnCancellation(t *testing.T) {
 	_, err := probeGrowingFile(ctx, "/tmp/growing.mkv", time.Millisecond,
 		func(context.Context, string) (*ProbeResult, error) {
 			return nil, errors.New("file ended prematurely")
-		})
+		}, nil)
 
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -70,6 +70,79 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestStreamGrowingFileDrainsBytesThatRacedTheCompletionMark(t *testing.T) {
+	// tusd writes the final chunk and then fires OnComplete: the mark can be
+	// set while the feeder is already parked at EOF. The feeder must read
+	// once more after seeing the mark, or that final chunk is silently lost.
+	path := filepath.Join(t.TempDir(), "growing.mkv")
+	require.NoError(t, os.WriteFile(path, []byte("first"), 0o644))
+
+	var complete atomic.Bool
+	var output lockedBuffer
+	done := make(chan error, 1)
+	go func() {
+		done <- streamGrowingFile(t.Context(), path, &output, 50*time.Millisecond, complete.Load)
+	}()
+	require.Eventually(t, func() bool { return output.String() == "first" }, time.Second, time.Millisecond)
+
+	// The mark lands first, then the bytes: the order the race produces.
+	complete.Store(true)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = file.WriteString("-tail")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	require.NoError(t, <-done)
+	require.Equal(t, "first-tail", output.String())
+}
+
+func TestBeginJobDroppedByCancelForgetsTheCompletionMark(t *testing.T) {
+	p := NewProgressive(1, nil, t.TempDir(), nil, 1<<20, nil, nil, nil)
+	p.ctx = t.Context()
+	p.started = true
+
+	p.Submit("r1", "/tmp/growing.mkv", 0)
+	p.Cancel("r1")
+	// A completion racing in after the cancel still finds the queued entry.
+	p.Complete("r1")
+	_, ok := p.beginJob(t.Context(), "r1")
+	require.False(t, ok)
+
+	// The next source for this room must not inherit a "finished" verdict.
+	require.False(t, p.isComplete("r1"))
+}
+
+func TestDoneReportsAFinishedOrAbsentJobImmediately(t *testing.T) {
+	p := NewProgressive(1, nil, t.TempDir(), nil, 1<<20, nil, nil, nil)
+	p.ctx = t.Context()
+	p.started = true
+
+	// No job was ever submitted: nothing to wait for.
+	select {
+	case <-p.Done("never"):
+	default:
+		t.Fatal("Done for an absent job should be closed")
+	}
+
+	// A submitted job holds Done open until it finishes.
+	p.Submit("r1", "/tmp/growing.mkv", 0)
+	select {
+	case <-p.Done("r1"):
+		t.Fatal("Done closed while the job is still queued")
+	default:
+	}
+	jobCtx, ok := p.beginJob(t.Context(), "r1")
+	require.True(t, ok)
+	_ = jobCtx
+	p.finishJob("r1")
+	select {
+	case <-p.Done("r1"):
+	case <-time.After(time.Second):
+		t.Fatal("Done not closed after finishJob")
+	}
 }
 
 func TestStreamGrowingFileEndsAtTrueEOFOnceComplete(t *testing.T) {
@@ -186,7 +259,7 @@ func TestProbeGrowingFileGivesUpOnASourceThatCannotStream(t *testing.T) {
 		func(context.Context, string) (*ProbeResult, error) {
 			attempts++
 			return nil, errors.New("moov atom not found")
-		})
+		}, nil)
 
 	require.ErrorIs(t, err, ErrContainerUnknown)
 	require.Equal(t, 1, attempts)
@@ -207,7 +280,7 @@ func TestProbeGrowingFileKeepsWaitingForAStreamableSource(t *testing.T) {
 				return nil, errors.New("file ended prematurely")
 			}
 			return want, nil
-		})
+		}, nil)
 
 	require.NoError(t, err)
 	require.Same(t, want, got)

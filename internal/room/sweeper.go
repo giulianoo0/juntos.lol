@@ -175,28 +175,37 @@ func uploadRoomID(infoPath string) string {
 // and sidecar, its working directory, and the media it published — while
 // leaving the record itself in place: the error that killed the room stays
 // readable until it expires, but not one byte of a source that will never
-// play stays paid for. Releasing the upload reservation is what makes further
-// tus writes land nowhere instead of quietly rebuilding the file.
+// play stays paid for.
+//
+// The reservation is released before the files go, so a new upload cannot be
+// created against the room mid-purge — though a PATCH already in flight can
+// still write into the unlinked inode until it ends; those bytes die with
+// the file handle. Every step is attempted even when an earlier one fails:
+// a purge that gives up half way keeps paying for what it left.
 func PurgeData(ctx context.Context, store *Store, dataDir string, bucket MediaStore, id string) error {
+	var errs []error
 	uploadID, err := store.UploadID(ctx, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("get reserved upload: %w", err)
+		errs = append(errs, fmt.Errorf("get reserved upload: %w", err))
 	}
 	if uploadID != "" {
+		if err := store.ReleaseUpload(ctx, id, uploadID); err != nil {
+			errs = append(errs, err)
+		}
 		incoming := filepath.Join(dataDir, "tus-incoming")
 		for _, path := range []string{filepath.Join(incoming, uploadID), filepath.Join(incoming, uploadID+".info")} {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("remove upload bytes: %w", err)
+				errs = append(errs, fmt.Errorf("remove upload bytes: %w", err))
 			}
-		}
-		if err := store.ReleaseUpload(ctx, id, uploadID); err != nil {
-			return err
 		}
 	}
 	if err := os.RemoveAll(filepath.Join(dataDir, "rooms", id)); err != nil {
-		return fmt.Errorf("remove room dir: %w", err)
+		errs = append(errs, fmt.Errorf("remove room dir: %w", err))
 	}
-	return removeRoomMedia(ctx, bucket, id)
+	if err := removeRoomMedia(ctx, bucket, id); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // removeRoomMedia gives a room's published objects back to the bucket.

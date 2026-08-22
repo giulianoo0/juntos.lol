@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -28,6 +29,11 @@ const (
 	// inputPollInterval is the maximum delay before new upload bytes are fed
 	// to ffmpeg after it reaches the file's temporary EOF.
 	inputPollInterval = 100 * time.Millisecond
+	// subtitleDrainTimeout bounds how long a finished video remux waits for
+	// the subtitle extraction to drain the same completed source. Ordinarily
+	// this is seconds; the bound exists so a wedged ffmpeg cannot pin a
+	// preview worker forever.
+	subtitleDrainTimeout = 5 * time.Minute
 )
 
 type probeFunc func(context.Context, string) (*ProbeResult, error)
@@ -59,20 +65,24 @@ type Progressive struct {
 	// onFailed reports a source the pipeline refuses to serve at all, so the
 	// caller can kill the room instead of letting the download run on.
 	onFailed func(roomID string)
-	probe     probeFunc
-	jobs      chan progressiveJob
-	done      chan struct{}
-	start     sync.Once
-	mu        sync.Mutex
-	ctx       context.Context
-	started   bool
-	stopping  bool
-	queued    map[string]struct{}
-	active    map[string]context.CancelFunc
-	canceled  map[string]struct{}
+	probe    probeFunc
+	jobs     chan progressiveJob
+	done     chan struct{}
+	start    sync.Once
+	mu       sync.Mutex
+	ctx      context.Context
+	started  bool
+	stopping bool
+	queued   map[string]struct{}
+	active   map[string]context.CancelFunc
+	canceled map[string]struct{}
 	// completed marks rooms whose upload has fully landed, so the feeder can
 	// stop at true EOF and let ffmpeg finish the whole file naturally.
 	completed map[string]struct{}
+	// waiters holds one channel per submitted job, closed when the job fully
+	// winds down (or is dropped). Done hands these out so the final encode
+	// can be held back until the preview has left the room's hls directory.
+	waiters map[string]chan struct{}
 	// previewStarted is when each accepted job was submitted, which is the
 	// moment the wait a viewer actually feels begins: the upload has just
 	// crossed the threshold and the waiting screen is up. It is consumed by
@@ -110,6 +120,7 @@ func NewProgressive(workers int, store *room.Store, dataDir string, publisher *P
 		active:            make(map[string]context.CancelFunc),
 		canceled:          make(map[string]struct{}),
 		completed:         make(map[string]struct{}),
+		waiters:           make(map[string]chan struct{}),
 		previewStarted:    make(map[string]time.Time),
 		unpreviewable:     make(map[string]struct{}),
 	}
@@ -169,6 +180,9 @@ func (p *Progressive) Submit(roomID, srcPath string, size int64) {
 		p.mu.Unlock()
 	case p.jobs <- progressiveJob{roomID: roomID, srcPath: srcPath, size: size}:
 		p.previewStarted[roomID] = time.Now()
+		if _, ok := p.waiters[roomID]; !ok {
+			p.waiters[roomID] = make(chan struct{})
+		}
 		p.mu.Unlock()
 		metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelinePreview).Inc()
 	default:
@@ -226,6 +240,34 @@ func (p *Progressive) isComplete(roomID string) bool {
 	return ok
 }
 
+// closedDone is what Done hands out for rooms with no job to wait for.
+var closedDone = func() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}()
+
+// Done returns a channel closed once the room's preview job — queued or
+// running — has fully wound down, publisher included. A room with no job
+// gets an already-closed channel. The final encode waits on this so the two
+// passes never write into the same directory at the same time.
+func (p *Progressive) Done(roomID string) <-chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ch, ok := p.waiters[roomID]; ok {
+		return ch
+	}
+	return closedDone
+}
+
+// releaseWaiter closes and forgets the room's Done channel.
+func (p *Progressive) releaseWaiter(roomID string) {
+	if ch, ok := p.waiters[roomID]; ok {
+		close(ch)
+		delete(p.waiters, roomID)
+	}
+}
+
 func (p *Progressive) worker(ctx context.Context) {
 	for {
 		select {
@@ -254,6 +296,11 @@ func (p *Progressive) beginJob(ctx context.Context, roomID string) (context.Cont
 	if _, ok := p.canceled[roomID]; ok {
 		delete(p.canceled, roomID)
 		delete(p.previewStarted, roomID)
+		// A completion that raced in behind the cancel dies with the job it
+		// was meant for; the next source must not inherit it. And whoever is
+		// waiting on this job is waiting on nothing now.
+		delete(p.completed, roomID)
+		p.releaseWaiter(roomID)
 		p.mu.Unlock()
 		metrics.FFmpegJobsQueued.WithLabelValues(metrics.PipelinePreview).Dec()
 		metrics.FFmpegJobs.WithLabelValues(metrics.PipelinePreview, metrics.JobCanceled).Inc()
@@ -272,9 +319,11 @@ func (p *Progressive) finishJob(roomID string) {
 	delete(p.active, roomID)
 	// A job that ended without the room ever becoming playable leaves its
 	// start time behind, and the map would otherwise hold one per room the
-	// server ever previewed. The completion mark is consumed the same way.
+	// server ever previewed. The completion mark is consumed the same way,
+	// and whoever waited on this job is released.
 	delete(p.previewStarted, roomID)
 	delete(p.completed, roomID)
+	p.releaseWaiter(roomID)
 	p.mu.Unlock()
 	metrics.FFmpegJobsRunning.WithLabelValues(metrics.PipelinePreview).Dec()
 }
@@ -293,7 +342,8 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) s
 		return outcomeFor(jobCtx, metrics.JobFailed)
 	}
 	p.setPhase(jobCtx, ctx, job.roomID, room.PreviewProbing, 0)
-	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe)
+	probe, err := probeGrowingFile(jobCtx, job.srcPath, probeRetryInterval, p.probe,
+		func() bool { return p.isComplete(job.roomID) })
 	if err != nil {
 		if errors.Is(err, ErrContainerUnknown) {
 			// The file cannot be previewed at all, so stop burning an ffprobe
@@ -352,7 +402,11 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) s
 	}
 	// Subtitles run alongside the video rather than after it: a viewer who can
 	// already watch the first minutes should be able to read them too.
-	go p.extractSubtitles(ctx, jobCtx, job, probe)
+	subtitlesDone := make(chan struct{})
+	go func() {
+		defer close(subtitlesDone)
+		p.extractSubtitles(ctx, jobCtx, job, probe)
+	}()
 	// Publishing runs alongside the remux for the same reason: a preview that
 	// only reached the bucket at the end would not be a preview.
 	publishing := make(chan struct{})
@@ -361,12 +415,38 @@ func (p *Progressive) process(ctx, jobCtx context.Context, job progressiveJob) s
 		p.publisher.Run(jobCtx, job.roomID, hlsDir, previewPublishPatterns)
 	}()
 	p.remux(ctx, jobCtx, job, hlsDir, probe)
-	// The publisher makes one last pass once the remux stops, so on a source
-	// that arrives all at once the preview only becomes reachable here, after
-	// the loop that would have announced it has already exited.
+	// The subtitles are still draining the same completed source; give them
+	// the moment they need rather than cutting their last cues off — but
+	// never pin this worker to a wedged extraction.
+	select {
+	case <-subtitlesDone:
+	case <-jobCtx.Done():
+	case <-time.After(subtitleDrainTimeout):
+		slog.WarnContext(ctx, "progressive: subtitle drain timed out", "room_id", job.roomID)
+	}
+	// The outcome is read before the shutdown below: ending our own job must
+	// not count it as cancelled.
+	outcome := outcomeFor(jobCtx, metrics.JobSucceeded)
+	// A remux that ended naturally no longer has a Cancel coming to close the
+	// job context, and the publisher's loop only returns when it dies — so
+	// the job ends itself here, which is also what triggers the publisher's
+	// one last pass. On a source that arrives all at once the preview only
+	// becomes reachable in that pass, after the loop that would have
+	// announced it has already exited.
+	p.cancelActive(job.roomID)
 	<-publishing
 	p.announcePreview(ctx, job.roomID, probe)
-	return outcomeFor(jobCtx, metrics.JobSucceeded)
+	return outcome
+}
+
+// cancelActive ends the room's job context, if a job is still registered.
+func (p *Progressive) cancelActive(roomID string) {
+	p.mu.Lock()
+	cancel := p.active[roomID]
+	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // outcomeFor reports a cancelled job as cancelled whatever else went wrong on
@@ -511,8 +591,13 @@ func (p *Progressive) previewPlayable(ctx context.Context, roomID string, probe 
 
 // probeGrowingFile retries transient parse failures until enough of the
 // container header has arrived or the upload is canceled/completed.
+//
+// complete reports whether the upload has finished. Completion renames the
+// growing file out from under a probe still waiting on it, and a retry loop
+// pointed at a path that will never exist again would spawn an ffprobe every
+// half second for the life of the process.
 func probeGrowingFile(ctx context.Context, path string, retryInterval time.Duration,
-	probe probeFunc) (*ProbeResult, error) {
+	probe probeFunc, complete func() bool) (*ProbeResult, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -520,6 +605,11 @@ func probeGrowingFile(ctx context.Context, path string, retryInterval time.Durat
 		result, err := probe(ctx, path)
 		if err == nil && result != nil && result.VideoCodec != "" {
 			return result, nil
+		}
+		if complete != nil && complete() {
+			if _, statErr := os.Stat(path); statErr != nil {
+				return nil, fmt.Errorf("source completed and moved before it could be probed: %w", err)
+			}
 		}
 		// Retrying forever is right for a header that is still arriving and
 		// wrong for one that will only ever arrive last. Which of the two this
@@ -561,6 +651,7 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 	defer file.Close()
 
 	buffer := make([]byte, 256*1024)
+	completeSeen := false
 	for {
 		n, readErr := file.Read(buffer)
 		if n > 0 {
@@ -574,10 +665,16 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 		if !errors.Is(readErr, io.EOF) {
 			return readErr
 		}
-		// Completion is only trusted at EOF: everything the upload wrote is
-		// already behind the read position by the time the mark can be set.
+		// The mark can land while this loop is already parked at EOF, with
+		// the upload's final chunk written between the read above and the
+		// check below. Seeing the mark therefore earns one more read: only
+		// an EOF observed strictly after the mark proves the file is drained.
 		if complete != nil && complete() {
-			return nil
+			if completeSeen {
+				return nil
+			}
+			completeSeen = true
+			continue
 		}
 
 		timer := time.NewTimer(pollInterval)

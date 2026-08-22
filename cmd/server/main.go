@@ -51,6 +51,8 @@ func main() {
 		Bucket:    cfg.R2Bucket,
 		AccessKey: cfg.R2AccessKeyID,
 		SecretKey: cfg.R2SecretAccessKey,
+		Endpoint:  cfg.R2Endpoint,
+		Insecure:  cfg.R2Insecure,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -68,11 +70,10 @@ func main() {
 	}, hub.NotifyRoomUpdated)
 	// The queue reports back into the hub, so it cannot be built before one;
 	// the hub is told about it here instead, before either serves anything.
+	// It is only started further down, once killRoom exists: recovery can
+	// resubmit a refused source, and a purge hook that is not installed yet
+	// would silently keep that room's bytes.
 	hub.SetMediaWork(queue)
-	queue.Start(ctx)
-	if err := queue.Recover(ctx); err != nil {
-		log.Printf("recover interrupted media jobs: %v", err)
-	}
 	streamStartBytes := cfg.StreamStartMB << 20
 	// killRoom is how a room dies before its time: told why, cut off from
 	// whatever is still feeding it, and stripped of every byte it accumulated.
@@ -87,7 +88,8 @@ func main() {
 			}
 		},
 	)
-	progressive.Start(ctx)
+	// Started below, after killRoom is assigned: the workers read it, and a
+	// worker racing the assignment would be a data race, not merely a miss.
 
 	// The ingest talks to this same server over loopback, so a torrent takes
 	// the identical path a browser upload does and inherits its whole
@@ -143,14 +145,30 @@ func main() {
 			log.Printf("mark refused room %s: %v", roomID, err)
 		}
 		hub.NotifyStatus(roomID, "error")
-		if err := room.PurgeData(killCtx, store, cfg.DataDir, bucket, roomID); err != nil {
-			log.Printf("purge refused room %s: %v", roomID, err)
-		}
+		// The dying preview's publisher makes one detached last pass on its
+		// way out; purging under it would let that pass resurrect what was
+		// just removed. The bytes go only once the job is truly gone.
+		go func() {
+			select {
+			case <-progressive.Done(roomID):
+			case <-time.After(2 * time.Minute):
+			}
+			purgeCtx, cancelPurge := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancelPurge()
+			if err := room.PurgeData(purgeCtx, store, cfg.DataDir, bucket, roomID); err != nil {
+				log.Printf("purge refused room %s: %v", roomID, err)
+			}
+		}()
 	}
 	// The queue reaches the same verdict for sources that could only be
 	// probed after the upload landed; it marks the room itself and hands the
 	// teardown here.
 	queue.SetPurge(func(roomID string) { killRoom(roomID) })
+	queue.Start(ctx)
+	if err := queue.Recover(ctx); err != nil {
+		log.Printf("recover interrupted media jobs: %v", err)
+	}
+	progressive.Start(ctx)
 
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),
@@ -174,8 +192,10 @@ func main() {
 			// The preview is not cut off when the upload lands: it drains to
 			// the file's end and keeps publishing, so nobody hits a frozen
 			// playlist while the slower final encode replaces it from behind.
+			// The final pass starts only once the preview has fully wound
+			// down — the two must never write the same directory at once.
 			progressive.Complete(roomID)
-			queue.Submit(roomID)
+			go media.SubmitAfterPreview(ctx, progressive, queue, roomID)
 		},
 		OnStreamStart: progressive.Submit,
 		OnTerminate: func(roomID string) {

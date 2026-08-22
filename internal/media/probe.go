@@ -2,16 +2,25 @@ package media
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/giulianoo0/ss/internal/room"
+)
+
+const (
+	// maxChapters bounds how many chapter atoms are trusted from one file.
+	maxChapters = 512
+	// maxChapterTitleBytes bounds a single chapter title.
+	maxChapterTitleBytes = 200
 )
 
 var textSubtitleCodecs = map[string]struct{}{
@@ -53,6 +62,9 @@ type probeOutput struct {
 			Language string `json:"language"`
 			Title    string `json:"title"`
 		} `json:"tags"`
+		Disposition struct {
+			AttachedPic int `json:"attached_pic"`
+		} `json:"disposition"`
 	} `json:"streams"`
 	Chapters []struct {
 		StartTime string `json:"start_time"`
@@ -140,17 +152,37 @@ func parseProbe(data []byte) (*ProbeResult, error) {
 		if startErr != nil || endErr != nil || end <= start {
 			continue
 		}
+		title := chapter.Tags.Title
+		if len(title) > maxChapterTitleBytes {
+			title = strings.ToValidUTF8(title[:maxChapterTitleBytes], "")
+		}
 		result.Chapters = append(result.Chapters, room.Chapter{
 			StartMs: int64(math.Round(start * 1000)),
 			EndMs:   int64(math.Round(end * 1000)),
-			Title:   chapter.Tags.Title,
+			Title:   title,
 		})
+		// The list rides in one Redis hash field and in every room GET; a
+		// broken muxer with thousands of chapter atoms must not bloat both.
+		if len(result.Chapters) == maxChapters {
+			break
+		}
 	}
+	// Play order, whatever order the container declared them in: the player
+	// numbers unnamed chapters by position.
+	slices.SortStableFunc(result.Chapters, func(a, b room.Chapter) int {
+		return cmp.Compare(a.StartMs, b.StartMs)
+	})
 	audioIndex := 0
 	subtitleIndex := 0
 	for _, stream := range raw.Streams {
 		switch stream.CodecType {
 		case "video":
+			// Embedded cover art is a video stream by codec type and nothing
+			// else. Reading it as "the video" would refuse a playable file —
+			// and the refusal path deletes the room.
+			if stream.Disposition.AttachedPic != 0 {
+				continue
+			}
 			if result.VideoCodec == "" {
 				result.VideoCodec = stream.CodecName
 				// Everything here packs into fMP4 and is decoded natively by
