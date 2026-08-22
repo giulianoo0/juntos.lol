@@ -20,7 +20,7 @@
 - compartilhamento de tela com LiveKit;
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
-- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede — o Torrentio é um deles e mora [num repositório à parte](https://github.com/DOG248/torrentioss); a documentação está em [ss.giuli.dev/docs](https://ss.giuli.dev/docs);
+- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [ss.giuli.dev/docs](https://ss.giuli.dev/docs);
 - métricas Prometheus enviadas para o Grafana Cloud, com painéis e alertas versionados no repositório.
 
 ## Como funciona
