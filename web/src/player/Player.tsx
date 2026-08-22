@@ -7,6 +7,7 @@ import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 import type { PlayState, RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
+import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { Settings, type SettingGroup } from './Settings'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
@@ -614,7 +615,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       },
       options: audioTracks.map((track, index) => ({
         value: index,
-        label: track.name || track.lang || String(index + 1),
+        label: audioTrackLabel(track, t.language, index),
       })),
     })
   }
