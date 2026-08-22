@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
@@ -86,7 +86,22 @@ export function Home() {
   const [history, setHistory] = useState<RoomHistoryEntry[]>(readHistory)
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
-  const [manualOpen, setManualOpen] = useState<ManualStep>(false)
+  const reduceMotion = useReducedMotion()
+  const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
+  // Which of the two ways in is on screen. The manual flow keeps its own step
+  // machine; this only decides whether it is the thing being shown.
+  // Manual by default: bringing your own file is what this was built for, and
+  // it is the path that works without a plugin installed.
+  const [view, setView] = useState<'catalog' | 'manual'>('manual')
+
+  const showView = (next: 'catalog' | 'manual') => {
+    setView(next)
+    setError('')
+    // Coming back to the manual side lands on its first step rather than
+    // wherever it was abandoned, and leaving tears it down so a half-filled
+    // magnet field is not waiting on return.
+    setManualOpen(next === 'manual' ? 'menu' : false)
+  }
   const [pluginsOpen, setPluginsOpen] = useState(false)
   // The panel is held one beat behind the request so the outgoing step can
   // dissolve before the next one mounts — see useMorphingStep.
@@ -259,32 +274,131 @@ export function Home() {
     selectFile(event.target.files?.[0])
   }
 
+  // The steps of the manual flow, lifted out of the JSX so the stage can
+  // render them where the catalog would be. They kept every animation they
+  // had as a dialog; only the surface around them changed.
+  const MANUAL_STEPS = (<>
+      {shownManual === 'menu' ? (
+        <div className="morph-step" data-step="menu">
+          <h2 className="stage-title">{t('home.uploadManually')}</h2>
+          <p className="stage-description">{t('home.uploadGuide')}</p>
+          <div className="source-options">
+            <button onClick={() => setManualOpen('file')}>
+              <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
+            </button>
+            <button onClick={() => { setError(''); setManualOpen('magnet') }}>
+              <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+            </button>
+            <button onClick={startScreenRoom}>
+              <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {shownManual === 'file' ? (
+        <div className="morph-step" data-step="file">
+          <div className="morph-head">
+            <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
+            <h2 className="stage-title">{t('home.uploadFile')}</h2>
+          </div>
+          <button
+            type="button"
+            className={`drop-zone dialog-drop ${dragging ? 'is-dragging' : ''}`}
+            onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            onClick={() => inputRef.current?.click()}
+          >
+            <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
+            <strong>{t('home.dropOrPick')}</strong>
+            <span>{t('home.dropHint')}</span>
+          </button>
+          {error ? <div className="error-card" role="alert">{error}</div> : null}
+        </div>
+      ) : null}
+
+      {shownManual === 'magnet' ? (
+        <div className="morph-step" data-step="magnet">
+          {/* The picker draws its own way back, because only it knows
+              whether that means the magnet it listed or leaving. */}
+          <TorrentPicker
+            maxFileBytes={MAX_UPLOAD_BYTES}
+            t={t}
+            initialSession={resumed?.session ?? null}
+            initialMagnet={resumed?.magnet ?? ''}
+            onExit={() => { setResumed(null); setManualOpen('menu') }}
+            onPicked={(file, session, magnet) => {
+              setResumed({ magnet, session })
+              setManualOpen(false)
+              setDraftNickname(nickname)
+              setPendingMedia({ kind: 'torrent', file, session })
+            }}
+          />
+        </div>
+      ) : null}
+    </>)
+
   return (
     <main className="home-shell catalog-shell">
       <header className="home-header">
         <ProgressiveBlur />
-        {/* The catalog is the page, so the header carries only what is not
-            the catalog: who this is, the language, and the way in for media
-            of your own. */}
+        {/* The two ways into a room are the two tabs, so the header sides
+            carry only what is neither: who this is, the language, plugins. */}
         <div className="header-start">
           <a className="home-wordmark" href="/">ss.giuli.dev</a>
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
         </div>
+        {/* Both ways of starting a room, side by side and weighted the same.
+            As a button beside a whole catalog, bringing your own file read as
+            the lesser path; it is not. */}
+        <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
+          {(['catalog', 'manual'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={view === value}
+              className={view === value ? 'is-active' : ''}
+              onClick={() => showView(value)}
+            >
+              {view === value ? (
+                <motion.span
+                  layoutId="home-tab-pill"
+                  className="season-pill"
+                  transition={reduceMotion ? { duration: 0 } : { type: 'spring', duration: 0.45, bounce: 0.2 }}
+                />
+              ) : null}
+              <span className="season-tab-label">
+                {value === 'catalog' ? t('home.tabCatalog') : t('home.tabOwn')}
+              </span>
+            </button>
+          ))}
+        </div>
         <div className="header-end">
           <BuildInfo label={t('home.source')} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
           </button>
-          <button className="header-upload primary-button" onClick={() => setManualOpen('menu')}>
-            <Upload size={15} aria-hidden="true" /><span className="nav-label">{t('home.uploadManually')}</span>
-          </button>
         </div>
       </header>
 
       <section className="catalog-stage">
-        <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
+        {view === 'catalog' ? (
+          <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
+        ) : (
+          <div className="manual-stage">
+            {/* One surface that changes what it is asking: the menu grows into
+                the drop zone or the magnet picker rather than stacking a
+                second panel over the first. */}
+            <MorphPanel className="upload-morph" sizeKey={panelFilled ? shownManual : 'opening'} morphing={morphingManual || !panelFilled}>
+              {MANUAL_STEPS}
+            </MorphPanel>
+          </div>
+        )}
         {error ? <div className="error-card" role="alert">{error}</div> : null}
       </section>
 
@@ -336,80 +450,6 @@ export function Home() {
       {/* One surface that changes what it is asking: the menu grows into the
           drop zone or the magnet picker rather than stacking a second panel
           over the first. */}
-      <Dialog open={manualOpen !== false} onOpenChange={(open) => { if (!open) setManualOpen(false) }}>
-        {manualOpen !== false ? (
-          <DialogContent
-            className="upload-dialog"
-            closeLabel={t('home.closeDialog')}
-            hideTitle
-            title={t('home.uploadManually')}
-          >
-            <MorphPanel className="upload-morph" sizeKey={panelFilled ? shownManual : 'opening'} morphing={morphingManual || !panelFilled}>
-              {shownManual === 'menu' ? (
-                <div className="morph-step" data-step="menu">
-                  <h2 className="stage-title">{t('home.uploadManually')}</h2>
-                  <p className="stage-description">{t('home.uploadGuide')}</p>
-                  <div className="source-options">
-                    <button onClick={() => setManualOpen('file')}>
-                      <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
-                    </button>
-                    <button onClick={() => { setError(''); setManualOpen('magnet') }}>
-                      <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
-                    </button>
-                    <button onClick={startScreenRoom}>
-                      <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {shownManual === 'file' ? (
-                <div className="morph-step" data-step="file">
-                  <div className="morph-head">
-                    <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
-                    <h2 className="stage-title">{t('home.uploadFile')}</h2>
-                  </div>
-                  <button
-                    type="button"
-                    className={`drop-zone dialog-drop ${dragging ? 'is-dragging' : ''}`}
-                    onDragEnter={(event) => { event.preventDefault(); setDragging(true) }}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDragLeave={() => setDragging(false)}
-                    onDrop={onDrop}
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    <Upload className="drop-icon" size={34} strokeWidth={1.6} aria-hidden="true" />
-                    <strong>{t('home.dropOrPick')}</strong>
-                    <span>{t('home.dropHint')}</span>
-                  </button>
-                  {error ? <div className="error-card" role="alert">{error}</div> : null}
-                </div>
-              ) : null}
-
-              {shownManual === 'magnet' ? (
-                <div className="morph-step" data-step="magnet">
-                  {/* The picker draws its own way back, because only it knows
-                      whether that means the magnet it listed or leaving. */}
-                  <TorrentPicker
-                    maxFileBytes={MAX_UPLOAD_BYTES}
-                    t={t}
-                    initialSession={resumed?.session ?? null}
-                    initialMagnet={resumed?.magnet ?? ''}
-                    onExit={() => { setResumed(null); setManualOpen('menu') }}
-                    onPicked={(file, session, magnet) => {
-                      setResumed({ magnet, session })
-                      setManualOpen(false)
-                      setDraftNickname(nickname)
-                      setPendingMedia({ kind: 'torrent', file, session })
-                    }}
-                  />
-                </div>
-              ) : null}
-            </MorphPanel>
-          </DialogContent>
-        ) : null}
-      </Dialog>
-
       {/* Outside the panel: the click that opens it must survive the step it
           was made in dissolving. */}
       <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />

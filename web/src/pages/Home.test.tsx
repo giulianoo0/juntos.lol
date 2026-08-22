@@ -14,13 +14,15 @@ vi.mock('../catalog/cinemeta', () => ({
   fetchMeta: vi.fn().mockResolvedValue(null),
 }))
 
-// The drop-zone lives behind the manual-upload panel now: open it, then pick
-// a way in. The panel holds each step one beat while the last one dissolves,
-// so every step has to be waited for.
+// The manual flow is the tab the page opens on, so there is no panel to open
+// first — only a way in to choose. The panel holds each step one beat while
+// the last one dissolves, so every step has to be waited for.
 async function openManual(step: RegExp) {
-  fireEvent.click(screen.getByRole('button', { name: /manual upload|upload manualmente/i }))
   fireEvent.click(await screen.findByRole('button', { name: step }))
 }
+
+/** The catalog is the other tab now. */
+const showCatalog = () => fireEvent.click(screen.getByRole('tab', { name: /catalogue|catálogo/i }))
 
 const openFilePanel = () => openManual(/upload a file|enviar um arquivo/i)
 
@@ -32,9 +34,16 @@ describe('Home', () => {
     vi.mocked(createRoomAndUploadTorrent).mockResolvedValue({ roomID: 'torrent-room', nickname: 'giuli' })
   })
 
-  it('renders the catalog board and starts upload after file selection', async () => {
+  it('shows the catalog board on the other tab', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
-    expect(screen.getByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
+    showCatalog()
+    expect(await screen.findByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
+  })
+
+  it('opens on the manual tab and starts upload after file selection', async () => {
+    render(<MemoryRouter><Home /></MemoryRouter>)
+    // Manual is the default: it is the path that works with nothing installed.
+    expect(screen.getByRole('tab', { name: /room|sala/i })).toHaveAttribute('aria-selected', 'true')
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
