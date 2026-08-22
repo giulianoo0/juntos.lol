@@ -21,7 +21,6 @@
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
 - catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede — o Torrentio é um deles e mora [num repositório à parte](https://github.com/DOG248/torrentioss); a documentação está em [ss.giuli.dev/docs](https://ss.giuli.dev/docs);
-- Plex como fonte nativa: conta pareada por código, sem senha, e o servidor puxa os bytes quando alcança a biblioteca ou o navegador do host puxa quando ela só existe na rede local;
 - métricas Prometheus enviadas para o Grafana Cloud, com painéis e alertas versionados no repositório.
 
 ## Como funciona
