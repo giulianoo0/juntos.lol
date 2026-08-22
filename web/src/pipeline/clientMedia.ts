@@ -44,6 +44,8 @@ const PRESIGN_BATCH = 32
 /** How often accumulated segments and playlists are pushed to the server. */
 const PUBLISH_INTERVAL_MS = 2_000
 const PUT_RETRIES = 2
+/** How many extra drain rounds a stuck object gets before the complete pass. */
+const DRAIN_ROUNDS = 10
 
 export interface ClientRemuxPlan {
   input: Input
@@ -91,7 +93,6 @@ interface ClaimResponse {
 interface PendingObject {
   name: string
   bytes: Uint8Array
-  contentType: string
 }
 
 export interface RunClientRemuxOptions {
@@ -103,9 +104,23 @@ export interface RunClientRemuxOptions {
 }
 
 /**
- * Runs the whole pipeline: claim, remux, upload, publish, complete. Throws
- * on any failure after releasing the claim, so the caller can fall back to
- * tus against a room that is exactly as it was.
+ * Thrown when the room moved on under the run — the source was swapped, so the
+ * server released the claim or rejected the generation. The caller must NOT
+ * fall back to tus for this: the room is on a different source now, and
+ * re-uploading the old file would race the new upload.
+ */
+export class RoomMovedOnError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RoomMovedOnError'
+  }
+}
+
+/**
+ * Runs the whole pipeline: claim, remux, upload, publish, complete. Throws on
+ * failure — RoomMovedOnError when the room was swapped (do not fall back),
+ * any other error when the run itself failed (fall back to tus). The claim is
+ * released on the way out either way, so the fallback upload can proceed.
  */
 export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress }: RunClientRemuxOptions): Promise<void> {
   const claimResponse = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/claim`, {
@@ -117,13 +132,21 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
   const { claim, mediaGeneration: serverGeneration } = await claimResponse.json() as ClaimResponse
   if (serverGeneration !== mediaGeneration) {
     await releaseClaim(roomID, claim)
-    throw new Error('client media claim raced a source swap')
+    throw new RoomMovedOnError('client media claim raced a source swap')
   }
 
   try {
     await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress })
   } catch (error) {
-    await releaseClaim(roomID, claim).catch(() => {})
+    // The server releases the claim itself on the complete pass; this covers
+    // every path that threw before it. Falling back to tus needs the room's
+    // reservation freed, so this must actually succeed before rethrowing.
+    await releaseClaimReliably(roomID, claim)
+    // A 403 (claim gone) or 409 (stale generation) mid-run means the room was
+    // swapped: surface it as RoomMovedOnError so the caller does not fall back.
+    if (error instanceof Error && /\b(403|409)\b/.test(error.message)) {
+      throw new RoomMovedOnError(error.message)
+    }
     throw error
   }
 }
@@ -134,6 +157,24 @@ async function releaseClaim(roomID: string, claim: string): Promise<void> {
   })
 }
 
+// Releasing must actually land, or the fallback tus upload hits a still-held
+// reservation and wedges the room until its TTL. A 404 or 403 means the claim
+// is already gone (room swapped, or the server released it on complete), which
+// is success for our purpose; only a network error or 5xx is retried.
+async function releaseClaimReliably(roomID: string, claim: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media?claim=${encodeURIComponent(claim)}`, {
+        method: 'DELETE',
+      })
+      if (response.ok || response.status === 404 || response.status === 403) return
+    } catch {
+      // network error — retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
+  }
+}
+
 async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress }: RunClientRemuxOptions & { claim: string }): Promise<void> {
   // Object flow: the muxer hands finished files to `pending`; `pump` drains
   // them through presign + PUT into `uploaded`; each publish confirms
@@ -142,47 +183,65 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // The chapters ride the first publish; mediabunny does not read them, so
   // a small EBML pass over the file's head does.
   const chaptersOnce = readMkvChapters(file)
+  const totalBytes = file.size
   const pending: PendingObject[] = []
   const uploaded: string[] = []
   const playlists = new Map<string, string>()
-  let uploadFailure: unknown = null
-  let pumping = Promise.resolve()
+  let uploadedBytes = 0
+  let failure: unknown = null
   let metadataSent = false
 
-  const enqueue = (name: string, target: unknown, contentType: string) => {
+  const fail = (error: unknown) => {
+    // The first failure aborts everything: the conversion stops encoding, the
+    // ticker stops publishing, and execute() throws so the caller falls back
+    // to tus — instead of paying to upload the rest of a doomed run.
+    failure ??= error
+    void conversion.cancel().catch(() => {})
+  }
+
+  // Backpressure: the muxer must not outrun the uplink. enqueue awaits a slot,
+  // so `pending` never holds more than a few segments' worth of bytes even on
+  // a huge file over a slow connection — the OOM the 50 GB ceiling would
+  // otherwise invite.
+  const inflight = new Set<Promise<void>>()
+  const enqueue = async (name: string, target: unknown): Promise<void> => {
+    if (failure) return
     const buffer = (target as BufferTarget).buffer
-    if (!buffer) {
-      uploadFailure ??= new Error(`segment ${name} finished without bytes`)
-      return
-    }
-    pending.push({ name, bytes: new Uint8Array(buffer), contentType })
-    pumping = pumping.then(() => pump()).catch((error: unknown) => { uploadFailure ??= error })
+    if (!buffer) { fail(new Error(`segment ${name} finished without bytes`)); return }
+    pending.push({ name, bytes: new Uint8Array(buffer) })
+    while (inflight.size >= PRESIGN_BATCH) await Promise.race(inflight)
+    const task = pump().catch(fail)
+    inflight.add(task)
+    void task.finally(() => inflight.delete(task))
+    if (pending.length >= PRESIGN_BATCH) await Promise.race(inflight)
   }
 
   const pump = async () => {
-    while (pending.length > 0) {
-      const batch = pending.splice(0, PRESIGN_BATCH)
-      const presign = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          claim,
-          objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
-        }),
-      })
-      if (!presign.ok) throw new Error(`presign refused: ${presign.status}`)
-      const { objects } = await presign.json() as { objects: { name: string; url: string; headers: Record<string, string> }[] }
-      const byName = new Map(objects.map((object) => [object.name, object]))
-      await Promise.all(batch.map(async (object) => {
-        const signed = byName.get(object.name)
-        if (!signed) throw new Error(`presign missing ${object.name}`)
-        await putWithRetry(signed.url, signed.headers, object.bytes)
-        uploaded.push(object.name)
-      }))
-    }
+    const batch = pending.splice(0, PRESIGN_BATCH)
+    if (batch.length === 0) return
+    const presign = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        claim,
+        objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
+      }),
+    })
+    if (!presign.ok) throw new Error(`presign refused: ${presign.status}`)
+    const { objects } = await presign.json() as { objects: { name: string; url: string; headers: Record<string, string> }[] }
+    const byName = new Map(objects.map((object) => [object.name, object]))
+    await Promise.all(batch.map(async (object) => {
+      const signed = byName.get(object.name)
+      if (!signed) throw new Error(`presign missing ${object.name}`)
+      await putWithRetry(signed.url, signed.headers, object.bytes)
+      uploaded.push(object.name)
+      uploadedBytes += object.bytes.byteLength
+    }))
   }
 
-  const publish = async (complete: boolean) => {
+  // Returns whether the server considers the room playable, which is the
+  // only trustworthy "done" signal on the complete pass.
+  const publish = async (complete: boolean): Promise<boolean> => {
     const confirm = uploaded.splice(0, 128)
     const body: Record<string, unknown> = {
       claim,
@@ -190,12 +249,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       confirm,
       playlists: Object.fromEntries(playlists),
       complete,
+      progress: { receivedBytes: uploadedBytes, sourceBytes: totalBytes },
     }
+    const chapters = metadataSent ? [] : await chaptersOnce
     if (!metadataSent) {
       body.audioTracks = plan.audioTracks.map((track) => ({ language: track.language, title: '' }))
-      const chapters = await chaptersOnce
       if (chapters.length > 0) body.chapters = chapters
-      metadataSent = true
     }
     const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/publish`, {
       method: 'POST',
@@ -203,10 +262,13 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       body: JSON.stringify(body),
     })
     if (!response.ok) throw new Error(`publish refused: ${response.status}`)
-    const { confirmed } = await response.json() as { confirmed: string[] }
+    // The metadata stuck only now that the request succeeded.
+    metadataSent = true
+    const { confirmed, ready } = await response.json() as { confirmed: string[]; ready: boolean }
     // Whatever the bucket did not vouch for is claimed again next round.
     const vouched = new Set(confirmed)
     for (const name of confirm) if (!vouched.has(name)) uploaded.push(name)
+    return ready
   }
 
   const output = new Output({
@@ -219,8 +281,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       getInitPath: ({ n }) => `cinit_${n}.mp4`,
       onMaster: (content) => { playlists.set('master.m3u8', content) },
       onPlaylist: (content, info) => { playlists.set(`client_stream_${info.n}.m3u8`, content) },
-      onInit: (target, info) => enqueue(`cinit_${info.n}.mp4`, target, 'video/mp4'),
-      onSegment: (target, info) => enqueue(`cs_${info.playlist.n}_${info.n}.m4s`, target, 'video/iso.segment'),
+      onInit: (target, info) => enqueue(`cinit_${info.n}.mp4`, target),
+      onSegment: (target, info) => enqueue(`cs_${info.playlist.n}_${info.n}.m4s`, target),
     }),
     target: new PathedTarget('master.m3u8', () => new BufferTarget()),
   })
@@ -238,26 +300,26 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
 
   // Publishing runs alongside the remux for the same reason the server's
   // does: a room that only became watchable at the end would not be a
-  // preview. Failures inside the loop surface on the next tick.
+  // preview. A publish failure aborts the whole run through fail().
   let publishing = false
   const ticker = setInterval(() => {
-    if (publishing || uploadFailure) return
+    if (publishing || failure) return
     publishing = true
-    void publish(false)
-      .catch((error: unknown) => { uploadFailure ??= error })
-      .finally(() => { publishing = false })
+    void publish(false).catch(fail).finally(() => { publishing = false })
   }, PUBLISH_INTERVAL_MS)
 
   try {
     await conversion.execute()
-    await pumping
-    if (uploadFailure) throw uploadFailure
+    await Promise.all([...inflight])
+    if (failure) throw failure
   } finally {
     clearInterval(ticker)
   }
-  // Drain: every object confirmed, final playlists (ENDLIST included), done.
-  while (uploaded.length > 0) await publish(false)
-  await publish(true)
+  // Drain what the remux produced, bounded: an object the bucket never
+  // vouches for must not spin here forever short of the complete pass.
+  for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)
+  const ready = await publish(true)
+  if (!ready) throw new Error('client remux produced no playable media')
 }
 
 async function putWithRetry(url: string, headers: Record<string, string>, bytes: Uint8Array): Promise<void> {

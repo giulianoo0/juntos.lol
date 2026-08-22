@@ -199,6 +199,53 @@ func TestClientMediaPublishRefusesAStrangeMaster(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestClientMediaPublishRefusesASmuggledMediaPlaylistTag(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
+	claim := claimRoom(t, e, "r1")
+
+	// An EXT-X-KEY would make every viewer's player fetch an attacker URL.
+	evil := "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://evil/k\"\n#EXTINF:4.0,\ncs_1_1.m4s\n"
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
+		`{"claim":"`+claim+`","playlists":{"client_stream_1.m3u8":`+strconvQuote(evil)+`}}`)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestClientMediaEarlyMasterIsNotFatal(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
+	claim := claimRoom(t, e, "r1")
+
+	// The master names a variant with no confirmed segments yet — the state
+	// every run's first tick is in. It must not 400.
+	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nclient_stream_1.m3u8\n"
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
+		`{"claim":"`+claim+`","confirm":[],"playlists":{"master.m3u8":`+strconvQuote(master)+`}}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	// The master was withheld, not stored.
+	_, err := store.Playlist(t.Context(), "r1", "master.m3u8")
+	require.Error(t, err)
+}
+
+func TestClientMediaCompleteWithoutPlayableMediaFails(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
+	claim := claimRoom(t, e, "r1")
+
+	// Nothing was ever confirmed; completing must report failure so the
+	// client falls back, and must free the claim so tus can proceed.
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
+		`{"claim":"`+claim+`","complete":true}`)
+	require.Equal(t, http.StatusConflict, w.Code)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "uploading", got.Status)
+	claimRoom(t, e, "r1") // the reservation is free
+}
+
 func TestClientMediaPublishRejectsAStaleGeneration(t *testing.T) {
 	store := newTestStore(t)
 	addUploadingRoom(t, store, "r1")
@@ -213,13 +260,26 @@ func TestClientMediaPublishRejectsAStaleGeneration(t *testing.T) {
 func TestClientMediaCompleteReleasesTheClaim(t *testing.T) {
 	store := newTestStore(t)
 	addUploadingRoom(t, store, "r1")
-	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
+	bucket := objectstore.NewFake()
+	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
+	// A complete run that actually produced playable media.
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_1.mp4",
+		strings.NewReader("i"), 1, media.ClientInitContentType, media.ClientObjectCacheControl))
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_1_1.m4s",
+		strings.NewReader("s"), 1, media.ClientSegmentContentType, media.ClientObjectCacheControl))
+	playlist := "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"cinit_1.mp4\"\n#EXTINF:4.0,\ncs_1_1.m4s\n#EXT-X-ENDLIST\n"
 	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
-		`{"claim":"`+claim+`","complete":true}`)
+		`{"claim":"`+claim+`","confirm":["cinit_1.mp4","cs_1_1.m4s"],`+
+			`"playlists":{"client_stream_1.m3u8":`+strconvQuote(playlist)+`},"complete":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// The reservation is gone: a fresh claim (or a tus upload) may take over.
-	claimRoom(t, e, "r1")
+	// The room is ready and the reservation is gone.
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
+	held, err := store.UploadID(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, held)
 }

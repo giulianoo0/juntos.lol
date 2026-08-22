@@ -63,6 +63,7 @@ vi.mock('./convert', () => ({
 const clientPipeline = vi.hoisted(() => ({
   planClientRemux: vi.fn().mockResolvedValue(null),
   runClientRemux: vi.fn().mockResolvedValue(undefined),
+  RoomMovedOnError: class RoomMovedOnError extends Error {},
 }))
 vi.mock('./pipeline/clientMedia', () => clientPipeline)
 
@@ -122,6 +123,17 @@ describe('upload registry', () => {
     // The room is exactly as it was, and tus carries it from zero.
     await vi.waitFor(() => { if (FakeUppy.instances.length === 0) throw new Error('tus not started yet') })
     expect(FakeUppy.instances[0].upload).toHaveBeenCalledOnce()
+  })
+
+  it('does not fall back when the room was swapped under the run', async () => {
+    clientPipeline.planClientRemux.mockResolvedValueOnce({ input: {}, audioTracks: [], durationSeconds: 60 })
+    clientPipeline.runClientRemux.mockRejectedValueOnce(new clientPipeline.RoomMovedOnError('swapped'))
+
+    await createRoomAndUpload(new File(['video'], 'movie.mkv'), 'giuli')
+    await vi.waitFor(() => new Promise((resolve) => setTimeout(resolve, 20)))
+
+    // Re-uploading the old file would race the new source's upload.
+    expect(FakeUppy.instances).toHaveLength(0)
   })
 
   it('resolves with the room id before the upload completes', async () => {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -110,15 +111,18 @@ func (r *R2) Stat(ctx context.Context, key string) (int64, error) {
 	return info.Size, nil
 }
 
-// PresignPut signs a PUT for key that a browser can use directly, with the
-// content type and cache control pinned into the signature: the client must
-// send exactly these headers or the bucket refuses the write, which is what
-// keeps immutable caching honest on objects the server never touches.
+// PresignPut signs a PUT for key that a browser can use directly. Content
+// type, cache control and — crucially — the exact byte length are pinned into
+// the signature: the client's request must carry all three or the bucket
+// refuses the write. Signing Content-Length is what bounds the upload; a
+// browser's fetch sets that header from the body it sends, so the body cannot
+// be larger (or smaller) than the size the presign was charged for.
 func (r *R2) PresignPut(ctx context.Context, key, contentType, cacheControl string,
-	expiry time.Duration) (string, http.Header, error) {
+	size int64, expiry time.Duration) (string, http.Header, error) {
 	headers := http.Header{
-		"Content-Type":  []string{contentType},
-		"Cache-Control": []string{cacheControl},
+		"Content-Type":   []string{contentType},
+		"Cache-Control":  []string{cacheControl},
+		"Content-Length": []string{strconv.FormatInt(size, 10)},
 	}
 	signed, err := r.client.PresignHeader(ctx, http.MethodPut, r.bucket, key, expiry, url.Values{}, headers)
 	if err != nil {

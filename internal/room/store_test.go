@@ -3,6 +3,7 @@ package room
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -46,6 +47,54 @@ func TestSetChaptersRoundTripsAndSwapClearsThem(t *testing.T) {
 	got, err = s.Get(t.Context(), "abc")
 	require.NoError(t, err)
 	require.Empty(t, got.Chapters)
+}
+
+func TestReclaimStaleClientClaims(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "stale", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "live", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	require.NoError(t, s.ReserveUpload(t.Context(), "stale", "client:aaa", now))
+	require.NoError(t, s.ReserveUpload(t.Context(), "live", "client:bbb", now))
+	// The stale one heartbeat is old; the live one is fresh.
+	require.NoError(t, s.mutateRoom(t.Context(), "stale", false, "client_media_touched",
+		strconv.FormatInt(now.Add(-10*time.Minute).UnixMilli(), 10)))
+	require.NoError(t, s.TouchClientClaim(t.Context(), "live"))
+
+	freed, err := s.ReclaimStaleClientClaims(t.Context(), 5*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, 1, freed)
+
+	// The stale room can be claimed again; the live one is still held.
+	staleID, err := s.UploadID(t.Context(), "stale")
+	require.NoError(t, err)
+	require.Empty(t, staleID)
+	liveID, err := s.UploadID(t.Context(), "live")
+	require.NoError(t, err)
+	require.Equal(t, "client:bbb", liveID)
+}
+
+func TestAddClientMediaBytesRefusesARoomWithoutAClaim(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "r1", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+
+	// No claim held: the charge must not recreate a bare hash.
+	_, err := s.AddClientMediaBytes(t.Context(), "r1", 100)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	require.NoError(t, s.ReserveUpload(t.Context(), "r1", "client:aaa", now))
+	total, err := s.AddClientMediaBytes(t.Context(), "r1", 100)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), total)
 }
 
 func TestSetErrorPersistsStatusAndMessage(t *testing.T) {

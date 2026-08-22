@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,10 +48,11 @@ func (f *Fake) Stat(_ context.Context, key string) (int64, error) {
 // PresignPut mirrors R2.PresignPut with an inert URL: httpapi tests exercise
 // the shape of the response, never the bucket's signature math.
 func (f *Fake) PresignPut(_ context.Context, key, contentType, cacheControl string,
-	_ time.Duration) (string, http.Header, error) {
+	size int64, _ time.Duration) (string, http.Header, error) {
 	return "https://fake.bucket.invalid/" + key, http.Header{
-		"Content-Type":  []string{contentType},
-		"Cache-Control": []string{cacheControl},
+		"Content-Type":   []string{contentType},
+		"Cache-Control":  []string{cacheControl},
+		"Content-Length": []string{strconv.FormatInt(size, 10)},
 	}, nil
 }
 

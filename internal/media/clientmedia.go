@@ -16,9 +16,9 @@ const (
 	// ClientSegmentContentType and friends mirror what the publisher records
 	// on its own uploads, so client-produced media is indistinguishable at
 	// the edge.
-	ClientSegmentContentType  = "video/iso.segment"
-	ClientInitContentType     = "video/mp4"
-	ClientObjectCacheControl  = "public, max-age=31536000, immutable"
+	ClientSegmentContentType = "video/iso.segment"
+	ClientInitContentType    = "video/mp4"
+	ClientObjectCacheControl = "public, max-age=31536000, immutable"
 	// MaxClientPlaylistBytes bounds one submitted playlist. The largest real
 	// playlist — a two-hour film in four-second segments — is under 100 KB.
 	MaxClientPlaylistBytes = 512 << 10
@@ -54,28 +54,135 @@ func ValidClientPlaylistName(name string) bool {
 	return clientPlaylistName.MatchString(name)
 }
 
-// ValidateClientMaster checks a client master playlist: every URI line must
-// name a playlist the same submission (or an earlier one) is allowed to own.
-// Tags pass through untouched — the client authored this ladder and the
-// server has nothing smarter to say about its BANDWIDTH numbers.
-func ValidateClientMaster(body []byte, playlistKnown func(name string) bool) bool {
-	if !isMasterPlaylist(body) {
-		return false
+// clientMediaTagAllowed is the set of playlist tags a client may submit. A
+// tag outside it is refused rather than copied through, so an attacker cannot
+// smuggle EXT-X-KEY (an arbitrary decryption URL every viewer would fetch),
+// EXT-X-DATERANGE (X-ASSET-URI), EXT-X-SESSION-DATA, or any future URI-bearing
+// tag into a playlist the server signs off on and serves. The list covers
+// exactly what mediabunny's CMAF/HLS muxer emits.
+var clientMediaTagAllowed = map[string]struct{}{
+	"#EXTM3U":                       {},
+	"#EXT-X-VERSION":                {},
+	"#EXT-X-TARGETDURATION":         {},
+	"#EXT-X-MEDIA-SEQUENCE":         {},
+	"#EXT-X-PLAYLIST-TYPE":          {},
+	"#EXT-X-INDEPENDENT-SEGMENTS":   {},
+	"#EXT-X-START":                  {},
+	"#EXT-X-MAP":                    {},
+	"#EXTINF":                       {},
+	"#EXT-X-PROGRAM-DATE-TIME":      {},
+	"#EXT-X-DISCONTINUITY":          {},
+	"#EXT-X-DISCONTINUITY-SEQUENCE": {},
+	"#EXT-X-GAP":                    {},
+	"#EXT-X-BITRATE":                {},
+	"#EXT-X-ENDLIST":                {},
+}
+
+// tagName reads the tag off a playlist line: everything up to the first ':',
+// or the whole line for a valueless tag.
+func tagName(line string) string {
+	if name, _, found := strings.Cut(line, ":"); found {
+		return name
 	}
+	return line
+}
+
+// SanitizeClientMediaPlaylist rejects a client media playlist that carries any
+// tag outside the allowlist, or a URI attribute on any tag other than
+// EXT-X-MAP (the one the server rewrites). Bare segment and playlist lines
+// are the caller's to validate against the published set; this guards the
+// tag lines the render step would otherwise copy verbatim.
+func SanitizeClientMediaPlaylist(body []byte) bool {
 	for line := range strings.SplitSeq(string(body), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			// EXT-X-MEDIA carries its playlist in a URI attribute.
-			if uri, ok := mapURI(trimmed); ok && !playlistKnown(uri) {
-				return false
-			}
+		if trimmed == "" || !strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if !playlistKnown(trimmed) {
+		name := tagName(trimmed)
+		if _, ok := clientMediaTagAllowed[name]; !ok {
+			return false
+		}
+		// Only EXT-X-MAP may carry a URI, and exactly one: a second URI= on
+		// the same tag is the duplicate-key trick a lenient parser resolves to
+		// the attacker's origin, and any URI on any other tag is a smuggled
+		// fetch.
+		if uris := strings.Count(trimmed, "URI="); uris > 0 && (name != "#EXT-X-MAP" || uris > 1) {
 			return false
 		}
 	}
 	return true
+}
+
+// ClientMasterVerdict is how a submitted master is judged: structurally sound
+// or not, and — if sound — whether every playlist it names is available yet.
+type ClientMasterVerdict int
+
+const (
+	// ClientMasterInvalid: a disallowed tag, a smuggled URI, or a name
+	// outside the grammar. A 400, and the run should stop.
+	ClientMasterInvalid ClientMasterVerdict = iota
+	// ClientMasterEarly: sound, but it names a playlist that has no confirmed
+	// segments yet. Skip it this round and accept it once the variant lands —
+	// this is the state every run starts in, not an error.
+	ClientMasterEarly
+	// ClientMasterReady: sound and every named playlist is available.
+	ClientMasterReady
+)
+
+// JudgeClientMaster checks a client master playlist: only the master's own
+// allowlisted tags, every URI (bare line or attribute) inside the client
+// name grammar, and never more than one URI on a line — a second URI= on the
+// same tag is how a duplicate-key parser is tricked into resolving an
+// attacker's origin. `available` reports whether a validly-named playlist has
+// landed; a master naming a not-yet-available one is early, not invalid.
+func JudgeClientMaster(body []byte, available func(name string) bool) ClientMasterVerdict {
+	if !isMasterPlaylist(body) {
+		return ClientMasterInvalid
+	}
+	ready := true
+	for line := range strings.SplitSeq(string(body), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "#") {
+			if !clientPlaylistName.MatchString(trimmed) {
+				return ClientMasterInvalid
+			}
+			if !available(trimmed) {
+				ready = false
+			}
+			continue
+		}
+		if _, ok := clientMasterTagAllowed[tagName(trimmed)]; !ok {
+			return ClientMasterInvalid
+		}
+		if strings.Count(trimmed, "URI=") > 1 {
+			return ClientMasterInvalid
+		}
+		if uri, ok := mapURI(trimmed); ok {
+			if !clientPlaylistName.MatchString(uri) {
+				return ClientMasterInvalid
+			}
+			if !available(uri) {
+				ready = false
+			}
+		}
+	}
+	if !ready {
+		return ClientMasterEarly
+	}
+	return ClientMasterReady
+}
+
+// clientMasterTagAllowed is what a client master playlist may contain.
+var clientMasterTagAllowed = map[string]struct{}{
+	"#EXTM3U":                     {},
+	"#EXT-X-VERSION":              {},
+	"#EXT-X-INDEPENDENT-SEGMENTS": {},
+	"#EXT-X-STREAM-INF":           {},
+	"#EXT-X-MEDIA":                {},
+	"#EXT-X-I-FRAME-STREAM-INF":   {},
 }
 
 // RenderClientPlaylist rewrites a client media playlist exactly the way the

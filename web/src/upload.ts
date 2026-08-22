@@ -227,6 +227,21 @@ export function startRoomUpload(
   uploadFile: File,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
+  // The progress entry is registered synchronously, before the client/tus
+  // decision: Room.tsx subscribes once on mount, and deferring the entry
+  // behind the dynamic import would show no progress for either path.
+  const entry = createEntry(uploadFile.size, startBytes)
+  uploads.set(roomID, entry)
+  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+
+  const fallBackToTus = () => {
+    // The registry entry is replaced by uploadFileToRoom's own; drop this one
+    // without firing its done-listener, so nobody hears "done" before tus has
+    // sent a byte.
+    if (uploads.get(roomID) === entry) uploads.delete(roomID)
+    uploadFileToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, uploadFile, onProgress)
+  }
+
   void (async () => {
     let pipeline: typeof import('./pipeline/clientMedia') | null = null
     let plan: Awaited<ReturnType<typeof import('./pipeline/clientMedia')['planClientRemux']>> = null
@@ -239,13 +254,10 @@ export function startRoomUpload(
       plan = null
     }
     if (!pipeline || !plan) {
-      uploadFileToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, uploadFile, onProgress)
+      fallBackToTus()
       return
     }
 
-    const entry = createEntry(uploadFile.size, startBytes)
-    uploads.set(roomID, entry)
-    if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
     // Server-side extraction never runs in client mode, so the browser's own
     // subtitle pass is the only one; it already publishes progressively.
     void extractAndUploadSubtitles(uploadFile, roomID, mediaGeneration)
@@ -259,11 +271,16 @@ export function startRoomUpload(
       })
       finishEntry(roomID, entry, null, () => {})
     } catch (error) {
-      // The claim was released on the way out; the room is exactly as it
-      // was, and tus carries it from zero.
+      if (error instanceof pipeline.RoomMovedOnError) {
+        // The controller swapped the source; another upload owns the room now.
+        // Falling back would re-upload the old file and race it.
+        if (uploads.get(roomID) === entry) uploads.delete(roomID)
+        return
+      }
+      // The run failed and released its claim; the room is free for tus to
+      // carry the same file from zero.
       console.warn('client media pipeline failed; falling back to upload', error)
-      finishEntry(roomID, entry, null, () => {})
-      uploadFileToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, uploadFile, onProgress)
+      fallBackToTus()
     }
   })()
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -177,7 +178,7 @@ func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
 func (s *Store) ReleaseUpload(ctx context.Context, roomID, uploadID string) error {
 	_, err := s.rdb.Eval(ctx, `
 if redis.call('HGET', KEYS[1], 'upload_id') ~= ARGV[1] then return 0 end
-redis.call('HDEL', KEYS[1], 'upload_id')
+redis.call('HDEL', KEYS[1], 'upload_id', 'client_media_touched')
 redis.call('DEL', KEYS[2])
 return 1
 `, []string{roomKey(roomID), uploadKey(roomID)}, uploadID).Result()
@@ -350,12 +351,79 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 // budget and returns the new total. The budget is what stands in for the tus
 // size limit on presigned uploads the server never relays: every presign is
 // charged for its declared size before the URL is handed out.
+//
+// The charge only lands on a room that still holds a client claim and has not
+// expired: without that guard a sweep landing between the authorization and
+// the HIncrBy would recreate the room hash as a TTL-less key that no longer
+// sits in rooms:by_expiry and is never swept again.
 func (s *Store) AddClientMediaBytes(ctx context.Context, id string, delta int64) (int64, error) {
-	total, err := s.rdb.HIncrBy(ctx, roomKey(id), "client_media_bytes", delta).Result()
+	result, err := s.rdb.Eval(ctx, `
+if not redis.call('EXISTS', KEYS[1]) or not redis.call('HGET', KEYS[1], 'upload_id') then return false end
+redis.call('HSET', KEYS[1], 'client_media_touched', ARGV[2])
+return redis.call('HINCRBY', KEYS[1], 'client_media_bytes', ARGV[1])
+`, []string{roomKey(id)}, delta, strconv.FormatInt(time.Now().UnixMilli(), 10)).Result()
+	if errors.Is(err, redis.Nil) {
+		// The Lua returned false — no room, or no claim held.
+		return 0, ErrNotFound
+	}
 	if err != nil {
 		return 0, fmt.Errorf("charge client media bytes: %w", err)
 	}
+	total, ok := result.(int64)
+	if !ok {
+		return 0, ErrNotFound
+	}
 	return total, nil
+}
+
+// TouchClientClaim refreshes the heartbeat on a room's client claim, so the
+// sweeper can tell a live remux from a tab that died holding the room.
+func (s *Store) TouchClientClaim(ctx context.Context, id string) error {
+	return s.mutateRoom(ctx, id, false, "client_media_touched",
+		strconv.FormatInt(time.Now().UnixMilli(), 10))
+}
+
+// ReclaimStaleClientClaims releases the claim on every room whose client
+// media heartbeat is older than idleFor, and reports how many it freed. A
+// client claim leaves no file behind the way a tus upload does, so the file
+// sweep cannot reach it; this is its reclaim, run on the same tick.
+func (s *Store) ReclaimStaleClientClaims(ctx context.Context, idleFor time.Duration) (int, error) {
+	cutoff := time.Now().Add(-idleFor).UnixMilli()
+	freed := 0
+	var cursor uint64
+	for {
+		keys, next, err := s.rdb.Scan(ctx, cursor, "room:*", 200).Result()
+		if err != nil {
+			return freed, fmt.Errorf("scan for stale client claims: %w", err)
+		}
+		for _, key := range keys {
+			if strings.Count(key, ":") != 1 {
+				continue // room:{id}:members and friends, not the room hash
+			}
+			fields, err := s.rdb.HMGet(ctx, key, "upload_id", "client_media_touched").Result()
+			if err != nil || len(fields) != 2 {
+				continue
+			}
+			uploadID, _ := fields[0].(string)
+			touched, _ := fields[1].(string)
+			if !strings.HasPrefix(uploadID, "client:") || touched == "" {
+				continue
+			}
+			at, err := strconv.ParseInt(touched, 10, 64)
+			if err != nil || at >= cutoff {
+				continue
+			}
+			id := strings.TrimPrefix(key, "room:")
+			if err := s.ReleaseUpload(ctx, id, uploadID); err == nil {
+				freed++
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return freed, nil
 }
 
 // SetChapters stores the source's authored chapter spans.
@@ -440,7 +508,7 @@ redis.call('HSET', KEYS[1],
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
-  'client_media_bytes', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
+  'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

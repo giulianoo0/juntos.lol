@@ -54,7 +54,7 @@ const (
 // the bytes back.
 type ClientMediaBucket interface {
 	Stat(ctx context.Context, key string) (int64, error)
-	PresignPut(ctx context.Context, key, contentType, cacheControl string, expiry time.Duration) (string, http.Header, error)
+	PresignPut(ctx context.Context, key, contentType, cacheControl string, size int64, expiry time.Duration) (string, http.Header, error)
 }
 
 // ClientMediaHooks tells connected clients what the acceptance step changed.
@@ -159,10 +159,10 @@ func presignClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			types[i] = contentType
 			declared += object.Size
 		}
-		// The budget is charged for what the client *declares*; a presigned
-		// PUT carries no enforced length, so honesty about size is verified
-		// later by the acceptance HEADs, and dishonesty about totals is what
-		// this ceiling catches.
+		// The budget is charged for what the client declares, and the
+		// declaration is not a promise but a constraint: the presign signs
+		// the exact Content-Length below, so the bucket refuses any PUT whose
+		// body is not that size. Declared bytes are therefore real bytes.
 		total, err := store.AddClientMediaBytes(c.Request.Context(), roomID, declared)
 		if err != nil {
 			c.Status(http.StatusInternalServerError)
@@ -177,7 +177,7 @@ func presignClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 		for i, object := range req.Objects {
 			key := media.HLSObjectKey(roomID, storedRoom.MediaGeneration, object.Name)
 			url, headers, err := bucket.PresignPut(c.Request.Context(), key, types[i],
-				media.ClientObjectCacheControl, presignExpiry)
+				media.ClientObjectCacheControl, object.Size, presignExpiry)
 			if err != nil {
 				slog.ErrorContext(c.Request.Context(), "presign client media failed",
 					"room_id", roomID, "name", object.Name, "error", err)
@@ -317,16 +317,30 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 				}
 			}
 		}
+		roomReady := becameReady || storedRoom.Status == "ready"
+		// Every publish is a heartbeat: a run still uploading has not gone
+		// stale, whatever the sweeper's clock says.
+		if !req.Complete {
+			_ = store.TouchClientClaim(ctx, roomID)
+		}
 		if req.Complete {
+			// The claim is released either way, so the fallback tus upload can
+			// take the room. But a "complete" run that never made the room
+			// playable failed, and the client must be told so it falls back
+			// rather than leaving a room stuck in "uploading" with no media.
 			if err := store.ReleaseUpload(ctx, roomID, req.Claim); err != nil {
 				slog.WarnContext(ctx, "release client media claim failed", "room_id", roomID, "error", err)
+			}
+			if !roomReady {
+				c.JSON(http.StatusConflict, gin.H{"error": "no_playable_media"})
+				return
 			}
 			if hooks.NotifyRoomUpdated != nil {
 				hooks.NotifyRoomUpdated(roomID)
 			}
 			slog.InfoContext(ctx, "client media complete", "room_id", roomID)
 		}
-		c.JSON(http.StatusOK, gin.H{"confirmed": confirmed, "ready": becameReady || storedRoom.Status == "ready"})
+		c.JSON(http.StatusOK, gin.H{"confirmed": confirmed, "ready": roomReady})
 	}
 }
 
@@ -353,7 +367,7 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		if name == "master.m3u8" {
 			continue // validated after every media playlist is known
 		}
-		if media.IsMasterPlaylist([]byte(body)) {
+		if media.IsMasterPlaylist([]byte(body)) || !media.SanitizeClientMediaPlaylist([]byte(body)) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist", "name": name})
 			return nil, false, false
 		}
@@ -368,18 +382,24 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		}
 	}
 	if master, submitted := playlists["master.m3u8"]; submitted {
-		known := func(name string) bool {
+		available := func(name string) bool {
 			if _, ok := rendered[name]; ok {
 				return true
 			}
 			has, err := store.HasPlaylist(ctx, roomID, name)
 			return err == nil && has
 		}
-		if !media.ValidateClientMaster([]byte(master), known) {
+		switch media.JudgeClientMaster([]byte(master), available) {
+		case media.ClientMasterInvalid:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist", "name": "master.m3u8"})
 			return nil, false, false
+		case media.ClientMasterReady:
+			rendered["master.m3u8"] = master
+		case media.ClientMasterEarly:
+			// Sound, but a variant it names has no confirmed segments yet.
+			// Every run starts here; publish the master once the variant
+			// lands, and never fail the round for it.
 		}
-		rendered["master.m3u8"] = master
 	}
 	return rendered, playable, true
 }

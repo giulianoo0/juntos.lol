@@ -35,6 +35,11 @@ func StartSweeper(ctx context.Context, store *Store, dataDir string, bucket Medi
 		case <-ticker.C:
 			SweepOnce(ctx, store, dataDir, bucket)
 			SweepStaleUploads(ctx, store, dataDir, uploadIdle)
+			if freed, err := store.ReclaimStaleClientClaims(ctx, uploadIdle); err != nil {
+				slog.ErrorContext(ctx, "sweeper: reclaim stale client claims", "err", err)
+			} else if freed > 0 {
+				slog.InfoContext(ctx, "sweeper: reclaimed stale client claims", "count", freed)
+			}
 		}
 	}
 }
