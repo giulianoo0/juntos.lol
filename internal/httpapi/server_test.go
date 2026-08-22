@@ -51,3 +51,49 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 		})
 	}
 }
+
+func newServerWithWebDir(t *testing.T, webDir string) http.Handler {
+	t.Helper()
+	cfg := testCfg(t)
+	cfg.WebDir = webDir
+	return NewServer(cfg, newTestStore(t), nil)
+}
+
+func TestDocsPathDoesNotFallBackToTheApp(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "docs", "index.html"), []byte("<h1>docs</h1>"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>app</h1>"), 0o644))
+	server := newServerWithWebDir(t, dir)
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/docs/", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "docs")
+
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/docs/nope", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code, "a wrong docs address must not open the app shell")
+}
+
+func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets", "plugin-worker"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "plugin-worker", "abc.js"), []byte("//"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "app-abc.js"), []byte("//"), 0o644))
+	server := newServerWithWebDir(t, dir)
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/plugin-worker/abc.js", nil))
+	policy := rec.Header().Get("Content-Security-Policy")
+	require.Contains(t, policy, "default-src 'none'")
+	// blob: is what lets the plugin's own module be imported at all; without
+	// it the sandbox does not run. https must not be there.
+	require.Contains(t, policy, "script-src blob:")
+	require.NotContains(t, policy, "https:")
+
+	// And the app itself must not inherit it, or nothing would reach /api.
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil))
+	require.Empty(t, rec.Header().Get("Content-Security-Policy"))
+}

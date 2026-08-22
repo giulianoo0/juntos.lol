@@ -121,6 +121,22 @@ func privacyHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
+		// The plugin worker gets a policy of its own, and it is the only layer
+		// of that sandbox plugin code cannot reach around from the inside.
+		// `default-src 'none'` removes every network API from that context —
+		// including any the bootstrap's allowlist missed — and closes
+		// `import('https://…')`, which fetches the url before rejecting it and
+		// is therefore an exfiltration channel nothing inside a worker can
+		// take away. `script-src blob:` is the one exception it needs to exist
+		// at all: the plugin's own module is imported from a blob url. What it
+		// does not allow is https or 'self'.
+		//
+		// Matched by directory, not by filename prefix: vite is configured to
+		// emit every chunk of the worker graph in here, so an import added to
+		// worker.ts cannot split a chunk out to a path with no policy.
+		if strings.HasPrefix(c.Request.URL.Path, "/assets/plugin-worker/") {
+			c.Header("Content-Security-Policy", "default-src 'none'; script-src blob:")
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") {
 			c.Header("Cache-Control", "no-store")
 		}
@@ -133,12 +149,16 @@ func registerFrontend(r *gin.Engine, webDir string) {
 		return
 	}
 	r.Static("/assets", filepath.Join(webDir, "assets"))
+	r.Static("/docs", filepath.Join(webDir, "docs"))
 	for _, name := range []string{"favicon.svg", "icons.svg", "social-card.png", "oembed.json"} {
 		r.StaticFile("/"+name, filepath.Join(webDir, name))
 	}
 	r.NoRoute(func(c *gin.Context) {
+		// A documentation address that is wrong should say it is wrong, not
+		// open the application.
 		if c.Request.Method != http.MethodGet || strings.HasPrefix(c.Request.URL.Path, "/api/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/media/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") {
+			strings.HasPrefix(c.Request.URL.Path, "/media/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/docs/") {
 			c.Status(http.StatusNotFound)
 			return
 		}
