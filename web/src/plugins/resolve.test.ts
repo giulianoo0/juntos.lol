@@ -32,7 +32,17 @@ describe('resolveStreams', () => {
 
   it('reports an empty list when the plugins ran and found nothing', async () => {
     const result = await resolveStreams(target, { load: async () => [plugin('a')], run: async () => [] })
-    expect(result).toEqual({ kind: 'streams', streams: [] })
+    expect(result).toEqual({ kind: 'streams', streams: [], failed: [] })
+  })
+
+  it('names the plugins that broke, which is not the same as finding nothing', async () => {
+    const result = await resolveStreams(target, {
+      load: async () => [plugin('a'), plugin('b')],
+      run: async () => { throw new Error('timeout') },
+    })
+    if (result.kind !== 'streams') throw new Error('expected streams')
+    expect(result.streams).toEqual([])
+    expect(result.failed).toEqual(['A', 'B'])
   })
 
   it('joins what two plugins found and marks the provenance of each', async () => {
@@ -57,6 +67,7 @@ describe('resolveStreams', () => {
     if (result.kind !== 'streams') throw new Error('expected streams')
     expect(result.streams).toHaveLength(1)
     expect(result.streams[0].pluginId).toBe('good')
+    expect(result.failed).toEqual(['BAD'])
   })
 
   it('runs only the plugins that are switched on', async () => {

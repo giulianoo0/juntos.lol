@@ -158,6 +158,22 @@ describe('runPlugin', () => {
     vi.useRealTimers()
   })
 
+  it('ends when the caller aborts, without waiting out the budget', async () => {
+    const worker = fakeWorker()
+    const abort = new AbortController()
+    const promise = runPlugin({ ...base, spawn: worker.spawn, fetchUrl: vi.fn(), signal: abort.signal })
+    abort.abort()
+    await expect(promise).rejects.toMatchObject({ reason: 'aborted' })
+    expect(worker.terminated.value).toBe(true)
+  })
+
+  it('does not even spawn when the signal is already aborted', async () => {
+    const spawn = vi.fn()
+    await expect(runPlugin({ ...base, spawn, fetchUrl: vi.fn(), signal: AbortSignal.abort() }))
+      .rejects.toMatchObject({ reason: 'aborted' })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
   it('surfaces an error the plugin threw', async () => {
     const worker = fakeWorker()
     const promise = runPlugin({ ...base, spawn: worker.spawn, fetchUrl: vi.fn() })

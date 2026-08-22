@@ -142,6 +142,23 @@ export async function fetchGitPlugin(repoUrl: string, deps: InstallDeps = {}): P
   return { source, commit }
 }
 
+/**
+ * Where a dropped file says it updates from, or null when that is nowhere we
+ * can follow.
+ *
+ * `parseManifest` accepts any https address; `canonicalRepoUrl` only knows
+ * GitHub. A plugin declaring a GitLab address is a file with no home we
+ * support — not a file that refuses to install over an optional field.
+ */
+function homeOf(updateUrl: string | null): string | null {
+  if (!updateUrl) return null
+  try {
+    return canonicalRepoUrl(updateUrl)
+  } catch {
+    return null
+  }
+}
+
 export async function buildInstall(source: string, origin: PluginOrigin, deps: InstallDeps = {}): Promise<InstalledPlugin> {
   const read = deps.readManifest ?? readManifestFromSource
   const manifest = await read(source)
@@ -153,7 +170,7 @@ export async function buildInstall(source: string, origin: PluginOrigin, deps: I
   // the locked origin gets compared against, so the two spellings have to be
   // reconciled here or every update from a dropped file is refused.
   const resolved: PluginOrigin = origin.kind === 'file'
-    ? { ...origin, updateUrl: origin.updateUrl ?? (manifest.updateUrl ? canonicalRepoUrl(manifest.updateUrl) : null) }
+    ? { ...origin, updateUrl: origin.updateUrl ?? homeOf(manifest.updateUrl) }
     : { ...origin, updateUrl: canonicalRepoUrl(origin.updateUrl) }
   return {
     // Derived from the resolved origin, so two spellings of one repository

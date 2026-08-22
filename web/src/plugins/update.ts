@@ -19,10 +19,17 @@ export function updateUrlOf(plugin: InstalledPlugin): string | null {
   return plugin.origin.updateUrl
 }
 
-/** Whether two written addresses name the same repository. */
+/**
+ * Whether two written addresses name the same repository.
+ *
+ * The locked address is ours, so it is canonicalised outside the try: if that
+ * throws, the registry is what is broken, and the caller should report a
+ * failure rather than accuse the plugin of redirecting itself.
+ */
 function sameOrigin(declared: string, locked: string): boolean {
+  const home = canonicalRepoUrl(locked)
   try {
-    return canonicalRepoUrl(declared) === canonicalRepoUrl(locked)
+    return canonicalRepoUrl(declared) === home
   } catch {
     // A declared address that is not a repository at all is not this one.
     return false
@@ -53,11 +60,19 @@ export async function updatePlugin(plugin: InstalledPlugin, deps: UpdateDeps = {
 
   try {
     const { source, commit } = await fetchGit(address, deps)
-    const currentCommit = plugin.origin.kind === 'git' ? plugin.origin.commit : ''
-    // A repository that reports no commit falls back to comparing the code.
-    if (commit !== '' && commit === currentCommit) return { kind: 'unchanged' }
+    // The code decides, never the commit. `fetchGitPlugin` reads the file and
+    // the commit in two separate requests, and a push landing between them
+    // pairs the old code with the new sha — a shortcut on the commit would
+    // then call it unchanged and never look at the new version again.
     const sha256 = await sha256Hex(source)
-    if (sha256 === plugin.sha256) return { kind: 'unchanged' }
+    if (sha256 === plugin.sha256) {
+      // Same code, moved commit: record the commit so the next check has an
+      // accurate baseline, but nothing else changed.
+      if (plugin.origin.kind === 'git' && commit !== '' && commit !== plugin.origin.commit) {
+        await save({ ...plugin, origin: { ...plugin.origin, commit } })
+      }
+      return { kind: 'unchanged' }
+    }
 
     const manifest = await readManifest(source)
     // Compared canonically on both sides. `parseManifest` normalises by a
@@ -80,6 +95,11 @@ export async function updatePlugin(plugin: InstalledPlugin, deps: UpdateDeps = {
       manifest,
       source,
       sha256,
+      // Capability the new version stopped asking for stops applying.
+      // Narrowing asks nobody's permission, and leaving a host approved after
+      // the plugin quit declaring it is capability with no owner — `resolve`
+      // runs against this list, not against the manifest.
+      approvedHosts: plugin.approvedHosts.filter((host) => manifest.hosts.includes(host)),
       origin: plugin.origin.kind === 'git' ? { ...plugin.origin, commit } : plugin.origin,
       pendingUpdate: null,
     })

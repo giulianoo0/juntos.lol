@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
-import { X } from 'lucide-react'
+import { Puzzle, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { CatalogBrowser } from './CatalogBrowser'
 import { ProgressiveBlur } from './ProgressiveBlur'
+import { PluginsPanel } from '../plugins/PluginsPanel'
 import { MetaDetails, type DetailsMode, type TitlePick } from './MetaDetails'
 import type { TitleOpen } from './PosterCard'
 
@@ -30,6 +31,7 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
   const t = useT()
   const reduceMotion = useReducedMotion()
   const [details, setDetails] = useState<TitleOpen | null>(focus?.open ?? null)
+  const [pluginsOpen, setPluginsOpen] = useState(false)
 
   // "Ver fontes" on a request card must land here even when the overlay is
   // already open; `focus` is parent state, so its identity only changes when
@@ -65,6 +67,9 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
       <header className="catalog-overlay-head">
         <ProgressiveBlur />
         <h1>{t('catalog.tab')}</h1>
+        <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
+          <Puzzle size={15} aria-hidden="true" />{t('plugins.open')}
+        </button>
         <button type="button" className="dialog-close" aria-label={t('details.close')} onClick={onClose}>
           <X size={16} aria-hidden="true" />
         </button>
@@ -74,6 +79,7 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
       </div>
       {details ? (
         <MetaDetails
+          onOpenPlugins={() => setPluginsOpen(true)}
           key={`${details.meta.type}:${details.meta.id}`}
           open={details}
           mode={mode}
@@ -85,6 +91,8 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
           onRequestTitle={(episode) => onRequestTitle(details, episode)}
         />
       ) : null}
+
+      <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
     </motion.div>
   )
 }

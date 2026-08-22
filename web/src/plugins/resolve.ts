@@ -5,15 +5,24 @@ import { listPlugins, type InstalledPlugin } from './store'
 
 export type ResolveResult =
   | { kind: 'no-plugins' }
-  | { kind: 'streams'; streams: CatalogStream[] }
+  /**
+   * `failed` names the plugins that ran and did not finish — out of time,
+   * blocked by the policy, or thrown. Without it, "nobody found anything" and
+   * "everybody broke" are the same sentence, and one of them tells you to go
+   * install more plugins for no reason.
+   */
+  | { kind: 'streams'; streams: CatalogStream[]; failed: string[] }
 
 export interface ResolveDeps {
   load?: () => Promise<InstalledPlugin[]>
-  run?: (plugin: InstalledPlugin, target: StreamTarget) => Promise<unknown>
+  run?: (plugin: InstalledPlugin, target: StreamTarget, signal?: AbortSignal) => Promise<unknown>
+  /** Ends every worker this started — a panel closing, a title changing. */
+  signal?: AbortSignal
 }
 
-function runInWorker(plugin: InstalledPlugin, target: StreamTarget): Promise<unknown> {
+function runInWorker(plugin: InstalledPlugin, target: StreamTarget, signal?: AbortSignal): Promise<unknown> {
   return runPlugin({
+    signal,
     // The hosts agreed to at install, never the ones the manifest currently
     // claims. A held update leaves those wider, and running against them
     // would grant exactly the capability the hold exists to withhold.
@@ -42,8 +51,11 @@ export async function resolveStreams(target: StreamTarget, deps: ResolveDeps = {
   if (enabled.length === 0) return { kind: 'no-plugins' }
 
   const settled = await Promise.allSettled(enabled.map(async (plugin) => (
-    parseStreams({ streams: await run(plugin, target) }, plugin.id, plugin.manifest.name)
+    parseStreams({ streams: await run(plugin, target, deps.signal) }, plugin.id, plugin.manifest.name)
   )))
   const streams = settled.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-  return { kind: 'streams', streams }
+  const failed = enabled
+    .filter((_, index) => settled[index].status === 'rejected')
+    .map((plugin) => plugin.manifest.name)
+  return { kind: 'streams', streams, failed }
 }

@@ -42,9 +42,11 @@ export interface RunPluginOptions {
   fetchUrl(url: URL, signal: AbortSignal): Promise<FetchResult>
   timeoutMs?: number
   maxRequests?: number
+  /** Ends the run from outside — a panel closing, a title changing. */
+  signal?: AbortSignal
 }
 
-export type RunFailure = 'timeout' | 'too-many-requests' | 'plugin-error'
+export type RunFailure = 'timeout' | 'too-many-requests' | 'plugin-error' | 'aborted'
 
 export class PluginRunError extends Error {
   readonly reason: RunFailure
@@ -86,6 +88,7 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
       if (settled) return
       settled = true
       window.clearTimeout(timer)
+      options.signal?.removeEventListener('abort', onAbort)
       inflight.abort()
       handle?.terminate()
       run()
@@ -94,6 +97,16 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
     const timer = window.setTimeout(() => {
       finish(() => reject(new PluginRunError('timeout', `plugin exceeded ${timeoutMs}ms`)))
     }, timeoutMs)
+
+    // Without this, closing a panel or picking another episode leaves the
+    // worker running out its whole budget, and the requests it started
+    // running with it. Six clicks in ten seconds is six live rounds.
+    const onAbort = () => finish(() => reject(new PluginRunError('aborted', 'plugin run was cancelled')))
+    if (options.signal?.aborted) {
+      onAbort()
+      return
+    }
+    options.signal?.addEventListener('abort', onAbort, { once: true })
 
     const onMessage = (message: WorkerRequest) => {
       if (settled) return

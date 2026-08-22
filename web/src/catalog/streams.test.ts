@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildMagnet, parseStreams, parseStreamTitle, streamKey, streamResolution } from './streams'
+import { buildMagnet, isPlayable, parseStreams, parseStreamTitle, streamKey, streamResolution, type CatalogStream } from './streams'
 
 describe('parseStreamTitle', () => {
   it('splits the release name from the emoji stats line', () => {
@@ -116,15 +116,57 @@ describe('buildMagnet', () => {
 })
 
 describe('streamKey', () => {
+  const of = (location: CatalogStream['location'], pluginId = 'p'): CatalogStream => ({
+    quality: '', resolution: 'sd', label: '', seeders: null, size: '', source: '',
+    languages: [], location, pluginId, pluginName: '',
+  })
+
   it('separates two files of the same torrent', () => {
-    const at = (fileIdx: number) => streamKey({
-      kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx, fileName: '',
-    })
+    const at = (fileIdx: number) => streamKey(of({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx, fileName: '' }))
     expect(at(0)).not.toBe(at(1))
   })
 
   it('separates a torrent from a url', () => {
-    expect(streamKey({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' }))
-      .not.toBe(streamKey({ kind: 'url', url: 'https://cdn.example.com/m.mkv' }))
+    expect(streamKey(of({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' })))
+      .not.toBe(streamKey(of({ kind: 'url', url: 'https://cdn.example.com/m.mkv' })))
+  })
+
+  it('separates the same torrent found by two different plugins', () => {
+    // Having more than one plugin is the point, and two of them returning the
+    // same release is the normal case, not a collision to ignore.
+    const location = { kind: 'torrent' as const, infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' }
+    expect(streamKey(of(location, 'a'))).not.toBe(streamKey(of(location, 'b')))
+  })
+})
+
+describe('isPlayable', () => {
+  it('says no to a url source, which this build has nowhere to send', () => {
+    const [torrent] = parseStreams({ streams: [{ infoHash: 'a'.repeat(40) }] }, 'p')
+    const [url] = parseStreams({ streams: [{ url: 'https://cdn.example.com/m.mkv' }] }, 'p')
+    expect(isPlayable(torrent)).toBe(true)
+    expect(isPlayable(url)).toBe(false)
+  })
+})
+
+describe('readLocation, through parseStreams', () => {
+  it('refuses a url carrying credentials', () => {
+    // These would have the server send Basic auth to an address a plugin
+    // chose — the same reason the manifest refuses them in updateUrl.
+    expect(parseStreams({ streams: [{ url: 'https://user:pass@cdn.example.com/m.mkv' }] }, 'p')).toEqual([])
+  })
+
+  it('stores the url in the form it checked, not the form it was written in', () => {
+    const [stream] = parseStreams({ streams: [{ url: 'https:\n//cdn.example.com/m.mkv' }] }, 'p')
+    expect(stream.location).toEqual({ kind: 'url', url: 'https://cdn.example.com/m.mkv' })
+  })
+
+  it('stops at a ceiling instead of parsing whatever a plugin sends', () => {
+    const many = Array.from({ length: 600 }, (_, index) => ({ infoHash: index.toString(16).padStart(40, '0') }))
+    expect(parseStreams({ streams: many }, 'p')).toHaveLength(500)
+  })
+
+  it('truncates a title long enough to be a document', () => {
+    const [stream] = parseStreams({ streams: [{ infoHash: 'a'.repeat(40), title: 'x'.repeat(5000) }] }, 'p')
+    expect(stream.label.length).toBeLessThanOrEqual(2000)
   })
 })

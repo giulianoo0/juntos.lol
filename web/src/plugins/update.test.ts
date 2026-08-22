@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { approvePendingUpdate, updateAll, updatePlugin, updateUrlOf } from './update'
-import { deletePlugin, listPlugins, putPlugin, type InstalledPlugin } from './store'
+import { deletePlugin, listPlugins, putPlugin, sha256Hex, type InstalledPlugin } from './store'
+
+// The real digest of the installed source, because updatePlugin compares the
+// code rather than trusting the commit — a fixture with a made-up hash would
+// make "same code" unreachable and hide the branch.
+const OLD_SHA = await sha256Hex('old')
 
 const installed: InstalledPlugin = {
   id: 'torrentio',
   manifest: { id: 'torrentio', name: 'Torrentio', version: '1.0.0', hosts: ['a.com'], updateUrl: 'https://github.com/u/r' },
   source: 'old',
-  sha256: 'old-hash',
+  sha256: OLD_SHA,
   origin: { kind: 'git', updateUrl: 'https://github.com/u/r', commit: 'aaa' },
   approvedHosts: ['a.com'],
   enabled: true,
@@ -42,9 +47,9 @@ describe('updateUrlOf', () => {
 })
 
 describe('updatePlugin', () => {
-  it('does nothing when the commit has not moved', async () => {
+  it('does nothing when the code has not changed', async () => {
     const saved: InstalledPlugin[] = []
-    const d = deps({ commit: 'aaa' }, saved)
+    const d = deps({ source: 'old', commit: 'aaa' }, saved)
     await expect(updatePlugin(installed, d)).resolves.toEqual({ kind: 'unchanged' })
     expect(saved).toHaveLength(0)
   })
@@ -59,19 +64,50 @@ describe('updatePlugin', () => {
 
   it('holds an update that wants a host nobody approved', async () => {
     const saved: InstalledPlugin[] = []
-    const d = deps({ manifest: manifestOf({ hosts: ['a.com', 'tracker.evil.com'] }) }, saved)
-    await expect(updatePlugin(installed, d)).resolves.toEqual({ kind: 'held', newHosts: ['tracker.evil.com'] })
+    // approvedHosts and manifest.hosts deliberately differ, so a version that
+    // compared the manifest against itself would not pass this.
+    const d = deps({ manifest: manifestOf({ hosts: ['a.com', 'b.com', 'tracker.evil.com'] }) }, saved)
+    await expect(updatePlugin({ ...installed, approvedHosts: ['a.com', 'b.com'] }, d))
+      .resolves.toEqual({ kind: 'held', newHosts: ['tracker.evil.com'] })
     expect(saved[0].source).toBe('old')
     expect(saved[0].pendingUpdate?.newHosts).toEqual(['tracker.evil.com'])
+    expect(saved[0].approvedHosts).toEqual(['a.com', 'b.com'])
+  })
+
+  it('does not hold an update that dropped a host, and stops approving it', async () => {
+    // Two approved, one declared: capability shrank, and shrinking asks
+    // nothing of anybody — but it does have to actually take effect, because
+    // resolveStreams runs against approvedHosts and not against the manifest.
+    const saved: InstalledPlugin[] = []
+    const wider = { ...installed, approvedHosts: ['a.com', 'b.com'] }
+    const d = deps({ manifest: manifestOf({ hosts: ['a.com'], version: '2.0.0' }) }, saved)
+    await expect(updatePlugin(wider, d)).resolves.toEqual({ kind: 'applied', version: '2.0.0' })
     expect(saved[0].approvedHosts).toEqual(['a.com'])
   })
 
-  it('does not hold an update that dropped a host', async () => {
-    // Two approved, one declared: capability shrank, and shrinking asks
-    // nothing of anybody.
-    const wider = { ...installed, approvedHosts: ['a.com', 'b.com'] }
-    const d = deps({ manifest: manifestOf({ hosts: ['a.com'], version: '2.0.0' }) })
-    await expect(updatePlugin(wider, d)).resolves.toEqual({ kind: 'applied', version: '2.0.0' })
+  it('accepts an update whose manifest spells the same repository differently', async () => {
+    // GitHub does not distinguish case, and parseManifest keeps the path. A
+    // raw string comparison here would read this as a redirected origin and
+    // refuse a legitimate update for ever.
+    const d = deps({ manifest: manifestOf({ updateUrl: 'https://GitHub.com/U/R.git/', version: '1.3.0' }) })
+    await expect(updatePlugin(installed, d)).resolves.toEqual({ kind: 'applied', version: '1.3.0' })
+  })
+
+  it('looks at the code even when the commit has not moved', async () => {
+    // fetchGitPlugin reads the file and the commit separately; a push between
+    // the two pairs old code with a new sha. Trusting the commit would leave
+    // that version invisible for ever.
+    const saved: InstalledPlugin[] = []
+    const d = deps({ commit: 'aaa', source: 'genuinely new', manifest: manifestOf({ version: '1.4.0' }) }, saved)
+    await expect(updatePlugin(installed, d)).resolves.toEqual({ kind: 'applied', version: '1.4.0' })
+    expect(saved[0].source).toBe('genuinely new')
+  })
+
+  it('records a moved commit even when the code is identical', async () => {
+    const saved: InstalledPlugin[] = []
+    const d = deps({ source: 'old', commit: 'ccc' }, saved)
+    await expect(updatePlugin(installed, d)).resolves.toEqual({ kind: 'unchanged' })
+    expect(saved[0].origin).toEqual({ kind: 'git', updateUrl: 'https://github.com/u/r', commit: 'ccc' })
   })
 
   it('refuses an update that redirects its own update address', async () => {

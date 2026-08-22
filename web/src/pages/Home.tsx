@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { MonitorUp, Upload } from 'lucide-react'
+import { MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
+import { PluginsPanel } from '../plugins/PluginsPanel'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
@@ -86,6 +87,7 @@ export function Home() {
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
   const [manualOpen, setManualOpen] = useState<ManualStep>(false)
+  const [pluginsOpen, setPluginsOpen] = useState(false)
   // The panel is held one beat behind the request so the outgoing step can
   // dissolve before the next one mounts — see useMorphingStep.
   const { shown: shownManual, morphing: morphingManual } = useMorphingStep(manualOpen)
@@ -258,6 +260,9 @@ export function Home() {
         </div>
         <div className="header-end">
           <BuildInfo label={t('home.source')} />
+          <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
+            <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
+          </button>
           <button className="header-upload primary-button" onClick={() => setManualOpen('menu')}>
             <Upload size={15} aria-hidden="true" /><span className="nav-label">{t('home.uploadManually')}</span>
           </button>
@@ -303,6 +308,7 @@ export function Home() {
 
       {detailsOpen ? (
         <MetaDetails
+          onOpenPlugins={() => setPluginsOpen(true)}
           key={`${detailsOpen.meta.type}:${detailsOpen.meta.id}`}
           open={detailsOpen}
           mode="create"
@@ -310,6 +316,8 @@ export function Home() {
           onPickStream={pickStream}
         />
       ) : null}
+
+      <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
 
       {/* One surface that changes what it is asking: the menu grows into the
           drop zone or the magnet picker rather than stacking a second panel

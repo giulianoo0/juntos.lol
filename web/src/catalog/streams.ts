@@ -113,11 +113,24 @@ function readLocation(stream: Record<string, unknown>): StreamLocation | null {
   }
   if (typeof stream.url === 'string') {
     try {
-      if (new URL(stream.url).protocol === 'https:') return { kind: 'url', url: stream.url }
+      const url = new URL(stream.url)
+      // Credentials here would have the server send Basic auth to an address
+      // a plugin chose — the same reason parseManifest refuses them in
+      // updateUrl. And what gets stored is the form that was checked, not
+      // the form that was written: `https:\n//host` parses fine and would
+      // carry the newline all the way to whoever builds the request.
+      if (url.protocol === 'https:' && !url.username && !url.password) {
+        return { kind: 'url', url: url.href }
+      }
     } catch { /* not a url at all */ }
   }
   return null
 }
+
+/** A list nobody scrolls to the end of. */
+const MAX_STREAMS = 500
+/** A release name, not a document. */
+const MAX_TITLE = 2_000
 
 export function parseStreams(payload: unknown, pluginId: string, pluginName = ''): CatalogStream[] {
   if (typeof payload !== 'object' || payload === null) return []
@@ -125,11 +138,14 @@ export function parseStreams(payload: unknown, pluginId: string, pluginName = ''
   if (!Array.isArray(streams)) return []
   const result: CatalogStream[] = []
   for (const value of streams) {
+    // Ten thousand streams is five regexes and an allocation each, on the
+    // main thread, over data a plugin chose.
+    if (result.length >= MAX_STREAMS) break
     if (typeof value !== 'object' || value === null) continue
     const stream = value as Record<string, unknown>
     const location = readLocation(stream)
     if (!location) continue
-    const title = typeof stream.title === 'string' ? stream.title : ''
+    const title = typeof stream.title === 'string' ? stream.title.slice(0, MAX_TITLE) : ''
     const parsed = parseStreamTitle(title)
     const quality = typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : ''
     result.push({
@@ -155,9 +171,28 @@ export function buildMagnet(location: Extract<StreamLocation, { kind: 'torrent' 
   return `magnet:?xt=urn:btih:${location.infoHash}${dn}${trackers}`
 }
 
-/** Identifies one stream among the ones on screen, for React keys. */
-export function streamKey(location: StreamLocation): string {
-  return location.kind === 'torrent'
+/**
+ * Identifies one stream among the ones on screen, for React keys.
+ *
+ * The plugin is part of it: two plugins returning the same torrent is the
+ * normal case — having more than one is the point — and without it they
+ * collide.
+ */
+export function streamKey(stream: CatalogStream): string {
+  const { location } = stream
+  const where = location.kind === 'torrent'
     ? `torrent:${location.infoHash}:${location.fileIdx ?? ''}:${location.fileName}`
     : `url:${location.url}`
+  return `${stream.pluginId}:${where}`
+}
+
+/**
+ * Whether this build can open a source at all.
+ *
+ * A url stream has nowhere to go until the server-side ingest exists. Listing
+ * one as if it were playable and throwing on click is worse than not offering
+ * it — see openCatalogStream, which refuses url streams outright.
+ */
+export function isPlayable(stream: CatalogStream): boolean {
+  return stream.location.kind === 'torrent'
 }

@@ -8,7 +8,7 @@ import { Carousel } from './Carousel'
 import { FadeImg } from './FadeImg'
 import { useT } from '../i18n/useT'
 import { fetchMeta, type MetaDetail, type MetaVideo } from './cinemeta'
-import { streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
+import { isPlayable, streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
 
@@ -63,6 +63,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const [streamsFailed, setStreamsFailed] = useState(false)
   // Distinct from an empty list: nothing is installed, which is fixable.
   const [noPlugins, setNoPlugins] = useState(false)
+  // Named, because "they all broke" is not "they found nothing".
+  const [brokenPlugins, setBrokenPlugins] = useState<string[]>([])
   const [resolutionFilter, setResolutionFilter] = useState<'all' | StreamResolution>('all')
   // A flag emoji, or 'all'. A flag matches releases carrying the language as
   // audio or as subtitles alike — Torrentio lists it either way.
@@ -97,11 +99,15 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
     // throws away, and would make a viewer need a plugin installed, which
     // contradicts the whole design.
     if (!target || mode === 'viewer') return
+    // An AbortController rather than a flag: a flag only stops us listening,
+    // and leaves every worker this started running out its whole budget.
+    const abort = new AbortController()
     let cancelled = false
     setStreams(null)
     setStreamsFailed(false)
     setNoPlugins(false)
-    resolveStreams(target)
+    setBrokenPlugins([])
+    resolveStreams(target, { signal: abort.signal })
       .then((result) => {
         if (cancelled) return
         if (result.kind === 'no-plugins') {
@@ -110,9 +116,13 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
           return
         }
         setStreams(result.streams)
+        setBrokenPlugins(result.failed)
       })
       .catch(() => { if (!cancelled) setStreamsFailed(true) })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      abort.abort()
+    }
   }, [target, mode])
 
   const seasons = useMemo(() => {
@@ -516,6 +526,10 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                     {t('details.openPlugins')}
                   </button>
                 </p>
+              ) : streams.length === 0 && brokenPlugins.length > 0 ? (
+                // Everything that ran, broke. Sending someone to install more
+                // plugins here would be advice for a different problem.
+                <p className="empty-copy">{t('details.pluginsBroke')} {brokenPlugins.join(', ')}</p>
               ) : streams.length === 0 ? (
                 <p className="empty-copy">
                   {t('details.noPluginResolved')}{' '}
@@ -533,10 +547,15 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   animate={{ opacity: 1, filter: 'blur(0px)' }}
                   transition={{ duration: 0.25, ease: REVEAL_EASE }}
                 >
-                  {visibleStreams.slice(0, 30).map((stream, index) => (
+                  {visibleStreams.slice(0, 30).map((stream) => (
                     <button
-                      key={`${streamKey(stream.location)}:${index}`}
+                      key={streamKey(stream)}
                       type="button"
+                      // A url source has nowhere to go until the server-side
+                      // ingest exists. Offering it and throwing on click is
+                      // worse than saying so.
+                      disabled={!isPlayable(stream)}
+                      title={isPlayable(stream) ? undefined : t('details.sourceNotSupported')}
                       onClick={() => onPickStream({
                         stream,
                         target,
