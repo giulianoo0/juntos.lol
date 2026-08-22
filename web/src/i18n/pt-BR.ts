@@ -159,6 +159,17 @@ export const ptBR: Record<string, string> = {
   'plugins.updatesFrom': 'Atualiza a partir de',
   'plugins.heldUpdate': 'Uma atualização espera aval porque pede hosts novos:',
   'plugins.approve': 'Aprovar',
+  'plex.title': 'Plex',
+  'plex.connect': 'Conectar conta Plex',
+  'plex.disconnect': 'Desconectar',
+  'plex.approve': 'Aprovar no Plex',
+  'plex.code': 'Aprove este código no Plex:',
+  'plex.finding': 'Procurando o servidor…',
+  'plex.unreachable': 'Nenhum servidor Plex respondeu. Se ele está na sua rede, verifique se o roteador não bloqueia respostas de DNS que apontam para endereços locais.',
+  'plex.search': 'Buscar na biblioteca',
+  'plex.viaLan': 'Pela rede local. Mantenha esta aba aberta até a transferência terminar.',
+  'plex.viaInternet': 'Pela internet. O servidor busca sozinho, você pode fechar a aba.',
+
 
   'details.quality': 'Qualidade',
   'details.allQualities': 'Todas as qualidades',

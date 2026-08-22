@@ -67,7 +67,7 @@ interface TorrentUploadSource {
 // the room page subscribe after navigation.
 const uploads = new Map<string, UploadEntry>()
 
-async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
+export async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
   const response = await fetch('/api/rooms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -152,7 +152,7 @@ export async function prepareLocalFile(
   return converted ?? file
 }
 
-function streamStartBytes(room: CreateRoomResponse): number {
+export function streamStartBytes(room: CreateRoomResponse): number {
   return room.streamStartBytes && room.streamStartBytes > 0
     ? room.streamStartBytes
     : DEFAULT_STREAM_START_BYTES
@@ -341,20 +341,78 @@ export async function startTorrentTransfer(
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<void> {
   if (await handOverToServer(roomID, source)) return
-  uploadTorrentToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, source, onProgress)
+  const { file, session } = source
+  startRemoteTransfer(roomID, uploadEndpoint, startBytes, mediaGeneration, {
+    name: file.name,
+    size: file.size,
+    // TorrentSideFile is already { name, path, size, read() }, which is what
+    // ChunkSource asks for. No mapping.
+    subtitleFiles: session.subtitleFiles,
+    read: (at, end) => file.read(at, end),
+    destroy: () => session.destroy(),
+  }, onProgress)
 }
 
-// Pulls a torrent into a room that already exists. Same swarm bookkeeping and
-// same progressive subtitle extraction as a fresh room, minus the room.
-export function uploadTorrentToRoom(
+/**
+ * Somewhere bytes can be read from by offset.
+ *
+ * The torrent path reads from a swarm and the Plex path from an HTTPS range
+ * request; the tus pump between them is the same code and always was.
+ */
+export interface ChunkSource {
+  name: string
+  size: number
+  /** Sibling subtitle files, if the source has any. */
+  subtitleFiles: TorrentSideFile[]
+  /** Inclusive on both ends, like an HTTP Range. */
+  read(at: number, end: number): Promise<ArrayBuffer>
+  destroy(): void
+}
+
+/**
+ * A ChunkSource backed by HTTP range requests.
+ *
+ * This is the path a Plex server on the local network takes: the VPS cannot
+ * reach 192.168.x.x, and the SSRF guard exists precisely so that it never
+ * will. The host's browser is already on that network, so it does the pumping.
+ */
+export function rangeSource(url: string, name: string, size: number): ChunkSource {
+  return {
+    name,
+    size,
+    subtitleFiles: [],
+    destroy: () => undefined,
+    async read(at: number, end: number): Promise<ArrayBuffer> {
+      const response = await fetch(url, { headers: { Range: `bytes=${at}-${end}` }, credentials: 'omit' })
+      if (response.status === 403) {
+        // Plex only hands over the original file to an account with "Allow
+        // Downloads" enabled. Reporting a bare 403 sends people off to re-pair
+        // their account, which is not the problem.
+        throw new Error('plex refused the original file — enable Allow Downloads for this user')
+      }
+      if (!response.ok) throw new Error(`source read failed (${response.status})`)
+      if (response.status !== 206 && at > 0) {
+        // The origin ignored the Range and is sending from the start. Writing
+        // that at this offset corrupts the upload silently.
+        throw new Error('source ignored the range request')
+      }
+      return await response.arrayBuffer()
+    },
+  }
+}
+
+// Pulls a source into a room that already exists. Same bookkeeping and same
+// progressive subtitle extraction as a fresh room, minus the room.
+export function startRemoteTransfer(
   roomID: string,
   uploadEndpoint: string,
   startBytes: number,
   mediaGeneration: number,
-  source: TorrentUploadSource,
+  source: ChunkSource,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
-  const { file, session } = source
+  const file = source
+  const session = source
   const room = { id: roomID, uploadEndpoint }
   const entry = createEntry(file.size, startBytes)
   uploads.set(room.id, entry)

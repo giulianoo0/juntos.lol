@@ -159,6 +159,17 @@ export const en: Record<string, string> = {
   'plugins.updatesFrom': 'Updates from',
   'plugins.heldUpdate': 'An update is waiting for approval because it asks for new hosts:',
   'plugins.approve': 'Approve',
+  'plex.title': 'Plex',
+  'plex.connect': 'Connect Plex account',
+  'plex.disconnect': 'Disconnect',
+  'plex.approve': 'Approve in Plex',
+  'plex.code': 'Approve this code in Plex:',
+  'plex.finding': 'Looking for the server…',
+  'plex.unreachable': 'No Plex server answered. If it is on your network, check that your router does not block DNS answers that point at local addresses.',
+  'plex.search': 'Search the library',
+  'plex.viaLan': 'Over the local network. Keep this tab open until the transfer finishes.',
+  'plex.viaInternet': 'Over the internet. The server fetches it on its own, you can close the tab.',
+
 
   'details.quality': 'Quality',
   'details.allQualities': 'All qualities',
