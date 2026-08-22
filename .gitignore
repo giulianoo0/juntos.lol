@@ -24,3 +24,6 @@ dist/
 # Built from the ss-docs repository and rsynced to the VPS; never versioned here.
 web-docs/*
 !web-docs/.gitkeep
+
+# Compose override local (o de produção vive só na VPS)
+docker-compose.override.yml

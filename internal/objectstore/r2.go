@@ -22,6 +22,11 @@ type R2Config struct {
 	Bucket    string
 	AccessKey string
 	SecretKey string
+	// Endpoint overrides the account-derived address, for a local MinIO
+	// standing in during development. Empty means real R2.
+	Endpoint string
+	// Insecure permits plain HTTP to the override endpoint.
+	Insecure bool
 }
 
 // NewR2 dials an R2 bucket. It does not verify the credentials — that costs a
@@ -30,14 +35,22 @@ func NewR2(cfg R2Config) (*R2, error) {
 	if cfg.AccountID == "" || cfg.Bucket == "" || cfg.AccessKey == "" || cfg.SecretKey == "" {
 		return nil, fmt.Errorf("objectstore: account id, bucket, access key and secret key are all required")
 	}
-	endpoint := cfg.AccountID + ".r2.cloudflarestorage.com"
-	transport, err := minio.DefaultTransport(true)
+	// The endpoint is normally derived from the account, but a local MinIO
+	// can stand in for the bucket during development — same S3 surface,
+	// different address, optionally without TLS.
+	endpoint := cfg.Endpoint
+	secure := !cfg.Insecure
+	if endpoint == "" {
+		endpoint = cfg.AccountID + ".r2.cloudflarestorage.com"
+		secure = true
+	}
+	transport, err := minio.DefaultTransport(secure)
 	if err != nil {
 		return nil, fmt.Errorf("objectstore: build R2 transport: %w", err)
 	}
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: true,
+		Secure: secure,
 		// R2 ignores the region but the S3 signature does not: it is part of
 		// the signing scope, and "auto" is what R2 expects to sign against.
 		Region: "auto",

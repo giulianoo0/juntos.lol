@@ -38,6 +38,13 @@ type Config struct {
 	R2Bucket          string
 	R2AccessKeyID     string
 	R2SecretAccessKey string
+	// R2Endpoint overrides the account-derived Cloudflare endpoint, so a
+	// local MinIO can stand in for the bucket during development and tests.
+	// Empty in production.
+	R2Endpoint string
+	// R2Insecure allows plain HTTP to the override endpoint. Never set in
+	// production; a local container has no certificate to offer.
+	R2Insecure bool
 	// MediaPublicURL is the origin the bucket is served from. Playlists point
 	// segments at it, so it is what a viewer actually fetches media from.
 	MediaPublicURL string
@@ -110,6 +117,8 @@ func Load() (Config, error) {
 	cfg.LivekitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
 	cfg.TorrentBridgeURL = os.Getenv("TORRENT_BRIDGE_URL")
 
+	cfg.R2Endpoint = os.Getenv("R2_ENDPOINT")
+	cfg.R2Insecure = os.Getenv("R2_INSECURE") == "1"
 	cfg.R2AccountID = os.Getenv("R2_ACCOUNT_ID")
 	cfg.R2Bucket = os.Getenv("R2_BUCKET")
 	cfg.R2AccessKeyID = os.Getenv("R2_ACCESS_KEY_ID")

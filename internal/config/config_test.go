@@ -16,6 +16,18 @@ func setMediaEnv(t *testing.T) {
 	t.Setenv("MEDIA_PUBLIC_URL", "https://media.example.test")
 }
 
+func TestLoadReadsObjectStoreEndpointOverride(t *testing.T) {
+	setMediaEnv(t)
+	t.Setenv("R2_ENDPOINT", "minio:9000")
+	t.Setenv("R2_INSECURE", "1")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, "minio:9000", cfg.R2Endpoint)
+	require.True(t, cfg.R2Insecure)
+}
+
 func TestLoadDefaults(t *testing.T) {
 	setMediaEnv(t)
 	t.Setenv("REDIS_URL", "")
