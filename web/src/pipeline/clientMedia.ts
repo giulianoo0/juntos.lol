@@ -27,6 +27,7 @@ import {
 import { registerAc3Decoder } from '@mediabunny/ac3'
 import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
+import { readMkvChapters } from './mkvChapters'
 
 // The WASM decoders register lazily: nothing loads until a file actually
 // carries one of these codecs.
@@ -133,11 +134,14 @@ async function releaseClaim(roomID: string, claim: string): Promise<void> {
   })
 }
 
-async function remuxAndPublish({ roomID, mediaGeneration, plan, claim, onProgress }: RunClientRemuxOptions & { claim: string }): Promise<void> {
+async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress }: RunClientRemuxOptions & { claim: string }): Promise<void> {
   // Object flow: the muxer hands finished files to `pending`; `pump` drains
   // them through presign + PUT into `uploaded`; each publish confirms
   // `uploaded` names with the server, which HEADs the bucket and extends the
   // published set the playlists are cut against.
+  // The chapters ride the first publish; mediabunny does not read them, so
+  // a small EBML pass over the file's head does.
+  const chaptersOnce = readMkvChapters(file)
   const pending: PendingObject[] = []
   const uploaded: string[] = []
   const playlists = new Map<string, string>()
@@ -189,6 +193,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, plan, claim, onProgres
     }
     if (!metadataSent) {
       body.audioTracks = plan.audioTracks.map((track) => ({ language: track.language, title: '' }))
+      const chapters = await chaptersOnce
+      if (chapters.length > 0) body.chapters = chapters
       metadataSent = true
     }
     const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/publish`, {

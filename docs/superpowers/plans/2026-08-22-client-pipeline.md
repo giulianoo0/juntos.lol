@@ -69,11 +69,12 @@ de fonte), fallback silencioso para tus em qualquer falha. Validado e2e
 local: h264+aac (remux puro) e vp9+opus→aac (transcode), zero ffmpeg no
 servidor, segmentos direto no MinIO.
 
-Gaps aceitos e documentados: capítulos (mediabunny não lê chapters de MKV —
-salas em modo cliente ficam sem; parser EBML próprio fica no backlog),
-menu de áudio (saída muxa vídeo+áudio numa variante só; multi-dub cai no
-fallback de fato ou perde o menu), e o progresso server-side vem do POST de
-publish (2s) em vez do tick de 1s do tus.
+Capítulos resolvidos no próprio cliente: `web/src/pipeline/mkvChapters.ts`
+(leitor EBML mínimo, SeekHead incluído, testado contra MKV real do ffmpeg)
+manda os chapters no primeiro publish. Gaps aceitos e documentados: menu de
+áudio (saída muxa vídeo+áudio numa variante só; multi-dub perde o menu no
+modo cliente) e o progresso server-side vem do POST de publish (2s) em vez
+do tick de 1s do tus.
 
 **Fase 2 — fonte crescendo (torrent no browser):** decidido NÃO fazer, pelo
 próprio princípio 4: os caminhos de torrent com bridge/url mantêm os bytes
