@@ -22,6 +22,7 @@ type ServerOption func(*serverOptions)
 type serverOptions struct {
 	sourceHooks       SourceHooks
 	ingestor          TorrentIngestor
+	urlIngestor       URLIngestor
 	subtitlePublisher SubtitlePublisher
 }
 
@@ -35,6 +36,11 @@ func WithSourceHooks(hooks SourceHooks) ServerOption {
 // browser.
 func WithTorrentIngestor(ingestor TorrentIngestor) ServerOption {
 	return func(o *serverOptions) { o.ingestor = ingestor }
+}
+
+// WithURLIngestor enables opening a room from a url a plugin produced.
+func WithURLIngestor(ingestor URLIngestor) ServerOption {
+	return func(o *serverOptions) { o.urlIngestor = ingestor }
 }
 
 // WithSubtitlePublisher sends browser-extracted subtitles to the bucket they
@@ -77,6 +83,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	}
 	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
 	RegisterTorrentRoute(r.Group("/api"), store, cfg, options.ingestor)
+	RegisterURLSourceRoute(r.Group("/api"), store, cfg, options.urlIngestor)
 	registerTorrentBridge(r, cfg.TorrentBridgeURL)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)

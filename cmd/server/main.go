@@ -21,6 +21,7 @@ import (
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/torrent"
 	"github.com/giulianoo0/ss/internal/upload"
+	"github.com/giulianoo0/ss/internal/urlingest"
 )
 
 func main() {
@@ -102,8 +103,29 @@ func main() {
 	)
 	ingestor.Start(ctx)
 
+	// The same trade, for a url a plugin produced. It takes the loopback tus
+	// path too, and it is the only place in the server that fetches an address
+	// third-party code chose — hence the guard in urlingest.
+	urlIngestor := urlingest.NewIngestor(
+		fmt.Sprintf("http://127.0.0.1:%d/api/upload/", cfg.Port),
+		cfg.FFmpegJobs,
+		cfg.MaxUploadMB<<20,
+		urlingest.Hooks{
+			OnFailed: func(roomID string, err error) {
+				failCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				if setErr := store.SetError(failCtx, roomID, "url download failed"); setErr != nil {
+					log.Printf("mark failed url ingest: %v", setErr)
+				}
+				hub.NotifyStatus(roomID, "error")
+			},
+		},
+	)
+	urlIngestor.Start(ctx)
+
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),
+		httpapi.WithURLIngestor(urlIngestor),
 		httpapi.WithSourceHooks(httpapi.SourceHooks{
 			// Swapping the source retires the previous media, so any preview
 			// still being built for it has to stop before its files are
@@ -111,6 +133,7 @@ func main() {
 			CancelMedia: func(roomID string) {
 				progressive.Cancel(roomID)
 				ingestor.Cancel(roomID)
+				urlIngestor.Cancel(roomID)
 			},
 			NotifyStatus: hub.NotifyStatus,
 		}),
