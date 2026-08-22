@@ -83,6 +83,25 @@ com "English"/"Japanese" no menu e a troca mantém a reprodução.
 Gap remanescente aceito: o progresso server-side vem do POST de publish (2s)
 em vez do tick de 1s do tus — cosmético.
 
+**Requisito de infra — CORS do bucket R2.** O pipeline cliente faz os PUTs
+presignados direto do browser pro endpoint do R2, então a política CORS do
+bucket `ss-media` **precisa** permitir `PUT` e o header `cache-control` (além
+do `GET`/`HEAD`/`range`/`content-type` que os viewers usam), para as origens
+da app. Sem isso o browser bloqueia todo PUT e **todo host cai no fallback do
+servidor** — e isso não aparece em teste local com MinIO, que não força CORS.
+Política aplicada (2026-08-22): origins ss.giuli.dev + ss-beta.giuli.dev +
+localhost:5173; methods GET/HEAD/PUT; headers range/content-type/cache-control.
+
+**Modo solo (host toca local).** `web/src/pipeline/localPlayback.ts`: os
+mesmos fragmentos CMAF que sobem pro R2 alimentam um MediaSource local que o
+host reproduz direto — sem round-trip, sem CORS. O upload segue igual, então
+viewer que entra no meio pega do edge e sincroniza. Single-variant só;
+multi-dub mantém o caminho do bucket. Validado no beta com R2 real.
+
+**Ambiente beta:** `ss-beta.giuli.dev` = stack `ss-beta` em `/opt/ss-beta`
+(app :8100, redis+bridge isolados; livekit/bucket/media compartilhados com
+produção), vhost nginx espelhado, cert Cloudflare Origin wildcard.
+
 **Fase 2 — fonte crescendo (torrent no browser):** decidido NÃO fazer, pelo
 próprio princípio 4: os caminhos de torrent com bridge/url mantêm os bytes
 fora do browser de propósito (banda), e o webtorrent in-browser é candidato
