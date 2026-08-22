@@ -648,9 +648,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
   // The source's authored spans, clamped to what is seekable right now:
   // during the preview the playable range is still growing, and a marker past
-  // its end would sit on the far edge pointing at nothing.
-  const chapters = (room.chapters ?? []).filter((chapter) => chapter.startMs / 1000 < seekMax)
-  const chapterLabel = (index: number) => chapters[index].title || `${t('player.chapter')} ${index + 1}`
+  // its end would sit on the far edge pointing at nothing. Each keeps its
+  // position in the full list, so unnamed chapters are numbered as the
+  // source counts them, not as the clamp happens to leave them.
+  const chapters = (room.chapters ?? [])
+    .map((chapter, index) => ({ ...chapter, ordinal: index + 1 }))
+    .filter((chapter) => chapter.startMs / 1000 < seekMax)
+  const chapterLabel = (index: number) =>
+    chapters[index].title || `${t('player.chapter')} ${chapters[index].ordinal}`
   const chapterIndexAt = (seconds: number) =>
     chapters.findIndex((chapter) => seconds * 1000 >= chapter.startMs && seconds * 1000 < chapter.endMs)
   const currentChapterIndex = chapterIndexAt(currentTime)
@@ -770,6 +775,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         <div
           className="seek-control"
           onPointerMove={chapters.length > 0 ? (event) => {
+            // A finger is not a hover: on touch the only pointermove is the
+            // drag itself, and with no pointerout coming the label would
+            // stay pinned wherever the drag ended.
+            if (event.pointerType === 'touch') return
             const rect = event.currentTarget.getBoundingClientRect()
             if (rect.width <= 0) return
             const frac = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
@@ -781,6 +790,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             setSeekHover({ leftPct: Math.min(Math.max(frac * 100, 6), 94), text })
           } : undefined}
           onPointerLeave={chapters.length > 0 ? () => setSeekHover(null) : undefined}
+          onPointerCancel={chapters.length > 0 ? () => setSeekHover(null) : undefined}
         >
           <div className="seek-track" aria-hidden="true">
             <div className="seek-played" style={{ width: pct(currentTime) }} />
@@ -801,7 +811,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             {/* Chapter boundaries read as gaps cut into the bar, whatever is
                 painted under them at that point. */}
             {chapters.filter((chapter) => chapter.startMs > 0).map((chapter) => (
-              <div key={chapter.startMs} className="seek-chapter-tick" style={{ left: pct(chapter.startMs / 1000) }} />
+              <div
+                key={`${chapter.ordinal}-${chapter.startMs}`}
+                className="seek-chapter-tick"
+                style={{ left: pct(chapter.startMs / 1000) }}
+              />
             ))}
           </div>
           <input
@@ -814,7 +828,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             onChange={(event) => seek(Number(event.target.value))}
           />
           {seekHover ? (
-            <span className="seek-tooltip" style={{ left: `${seekHover.leftPct}%` }}>{seekHover.text}</span>
+            <span className="seek-tooltip" aria-hidden="true" style={{ left: `${seekHover.leftPct}%` }}>{seekHover.text}</span>
           ) : null}
         </div>
         {/* What is playing on the left, how it is played on the right. */}

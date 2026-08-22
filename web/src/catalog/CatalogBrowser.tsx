@@ -157,6 +157,15 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
         onClick={searchCompact ? expandSearch : undefined}
         role={searchCompact ? 'button' : undefined}
         aria-label={searchCompact ? t('catalog.search') : undefined}
+        // The input this replaced was focusable; its stand-in must be too,
+        // or scrolling the board locks keyboard users out of search.
+        tabIndex={searchCompact ? 0 : undefined}
+        onKeyDown={searchCompact ? (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            expandSearch()
+          }
+        } : undefined}
       >
         {/* A layout child of a layout parent gets counter-scaled while the
             pill travels, so the glyph glides instead of stretching with it. */}

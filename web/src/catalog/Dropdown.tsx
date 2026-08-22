@@ -35,7 +35,6 @@ export function Dropdown({ label, value, options, onChange, align = 'start' }: D
     <MorphingMenu
       align={align}
       haspopup="listbox"
-      ariaLabel={label}
       triggerClassName="dropdown-pill"
       trigger={(open) => (
         <>

@@ -8,7 +8,10 @@
   color: var(--text); background: var(--canvas); font-synthesis: none; text-rendering: optimizeLegibility;
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--canvas); }
+/* Transparent on purpose: the ::before below sits at z-index -1, which in
+   the root stacking context paints under body's own background — an opaque
+   body would hide the glow entirely. The page's ground is :root's canvas. */
+body { margin: 0; min-width: 320px; min-height: 100vh; background: transparent; }
 /* The glow lives on its own fixed layer rather than as a fixed-attachment
    background: once anything on the page composites (the header's backdrop
    blur does), Chrome repaints an attachment-fixed background per scroll frame
@@ -553,7 +556,7 @@ h1, h2, p { margin-top: 0; }
 .catalog-stage .progress-wrap, .catalog-stage .error-card { max-width: 560px; margin-left: auto; margin-right: auto; }
 .catalog-starting { margin-top: 18px; text-align: center; color: var(--text-dim); font-size: 13px; }
 .catalog-browser.is-compact { max-width: none; }
-.catalog-search { position: fixed; bottom: 22px; left: 50%; translate: -50% 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100vw - 32px)); height: 52px; padding: 0 18px; color: var(--text); background: rgba(11,12,18,.62); border: 0; backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 18px 50px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.08); }
+.catalog-search { position: fixed; bottom: 22px; left: 50%; translate: -50% 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100vw - 32px)); height: 52px; padding: 0 18px; overflow: hidden; color: var(--text); background: rgba(11,12,18,.62); border: 0; backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 18px 50px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.08); }
 .catalog-search input::placeholder { color: rgba(255,255,255,.55); }
 .catalog-search-icon { display: inline-flex; flex: 0 0 auto; }
 .catalog-search-field { display: flex; flex: 1 1 auto; align-items: center; gap: 10px; min-width: 0; }
@@ -617,7 +620,7 @@ h1, h2, p { margin-top: 0; }
 .details-description { max-width: 62ch; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
 .details-cast { margin-bottom: 8px; color: var(--text-faint); font-size: 12px; }
 .details-episodes { margin-top: 18px; }
-.details-season-row { display: flex; align-items: center; gap: 20px; margin-bottom: 14px; }
+.details-season-row { display: flex; align-items: center; gap: 20px; margin-bottom: 22px; }
 /* The scrollport carries 8px of padding pulled back by an equal negative
    margin: the pill's spring overshoots the first and last tab, and its
    shadow hangs below every one — without the slack, overflow-x clips both. */

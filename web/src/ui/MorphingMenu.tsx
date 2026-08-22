@@ -64,7 +64,10 @@ function measurePanel(trigger: HTMLElement, align: 'start' | 'end', minWidth: nu
   const spaceBelow = viewportHeight - rect.top - VIEWPORT_MARGIN
   const spaceAbove = rect.bottom - VIEWPORT_MARGIN
   const openUp = spaceBelow < Math.min(PANEL_MAX_HEIGHT, 280) && spaceAbove > spaceBelow
-  const maxHeight = Math.max(160, Math.min(PANEL_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow))
+  // The space clamp wins over the usability floor: a floor larger than the
+  // viewport's leftover space would push the panel's first rows off-screen,
+  // which is worse than a short panel that scrolls.
+  const maxHeight = Math.max(96, Math.min(PANEL_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow))
 
   return {
     left: align === 'start' ? anchor : null,
@@ -158,7 +161,11 @@ export function MorphingMenu({
       setTriggerContentVisible(false)
       closingRef.current = true
       window.clearTimeout(revealTimeoutRef.current)
-      revealTimeoutRef.current = window.setTimeout(revealTriggerContent, CLOSE_DURATION * 1000 + 40)
+      // The close is two morphs back to back — the content's exit gates
+      // unmount for CLOSE_DURATION, and only then does the trigger run its
+      // own retract — so the fallback must outlast both, or it re-shows the
+      // label mid-shrink: the exact artifact this choreography prevents.
+      revealTimeoutRef.current = window.setTimeout(revealTriggerContent, CLOSE_DURATION * 2 * 1000 + 60)
     }
     if (returnFocus) triggerRef.current?.focus({ preventScroll: true })
   }, [reducedMotion, revealTriggerContent])

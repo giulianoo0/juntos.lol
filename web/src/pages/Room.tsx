@@ -630,6 +630,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             <TorrentPicker
               maxFileBytes={MAX_UPLOAD_BYTES}
               t={t}
+              onExit={() => setSourcePanel(null)}
               onPicked={chooseTorrent}
             />
           </DialogContent>
