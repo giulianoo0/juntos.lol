@@ -88,6 +88,10 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
 
   const onDrop = (event: DragEvent) => {
     event.preventDefault()
+    // React propagates synthetic events up its own tree, and this panel is a
+    // child of a page that also accepts dropped files. Without this, a
+    // dropped plugin is read here AND handed to the page as media to upload.
+    event.stopPropagation()
     const file = event.dataTransfer.files[0]
     if (file) void fromFile(file)
   }
@@ -161,7 +165,7 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
                   type="button"
                   className="plugins-drop"
                   onClick={() => fileRef.current?.click()}
-                  onDragOver={(event) => event.preventDefault()}
+                  onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
                   onDrop={onDrop}
                 >
                   {t('plugins.dropHint')}

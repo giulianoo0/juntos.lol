@@ -159,6 +159,7 @@ export const ptBR: Record<string, string> = {
   'plugins.updatesFrom': 'Atualiza a partir de',
   'plugins.heldUpdate': 'Uma atualização espera aval porque pede hosts novos:',
   'plugins.approve': 'Aprovar',
+  'home.cancel': 'Cancelar',
 
   'details.quality': 'Qualidade',
   'details.allQualities': 'Todas as qualidades',
