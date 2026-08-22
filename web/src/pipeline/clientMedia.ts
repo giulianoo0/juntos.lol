@@ -117,6 +117,37 @@ export class RoomMovedOnError extends Error {
 }
 
 /**
+ * A failed call to one of the client-media endpoints, carrying the server's
+ * own `error` code from the JSON body. The code — not the HTTP status — is
+ * what distinguishes a source swap (`claim_mismatch`, `stale_generation`)
+ * from a run that simply failed (`no_playable_media`) or a bucket PUT that
+ * 403'd: the same status means different things, so only the code decides.
+ */
+class ServerError extends Error {
+  readonly code: string
+  readonly status: number
+  constructor(code: string, status: number) {
+    super(`client media ${code || 'error'} (${status})`)
+    this.name = 'ServerError'
+    this.code = code
+    this.status = status
+  }
+}
+
+/** The error codes the server returns when the room has moved on under a run. */
+const MOVED_ON_CODES = new Set(['claim_mismatch', 'stale_generation', 'room_not_found'])
+
+// Reads the server's `{"error": code}` body off a failed response.
+async function serverError(response: Response): Promise<ServerError> {
+  let code = ''
+  try {
+    const body = await response.json() as { error?: string }
+    code = body.error ?? ''
+  } catch { /* no JSON body */ }
+  return new ServerError(code, response.status)
+}
+
+/**
  * Runs the whole pipeline: claim, remux, upload, publish, complete. Throws on
  * failure — RoomMovedOnError when the room was swapped (do not fall back),
  * any other error when the run itself failed (fall back to tus). The claim is
@@ -138,13 +169,14 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
   try {
     await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress })
   } catch (error) {
-    // The server releases the claim itself on the complete pass; this covers
-    // every path that threw before it. Falling back to tus needs the room's
-    // reservation freed, so this must actually succeed before rethrowing.
+    // The server releases the claim itself on a successful complete; this
+    // covers every path that threw before it. Falling back to tus needs the
+    // room's reservation freed, so this must land before rethrowing.
     await releaseClaimReliably(roomID, claim)
-    // A 403 (claim gone) or 409 (stale generation) mid-run means the room was
-    // swapped: surface it as RoomMovedOnError so the caller does not fall back.
-    if (error instanceof Error && /\b(403|409)\b/.test(error.message)) {
+    // Only the server's own swap codes suppress the fallback. Everything
+    // else — a bucket 403, a 409 no_playable_media, a network error — is a
+    // failed run whose room is free, so tus should carry it.
+    if (error instanceof ServerError && MOVED_ON_CODES.has(error.code)) {
       throw new RoomMovedOnError(error.message)
     }
     throw error
@@ -227,7 +259,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
         objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
       }),
     })
-    if (!presign.ok) throw new Error(`presign refused: ${presign.status}`)
+    if (!presign.ok) throw await serverError(presign)
     const { objects } = await presign.json() as { objects: { name: string; url: string; headers: Record<string, string> }[] }
     const byName = new Map(objects.map((object) => [object.name, object]))
     await Promise.all(batch.map(async (object) => {
@@ -261,7 +293,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!response.ok) throw new Error(`publish refused: ${response.status}`)
+    if (!response.ok) throw await serverError(response)
     // The metadata stuck only now that the request succeeded.
     metadataSent = true
     const { confirmed, ready } = await response.json() as { confirmed: string[]; ready: boolean }
@@ -318,8 +350,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // Drain what the remux produced, bounded: an object the bucket never
   // vouches for must not spin here forever short of the complete pass.
   for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)
-  const ready = await publish(true)
-  if (!ready) throw new Error('client remux produced no playable media')
+  // The complete pass throws (409 no_playable_media) if it produced nothing
+  // watchable, which the caller turns into a tus fallback.
+  await publish(true)
 }
 
 async function putWithRetry(url: string, headers: Record<string, string>, bytes: Uint8Array): Promise<void> {

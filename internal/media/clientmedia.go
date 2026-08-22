@@ -157,11 +157,19 @@ func JudgeClientMaster(body []byte, available func(name string) bool) ClientMast
 		if _, ok := clientMasterTagAllowed[tagName(trimmed)]; !ok {
 			return ClientMasterInvalid
 		}
-		if strings.Count(trimmed, "URI=") > 1 {
+		// The master is served verbatim, so its URI attributes are checked
+		// case-insensitively: any uri= token must be the quoted form the
+		// server can parse, appear exactly once, and name a known local
+		// playlist. An unquoted, lowercase, or duplicated URI is refused
+		// rather than copied to every viewer's player.
+		lower := strings.ToLower(trimmed)
+		uriCount := strings.Count(lower, "uri=")
+		if uriCount > 1 {
 			return ClientMasterInvalid
 		}
-		if uri, ok := mapURI(trimmed); ok {
-			if !clientPlaylistName.MatchString(uri) {
+		if uriCount == 1 {
+			uri, ok := mapURI(trimmed)
+			if !ok || !clientPlaylistName.MatchString(uri) {
 				return ClientMasterInvalid
 			}
 			if !available(uri) {

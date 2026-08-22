@@ -39,16 +39,27 @@ func TestJudgeClientMaster(t *testing.T) {
 		t.Fatalf("early master judged %d", got)
 	}
 
-	// A foreign origin, a duplicate URI, and a name outside the grammar are
-	// each invalid.
+	// A foreign origin, a duplicate URI, a disallowed tag, a bad name, and —
+	// crucially — a lowercase or unquoted URI that a case-sensitive check
+	// would have waved through, are each invalid.
 	for _, body := range []string{
 		"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://evil/e.m3u8\n",
 		"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"client_stream_1.m3u8\",URI=\"https://evil/e.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1\nclient_stream_1.m3u8\n",
 		"#EXTM3U\n#EXT-X-KEY:URI=\"https://evil/k\"\n#EXT-X-STREAM-INF:BANDWIDTH=1\nclient_stream_1.m3u8\n",
 		"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n../stream_0.m3u8\n",
+		"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,uri=\"https://evil/e.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1\nclient_stream_1.m3u8\n",
+		"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI=https://evil/e.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1\nclient_stream_1.m3u8\n",
 	} {
 		if got := JudgeClientMaster([]byte(body), available); got != ClientMasterInvalid {
 			t.Fatalf("invalid master judged %d: %q", got, body)
 		}
+	}
+
+	// A well-formed audio group naming a known local playlist is fine.
+	known["client_stream_2.m3u8"] = true
+	grouped := "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",URI=\"client_stream_2.m3u8\"\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO=\"a\"\nclient_stream_1.m3u8\n"
+	if got := JudgeClientMaster([]byte(grouped), available); got != ClientMasterReady {
+		t.Fatalf("valid audio-group master judged %d", got)
 	}
 }

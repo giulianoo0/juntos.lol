@@ -71,10 +71,17 @@ servidor, segmentos direto no MinIO.
 
 Capítulos resolvidos no próprio cliente: `web/src/pipeline/mkvChapters.ts`
 (leitor EBML mínimo, SeekHead incluído, testado contra MKV real do ffmpeg)
-manda os chapters no primeiro publish. Gaps aceitos e documentados: menu de
-áudio (saída muxa vídeo+áudio numa variante só; multi-dub perde o menu no
-modo cliente) e o progresso server-side vem do POST de publish (2s) em vez
-do tick de 1s do tus.
+manda os chapters no primeiro publish.
+
+Multi-áudio (multi-dub) **também funciona** — o gap era falso. O
+`HlsOutputFormat` do mediabunny gera audio groups HLS nativos (EXT-X-MEDIA
+por faixa com LANGUAGE/NAME, vídeo apontando `AUDIO="grupo"`); o servidor
+aceita esse master pela mesma validação, e o menu de áudio do player popula
+de `hls.audioTracks` sem nenhuma mudança. Validado e2e: um MKV eng+jpn abre
+com "English"/"Japanese" no menu e a troca mantém a reprodução.
+
+Gap remanescente aceito: o progresso server-side vem do POST de publish (2s)
+em vez do tick de 1s do tus — cosmético.
 
 **Fase 2 — fonte crescendo (torrent no browser):** decidido NÃO fazer, pelo
 próprio princípio 4: os caminhos de torrent com bridge/url mantêm os bytes
