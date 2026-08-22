@@ -8,6 +8,8 @@ import { createRoomAndIngestUrl, createRoomAndUpload, createRoomAndUploadTorrent
 import { BuildInfo } from '../components/BuildInfo'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
+import { playError } from '../onboarding/sounds'
+import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
@@ -89,6 +91,7 @@ export function Home() {
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
   const [draftNickname, setDraftNickname] = useState(nickname)
   const reduceMotion = useReducedMotion()
+  const { toast } = useToast()
   // Read once, at mount: this decides whether the very first paint carries the
   // explanation, and it must not flip under a re-render.
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
@@ -263,7 +266,17 @@ export function Home() {
       discardPending(media)
       // A file that changed under the picker is not a failed transfer, and
       // saying "try again" would send someone straight back into it.
-      setError(t(isUnreadableFile(error) ? 'error.fileChanged' : 'home.failed'))
+      const message = t(isUnreadableFile(error) ? 'error.fileChanged' : 'home.failed')
+      // On the catalogue side the error card sits below a full page of
+      // posters, where nobody scrolls to find it. A toast arrives where the
+      // eye already is, and the sound says something happened even if the
+      // click had moved on.
+      if (view === 'catalog') {
+        playError()
+        toast(message)
+      } else {
+        setError(message)
+      }
       setStarting(false)
       setProgress(null)
     }

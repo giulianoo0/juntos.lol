@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useT } from '../i18n/useT'
 import { MorphPanel } from '../ui/MorphPanel'
-import { useMorphingStep } from '../ui/useMorphingStep'
 import { ArtCatalogue, ArtOwn, ArtTogether } from './art'
 import { playAdvance, playBack, playFinish } from './sounds'
 import { markSeen } from './seen'
@@ -49,9 +48,6 @@ export function Onboarding({ onDone }: { onDone?: () => void }) {
   const [direction, setDirection] = useState(1)
   const [closing, setClosing] = useState(false)
   const step = STEPS[index]
-  // The same one-beat delay the rest of the app morphs on, so this reads as
-  // part of it rather than as a thing bolted on the front.
-  const { shown, morphing } = useMorphingStep(step)
 
   const finish = useCallback(() => {
     markSeen()
@@ -91,20 +87,28 @@ export function Onboarding({ onDone }: { onDone?: () => void }) {
 
   if (closing) return null
 
-  const Art = ART[shown]
+  const Art = ART[step]
   const last = index === STEPS.length - 1
 
   return (
     <div className="onboard-backdrop" role="dialog" aria-modal="true" aria-label={t('onboard.title')}>
-      <MorphPanel sizeKey={shown} morphing={morphing} className="onboard-morph">
+      {/* morphing stays false on purpose. MorphPanel's own dissolve takes the
+          whole pane to opacity 0 for a beat, which is right when the caller
+          does nothing itself — here the steps cross-fade and slide past each
+          other, and stacking the two made the panel vanish and come back.
+          The panel keeps the job of travelling between sizes; the content
+          keeps the job of changing. */}
+      <MorphPanel sizeKey={step} morphing={false} className="onboard-morph">
         <div className="onboard-panel">
-          {/* `popLayout` takes the leaving step out of flow, so the panel's
-              height follows the incoming one immediately instead of holding
-              the taller of the two while both are mounted. That is what makes
-              the box travel rather than jump. */}
-          <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+          <div className="onboard-stage">
+          {/* Both steps live in the same grid cell (see .onboard-stage), so
+              the outgoing and incoming ones overlap instead of following each
+              other. `popLayout` took the leaver out of flow and the panel
+              collapsed to nothing for a frame — the box blinked. Stacked, the
+              height is always somebody's, and it travels between them. */}
+          <AnimatePresence initial={false} custom={direction}>
             <motion.div
-              key={shown}
+              key={step}
               className="onboard-step"
               custom={direction}
               variants={reduceMotion ? REDUCED : SLIDE}
@@ -114,13 +118,14 @@ export function Onboarding({ onDone }: { onDone?: () => void }) {
               transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
             >
               <Art />
-              <h2>{t(`onboard.${shown}.title`)}</h2>
-              <p>{t(`onboard.${shown}.body`)}</p>
-              {shown !== 'welcome' ? (
-                <p className="onboard-aside">{t(`onboard.${shown}.aside`)}</p>
+              <h2>{t(`onboard.${step}.title`)}</h2>
+              <p>{t(`onboard.${step}.body`)}</p>
+              {step !== 'welcome' ? (
+                <p className="onboard-aside">{t(`onboard.${step}.aside`)}</p>
               ) : null}
             </motion.div>
-          </AnimatePresence>
+            </AnimatePresence>
+          </div>
 
           <div className="onboard-controls">
             <div className="onboard-dots" aria-hidden="true">

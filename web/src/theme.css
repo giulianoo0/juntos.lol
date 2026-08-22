@@ -465,6 +465,14 @@ h1, h2, p { margin-top: 0; }
 .settings-slot { display: block; width: 36px; height: 36px; }
 .settings-morph { position: absolute; right: 0; bottom: 0; z-index: 3; width: 36px; height: 36px; overflow: hidden; border-radius: 18px; background: transparent; box-shadow: none; transition: background var(--t-open) var(--ease), box-shadow var(--t-open) var(--ease); }
 .settings-morph.is-open { width: 250px; height: auto; background: rgba(16,18,24,.96); box-shadow: 0 18px 44px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); backdrop-filter: blur(18px) saturate(135%); }
+/* A release with forty subtitle languages made this list taller than the
+   viewport, so it ran off both ends of the player and the controls under it
+   were unreachable. Bounded to the space above the control bar, and it
+   scrolls. The z-index puts it over the playback error rather than under: the
+   menu is what you opened, and a message you cannot read past is worse than a
+   message you cannot see. */
+.settings-morph.is-open { max-height: min(60vh, 420px); z-index: 12; }
+.settings-morph.is-open .settings-pane { max-height: min(60vh, 420px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 /* Fixed once open, so the panel is revealed by the growing box rather than
    re-wrapping its own rows on every frame of the travel. */
 .settings-morph.is-open .settings-pane { width: 250px; }
@@ -504,7 +512,14 @@ h1, h2, p { margin-top: 0; }
 .catalog-shell { display: block; padding: 104px clamp(16px, 4vw, 54px) 40px; }
 
 .catalog-shell .history-panel { margin: 0 auto; }
-.catalog-stage { max-width: 1240px; margin: 0 auto; }
+/* The chain from the page down to the track has to be allowed to shrink. A
+   flex or grid item defaults to min-width:auto, which is its content's
+   min-content width — and a row of forty fixed-width posters has a very large
+   one. Left alone, the board stayed as wide as its widest row and the whole
+   page scrolled sideways on a narrow window instead of the carousel
+   scrolling inside itself. */
+.catalog-stage { max-width: 1240px; margin: 0 auto; width: 100%; min-width: 0; }
+.catalog-browser, .catalog-row, .carousel, .carousel-viewport { min-width: 0; max-width: 100%; }
 .catalog-stage .progress-wrap, .catalog-stage .error-card { max-width: 560px; margin-left: auto; margin-right: auto; }
 .catalog-starting { margin-top: 18px; text-align: center; color: var(--text-dim); font-size: 13px; }
 .catalog-browser.is-compact { max-width: none; }

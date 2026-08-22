@@ -27,6 +27,12 @@
   overflow: hidden;
 }
 
+/* Both steps occupy this one cell, so the outgoing and incoming ones overlap
+   rather than queue. The panel then travels between their heights instead of
+   collapsing to nothing for a frame while neither is in flow. */
+.onboard-stage { display: grid; }
+.onboard-stage > * { grid-area: 1 / 1; }
+
 .onboard-step { display: flex; flex-direction: column; text-align: left; }
 .onboard-step h2 { margin: 0 0 8px; font-size: 25px; font-weight: 700; letter-spacing: -.035em; }
 .onboard-step p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.6; }

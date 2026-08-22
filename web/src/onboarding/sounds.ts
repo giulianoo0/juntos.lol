@@ -79,6 +79,20 @@ export function playBack(): void {
   play({ from: 620, to: 380, duration: 0.09, gain: 0.04, type: 'sine' })
 }
 
+/**
+ * Something failed. Two falling notes, low and short.
+ *
+ * Lives here rather than in its own module because it is the same synthesiser
+ * and the same register: an app with two unrelated sound vocabularies sounds
+ * like two apps.
+ */
+export function playError(): void {
+  play({ from: 400, to: 300, duration: 0.1, gain: 0.05, type: 'sine' })
+  const ctx = audio()
+  if (!ctx) return
+  window.setTimeout(() => play({ from: 300, to: 200, duration: 0.18, gain: 0.045, type: 'sine' }), 95)
+}
+
 /** The last step. Two notes, a third apart, so the end sounds like an end. */
 export function playFinish(): void {
   play({ from: 620, to: 660, duration: 0.11, gain: 0.05, type: 'sine' })

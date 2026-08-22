@@ -120,7 +120,21 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 		args = append(args, "-map", "0:a:"+strconv.Itoa(track.Index))
 	}
 	if len(audio) > 0 {
-		args = append(args, "-c:a", "aac", "-b:a", "192k")
+		// Downmixed to stereo, and this is the fix for a real failure rather
+		// than a preference.
+		//
+		// A 5.1 source whose channel layout ffmpeg cannot map encodes to a
+		// six-channel AAC track with `channel_layout=unknown`. The CODECS
+		// string still reads mp4a.40.2, so MediaSource.isTypeSupported says
+		// yes and hls.js creates the buffers — and then appendBuffer fails,
+		// because the channel configuration in the sample entry is not one
+		// the decoder accepts. The room dies with "your browser cannot decode
+		// this video" on a file whose video is plain H.264.
+		//
+		// Stereo AAC is the one audio configuration every browser decodes.
+		// The cost is surround for the few watching on a 5.1 setup; the
+		// alternative is a whole class of rooms that never play at all.
+		args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k")
 	}
 
 	if len(audio) == 0 {

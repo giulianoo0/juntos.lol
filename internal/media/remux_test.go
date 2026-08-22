@@ -253,3 +253,23 @@ func TestFinalizeProgressiveOutputsKeepsPreviewPlayable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, strings.Count(string(again), "#EXT-X-ENDLIST"))
 }
+
+// A six-channel AAC track whose layout ffmpeg could not map encodes with
+// `channel_layout=unknown`. The CODECS string still reads mp4a.40.2, so the
+// browser reports the codec as supported, creates the source buffers, and then
+// refuses the bytes — and the room dies claiming the browser cannot decode a
+// plain H.264 video. Stereo is the one configuration that never does this.
+func TestAudioIsDownmixedToStereo(t *testing.T) {
+	probe := &ProbeResult{
+		VideoCopyable: true,
+		VideoHeight:   1080,
+		Audio: []room.TrackInfo{
+			{Index: 0, Language: "por", Codec: "ac3"},
+			{Index: 1, Language: "eng", Codec: "ac3"},
+		},
+	}
+	args, _ := buildStreamMapping(probe, true)
+	joined := strings.Join(args, " ")
+	require.Contains(t, joined, "-c:a aac")
+	require.Contains(t, joined, "-ac 2")
+}
