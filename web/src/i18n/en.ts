@@ -159,6 +159,7 @@ export const en: Record<string, string> = {
   'plugins.updatesFrom': 'Updates from',
   'plugins.heldUpdate': 'An update is waiting for approval because it asks for new hosts:',
   'plugins.approve': 'Approve',
+  'home.cancel': 'Cancel',
   'plex.title': 'Plex',
   'plex.connect': 'Connect Plex account',
   'plex.disconnect': 'Disconnect',
