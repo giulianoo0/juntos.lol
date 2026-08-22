@@ -70,13 +70,20 @@ func TestStreamGrowingFileFollowsAppendsUntilCancellation(t *testing.T) {
 	require.ErrorIs(t, <-done, context.Canceled)
 }
 
-func TestPreviewVideoVariantPlaylistIsTheOnlyVariant(t *testing.T) {
-	// The preview muxes its audio into its single video variant, so the
-	// playlist to watch for playable video is the same one whether or not the
-	// release ships sound, and however many dubs it ships.
+func TestPreviewVideoVariantPlaylistFollowsTheDubs(t *testing.T) {
+	// A silent release and a single-dub one both mux into the lone video
+	// variant, so the playlist to watch is the first either way.
 	require.Equal(t, "preview_stream_0.m3u8", previewVideoVariantPlaylist(&ProbeResult{}))
 	require.Equal(t, "preview_stream_0.m3u8",
+		previewVideoVariantPlaylist(&ProbeResult{Audio: []room.TrackInfo{{Index: 0}}}))
+
+	// Several dubs get a group, and ffmpeg numbers variants in var_stream_map
+	// order, so they take the leading slots and the video lands after them.
+	require.Equal(t, "preview_stream_2.m3u8",
 		previewVideoVariantPlaylist(&ProbeResult{Audio: []room.TrackInfo{{Index: 0}, {Index: 1}}}))
+	require.Equal(t, "preview_stream_3.m3u8", previewVideoVariantPlaylist(&ProbeResult{
+		Audio: []room.TrackInfo{{Index: 0}, {Index: 1}, {Index: 2}},
+	}))
 }
 
 func TestProgressiveCancelKeepsQueuedJobCanceled(t *testing.T) {
@@ -166,9 +173,14 @@ func TestAnnouncePreviewMakesTheRoomReadyAfterTheLastPublish(t *testing.T) {
 	// publisher's last pass only lands afterwards. Nothing left running would
 	// notice, so the room advertises "preparing" with watchable media already
 	// in the bucket.
+	// Two dubs means an audio group, so the dubs are variants 0 and 1 and the
+	// video is variant 2. A dub fills with fixed-length segments long before a
+	// copied video track can split at a source keyframe, so watching the wrong
+	// one here would announce the room over a black frame.
 	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{
-		"master.m3u8":           "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\npreview_stream_0.m3u8\n",
+		"master.m3u8":           "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\npreview_stream_2.m3u8\n",
 		"preview_stream_0.m3u8": "#EXTM3U\n#EXTINF:4.0,\nseg.m4s\n",
+		"preview_stream_2.m3u8": "#EXTM3U\n#EXTINF:4.0,\nseg.m4s\n",
 	}))
 	p.announcePreview(t.Context(), "r1", probe)
 

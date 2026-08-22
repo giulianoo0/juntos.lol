@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -522,10 +523,21 @@ func streamGrowingFile(ctx context.Context, path string, dst io.Writer, pollInte
 }
 
 // previewVideoVariantPlaylist names the media playlist of the preview's video
-// rendition. The preview is a single variant carrying its own audio, so there
-// is only ever one, whether or not the source has sound.
-func previewVideoVariantPlaylist(*ProbeResult) string {
-	return "preview_stream_0.m3u8"
+// rendition.
+//
+// The preview carries one video rendition either way, but not always at the
+// same index: when the source has several dubs they get an audio group, and
+// ffmpeg numbers variants in var_stream_map order, so the dubs take the
+// leading slots and the video follows them. Naming the wrong playlist here
+// means previewPlayable inspects a dub, which fills with fixed-length segments
+// long before a copied video track can split at a source keyframe — the room
+// is announced as ready and the first viewer hears sound over a black frame.
+func previewVideoVariantPlaylist(p *ProbeResult) string {
+	index := 0
+	if p != nil && len(p.Audio) > 1 {
+		index = len(p.Audio)
+	}
+	return "preview_stream_" + strconv.Itoa(index) + ".m3u8"
 }
 
 func hasNonEmptyMatch(pattern string) bool {

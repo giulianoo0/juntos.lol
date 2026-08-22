@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/giulianoo0/ss/internal/room"
 )
 
 const ffmpegErrorTailBytes = 2 * 1024
@@ -118,9 +116,6 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 	args = append(args, videoArgs...)
 
 	audio := p.Audio
-	if progressive {
-		audio = previewAudio(p)
-	}
 	for _, track := range audio {
 		args = append(args, "-map", "0:a:"+strconv.Itoa(track.Index))
 	}
@@ -133,12 +128,16 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 		return args, streamMap
 	}
 
-	// The preview muxes its audio into its one video variant instead of giving
-	// it a group of its own. A group is a second stream of segments, so it
-	// doubles what the preview writes to disk and uploads to the bucket, and it
-	// buys nothing: the preview carries a single rendition and a single dub, so
-	// there is no switch for the group to keep open.
-	if progressive {
+	// With a single dub the preview muxes its audio into its one video variant
+	// instead of giving it a group of its own. A group is a second stream of
+	// segments, so it costs the preview another write to disk and another
+	// upload to the bucket, and with nothing to switch to it buys nothing.
+	//
+	// More than one dub is the opposite case: the switch is the whole point,
+	// and leaving it to the final ladder leaves it out for the length of the
+	// encode — tens of minutes on a feature. So the preview pays for the group
+	// exactly when a viewer has something to choose between.
+	if progressive && len(audio) == 1 {
 		return args, videoMap[0] + ",a:0"
 	}
 
@@ -159,17 +158,6 @@ func buildStreamMapping(p *ProbeResult, progressive bool) (args []string, stream
 		variants = append(variants, video+",agroup:audio")
 	}
 	return args, strings.Join(variants, " ")
-}
-
-// previewAudio is the audio the preview carries: the default track alone. A
-// release with eight dubs would otherwise cost eight AAC encodes and eight
-// segment streams before the room can play at all, and the preview exists to
-// start playback. The remaining dubs arrive with the final ladder.
-func previewAudio(p *ProbeResult) []room.TrackInfo {
-	if len(p.Audio) == 0 {
-		return nil
-	}
-	return p.Audio[:1]
 }
 
 func isSafeLanguage(language string) bool {
