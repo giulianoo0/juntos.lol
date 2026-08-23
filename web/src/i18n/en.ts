@@ -27,6 +27,7 @@ export const en: Record<string, string> = {
   'bridge.step3': 'Come back and open a torrent as usual. The room uses it on its own.',
   'bridge.download': 'Download ss-bridge',
   'bridge.otherOs': 'Other:',
+  'bridge.loopback': 'If you already downloaded ss-bridge, your browser will ask for local network access. Allow it: it only lets the site talk to the app here on your PC (127.0.0.1), nothing else. Without it the app cannot be detected.',
   'bridge.connected': 'Connected. Your torrents download here on your PC.',
   'home.nicknamePlaceholder': 'Guest name is created automatically',
   'home.source': 'View the source on GitHub',

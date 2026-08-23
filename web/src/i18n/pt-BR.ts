@@ -27,6 +27,7 @@ export const ptBR: Record<string, string> = {
   'bridge.step3': 'Volte aqui e abra um torrent normal. A sala usa ele sozinha.',
   'bridge.download': 'Baixar o ss-bridge',
   'bridge.otherOs': 'Outros:',
+  'bridge.loopback': 'Se você já baixou o ss-bridge, o navegador vai pedir acesso à rede local. Permita: é só para o site conversar com o app aqui no seu PC (127.0.0.1), nada além disso. Sem essa permissão o app não é detectado.',
   'bridge.connected': 'Conectado. Seus torrents baixam aqui no seu PC.',
   'home.nicknamePlaceholder': 'Um nome de convidado será criado automaticamente',
   'home.source': 'Ver o código no GitHub',

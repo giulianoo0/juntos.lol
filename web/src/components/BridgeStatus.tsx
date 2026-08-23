@@ -87,6 +87,7 @@ export function BridgeStatus({ t }: { t: Translator }) {
                     <a key={other} href={downloadUrl(other)}>{OS_LABEL[other]}</a>
                   ))}
                 </div>
+                <p className="bridge-loopback">{t('bridge.loopback')}</p>
               </>
             )}
           </DialogContent>
