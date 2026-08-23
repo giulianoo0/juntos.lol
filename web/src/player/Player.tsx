@@ -26,6 +26,8 @@ interface PlayerProps {
   serverOffsetMs?: number
   // Extra content rendered inside the fullscreen-capable wrap.
   overlay?: ReactNode
+  // Opens the room's chapter list, when the room has one to show.
+  onChapters?: () => void
 }
 
 // TAP_TOGGLE_DELAY_MS is how long a tap waits to see whether it is really the
@@ -74,7 +76,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, overlay }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, overlay, onChapters }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -794,7 +796,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             what it points at sits underneath it. */}
         <div
           className="seek-control"
-          onPointerMove={chapters.length > 0 ? (event) => {
+          onPointerMove={(event) => {
             // A finger is not a hover: on touch the only pointermove is the
             // drag itself, and with no pointerout coming the label would
             // stay pinned wherever the drag ended.
@@ -804,13 +806,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             const frac = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
             const seconds = frac * seekMax
             const index = chapterIndexAt(seconds)
+            // The section under the pointer and the time the pointer is at —
+            // what a click would seek to — not the chapter's own span.
             const text = index >= 0
-              ? `${chapterLabel(index)} · ${formatTime(chapters[index].startMs / 1000)}–${formatTime(Math.min(chapters[index].endMs / 1000, seekMax))}`
+              ? `${chapterLabel(index)} · ${formatTime(seconds)}`
               : formatTime(seconds)
             setSeekHover({ leftPct: Math.min(Math.max(frac * 100, 6), 94), text })
-          } : undefined}
-          onPointerLeave={chapters.length > 0 ? () => setSeekHover(null) : undefined}
-          onPointerCancel={chapters.length > 0 ? () => setSeekHover(null) : undefined}
+          }}
+          onPointerLeave={() => setSeekHover(null)}
+          onPointerCancel={() => setSeekHover(null)}
         >
           <div className="seek-track" aria-hidden="true">
             <div className="seek-played" style={{ width: pct(currentTime) }} />
@@ -862,7 +866,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
           <span className="timecode">
             {formatTime(currentTime)} / {formatTime(duration)}
-            {currentChapterIndex >= 0 ? (
+            {currentChapterIndex >= 0 && onChapters ? (
+              <button
+                type="button"
+                className="timecode-chapter"
+                title={t('chapters.title')}
+                onClick={onChapters}
+              > · {chapterLabel(currentChapterIndex)}</button>
+            ) : currentChapterIndex >= 0 ? (
               <span className="timecode-chapter"> · {chapterLabel(currentChapterIndex)}</span>
             ) : null}
           </span>

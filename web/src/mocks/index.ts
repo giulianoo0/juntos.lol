@@ -124,6 +124,13 @@ function mockRoom(id: string, elapsedMs: number): RoomInfo {
     audioTracks: [{ index: 0, language: 'jpn', title: 'Japanese', codec: 'aac' }],
     subtitleTracks: [{ index: 0, language: 'por', title: 'Português', codec: 'ass' }],
     bitmapSubsSkipped: 0,
+    chapters: [
+      { startMs: 0, endMs: 90_000, title: 'Prologue' },
+      { startMs: 90_000, endMs: 180_000, title: 'Opening' },
+      { startMs: 180_000, endMs: 1_100_000, title: '' },
+      { startMs: 1_100_000, endMs: 1_290_000, title: 'Ending' },
+      { startMs: 1_290_000, endMs: 1_420_000, title: 'Preview' },
+    ],
     memberCount: 1,
     expiresAt: '2099-01-01T00:00:00Z',
     mediaBaseUrl: '/mock-media',
