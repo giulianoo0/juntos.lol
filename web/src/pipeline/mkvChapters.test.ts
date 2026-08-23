@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readMkvChapters } from './mkvChapters'
+import { fileInput } from './mediaInput'
 
 // A real ffmpeg-muxed Matroska (base64-inlined), chapters and all. ffmpeg
 // writes Chapters after the clusters with a SeekHead pointing at them, so
@@ -41,7 +42,7 @@ describe('readMkvChapters', () => {
   it('reads the chapter atoms ffmpeg wrote', async () => {
     const file = new File([fixture], 'chaptered.mkv')
 
-    const chapters = await readMkvChapters(file)
+    const chapters = await readMkvChapters(fileInput(file))
 
     expect(chapters).toEqual([
       { startMs: 0, endMs: 400, title: 'Abertura' },
@@ -52,6 +53,6 @@ describe('readMkvChapters', () => {
 
   it('answers nothing for a file that is not Matroska', async () => {
     const file = new File([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], 'movie.mp4')
-    expect(await readMkvChapters(file)).toEqual([])
+    expect(await readMkvChapters(fileInput(file))).toEqual([])
   })
 })

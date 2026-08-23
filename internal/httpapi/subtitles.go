@@ -21,7 +21,7 @@ import (
 
 const (
 	maxSubtitlesBodyBytes = 8 << 20
-	maxSubtitleTracks     = 32
+	maxSubtitleTracks     = 64
 	maxSubtitleVTTBytes   = 4 << 20
 	maxSubtitleTitleBytes = 255
 )

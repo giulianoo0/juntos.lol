@@ -24,16 +24,13 @@ type Config struct {
 	WebDir            string
 	RedisURL          string
 	MaxUploadMB       int64
-	StreamStartMB     int64
 	RoomTTLHours      int
 	MaxParticipants   int
 	RoomIdleSeconds   int
 	UploadIdleMinutes int
-	FFmpegJobs        int
 	LivekitURL        string
 	LivekitAPIKey     string
 	LivekitAPISecret  string
-	TorrentBridgeURL  string
 	R2AccountID       string
 	R2Bucket          string
 	R2AccessKeyID     string
@@ -58,12 +55,10 @@ func Load() (Config, error) {
 		WebDir:            "web/dist",
 		RedisURL:          "redis://localhost:6379",
 		MaxUploadMB:       51200,
-		StreamStartMB:     1,
 		RoomTTLHours:      5,
 		MaxParticipants:   20,
 		RoomIdleSeconds:   90,
 		UploadIdleMinutes: 10,
-		FFmpegJobs:        2,
 		LivekitURL:        "",
 		LivekitAPIKey:     "",
 		LivekitAPISecret:  "",
@@ -91,9 +86,6 @@ func Load() (Config, error) {
 	if cfg.UploadIdleMinutes, err = envInt("UPLOAD_IDLE_MINUTES", cfg.UploadIdleMinutes); err != nil {
 		return Config{}, err
 	}
-	if cfg.StreamStartMB, err = envInt64("STREAM_START_MB", cfg.StreamStartMB); err != nil {
-		return Config{}, err
-	}
 	if cfg.RoomTTLHours, err = envInt("ROOM_TTL_HOURS", cfg.RoomTTLHours); err != nil {
 		return Config{}, err
 	}
@@ -101,9 +93,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.RoomIdleSeconds, err = envInt("ROOM_IDLE_SECONDS", cfg.RoomIdleSeconds); err != nil {
-		return Config{}, err
-	}
-	if cfg.FFmpegJobs, err = envInt("FFMPEG_JOBS", cfg.FFmpegJobs); err != nil {
 		return Config{}, err
 	}
 	// Sharing a port would put the metrics endpoint on the listener that is
@@ -115,7 +104,6 @@ func Load() (Config, error) {
 	cfg.LivekitURL = os.Getenv("LIVEKIT_URL")
 	cfg.LivekitAPIKey = os.Getenv("LIVEKIT_API_KEY")
 	cfg.LivekitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
-	cfg.TorrentBridgeURL = os.Getenv("TORRENT_BRIDGE_URL")
 
 	cfg.R2Endpoint = os.Getenv("R2_ENDPOINT")
 	cfg.R2Insecure = os.Getenv("R2_INSECURE") == "1"

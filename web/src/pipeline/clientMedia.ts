@@ -9,12 +9,12 @@
  * stays the only authority on what gets published — every uploaded segment
  * is confirmed against the bucket before any playlist may name it.
  *
- * Everything here degrades silently: any failure, at any point, hands the
- * upload back to the tus path unchanged.
+ * This is the only pipeline. A source this browser cannot remux is a room
+ * that cannot be opened, and the verdict is told to the host — there is no
+ * server to hand the file to.
  */
 import {
   ALL_FORMATS,
-  BlobSource,
   BufferTarget,
   CmafOutputFormat,
   Conversion,
@@ -28,6 +28,7 @@ import { registerAc3Decoder } from '@mediabunny/ac3'
 import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
 import { readMkvChapters } from './mkvChapters'
+import type { MediaInput } from './mediaInput'
 import { codecsFromMaster, createLocalPlayback } from './localPlayback'
 
 // The WASM decoders register lazily: nothing loads until a file actually
@@ -55,12 +56,13 @@ export interface ClientRemuxPlan {
 }
 
 /**
- * Decides whether this browser can prepare this file itself. Null means the
- * tus path should run instead — a verdict, never an error.
+ * Decides whether this browser can prepare this source itself. Null is a
+ * verdict, never an error: the source is not something this browser can
+ * remux, and the host is told so.
  */
-export async function planClientRemux(file: File): Promise<ClientRemuxPlan | null> {
+export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan | null> {
   try {
-    const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS })
+    const input = new Input({ source: file.source(), formats: ALL_FORMATS })
     if (!(await input.canRead())) return null
     const video = await input.getPrimaryVideoTrack()
     if (!video || !video.codec || !COPYABLE_VIDEO.has(video.codec)) return null
@@ -99,16 +101,15 @@ interface PendingObject {
 export interface RunClientRemuxOptions {
   roomID: string
   mediaGeneration: number
-  file: File
+  file: MediaInput
   plan: ClientRemuxPlan
   onProgress?: (pct: number) => void
 }
 
 /**
  * Thrown when the room moved on under the run — the source was swapped, so the
- * server released the claim or rejected the generation. The caller must NOT
- * fall back to tus for this: the room is on a different source now, and
- * re-uploading the old file would race the new upload.
+ * server released the claim or rejected the generation. The caller must not
+ * report it as a failure of this source: the room is on a different one now.
  */
 export class RoomMovedOnError extends Error {
   constructor(message: string) {
@@ -171,12 +172,12 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
     await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress })
   } catch (error) {
     // The server releases the claim itself on a successful complete; this
-    // covers every path that threw before it. Falling back to tus needs the
-    // room's reservation freed, so this must land before rethrowing.
+    // covers every path that threw before it, so a retry from the host does
+    // not hit a still-held reservation.
     await releaseClaimReliably(roomID, claim)
-    // Only the server's own swap codes suppress the fallback. Everything
+    // Only the server's own swap codes mean the room moved on. Everything
     // else — a bucket 403, a 409 no_playable_media, a network error — is a
-    // failed run whose room is free, so tus should carry it.
+    // failed run.
     if (error instanceof ServerError && MOVED_ON_CODES.has(error.code)) {
       throw new RoomMovedOnError(error.message)
     }
@@ -190,8 +191,8 @@ async function releaseClaim(roomID: string, claim: string): Promise<void> {
   })
 }
 
-// Releasing must actually land, or the fallback tus upload hits a still-held
-// reservation and wedges the room until its TTL. A 404 or 403 means the claim
+// Releasing must actually land, or the next attempt on this room hits a
+// still-held reservation and wedges it until its TTL. A 404 or 403 means the claim
 // is already gone (room swapped, or the server released it on complete), which
 // is success for our purpose; only a network error or 5xx is retried.
 async function releaseClaimReliably(roomID: string, claim: string): Promise<void> {
@@ -226,8 +227,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
 
   const fail = (error: unknown) => {
     // The first failure aborts everything: the conversion stops encoding, the
-    // ticker stops publishing, and execute() throws so the caller falls back
-    // to tus — instead of paying to upload the rest of a doomed run.
+    // ticker stops publishing, and execute() throws — instead of paying to
+    // upload the rest of a doomed run.
     failure ??= error
     local?.dispose()
     local = null
@@ -394,7 +395,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // vouches for must not spin here forever short of the complete pass.
   for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)
   // The complete pass throws (409 no_playable_media) if it produced nothing
-  // watchable, which the caller turns into a tus fallback.
+  // watchable.
   await publish(true)
 }
 

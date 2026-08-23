@@ -6,16 +6,16 @@
 
 ## O que está pronto
 
-- upload resumível com [tus](https://tus.io/) para arquivos de até 50 GB;
-- início progressivo: o servidor começa a preparar HLS quando recebe o primeiro bloco configurado, sem esperar o upload inteiro;
+- o vídeo é preparado no navegador de quem abre a sala: remux para HLS com [mediabunny](https://mediabunny.dev) e envio dos segmentos direto para o bucket, sem nenhum byte de vídeo e nenhum ffmpeg no servidor;
+- início progressivo: a sala começa a tocar com os primeiros segmentos publicados, sem esperar o remux inteiro;
 - player responsivo com tela cheia, controles que somem durante a reprodução e suporte a HLS nativo ou `hls.js`;
 - sincronização de play, pause, seek e velocidade por WebSocket;
 - chat e lista de participantes por sala;
 - seleção de faixas de áudio e legendas de texto;
-- extração de legendas MKV no navegador e fallback de extração com FFmpeg no servidor;
-- torrent baixado pelo servidor, não pelo navegador, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
+- extração de legendas MKV no navegador, publicadas enquanto o remux continua;
+- torrent baixado pelo ss-bridge, um app nativo na máquina de quem abre a sala, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
 - tela de espera com a fase da preparação e uma estimativa de quando dá para começar a assistir;
-- torrents com seleção de arquivo e bridge híbrido para Chrome, Dia e Safari;
+- torrents com seleção de arquivo, sem nenhum download no servidor;
 - entrada por link pedindo apenas o apelido, com aviso de quem entra e quem sai da sala;
 - compartilhamento de tela com LiveKit;
 - interface em português e inglês;
@@ -27,49 +27,43 @@
 
 ```mermaid
 flowchart LR
-    B["Navegador"] -->|"cria sala e envia via tus"| A["API Go"]
+    B["Navegador do host"] -->|"cria sala, claim, presign, playlists"| A["API Go"]
+    B -->|"PUT segmentos HLS (presigned)"| O["Bucket R2"]
     B <-->|"estado, chat e relógio"| W["WebSocket Hub"]
     A --> R["Redis"]
-    A --> D["Volume de mídia"]
-    A --> F["FFmpeg / ffprobe"]
-    F -->|"HLS fMP4 + WebVTT"| D
-    B -->|"magnet e escolha do arquivo"| A
-    A -->|"stream sequencial"| T["Torrent bridge"]
+    A -->|"legendas WebVTT"| O
+    B <-->|"magnet, arquivos e bytes por Range"| T["ss-bridge (127.0.0.1)"]
     T <-->|"DHT + trackers + peers"| P["Swarm BitTorrent"]
     B <-->|"WebRTC"| L["LiveKit"]
 ```
 
-### Upload e disponibilidade progressiva
+### Preparação do vídeo, no navegador do host
 
-1. O navegador cria a sala com `POST /api/rooms`.
-2. O arquivo é enviado em partes pelo protocolo tus.
-3. Ao atingir `STREAM_START_MB`, o pipeline progressivo acompanha o arquivo crescente e alimenta o FFmpeg sem tratar um EOF temporário como fim do upload.
-4. A sala passa para `ready` assim que existe o primeiro segmento HLS completo.
-5. Quando o upload termina, uma segunda passagem produz o HLS VOD definitivo. A prévia continua disponível durante essa troca.
+O servidor não processa vídeo. Tudo que custa CPU acontece na máquina de quem abre a sala:
 
-Um upload interrompido continua retomável pelo protocolo tus por `UPLOAD_IDLE_MINUTES`. Passado esse tempo sem receber bytes, os dados parciais são descartados e a sala é marcada como falha, em vez de ocupar espaço até o fim do TTL.
+1. O navegador cria a sala com `POST /api/rooms` e reivindica o direito de produzir a mídia dela (`/client-media/claim`).
+2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local, torrent via ss-bridge ou url de um plugin — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
+3. Cada segmento é enviado por `PUT` direto ao bucket, com uma URL assinada pelo servidor (`/client-media/presign`).
+4. A cada poucos segundos o navegador entrega as playlists (`/client-media/publish`). O servidor confirma no bucket que cada objeto nomeado existe antes de publicar, então um viewer nunca recebe uma URL que dá 404.
+5. A sala passa para `ready` no primeiro segmento confirmado; o remux continua por trás.
 
-Nem toda fonte tem prévia. Um MP4 cujo átomo `moov` fica depois da mídia não tem nenhum prefixo decodificável, então o servidor lê o começo do arquivo, reconhece esse layout e diz isso na tela de espera, em vez de tentar analisar o arquivo a cada meio segundo até o download acabar. A reprodução começa na passagem final, como sempre.
+O host também toca do próprio remux, pelo MediaSource, sem esperar o bucket.
 
-A tela de espera mostra em qual fase a fonte está — recebendo, analisando, gerando o primeiro trecho — e estima quanto falta até dar para assistir, comparando a taxa observada com o tamanho derivado do bitrate que o `ffprobe` mediu. Os números vêm do servidor, então valem para todo mundo na sala e não só para a aba que enviou o arquivo.
-
-Vídeos H.264 e HEVC são copiados quando possível. Outros codecs de vídeo são convertidos para H.264. As faixas de áudio são publicadas como AAC. A prévia usa segmentos de 2 segundos; o VOD final usa segmentos de 6 segundos.
+Uma fonte que o navegador não consegue preparar — codec que ele não decodifica, container que não lê — não abre sala: a tela diz isso e não há servidor para cair de volta. Um claim sem atividade por `UPLOAD_IDLE_MINUTES` é devolvido pelo sweeper, para uma sala abandonada no meio não ficar travada até o TTL.
 
 ### Torrents
 
-O navegador não depende de peers WebRTC para abrir ou baixar um torrent, e não carrega os bytes. O fluxo principal usa o `torrent-bridge`, um processo Node/WebTorrent isolado que:
+O servidor não baixa torrent nenhum. Quem abre um magnet precisa do [ss-bridge](https://github.com/giulianoo0/ss-bridge), um app nativo pequeno (Rust) que roda na máquina de quem criou a sala, embute um cliente BitTorrent e serve os bytes por HTTP em `127.0.0.1:32227`, com CORS para o site.
 
-1. valida o magnet e mantém somente o info hash e o nome;
-2. descobre metadados e peers por DHT e por uma whitelist de trackers;
-3. devolve a lista de arquivos para o seletor;
-4. seleciona o arquivo escolhido inteiro e entrega um stream sequencial, mantendo prioridade crítica logo à frente do ponto de leitura;
-5. entrega também os arquivos de legenda que acompanham o vídeo, sem alterar a prioridade das peças do vídeo.
+1. O site pergunta ao ss-bridge pela saúde e, a partir daí, o pill no cabeçalho mostra se ele está ligado.
+2. O magnet é aberto no ss-bridge, que descobre metadados e peers por DHT e trackers e devolve a lista de arquivos para o seletor.
+3. O arquivo escolhido é priorizado em ordem, e o navegador lê os bytes por requisições `Range`, que o ss-bridge responde assim que as peças chegam.
+4. O upload segue exatamente o caminho de um arquivo local: o navegador remuxa e envia, e a sala começa antes do download inteiro.
+5. Os arquivos de legenda que acompanham o vídeo são lidos do mesmo torrent e publicados junto.
 
-Depois que o arquivo é escolhido, o navegador entrega a sessão do bridge à API e sai do caminho: a API consome o stream e o envia ao próprio endpoint tus por loopback, reaproveitando a reserva de upload, o início progressivo, a conclusão e a limpeza de uploads abandonados que o upload comum já usa.
+Navegadores com Local Network Access (Chrome 142+, Firefox) pedem permissão antes da primeira requisição a `127.0.0.1`. O site só dispara esse pedido quando a pessoa clica em "Já baixei e abri" no diálogo do ss-bridge, com a explicação e uma seta apontando para onde a permissão aparece; nenhuma sondagem em segundo plano levanta o pedido sozinha.
 
-Isso importa por dois motivos medidos. Os bytes não atravessam mais a conexão de quem abriu a sala duas vezes, e a perna de subida do navegador era a mais estreita do caminho. E um stream único seleciona todas as peças restantes de uma vez: leituras por intervalo só conseguiam selecionar o intervalo pedido, então entre uma e outra o swarm ficava com dezenas de peers conectados e nada para baixar.
-
-O fallback WebTorrent no navegador é usado apenas quando o bridge não está configurado; nesse caso o navegador volta a fazer o upload. A velocidade depende da disponibilidade e da distribuição das peças no swarm.
+Sem o ss-bridge, abrir um torrent falha com uma mensagem que aponta para o pill. Não há fallback no servidor nem no navegador.
 
 ### Sincronização e controle
 
@@ -82,9 +76,9 @@ O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacida
 ### Áudio e legendas
 
 - Texto: ASS/SSA, SubRip, WebVTT e `mov_text` são convertidos para WebVTT.
-- MKV: o navegador tenta extrair legendas de texto enquanto o upload continua.
-- Torrent: os arquivos `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo são lidos inteiros pelo servidor, convertidos para WebVTT com FFmpeg e publicados quase imediatamente, sem esperar o vídeo. O idioma vem do nome do arquivo. As legendas embutidas no container saem da passagem final do FFmpeg e são numeradas antes das externas; as duas listas são unidas, então nenhuma das duas some quando o download termina.
-- Fallback: depois do upload, FFmpeg extrai as faixas que ainda não foram fornecidas pelo cliente. Uma extração parcial publica as legendas já disponíveis sem cancelar essa passagem final.
+- MKV: o navegador extrai as legendas de texto numa passagem sequencial sobre a fonte, em paralelo ao remux.
+- Torrent: os arquivos `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo são lidos do ss-bridge, convertidos para WebVTT no navegador e publicados quase imediatamente, sem esperar o vídeo. O idioma vem do nome do arquivo.
+- O servidor só recebe WebVTT pronto (`POST /api/rooms/:id/subtitles`) e o repassa ao bucket.
 - Imagem: PGS e VobSub são detectadas, mas não são exibidas; a interface informa quantas foram ignoradas.
 
 ## Executar com Docker
@@ -105,9 +99,8 @@ docker compose up --build
 
 Acesse [http://localhost:8099](http://localhost:8099). O Compose inicia:
 
-- `app`: frontend compilado, API Go, WebSocket e pipeline FFmpeg;
+- `app`: frontend compilado, API Go e WebSocket;
 - `redis`: salas, participantes e estado sincronizado;
-- `torrent-bridge`: cliente BitTorrent híbrido isolado;
 - `livekit`: servidor WebRTC em modo de desenvolvimento;
 - `alloy`: coletor que raspa as métricas da aplicação e as envia ao Grafana Cloud.
 
@@ -117,13 +110,13 @@ Para encerrar:
 docker compose down
 ```
 
-Os vídeos e segmentos ficam no volume `ss-data`. O cache transitório de torrents fica em `ss-torrent-cache`.
+O volume `ss-data` guarda só as legendas antes de subirem ao bucket; vídeo e segmentos nunca passam pelo servidor.
 
 ## Desenvolvimento local
 
 ### Backend
 
-O backend requer Go 1.26, Redis e FFmpeg/ffprobe disponíveis no `PATH`.
+O backend requer Go 1.26 e Redis. Não há ffmpeg.
 
 ```bash
 go test ./...
@@ -156,18 +149,15 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | --- | --- | --- |
 | `PORT` | `8080` | Porta HTTP interna da aplicação. |
 | `APP_BIND` | `127.0.0.1:8099` | Bind publicado pelo Docker Compose. |
-| `DATA_DIR` | `/data` | Diretório de uploads, HLS e legendas. |
+| `DATA_DIR` | `/data` | Diretório de trabalho das legendas. |
 | `WEB_DIR` | `web/dist` | Diretório dos arquivos estáticos compilados. |
 | `REDIS_URL` | `redis://localhost:6379` | Conexão Redis. |
-| `MAX_UPLOAD_MB` | `51200` | Limite máximo por arquivo, em MiB. |
-| `STREAM_START_MB` | `1` | Quantidade recebida antes de iniciar a prévia progressiva. |
+| `MAX_UPLOAD_MB` | `51200` | Orçamento de bytes que um remux pode publicar, em MiB. |
 | `ROOM_TTL_HOURS` | `5` | Vida útil da sala e da mídia. |
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
 | `ROOM_IDLE_SECONDS` | `90` | Tempo sem participantes até a sala ser recolhida: registro no Redis, diretório em disco e mídia no bucket. |
-| `UPLOAD_IDLE_MINUTES` | `10` | Tempo que um upload interrompido continua retomável antes de ser descartado. |
-| `FFMPEG_JOBS` | `2` | Workers simultâneos em cada fila de mídia. |
+| `UPLOAD_IDLE_MINUTES` | `10` | Tempo sem atividade até o claim de um remux ser devolvido. |
 | `METRICS_PORT` | `9090` | Porta do endpoint Prometheus, em um listener separado do da aplicação. `0` desliga o endpoint. |
-| `TORRENT_BRIDGE_URL` | vazio | URL interna do bridge; o Compose usa `http://torrent-bridge:8090`. |
 | `LIVEKIT_URL` | vazio | URL WebSocket entregue aos navegadores, normalmente `wss://...`. |
 | `LIVEKIT_API_KEY` | vazio | Chave para emitir tokens LiveKit. |
 | `LIVEKIT_API_SECRET` | vazio | Segredo para emitir tokens LiveKit. |
@@ -208,8 +198,8 @@ rsync -az --delete \
   --exclude .env --exclude docker-compose.override.yml --exclude livekit.yaml \
   ./ usuario@servidor:/opt/ss/
 ssh usuario@servidor 'cd /opt/ss \
-  && docker compose build app torrent-bridge \
-  && docker compose up -d app torrent-bridge \
+  && docker compose build app \
+  && docker compose up -d app \
   && docker compose ps'
 ```
 
@@ -227,8 +217,7 @@ Banda vem de contadores. A aplicação conta bytes e nunca calcula taxa: quem tr
 
 - salas criadas, ativas, por estado e recolhidas, com o motivo — sala vazia ou fim do TTL;
 - participantes conectados, entradas e saídas, conexões e mensagens WebSocket;
-- bytes recebidos por tus, bytes de torrent, peers do swarm e transferências em andamento;
-- jobs de FFmpeg por fila e por desfecho, com histograma de duração, tempo até a prévia ficar pronta e a proporção entre cópia e transcode;
+- bytes assinados para o pipeline do cliente e objetos confirmados no bucket;
 - requisições HTTP por rota, status e duração, e os bytes que entram e saem em cada uma;
 - operações no R2 por tipo e por classe de cobrança, com duração e erros.
 
@@ -263,53 +252,42 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 | Método | Rota | Função |
 | --- | --- | --- |
 | `GET` | `/healthz` | Saúde do processo da aplicação. |
-| `POST` | `/api/rooms` | Cria uma sala e devolve o endpoint tus. |
+| `POST` | `/api/rooms` | Cria uma sala. |
 | `GET` | `/api/rooms/:id` | Consulta status, faixas e expiração. |
-| `POST/PATCH/HEAD/DELETE` | `/api/upload/*` | Criação, continuação e encerramento de uploads tus. |
 | `GET` | `/ws/rooms/:id` | WebSocket de presença, chat e reprodução. |
 | `GET` | `/media/:id/hls/*` | Playlists e segmentos HLS. |
 | `GET` | `/media/:id/subs/*` | Legendas WebVTT. |
 | `POST` | `/api/rooms/:id/subtitles` | Recebe legendas extraídas pelo navegador. |
 | `POST` | `/api/rooms/:id/screenshare/token` | Emite credencial LiveKit para um membro conectado. |
-| `POST` | `/api/torrent-bridge/open` | Abre um magnet e retorna metadados. |
-| `POST` | `/api/torrent-bridge/select` | Seleciona o arquivo da sessão. |
-| `POST` | `/api/torrent-bridge/read` | Entrega um intervalo binário de até 8 MiB. |
-| `POST` | `/api/torrent-bridge/read-file` | Lê outro arquivo do mesmo torrent, usado para legendas externas. |
-| `POST` | `/api/torrent-bridge/stats` | Retorna peers, velocidade e progresso. |
-| `POST` | `/api/torrent-bridge/close` | Fecha a sessão e limpa seu cache. |
 
 ## Persistência e segurança
 
 - Salas e estado ficam no Redis com expiração.
-- Uploads e derivados ficam em `DATA_DIR/rooms/<id>` e são removidos pelo sweeper após o TTL.
+- A mídia de cada sala fica no bucket em `rooms/<id>/g<geração>/` e é removida pelo sweeper após o TTL.
 - O ID da sala funciona como link de acesso; não há contas ou ACL por usuário.
 - Nomes de arquivo, apelidos, IDs, caminhos de mídia, legendas e ranges são validados e limitados.
 - Rotas de API usam `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` e bloqueio de framing.
 - O Gin não confia em cabeçalhos de proxy enviados pelo cliente.
-- O bridge aceita somente magnets BTIH válidos, limita sessões e ranges e roda sem capabilities, com filesystem somente leitura e rede separada do Redis.
 - Tokens LiveKit só são emitidos para membros que apresentem a capacidade efêmera recebida pelo WebSocket.
 
 ## Limitações conhecidas
 
-- A disponibilidade de torrents depende do swarm. Metadados disponíveis não garantem que todas as peças do vídeo tenham seed.
+- Torrents exigem o ss-bridge aberto na máquina de quem cria a sala, e a disponibilidade depende do swarm. Metadados disponíveis não garantem que todas as peças do vídeo tenham seed.
 - PGS e VobSub são legendas bitmap e não são renderizadas pelo player atual.
-- A mídia é armazenada em volume local; múltiplas réplicas exigem storage compartilhado e coordenação adicional.
 - O link da sala concede acesso a quem o possui.
-- Alguns formatos MP4 precisam ser remuxados no navegador para permitir processamento progressivo.
+- Só navegadores capazes de remuxar (WebCodecs para decodificar o áudio, AAC para codificar) abrem sala com vídeo. Quem assiste não precisa de nada disso.
 
 ## Estrutura do repositório
 
 ```text
-bridge/              bridge BitTorrent em Node/WebTorrent
 cmd/server/          entrada do servidor Go
 internal/config/     configuração por ambiente
 internal/httpapi/    rotas HTTP, mídia, legendas e LiveKit
-internal/media/      probe, remux, HLS progressivo e filas
+internal/media/      o lado servidor do pipeline do cliente: validação e render de playlists, publicação de legendas
 internal/metrics/    séries Prometheus expostas pelo servidor
 internal/objectstore/ bucket R2 e a contagem das operações cobradas
 internal/room/       modelo, Redis e expiração
 internal/sync/       WebSocket, presença, chat e relógio
-internal/upload/     integração tus
 observability/       coletor, painéis, alertas e o script que os envia
 web/src/             aplicação React/TypeScript
 ```

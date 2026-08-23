@@ -3,8 +3,6 @@ package httpapi
 
 import (
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -21,8 +19,6 @@ type ServerOption func(*serverOptions)
 
 type serverOptions struct {
 	sourceHooks       SourceHooks
-	ingestor          TorrentIngestor
-	urlIngestor       URLIngestor
 	subtitlePublisher SubtitlePublisher
 	clientMediaBucket ClientMediaBucket
 	clientMediaHooks  ClientMediaHooks
@@ -33,28 +29,15 @@ func WithSourceHooks(hooks SourceHooks) ServerOption {
 	return func(o *serverOptions) { o.sourceHooks = hooks }
 }
 
-// WithTorrentIngestor enables the endpoint that pulls a torrent file in
-// server-side. Without it, torrent rooms fall back to uploading from the
-// browser.
-func WithTorrentIngestor(ingestor TorrentIngestor) ServerOption {
-	return func(o *serverOptions) { o.ingestor = ingestor }
-}
-
-// WithURLIngestor enables opening a room from a url a plugin produced.
-func WithURLIngestor(ingestor URLIngestor) ServerOption {
-	return func(o *serverOptions) { o.urlIngestor = ingestor }
-}
-
 // WithSubtitlePublisher sends browser-extracted subtitles to the bucket they
 // are served from. Without it they are stored but never delivered.
 func WithSubtitlePublisher(publisher SubtitlePublisher) ServerOption {
 	return func(o *serverOptions) { o.subtitlePublisher = publisher }
 }
 
-// WithClientMedia enables the client media pipeline: a capable browser
+// WithClientMedia enables the client media pipeline: the host's browser
 // remuxes the source itself and writes segments straight into the bucket
-// through presigned URLs. Without it those routes do not exist and every
-// room prepares through the server's ffmpeg.
+// through presigned URLs. It is the only way media reaches a room.
 func WithClientMedia(bucket ClientMediaBucket, hooks ClientMediaHooks) ServerOption {
 	return func(o *serverOptions) {
 		o.clientMediaBucket = bucket
@@ -96,38 +79,11 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	}
 	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
-	RegisterTorrentRoute(r.Group("/api"), store, cfg, options.ingestor)
-	RegisterURLSourceRoute(r.Group("/api"), store, cfg, options.urlIngestor)
-	registerTorrentBridge(r, cfg.TorrentBridgeURL)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
 	}
 	registerFrontend(r, cfg.WebDir)
 	return r
-}
-
-func registerTorrentBridge(r *gin.Engine, rawURL string) {
-	if rawURL == "" {
-		return
-	}
-	target, err := url.Parse(rawURL)
-	if err != nil || target.Scheme != "http" || target.Host == "" {
-		panic("invalid torrent bridge URL")
-	}
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
-		http.Error(w, `{"error":"torrent bridge unavailable"}`, http.StatusBadGateway)
-	}
-	r.Any("/api/torrent-bridge/*path", func(c *gin.Context) {
-		// The whole-file stream exists for the server-side ingest, which
-		// reaches the bridge directly. Proxying it would hand anyone an
-		// unmetered pipe for a 10 GB file over a single request.
-		if c.Param("path") == "/stream" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-			return
-		}
-		proxy.ServeHTTP(c.Writer, c.Request)
-	})
 }
 
 func privacyHeaders() gin.HandlerFunc {

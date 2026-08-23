@@ -91,15 +91,14 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			hooks.CancelMedia(roomID)
 		}
 		// Everything under the room directory belongs to the source being
-		// replaced. Leaving any of it behind would make the next upload fail:
-		// the pipeline refuses a room holding more than one original file.
+		// replaced: the subtitles the previous remux published.
 		if err := os.RemoveAll(filepath.Join(cfg.DataDir, "rooms", roomID)); err != nil {
 			slog.ErrorContext(c.Request.Context(), "remove previous room media", "room_id", roomID, "error", err)
 			c.Status(http.StatusInternalServerError)
 			return
 		}
 
-		previousUpload, generation, err := store.SwapSource(
+		_, generation, err := store.SwapSource(
 			c.Request.Context(), roomID, req.Kind, fileName, status, time.Now())
 		if errors.Is(err, room.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
@@ -111,22 +110,14 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
-		// The reservation is gone from Redis, so nothing would ever sweep the
-		// bytes of an upload that was still in flight.
-		if previousUpload != "" {
-			removeIncomingUpload(c, cfg.DataDir, roomID, previousUpload)
-		}
-
 		if hooks.NotifyStatus != nil {
 			hooks.NotifyStatus(roomID, status)
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"status":           status,
-			"sourceKind":       req.Kind,
-			"fileName":         fileName,
-			"mediaGeneration":  generation,
-			"uploadEndpoint":   "/api/upload/",
-			"streamStartBytes": cfg.StreamStartMB << 20,
+			"status":          status,
+			"sourceKind":      req.Kind,
+			"fileName":        fileName,
+			"mediaGeneration": generation,
 		})
 	}
 }
@@ -146,18 +137,5 @@ func sourceTarget(req changeSourceRequest) (status, fileName string, ok bool) {
 		return "ready", "", true
 	default:
 		return "", "", false
-	}
-}
-
-func removeIncomingUpload(c *gin.Context, dataDir, roomID, uploadID string) {
-	if !validMediaRoomID(uploadID) {
-		return
-	}
-	incoming := filepath.Join(dataDir, "tus-incoming")
-	for _, path := range []string{filepath.Join(incoming, uploadID), filepath.Join(incoming, uploadID+".info")} {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.ErrorContext(c.Request.Context(), "remove superseded upload",
-				"room_id", roomID, "upload_id", uploadID, "error", err)
-		}
 	}
 }

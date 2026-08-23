@@ -2,7 +2,8 @@ import parserBundleUrl from 'matroska-subtitles/dist/matroska-subtitles.min.js?u
 import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
 import type { VttTrack } from './subtitleFormats'
 
-const SLICE_BYTES = 8 * 1024 * 1024
+// What the server stores per room (maxSubtitleTracks on its side).
+export const MAX_SUBTITLE_TRACKS = 64
 // Minimum gap between progressive publishes. Cues keep arriving for as long as
 // the source streams, and each publish rewrites every track server-side.
 const PUBLISH_INTERVAL_MS = 8_000
@@ -137,16 +138,6 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   }
 }
 
-// Streams a whole file through the parser in slices, so memory stays bounded
-// even for multi-GB uploads.
-async function extractSubtitleTracks(file: File): Promise<VttTrack[]> {
-  const stream = await createMatroskaSubtitleStream()
-  for (let offset = 0; offset < file.size; offset += SLICE_BYTES) {
-    stream.write(new Uint8Array(await file.slice(offset, offset + SLICE_BYTES).arrayBuffer()))
-  }
-  return await stream.finish()
-}
-
 export function toWebVTT(cues: SubtitleCue[], ass: AssTrackInfo | null = null): string {
   const sorted = [...cues].sort((a, b) => a.time - b.time)
   const lines = ['WEBVTT', '']
@@ -246,7 +237,9 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     order.push(source)
   }
 
-  const union = (): VttTrack[] => order.flatMap((source) => sources.get(source)?.tracks ?? [])
+  // The server refuses a post with more tracks than it will store, rather
+  // than keeping some: a release with more is cut here, embedded first.
+  const union = (): VttTrack[] => order.flatMap((source) => sources.get(source)?.tracks ?? []).slice(0, MAX_SUBTITLE_TRACKS)
   const allComplete = (): boolean => order.every((source) => sources.get(source)?.complete === true)
 
   const post = async () => {
@@ -291,21 +284,5 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
       pending = pending.then(() => (dirty ? post() : Promise.resolve()))
       await pending
     },
-  }
-}
-
-// Best-effort client-side subtitle extraction for a local file: embedded text
-// tracks are posted while the upload is still running. Never rejects; the
-// server-side extraction at upload completion remains the fallback.
-export async function extractAndUploadSubtitles(file: File, roomID: string,
-  mediaGeneration: number): Promise<void> {
-  if (!isMatroska(file)) return
-  const collector = createSubtitleCollector(roomID, mediaGeneration)
-  collector.register('embedded')
-  try {
-    collector.publish('embedded', await extractSubtitleTracks(file), true)
-    await collector.flush()
-  } catch (error) {
-    console.error('subtitle extraction failed', error)
   }
 }

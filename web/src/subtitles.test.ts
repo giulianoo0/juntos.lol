@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseAssHeader } from './assvtt'
-import { createSubtitleCollector, extractAndUploadSubtitles, toWebVTT, type SubtitleCue } from './subtitles'
+import { createSubtitleCollector, toWebVTT, type SubtitleCue } from './subtitles'
 
 describe('toWebVTT', () => {
   it('serializes cues with millisecond timings sorted by start time', () => {
@@ -84,70 +84,6 @@ describe('toWebVTT', () => {
 
   it('clamps negative timings to zero', () => {
     expect(toWebVTT([{ text: 'Hi', time: -5, duration: 500 }])).toContain('00:00:00.000 --> 00:00:00.495')
-  })
-})
-
-describe('extractAndUploadSubtitles', () => {
-  type Listener = (...args: never[]) => void
-
-  class FakeParser {
-    listeners = new Map<string, Listener[]>()
-    once(event: string, listener: Listener) { this.on(event, listener) }
-    on(event: string, listener: Listener) {
-      this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener])
-    }
-    resume() {}
-    write() {}
-    end() {
-      this.emit('tracks', [{ number: 3, language: 'eng', name: 'Signs', type: 'utf8' }] as never)
-      this.emit('subtitle', { text: 'Hello', time: 1_000, duration: 3_000 } as never, 3 as never)
-      this.emit('finish')
-    }
-    private emit(event: string, ...args: never[]) {
-      for (const listener of this.listeners.get(event) ?? []) listener(...args)
-    }
-  }
-
-  beforeEach(() => {
-    vi.stubGlobal('MatroskaSubtitles', { SubtitleParser: FakeParser })
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 204 }))
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
-
-  it('does nothing for non-Matroska files', async () => {
-    await extractAndUploadSubtitles(new File(['video'], 'movie.mp4', { type: 'video/mp4' }), 'room1', 0)
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('posts all extracted tracks as WebVTT in one request', async () => {
-    await extractAndUploadSubtitles(new File(['video'], 'movie.mkv', { type: 'video/x-matroska' }), 'room1', 0)
-    expect(fetch).toHaveBeenCalledWith('/api/rooms/room1/subtitles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tracks: [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\n00:00:01.000 --> 00:00:04.000 line:-3\nHello\n' }],
-        complete: true,
-        mediaGeneration: 0,
-      }),
-    })
-  })
-
-  it('resolves silently when the server rejects the tracks', async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 400 } as Response)
-    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1', 0)).resolves.toBeUndefined()
-    expect(console.warn).toHaveBeenCalled()
-  })
-
-  it('resolves silently when the request itself fails', async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error('network down'))
-    await expect(extractAndUploadSubtitles(new File(['v'], 'movie.mkv'), 'room1', 0)).resolves.toBeUndefined()
-    expect(console.error).toHaveBeenCalled()
   })
 })
 

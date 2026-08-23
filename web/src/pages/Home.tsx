@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
-import { createRoomAndIngestUrl, createRoomAndUpload, createRoomAndUploadTorrent, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
+import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
@@ -15,7 +15,7 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { BridgeStatus } from '../components/BridgeStatus'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
-import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import { HelperRequiredError, type TorrentSession, type TorrentVideoFile } from '../torrent'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
@@ -227,7 +227,7 @@ export function Home() {
         // A url source has no swarm to open and no file list to pick from.
         // The size is zero because a stream object rarely carries one, and
         // zero is how the server is told to ask the origin instead.
-        room = await createRoomAndIngestUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
+        room = await createRoomAndUploadUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
         fileName = media.pick.displayName
         const playing = nowPlayingFromPick(media.pick)
         try {
@@ -273,7 +273,11 @@ export function Home() {
       discardPending(media)
       // A file that changed under the picker is not a failed transfer, and
       // saying "try again" would send someone straight back into it.
-      const message = t(isUnreadableFile(error) ? 'error.fileChanged' : 'home.failed')
+      const message = t(
+        isUnreadableFile(error) ? 'error.fileChanged'
+          : error instanceof HelperRequiredError ? 'home.torrentNeedsBridge'
+            : 'home.failed',
+      )
       // On the catalogue side the error card sits below a full page of
       // posters, where nobody scrolls to find it. A toast arrives where the
       // eye already is, and the sound says something happened even if the

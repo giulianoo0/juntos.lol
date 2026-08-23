@@ -19,7 +19,6 @@ func TestCreateRoom(t *testing.T) {
 	s := newTestStore(t) // helper: miniredis + NewStore
 	e := gin.New()
 	cfg := testCfg(t)
-	cfg.StreamStartMB = 3
 	RegisterRoomRoutes(e.Group("/api"), s, cfg)
 	w := httptest.NewRecorder()
 	body := `{"fileName":"movie.mkv","nickname":"giuli"}`
@@ -28,13 +27,10 @@ func TestCreateRoom(t *testing.T) {
 	e.ServeHTTP(w, req)
 	require.Equal(t, 201, w.Code)
 	var resp struct {
-		ID               string
-		UploadEndpoint   string
-		StreamStartBytes int64
+		ID string
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.ID, 8)
-	require.Equal(t, int64(3<<20), resp.StreamStartBytes)
 	got, _ := s.Get(context.Background(), resp.ID)
 	require.Equal(t, "uploading", got.Status)
 }

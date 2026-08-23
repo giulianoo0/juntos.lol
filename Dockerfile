@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /bin/server ./cmd/serve
 FROM debian:trixie-slim
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+	&& apt-get install -y --no-install-recommends ca-certificates \
 	&& useradd --system --uid 10001 --create-home app \
 	&& mkdir -p /data /web \
 	&& chown -R app:app /data /web \

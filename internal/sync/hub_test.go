@@ -202,20 +202,17 @@ func TestHubIdleCleanupKeepsTheMediaOfAnActiveUpload(t *testing.T) {
 // says nothing about whether reclaiming it would destroy work in flight.
 func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
 	tests := []struct {
-		name      string
-		received  int64
-		total     int64
-		mediaBusy bool
+		name     string
+		received int64
+		total    int64
 	}{
 		{name: "source still arriving", received: 500, total: 1000},
-		{name: "final remux running", received: 1000, total: 1000, mediaBusy: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
 			hub.idleAfter = 20 * time.Millisecond
-			hub.SetMediaWork(fakeMediaWork{busy: tt.mediaBusy})
 			bucket := hub.bucket.(*objectstore.Fake)
 			require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
 			require.NoError(t, store.SetIngestProgress(t.Context(), "r1", tt.received, tt.total))
@@ -249,7 +246,6 @@ func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
 func TestHubIdleCleanupReclaimsARoomWhoseWorkIsDone(t *testing.T) {
 	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
 	hub.idleAfter = 20 * time.Millisecond
-	hub.SetMediaWork(fakeMediaWork{busy: false})
 	require.NoError(t, store.SetStatus(t.Context(), "r1", "ready"))
 	require.NoError(t, store.SetIngestProgress(t.Context(), "r1", 1000, 1000))
 	client := dialHubWS(t, server)
@@ -261,10 +257,6 @@ func TestHubIdleCleanupReclaimsARoomWhoseWorkIsDone(t *testing.T) {
 		return errors.Is(err, room.ErrNotFound)
 	}, time.Second, 10*time.Millisecond)
 }
-
-type fakeMediaWork struct{ busy bool }
-
-func (f fakeMediaWork) Busy(string) bool { return f.busy }
 
 func TestHubIdleCleanupPreservesActiveUpload(t *testing.T) {
 	for _, status := range []string{"uploading", "processing"} {
@@ -651,7 +643,7 @@ func TestHubDoesNotStopForAStalledMemberAlone(t *testing.T) {
 }
 
 func TestHubTitleRequestBroadcasts(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -675,7 +667,7 @@ func TestHubTitleRequestBroadcasts(t *testing.T) {
 }
 
 func TestHubTitleRequestValidationAndRateLimit(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleMinutes: 10})
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)

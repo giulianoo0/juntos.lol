@@ -109,7 +109,7 @@ func TestStoreClientSubtitlesRejectsBadInput(t *testing.T) {
 		{name: "no tracks", body: `{"tracks":[]}`},
 		{name: "vtt missing WEBVTT header", body: `{"tracks":[{"language":"eng","vtt":"not vtt"}]}`},
 		{name: "title too long", body: `{"tracks":[{"language":"eng","title":"` + strings.Repeat("a", 256) + `","vtt":"WEBVTT"}]}`},
-		{name: "too many tracks", body: `{"tracks":[` + strings.TrimSuffix(strings.Repeat(`{"language":"eng","vtt":"WEBVTT"},`, 33), ",") + `]}`},
+		{name: "too many tracks", body: `{"tracks":[` + strings.TrimSuffix(strings.Repeat(`{"language":"eng","vtt":"WEBVTT"},`, maxSubtitleTracks+1), ",") + `]}`},
 		{name: "oversize body", body: `{"tracks":[{"language":"eng","vtt":"WEBVTT ` + strings.Repeat("a", 8<<20) + `"}]}`},
 	}
 	for _, tt := range tests {

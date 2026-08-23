@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
-import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
+import { HelperRequiredError, openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
@@ -103,8 +103,10 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
       owned.current = opened
       setSession(opened)
       if (opened.files.length === 0) setError(t('home.torrentNoVideos'))
-    } catch {
-      setError(t('home.torrentFailed'))
+    } catch (error) {
+      // Without the helper there is no torrent at all, and "check the magnet"
+      // would send someone to fix the wrong thing.
+      setError(t(error instanceof HelperRequiredError ? 'home.torrentNeedsBridge' : 'home.torrentFailed'))
     } finally {
       setLoading(false)
     }

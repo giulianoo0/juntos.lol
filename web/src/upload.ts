@@ -1,36 +1,35 @@
-import Uppy from '@uppy/core'
-import Tus from '@uppy/tus'
-import { convertMp4ToMkv, isMp4 } from './convert'
+/**
+ * Getting a source into a room. There is exactly one way: this browser
+ * remuxes the source itself and publishes the segments straight into the
+ * bucket (see pipeline/clientMedia). The server creates the room, signs the
+ * bucket writes and accepts the playlists; it never sees the video bytes and
+ * never runs ffmpeg. A source this browser cannot remux is a room that does
+ * not open, and the host is told why.
+ */
 import {
   createMatroskaSubtitleStream,
   createSubtitleCollector,
-  extractAndUploadSubtitles,
   isMatroska,
-  type MatroskaSubtitleStream,
   type SubtitleCollector,
 } from './subtitles'
 import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
 import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentSideFile, TorrentVideoFile } from './torrent'
+import { fileInput, torrentInput, urlInput, type MediaInput } from './pipeline/mediaInput'
 
-const TUS_CHUNK_BYTES = 50 * 1024 * 1024
-const TORRENT_CHUNK_BYTES = 8 * 1024 * 1024
-// The server accepts 32 subtitle tracks per room; leave headroom for the
-// tracks muxed into the video itself.
+// Headroom under the server's per-room track cap for the tracks muxed into
+// the video itself.
 const MAX_EXTERNAL_SUBTITLES = 16
 // How often the cues seen so far are republished while bytes keep arriving.
 const SUBTITLE_SNAPSHOT_MS = 8_000
-// Subtitle extraction must never hold up the upload. The parser bundle is a
-// same-origin asset, so anything slower than this is a failure to move on from.
-const SUBTITLE_PARSER_TIMEOUT_MS = 10_000
+// The slice a subtitle pass reads at a time. Big enough that a torrent read
+// is worth the round trip, small enough to keep memory flat on a 50 GB file.
+const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
 const REGISTRY_TTL_MS = 30_000
-const DEFAULT_STREAM_START_BYTES = 1024 * 1024
 
 interface CreateRoomResponse {
   id: string
   nickname: string
-  uploadEndpoint: string
-  streamStartBytes?: number
 }
 
 export interface UploadResult {
@@ -47,7 +46,6 @@ export interface RoomUploadProgress {
   pct: number
   bytesUploaded: number
   bytesTotal: number
-  streamStartBytes: number
 }
 
 interface UploadEntry {
@@ -91,8 +89,6 @@ export interface RoomSource {
   sourceKind: 'upload' | 'screen'
   fileName: string
   mediaGeneration: number
-  uploadEndpoint: string
-  streamStartBytes: number
 }
 
 // Repoints an existing room at a new source. Only the controller is allowed
@@ -113,10 +109,17 @@ export async function changeRoomSource(
   return await response.json() as RoomSource
 }
 
-// The error a file that changed on disk produces, reported separately because
-// the remedy is entirely different from a failed transfer: wait, then pick it
-// again.
+// The errors a transfer reports by name, because each has its own remedy and
+// the room page says a different thing for each.
+//
+// A file that changed on disk: wait for the download to finish, pick again.
 export const FILE_UNREADABLE = 'file-unreadable'
+// This browser cannot remux this source — a codec it cannot decode, a
+// container it cannot read. Another browser, or another release.
+export const UNSUPPORTED_MEDIA = 'unsupported-media'
+// A url source that refused the browser (no CORS, no Range). Nothing here can
+// fix that; a different stream can.
+export const SOURCE_UNREACHABLE = 'source-unreachable'
 
 // A picked File is a snapshot of a path, and browsers invalidate it the moment
 // the bytes underneath change. A file that is still downloading changes
@@ -140,27 +143,9 @@ export async function assertReadable(file: File): Promise<void> {
   }
 }
 
-// MP4s with a trailing moov atom cannot be remuxed progressively on the
-// server, so remux to Matroska locally first (codec copy). On failure the
-// original file is used unchanged; a missing video track rejects.
-export async function prepareLocalFile(
-  file: File,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<File> {
-  if (!isMp4(file)) return file
-  const converted = await convertMp4ToMkv(file, (pct) => onProgress?.({ phase: 'converting', pct }))
-  return converted ?? file
-}
-
-function streamStartBytes(room: CreateRoomResponse): number {
-  return room.streamStartBytes && room.streamStartBytes > 0
-    ? room.streamStartBytes
-    : DEFAULT_STREAM_START_BYTES
-}
-
-function createEntry(bytesTotal: number, startBytes: number): UploadEntry {
+function createEntry(bytesTotal: number): UploadEntry {
   return {
-    progress: { pct: 0, bytesUploaded: 0, bytesTotal, streamStartBytes: startBytes },
+    progress: { pct: 0, bytesUploaded: 0, bytesTotal },
     done: false,
     error: null,
     progressListeners: new Set(),
@@ -188,184 +173,18 @@ function finishEntry(roomID: string, entry: UploadEntry, error: string | null, c
   }, REGISTRY_TTL_MS)
 }
 
-function encodeMetadata(value: string): string {
-  const bytes = new TextEncoder().encode(value)
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
-}
-
 export async function createRoomAndUpload(
   file: File,
   nickname: string,
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
-  // Before anything is created, so a file that cannot be read never leaves a
+  // A file still being written fails here, before a room exists, not as a
   // room behind that will sit at zero per cent for ever.
   await assertReadable(file)
-  const uploadFile = await prepareLocalFile(file, onProgress)
-  const room = await createRoom(uploadFile.name, nickname)
-  startRoomUpload(room.id, room.uploadEndpoint, streamStartBytes(room), 0, uploadFile, onProgress)
+  const room = await createRoom(file.name, nickname)
+  startFileUpload(room.id, 0, file, onProgress)
   return { roomID: room.id, nickname: room.nickname }
-}
-
-/**
- * Hands the file to whichever pipeline can carry it: a capable browser
- * remuxes and publishes the media itself, straight into the bucket, and the
- * server never runs ffmpeg for the room. Everything else — and any client
- * pipeline failure, at any point — goes through tus exactly as before.
- *
- * The decision is asynchronous but the call is not: the room exists and the
- * caller has already navigated into it either way.
- */
-export function startRoomUpload(
-  roomID: string,
-  uploadEndpoint: string,
-  startBytes: number,
-  mediaGeneration: number,
-  uploadFile: File,
-  onProgress?: (progress: UploadProgress) => void,
-): void {
-  // The progress entry is registered synchronously, before the client/tus
-  // decision: Room.tsx subscribes once on mount, and deferring the entry
-  // behind the dynamic import would show no progress for either path.
-  const entry = createEntry(uploadFile.size, startBytes)
-  uploads.set(roomID, entry)
-  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
-
-  const fallBackToTus = () => {
-    // The registry entry is replaced by uploadFileToRoom's own; drop this one
-    // without firing its done-listener, so nobody hears "done" before tus has
-    // sent a byte.
-    if (uploads.get(roomID) === entry) uploads.delete(roomID)
-    uploadFileToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, uploadFile, onProgress)
-  }
-
-  void (async () => {
-    let pipeline: typeof import('./pipeline/clientMedia') | null = null
-    let plan: Awaited<ReturnType<typeof import('./pipeline/clientMedia')['planClientRemux']>> = null
-    try {
-      // A dynamic import so the remuxer and its WASM audio decoders live in
-      // their own chunk, paid for only when an upload actually starts.
-      pipeline = await import('./pipeline/clientMedia')
-      plan = await pipeline.planClientRemux(uploadFile)
-    } catch {
-      plan = null
-    }
-    if (!pipeline || !plan) {
-      fallBackToTus()
-      return
-    }
-
-    // Server-side extraction never runs in client mode, so the browser's own
-    // subtitle pass is the only one; it already publishes progressively.
-    void extractAndUploadSubtitles(uploadFile, roomID, mediaGeneration)
-    try {
-      await pipeline.runClientRemux({
-        roomID,
-        mediaGeneration,
-        file: uploadFile,
-        plan,
-        onProgress: (pct) => updateEntry(entry, Math.round((pct / 100) * uploadFile.size)),
-      })
-      finishEntry(roomID, entry, null, () => {})
-    } catch (error) {
-      if (error instanceof pipeline.RoomMovedOnError) {
-        // The controller swapped the source; another upload owns the room now.
-        // Falling back would re-upload the old file and race it.
-        if (uploads.get(roomID) === entry) uploads.delete(roomID)
-        return
-      }
-      // The run failed and released its claim; the room is free for tus to
-      // carry the same file from zero.
-      console.warn('client media pipeline failed; falling back to upload', error)
-      fallBackToTus()
-    }
-  })()
-}
-
-// Streams a prepared file into a room that already exists, which is what a
-// source swap needs: the room, its members and its chat are all already there.
-export function uploadFileToRoom(
-  roomID: string,
-  uploadEndpoint: string,
-  startBytes: number,
-  mediaGeneration: number,
-  uploadFile: File,
-  onProgress?: (progress: UploadProgress) => void,
-): void {
-  const room = { id: roomID, uploadEndpoint }
-  const uppy = new Uppy({ autoProceed: false })
-  // Keep each PATCH below the common reverse-proxy upload cap while still
-  // allowing the server's 50 GB room limit to be reached resumably.
-  uppy.use(Tus, { endpoint: room.uploadEndpoint, chunkSize: TUS_CHUNK_BYTES })
-  uppy.setMeta({ roomID: room.id })
-  uppy.addFile({ name: uploadFile.name, type: uploadFile.type, data: uploadFile })
-
-  const entry = createEntry(uploadFile.size, startBytes)
-  uploads.set(room.id, entry)
-  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
-
-  const finish = (error: string | null) => {
-    finishEntry(room.id, entry, error, () => uppy.destroy())
-  }
-
-  uppy.on('upload-progress', (_file, progress) => {
-    const total = progress.bytesTotal ?? uploadFile.size
-    const uploaded = progress.bytesUploaded ?? 0
-    entry.progress.bytesTotal = total
-    updateEntry(entry, uploaded)
-  })
-  const describe = (error: unknown) => {
-    if (isUnreadableFile(error)) return FILE_UNREADABLE
-    return error instanceof Error ? error.message : 'upload failed'
-  }
-  uppy.on('complete', (result) => finish(result.failed?.length ? describe(result.failed[0]?.error) : null))
-  uppy.on('error', (error) => finish(describe(error)))
-  void uppy.upload().catch((error: unknown) => finish(describe(error)))
-
-  // Fire-and-forget: server-side extraction at completion stays the fallback.
-  // For a converted file this runs against the fresh MKV; for an unconverted
-  // MP4 it silently no-ops.
-  void extractAndUploadSubtitles(uploadFile, room.id, mediaGeneration)
-}
-
-/**
- * Points a room at a url and lets the server fetch it. The bytes never touch
- * this browser — the same trade the torrent hand-off makes, for the same
- * reason, and it means the transfer survives the tab closing.
- */
-export async function startUrlTransfer(roomID: string, url: string, fileName: string, size: number): Promise<void> {
-  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url, fileName, size }),
-  })
-  if (response.ok) return
-  // The server names which rule barred the address. Dropping that and
-  // reporting a bare status would leave the host with nothing to act on:
-  // "not https" and "points at your own network" have different fixes.
-  let reason = ''
-  try {
-    const body = await response.json() as { reason?: unknown }
-    if (typeof body.reason === 'string') reason = body.reason
-  } catch { /* not JSON, which is not itself worth reporting */ }
-  throw new Error(reason
-    ? `url source refused (${response.status}): ${reason}`
-    : `url source refused (${response.status})`)
-}
-
-export async function createRoomAndIngestUrl(
-  url: string,
-  fileName: string,
-  size: number,
-  nickname: string,
-): Promise<UploadResult> {
-  if (mocksEnabled) return mockCreateRoom(nickname)
-  const created = await createRoom(fileName, nickname)
-  await startUrlTransfer(created.id, url, fileName, size)
-  return { roomID: created.id, nickname: created.nickname }
 }
 
 export async function createRoomAndUploadTorrent(
@@ -375,187 +194,123 @@ export async function createRoomAndUploadTorrent(
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
   const created = await createRoom(source.file.name, nickname)
-  await startTorrentTransfer(created.id, created.uploadEndpoint, streamStartBytes(created), 0, source, onProgress)
+  startTorrentUpload(created.id, 0, source, onProgress)
   return { roomID: created.id, nickname: created.nickname }
 }
 
-// Hands the chosen file to the server, which then pulls it from the bridge
-// itself. Returns false when there is no bridge session to hand over — the
-// in-browser WebTorrent fallback — and the browser has to do the transfer.
-async function handOverToServer(roomID: string, source: TorrentUploadSource): Promise<boolean> {
-  const sessionID = source.session.bridgeSessionID
-  if (!sessionID) return false
-  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/torrent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      sessionId: sessionID,
-      path: source.file.path,
-      fileName: source.file.name,
-      size: source.file.size,
-    }),
-  })
-  // A server without the ingest wired up answers 404 for the route itself,
-  // which is the one failure that should fall back rather than surface.
-  if (response.status === 404) return false
-  if (!response.ok) throw new Error(`torrent handover failed (${response.status})`)
-  // The session belongs to the server now: tearing it down here would destroy
-  // the torrent underneath the download that just started.
-  source.session.destroy(true)
-  return true
+export async function createRoomAndUploadUrl(
+  url: string,
+  fileName: string,
+  size: number,
+  nickname: string,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(fileName, nickname)
+  startUrlUpload(created.id, 0, url, fileName, size)
+  return { roomID: created.id, nickname: created.nickname }
 }
 
-// Starts a torrent transfer the best way available: server-side when a bridge
-// session can be handed over, and through this browser otherwise.
-export async function startTorrentTransfer(
+export function startFileUpload(
   roomID: string,
-  uploadEndpoint: string,
-  startBytes: number,
   mediaGeneration: number,
-  source: TorrentUploadSource,
-  onProgress?: (progress: UploadProgress) => void,
-): Promise<void> {
-  if (await handOverToServer(roomID, source)) return
-  uploadTorrentToRoom(roomID, uploadEndpoint, startBytes, mediaGeneration, source, onProgress)
-}
-
-// Pulls a torrent into a room that already exists. Same swarm bookkeeping and
-// same progressive subtitle extraction as a fresh room, minus the room.
-export function uploadTorrentToRoom(
-  roomID: string,
-  uploadEndpoint: string,
-  startBytes: number,
-  mediaGeneration: number,
-  source: TorrentUploadSource,
+  file: File,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
-  const { file, session } = source
-  const room = { id: roomID, uploadEndpoint }
-  const entry = createEntry(file.size, startBytes)
-  uploads.set(room.id, entry)
-  if (onProgress) entry.progressListeners.add((value) => onProgress({ phase: 'uploading', pct: value.pct }))
+  startRoomUpload(roomID, mediaGeneration, fileInput(file), { onProgress })
+}
 
-  const finish = (error: string | null) => finishEntry(room.id, entry, error, session.destroy)
+// The helper keeps downloading for as long as the session lives, so it is
+// torn down with the transfer, whichever way that ends.
+export function startTorrentUpload(
+  roomID: string,
+  mediaGeneration: number,
+  { file, session }: TorrentUploadSource,
+  onProgress?: (progress: UploadProgress) => void,
+): void {
+  startRoomUpload(roomID, mediaGeneration, torrentInput(file), {
+    onProgress,
+    sideFiles: session.subtitleFiles,
+    cleanup: () => session.destroy(),
+  })
+}
 
-  // Subtitles do not need a second pass over the swarm. Sibling subtitle
-  // files are fetched directly, and the tracks muxed into the video are
-  // parsed from the very bytes that are already being uploaded.
-  const collector = createSubtitleCollector(room.id, mediaGeneration)
-  const externalSubtitles = session.subtitleFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
-  if (externalSubtitles.length > 0) {
-    collector.register('external')
-    void loadExternalSubtitles(externalSubtitles, collector)
-  }
+export function startUrlUpload(
+  roomID: string,
+  mediaGeneration: number,
+  url: string,
+  fileName: string,
+  size: number,
+): void {
+  startRoomUpload(roomID, mediaGeneration, urlInput(url, fileName, size), { unreachable: SOURCE_UNREACHABLE })
+}
 
-  // Started before the upload handshake so the bundle loads while the tus
-  // session is being created.
-  let parserPromise: Promise<MatroskaSubtitleStream | null> | null = null
-  if (isMatroska(file)) {
-    collector.register('embedded')
-    parserPromise = createMatroskaSubtitleStream().catch((error: unknown) => {
-      console.error('subtitle parser unavailable', error)
-      return null
-    })
-  }
+interface RoomUploadOptions {
+  onProgress?: (progress: UploadProgress) => void
+  /** Subtitle files that shipped next to the video, read and published alongside. */
+  sideFiles?: TorrentSideFile[]
+  /** Runs once the transfer ends, however it ends. */
+  cleanup?: () => void
+  /** What to report when the source cannot even be read — a url that refused the browser. */
+  unreachable?: string
+}
+
+/**
+ * Remuxes the source here and publishes it into the bucket.
+ *
+ * The decision is asynchronous but the call is not: the room exists and the
+ * caller has already navigated into it either way. Whatever goes wrong is
+ * reported through the registry, by name, for the room page to explain.
+ */
+export function startRoomUpload(
+  roomID: string,
+  mediaGeneration: number,
+  input: MediaInput,
+  { onProgress, sideFiles = [], cleanup = () => {}, unreachable = UNSUPPORTED_MEDIA }: RoomUploadOptions = {},
+): void {
+  // The progress entry is registered synchronously: Room.tsx subscribes once
+  // on mount, and deferring the entry behind the dynamic import would show no
+  // progress at all.
+  const entry = createEntry(input.size)
+  uploads.set(roomID, entry)
+  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+  const finish = (error: string | null) => finishEntry(roomID, entry, error, cleanup)
 
   void (async () => {
-    let uploadURL = ''
-    let subtitles: MatroskaSubtitleStream | null = null
+    // A dynamic import so the remuxer and its WASM audio decoders live in
+    // their own chunk, paid for only when an upload actually starts.
+    const pipeline = await import('./pipeline/clientMedia')
+    let plan: Awaited<ReturnType<typeof pipeline.planClientRemux>> = null
     try {
-      const createResponse = await fetch(room.uploadEndpoint, {
-        method: 'POST',
-        headers: {
-          'Tus-Resumable': '1.0.0',
-          'Upload-Length': String(file.size),
-          'Upload-Metadata': `roomID ${encodeMetadata(room.id)},filename ${encodeMetadata(file.name)}`,
-        },
+      plan = await pipeline.planClientRemux(input)
+    } catch (error) {
+      if (isUnreadableFile(error)) { finish(FILE_UNREADABLE); return }
+      finish(unreachable)
+      return
+    }
+    if (!plan) { finish(UNSUPPORTED_MEDIA); return }
+
+    // Subtitles run beside the remux, off the same bytes, and publish as they
+    // go; the room has them before the video finishes.
+    void publishSubtitles(input, sideFiles, roomID, mediaGeneration)
+    try {
+      await pipeline.runClientRemux({
+        roomID,
+        mediaGeneration,
+        file: input,
+        plan,
+        onProgress: (pct) => updateEntry(entry, Math.round((pct / 100) * input.size)),
       })
-      if (!createResponse.ok) throw new Error(`torrent upload creation failed (${createResponse.status})`)
-      const location = createResponse.headers.get('Location')
-      if (!location) throw new Error('torrent upload location missing')
-      uploadURL = new URL(location, window.location.href).toString()
-
-      if (parserPromise) {
-        subtitles = await withTimeout(parserPromise, SUBTITLE_PARSER_TIMEOUT_MS)
-        // A source that never produced a parser stays incomplete, which keeps
-        // the authoritative server-side extraction scheduled.
-        if (!subtitles) collector.publish('embedded', [], false)
-      }
-
-      const readChunk = (at: number) => {
-        // The very first request only waits for the server's preview threshold;
-        // later requests are larger for better throughput.
-        const chunkSize = at === 0 ? Math.min(startBytes, file.size) : Math.min(TORRENT_CHUNK_BYTES, file.size - at)
-        return file.read(at, at + chunkSize - 1)
-      }
-
-      let offset = 0
-      let lastSnapshotAt = Date.now()
-      // Swarm reads and PATCHes are both network bound, so the next chunk is
-      // pulled from the swarm while the current PATCH is in flight. A single
-      // slot of lookahead keeps memory bounded; PATCHes stay strictly
-      // sequential, only the reads overlap.
-      let prefetch: { offset: number; body: Promise<ArrayBuffer> } | null = null
-      while (offset < file.size) {
-        const body: ArrayBuffer = prefetch && prefetch.offset === offset ? await prefetch.body : await readChunk(offset)
-        prefetch = null
-        const expectedNext = offset + body.byteLength
-        if (expectedNext < file.size) {
-          const next = readChunk(expectedNext)
-          // A short write leaves this prefetch unawaited; swallow its
-          // rejection there so only the chunk actually used can throw.
-          void next.catch(() => undefined)
-          prefetch = { offset: expectedNext, body: next }
-        }
-        const patchResponse = await fetch(uploadURL, {
-          method: 'PATCH',
-          headers: {
-            'Tus-Resumable': '1.0.0',
-            'Content-Type': 'application/offset+octet-stream',
-            'Upload-Offset': String(offset),
-          },
-          body,
-        })
-        if (!patchResponse.ok) throw new Error(`torrent upload failed (${patchResponse.status})`)
-        const nextOffset = Number(patchResponse.headers.get('Upload-Offset'))
-        const previousOffset = offset
-        offset = Number.isFinite(nextOffset) && nextOffset > offset ? nextOffset : offset + body.byteLength
-        updateEntry(entry, offset)
-
-        // Feed the parser only the bytes the server actually accepted: a short
-        // write is re-read from the new offset, and anything else would splice
-        // the container stream and desync the parser for good.
-        if (subtitles) {
-          const accepted = offset - previousOffset
-          if (accepted === body.byteLength) subtitles.write(new Uint8Array(body))
-          else if (accepted > 0 && accepted < body.byteLength) subtitles.write(new Uint8Array(body, 0, accepted))
-          else subtitles = null
-        }
-        if (subtitles && Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
-          lastSnapshotAt = Date.now()
-          collector.publish('embedded', subtitles.snapshot(), false)
-        }
-      }
-      if (subtitles) {
-        try {
-          collector.publish('embedded', await subtitles.finish(), true)
-        } catch (error) {
-          console.error('subtitle extraction failed', error)
-          // Leave the source incomplete so the server still extracts the
-          // authoritative tracks once the upload lands.
-          collector.publish('embedded', subtitles.snapshot(), false)
-        }
-        void collector.flush()
-      }
       finish(null)
     } catch (error) {
-      if (uploadURL) {
-        void fetch(uploadURL, {
-          method: 'DELETE',
-          headers: { 'Tus-Resumable': '1.0.0' },
-        }).catch(() => undefined)
+      if (error instanceof pipeline.RoomMovedOnError) {
+        // The controller swapped the source; another upload owns the room
+        // now. Not a failure of this one, so nobody is told of it.
+        if (uploads.get(roomID) === entry) uploads.delete(roomID)
+        cleanup()
+        return
       }
-      finish(error instanceof Error ? error.message : 'torrent upload failed')
+      console.error('client media pipeline failed', error)
+      finish(isUnreadableFile(error) ? FILE_UNREADABLE : error instanceof Error ? error.message : 'upload failed')
     }
   })()
 }
@@ -579,9 +334,47 @@ export function subscribeUploadDone(roomID: string, callback: (err: string | nul
   return () => { entry.doneListeners.delete(callback) }
 }
 
-// Reads the subtitle files shipped alongside the video and publishes them as
-// they land. Each file is complete on its own, so they are usable long before
-// the video finishes downloading.
+// Best effort, never rejects: the tracks muxed into a Matroska source are
+// parsed out of a sequential pass over it, and the sibling subtitle files are
+// read whole. Both publish as they arrive, and the collector holds the final
+// "complete" until every registered source has delivered.
+async function publishSubtitles(
+  input: MediaInput,
+  sideFiles: TorrentSideFile[],
+  roomID: string,
+  mediaGeneration: number,
+): Promise<void> {
+  const collector = createSubtitleCollector(roomID, mediaGeneration)
+  const external = sideFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
+  const embedded = isMatroska(input)
+  if (external.length > 0) collector.register('external')
+  if (embedded) collector.register('embedded')
+  if (external.length === 0 && !embedded) return
+  await Promise.all([
+    external.length > 0 ? loadExternalSubtitles(external, collector) : Promise.resolve(),
+    embedded ? extractEmbeddedSubtitles(input, collector) : Promise.resolve(),
+  ])
+}
+
+async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
+  try {
+    const stream = await createMatroskaSubtitleStream()
+    let lastSnapshotAt = Date.now()
+    for (let offset = 0; offset < input.size; offset += SUBTITLE_SLICE_BYTES) {
+      stream.write(await input.read(offset, Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)))
+      if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
+        lastSnapshotAt = Date.now()
+        collector.publish('embedded', stream.snapshot(), false)
+      }
+    }
+    collector.publish('embedded', await stream.finish(), true)
+  } catch (error) {
+    console.error('subtitle extraction failed', error)
+    collector.publish('embedded', [], true)
+  }
+  await collector.flush()
+}
+
 async function loadExternalSubtitles(files: TorrentSideFile[], collector: SubtitleCollector): Promise<void> {
   const tracks: VttTrack[] = []
   for (const file of files) {
@@ -596,12 +389,4 @@ async function loadExternalSubtitles(files: TorrentSideFile[], collector: Subtit
   }
   collector.publish('external', tracks, true)
   await collector.flush()
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), ms)
-    void promise.then((value) => { clearTimeout(timer); resolve(value) },
-      () => { clearTimeout(timer); resolve(null) })
-  })
 }

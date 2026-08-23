@@ -5,9 +5,9 @@ services:
       args:
         GIT_SHA: ${GIT_SHA:-dev}
     # Without a policy here the host coming back up leaves the site off the
-    # air: Docker restarts and starts only the containers that carry one, so a
-    # reboot took down everything except the bridge. unless-stopped rather than
-    # always, so a deliberate stop during a deploy is still respected.
+    # air: Docker restarts and starts only the containers that carry one.
+    # unless-stopped rather than always, so a deliberate stop during a deploy
+    # is still respected.
     restart: unless-stopped
     ports:
       - "${APP_BIND:-127.0.0.1:8099}:8080"
@@ -22,7 +22,6 @@ services:
       DATA_DIR: /data
       WEB_DIR: /web
       GIN_MODE: release
-      TORRENT_BRIDGE_URL: http://torrent-bridge:8090
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
@@ -40,29 +39,6 @@ services:
     depends_on:
       - redis
       - livekit
-      - torrent-bridge
-    networks:
-      - default
-      - torrent-edge
-
-  torrent-bridge:
-    build:
-      context: .
-      dockerfile: Dockerfile.bridge
-    expose:
-      - "8090"
-    restart: unless-stopped
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 128
-    mem_limit: 1g
-    volumes:
-      - ss-torrent-cache:/cache
-    networks:
-      - torrent-edge
 
   # Scrapes the application and forwards the series to Grafana Cloud. There is
   # deliberately no Prometheus and no Grafana here: the stack in Grafana Cloud
@@ -111,10 +87,6 @@ services:
 
 volumes:
   ss-data:
-  ss-torrent-cache:
   # The collector's write-ahead log, so a restart does not drop the samples it
   # had scraped but not yet shipped.
   ss-alloy-data:
-
-networks:
-  torrent-edge:

@@ -125,6 +125,11 @@ h1, h2, p { margin-top: 0; }
 .subtitle-layer .magenta { color: #f57af5; }
 .subtitle-layer .blue { color: #7aa5ff; }
 .subtitle-layer .black { color: #16181d; text-shadow: 1.5px 2.5px 2px rgba(255,255,255,.6), 0 0 8px rgba(255,255,255,.45); }
+/* A dark ground behind the controls, or a white video swallows them whole:
+   every element in the bar is drawn in light tones over whatever the frame
+   happens to be. It fades with the controls, so a clean frame stays clean. */
+.player-wrap::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 130px; background: linear-gradient(180deg, rgba(3,4,7,0), rgba(3,4,7,.66)); pointer-events: none; opacity: 1; transition: opacity 180ms var(--ease); }
+.controls-hidden::after { opacity: 0; }
 .player-controls { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: calc(100% - 32px); padding: 12px 14px 10px; border: 0; background: transparent; opacity: 1; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
 .controls-hidden { cursor: none; }
 .controls-hidden .player-controls { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
@@ -223,6 +228,20 @@ h1, h2, p { margin-top: 0; }
 .seek-chapter-tick { position: absolute; top: 0; bottom: 0; width: 3px; transform: translateX(-50%); background: rgba(3,4,7,.9); }
 .seek-tooltip { position: absolute; bottom: calc(100% + 10px); z-index: 2; transform: translateX(-50%); padding: 5px 10px; border-radius: 9px; background: rgba(10,11,16,.94); box-shadow: 0 8px 24px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.07); color: var(--text); font-size: 11.5px; white-space: nowrap; pointer-events: none; }
 .timecode-chapter { color: var(--text-faint); }
+button.timecode-chapter { padding: 0; border: 0; background: none; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; transition: color .2s var(--ease); }
+button.timecode-chapter:hover { color: var(--text); }
+
+/* The chapter list borrows the chat's shell, so the two read as one dock
+   swapping contents. */
+.chapters-list { margin: 0; padding: 4px 8px 12px; list-style: none; overflow-y: auto; min-height: 0; display: grid; gap: 2px; align-content: start; }
+.chapter-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 12px; background: none; color: var(--text-dim); font-size: 13px; text-align: left; cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
+.chapter-row:hover:not(:disabled) { background: rgba(255,255,255,.06); color: var(--text); }
+.chapter-row.is-current { color: #b8bcff; background: rgba(120,127,250,.12); }
+.chapter-row:disabled { cursor: default; opacity: .45; }
+.chapter-row svg { flex: 0 0 auto; margin-left: auto; }
+.chapter-time { flex: 0 0 auto; min-width: 44px; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-faint); }
+.chapter-row.is-current .chapter-time { color: inherit; }
+.chapter-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seek-control input[type=range] { position: relative; z-index: 1; width: 100%; height: 18px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
 .seek-control input[type=range]:disabled { cursor: default; }
 .seek-control input[type=range]::-webkit-slider-runnable-track { height: 18px; background: transparent; }
@@ -846,6 +865,44 @@ h1, h2, p { margin-top: 0; }
 .bridge-other-os a:hover { color: var(--text); }
 .bridge-connected { margin: 6px 0 0; color: #56d364; font-size: 14px; }
 .bridge-loopback { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12.5px; line-height: 1.5; }
+
+/* The dialog is one surface that reforms between install → asking → outcome,
+   so the panel owns the width and lets the height travel with the step. */
+.bridge-morph { width: 100%; }
+.bridge-morph .morph-pane { width: 100%; }
+
+/* Quieter than the download button beside it: this is the path for someone who
+   already has the app, not the one being offered. */
+.bridge-already { display: block; width: 100%; margin-top: 10px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 14px; background: transparent; color: var(--text-dim); font-size: 14px; cursor: pointer; transition: color .2s var(--ease), border-color .2s var(--ease), background .2s var(--ease); }
+.bridge-already:hover { color: var(--text); border-color: rgba(255,255,255,.22); background: rgba(255,255,255,.04); }
+
+.bridge-asking { display: grid; justify-items: start; gap: 10px; padding: 4px 0 2px; }
+.bridge-asking h3 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.02em; }
+.bridge-asking p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
+
+/* The heading does the waiting: a bright band travels across the letters, so
+   the step reads as busy without a spinner parked next to it. The gradient is
+   painted through the text, which is why the colour has to be transparent. */
+.bridge-shimmer { background: linear-gradient(100deg, var(--text-dim) 30%, #fff 46%, #d6d8ff 52%, var(--text-dim) 68%); background-size: 280% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; -webkit-text-fill-color: transparent; animation: bridge-shimmer 2.1s linear infinite; }
+@keyframes bridge-shimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+
+.bridge-outcome { display: grid; gap: 12px; padding: 4px 0 2px; }
+.bridge-outcome h3 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+.bridge-outcome p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
+.bridge-outcome .primary-button { width: 100%; }
+.bridge-outcome .bridge-already { margin-top: 0; }
+.bridge-os-note { color: var(--text-faint) !important; font-size: 12.5px !important; }
+
+/* The arrow at the permission bubble. Pinned to the viewport's top-left, which
+   is where Chromium and Firefox anchor it under the address bar on every
+   desktop OS; it sits above the dialog overlay so the dimmed page behind does
+   not swallow it. Hidden on narrow screens, where the step says it in words. */
+.bridge-pointer { position: fixed; top: 12px; left: 16px; z-index: 60; display: flex; align-items: flex-end; gap: 6px; pointer-events: none; animation: bridge-point-in .32s var(--ease) both; }
+.bridge-pointer svg { width: 78px; height: 62px; flex: 0 0 auto; stroke: #b8bcff; stroke-width: 2.4; filter: drop-shadow(0 2px 8px rgba(0,0,0,.6)); }
+.bridge-pointer span { margin-bottom: 4px; padding: 7px 12px; border-radius: 999px; background: #b8bcff; color: #14161f; font-size: 13px; font-weight: 650; white-space: nowrap; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+@keyframes bridge-point-in { from { opacity: 0; transform: translate(10px, 10px); } to { opacity: 1; transform: none; } }
+@media (max-width: 640px) { .bridge-pointer { display: none; } }
+@media (prefers-reduced-motion: reduce) { .bridge-pointer { animation: none; } .bridge-shimmer { animation: none; color: var(--text); -webkit-text-fill-color: var(--text); } }
 /* The overlay header lays its children out with space-between, so the button
    sits next to the title instead of being pushed to the far edge. */
 .catalog-overlay-head .header-plugins { margin-right: auto; margin-left: 16px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; background: transparent; font-size: 13px; }

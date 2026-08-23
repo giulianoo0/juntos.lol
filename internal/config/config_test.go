@@ -35,8 +35,6 @@ func TestLoadDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 8080, cfg.Port)
 	require.Equal(t, int64(51200), cfg.MaxUploadMB)
-	require.Equal(t, int64(1), cfg.StreamStartMB)
-	require.Equal(t, 2, cfg.FFmpegJobs)
 	require.Equal(t, "web/dist", cfg.WebDir)
 }
 

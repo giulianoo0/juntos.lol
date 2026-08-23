@@ -2,13 +2,11 @@ package room
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/giulianoo0/ss/internal/metrics"
@@ -23,9 +21,10 @@ type MediaStore interface {
 
 // StartSweeper ticks every interval and removes expired rooms from disk, Redis
 // and the bucket until ctx is cancelled. This guarantees nothing outlives the
-// room TTL.
+// room TTL. claimIdle is how long a host's browser may go quiet mid-remux
+// before its claim on the room is taken back.
 func StartSweeper(ctx context.Context, store *Store, dataDir string, bucket MediaStore,
-	interval, uploadIdle time.Duration) {
+	interval, claimIdle time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -34,8 +33,7 @@ func StartSweeper(ctx context.Context, store *Store, dataDir string, bucket Medi
 			return
 		case <-ticker.C:
 			SweepOnce(ctx, store, dataDir, bucket)
-			SweepStaleUploads(ctx, store, dataDir, uploadIdle)
-			if freed, err := store.ReclaimStaleClientClaims(ctx, uploadIdle); err != nil {
+			if freed, err := store.ReclaimStaleClientClaims(ctx, claimIdle); err != nil {
 				slog.ErrorContext(ctx, "sweeper: reclaim stale client claims", "err", err)
 			} else if freed > 0 {
 				slog.InfoContext(ctx, "sweeper: reclaimed stale client claims", "count", freed)
@@ -44,9 +42,8 @@ func StartSweeper(ctx context.Context, store *Store, dataDir string, bucket Medi
 	}
 }
 
-// SweepOnce removes expired room data, including the corresponding tus upload
-// bytes and metadata and the media the room published. Delete already ZREMs
-// rooms:by_expiry.
+// SweepOnce removes expired room data — its working directory and the media
+// the room published. Delete already ZREMs rooms:by_expiry.
 //
 // The bucket's lifecycle rule remains the backstop, but it is measured from
 // when each object was written, so media left here outlives the room that
@@ -59,22 +56,6 @@ func SweepOnce(ctx context.Context, store *Store, dataDir string, bucket MediaSt
 		return
 	}
 	for _, id := range ids {
-		uploadID, err := store.UploadID(ctx, id)
-		if err != nil {
-			slog.Error("sweeper: get reserved upload", "room", id, "err", err)
-			continue
-		}
-		if uploadID != "" {
-			incoming := filepath.Join(dataDir, "tus-incoming")
-			if err := os.Remove(filepath.Join(incoming, uploadID)); err != nil && !os.IsNotExist(err) {
-				slog.Error("sweeper: remove tus upload", "room", id, "upload", uploadID, "err", err)
-				continue
-			}
-			if err := os.Remove(filepath.Join(incoming, uploadID+".info")); err != nil && !os.IsNotExist(err) {
-				slog.Error("sweeper: remove tus metadata", "room", id, "upload", uploadID, "err", err)
-				continue
-			}
-		}
 		if err := os.RemoveAll(filepath.Join(dataDir, "rooms", id)); err != nil {
 			slog.Error("sweeper: remove room dir", "room", id, "err", err)
 			continue
@@ -104,104 +85,23 @@ func sweepOnce(ctx context.Context, store *Store, dataDir string) {
 	SweepOnce(ctx, store, dataDir, nil)
 }
 
-// tusInfo is the part of the sidecar tusd writes next to an upload that
-// identifies which room the bytes belong to.
-type tusInfo struct {
-	MetaData map[string]string `json:"MetaData"`
-}
-
-// SweepStaleUploads reclaims uploads nobody is feeding any more.
+// PurgeData removes everything a room has accumulated — its working directory
+// and the media it published — while leaving the record itself in place: the
+// error that killed the room stays readable until it expires, but not one
+// byte of a source that will never play stays paid for.
 //
-// A tus upload survives the tab that started it, which is the point: closing
-// it by accident should not lose the transfer. But an upload nobody returns to
-// otherwise occupies its bytes until the room's whole TTL elapses, and its
-// room sits in "uploading" forever showing viewers a preparing screen that
-// will never finish. Anything untouched for idleFor is therefore released, its
-// room marked failed, and its bytes returned.
-//
-// The data file's modification time is the activity signal: the store writes
-// to it as each chunk lands, so it is exactly "when we last heard from the
-// uploader" with no bookkeeping of its own to drift.
-func SweepStaleUploads(ctx context.Context, store *Store, dataDir string, idleFor time.Duration) {
-	incoming := filepath.Join(dataDir, "tus-incoming")
-	entries, err := os.ReadDir(incoming)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.ErrorContext(ctx, "sweeper: read tus uploads", "err", err)
-		}
-		return
-	}
-
-	cutoff := time.Now().Add(-idleFor)
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || strings.HasSuffix(name, ".info") {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil || info.ModTime().After(cutoff) {
-			continue
-		}
-
-		roomID := uploadRoomID(filepath.Join(incoming, name+".info"))
-		if roomID != "" {
-			if err := store.ReleaseUpload(ctx, roomID, name); err != nil {
-				slog.ErrorContext(ctx, "sweeper: release stale upload", "room", roomID, "err", err)
-			}
-			// The room can never reach ready now, so stop it presenting as a
-			// transfer still in progress.
-			if err := store.SetError(ctx, roomID, "upload abandoned"); err != nil && !errors.Is(err, ErrNotFound) {
-				slog.ErrorContext(ctx, "sweeper: mark abandoned upload", "room", roomID, "err", err)
-			}
-		}
-		slog.InfoContext(ctx, "sweeper: reclaiming abandoned upload",
-			"room", roomID, "upload", name, "idle_for", time.Since(info.ModTime()).Round(time.Second))
-		for _, path := range []string{filepath.Join(incoming, name), filepath.Join(incoming, name+".info")} {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				slog.ErrorContext(ctx, "sweeper: remove stale upload", "path", path, "err", err)
-			}
-		}
-	}
-}
-
-func uploadRoomID(infoPath string) string {
-	data, err := os.ReadFile(infoPath)
-	if err != nil {
-		return ""
-	}
-	var info tusInfo
-	if err := json.Unmarshal(data, &info); err != nil {
-		return ""
-	}
-	return info.MetaData["roomID"]
-}
-
-// PurgeData removes everything a room has accumulated — the tus upload bytes
-// and sidecar, its working directory, and the media it published — while
-// leaving the record itself in place: the error that killed the room stays
-// readable until it expires, but not one byte of a source that will never
-// play stays paid for.
-//
-// The reservation is released before the files go, so a new upload cannot be
-// created against the room mid-purge — though a PATCH already in flight can
-// still write into the unlinked inode until it ends; those bytes die with
-// the file handle. Every step is attempted even when an earlier one fails:
-// a purge that gives up half way keeps paying for what it left.
+// The claim is released before the files go, so a new remux cannot start
+// against the room mid-purge. Every step is attempted even when an earlier
+// one fails: a purge that gives up half way keeps paying for what it left.
 func PurgeData(ctx context.Context, store *Store, dataDir string, bucket MediaStore, id string) error {
 	var errs []error
-	uploadID, err := store.UploadID(ctx, id)
+	claim, err := store.UploadID(ctx, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		errs = append(errs, fmt.Errorf("get reserved upload: %w", err))
+		errs = append(errs, fmt.Errorf("get client claim: %w", err))
 	}
-	if uploadID != "" {
-		if err := store.ReleaseUpload(ctx, id, uploadID); err != nil {
+	if claim != "" {
+		if err := store.ReleaseUpload(ctx, id, claim); err != nil {
 			errs = append(errs, err)
-		}
-		incoming := filepath.Join(dataDir, "tus-incoming")
-		for _, path := range []string{filepath.Join(incoming, uploadID), filepath.Join(incoming, uploadID+".info")} {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				errs = append(errs, fmt.Errorf("remove upload bytes: %w", err))
-			}
 		}
 	}
 	if err := os.RemoveAll(filepath.Join(dataDir, "rooms", id)); err != nil {

@@ -69,9 +69,15 @@ class Reader {
   }
 }
 
-export async function readMkvChapters(file: File): Promise<MkvChapter[]> {
+/** The two reads this needs, so a torrent or a url can answer as well as a File. */
+export interface ChapterReader {
+  size: number
+  read(start: number, end: number): Promise<Uint8Array>
+}
+
+export async function readMkvChapters(file: ChapterReader): Promise<MkvChapter[]> {
   try {
-    const head = new Uint8Array(await file.slice(0, Math.min(HEAD_SCAN_BYTES, file.size)).arrayBuffer())
+    const head = await file.read(0, Math.min(HEAD_SCAN_BYTES, file.size))
     const reader = new Reader(head)
     if (reader.vint(true) !== EBML_ID) return []
     const ebmlSize = reader.vint(false)
@@ -99,12 +105,12 @@ export async function readMkvChapters(file: File): Promise<MkvChapter[]> {
     if (chaptersAt < 0) return []
 
     // The SeekHead pointed past what was read; fetch just that element.
-    const idProbe = new Reader(new Uint8Array(await file.slice(chaptersAt, Math.min(chaptersAt + 12, file.size)).arrayBuffer()))
+    const idProbe = new Reader(await file.read(chaptersAt, Math.min(chaptersAt + 12, file.size)))
     if (idProbe.vint(true) !== CHAPTERS_ID) return []
     const bodySize = idProbe.vint(false)
     if (bodySize === null || bodySize > HEAD_SCAN_BYTES) return []
     const bodyStart = chaptersAt + idProbe.pos
-    const body = new Uint8Array(await file.slice(bodyStart, bodyStart + bodySize).arrayBuffer())
+    const body = await file.read(bodyStart, bodyStart + bodySize)
     return parseChapters(new Reader(body))
   } catch {
     return []

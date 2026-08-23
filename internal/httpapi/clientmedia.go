@@ -302,7 +302,14 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			return
 		}
 		if req.Progress != nil {
-			if err := store.SetIngestProgress(ctx, roomID, req.Progress.ReceivedBytes, req.Progress.SourceBytes); err == nil &&
+			// The browser counts what it uploaded, which is the remux's output
+			// and never equals the source's size. The complete pass is what
+			// says the whole source has been read, so it lands the figure.
+			received := req.Progress.ReceivedBytes
+			if req.Complete {
+				received = req.Progress.SourceBytes
+			}
+			if err := store.SetIngestProgress(ctx, roomID, received, req.Progress.SourceBytes); err == nil &&
 				hooks.NotifyRoomUpdated != nil {
 				hooks.NotifyRoomUpdated(roomID)
 			}

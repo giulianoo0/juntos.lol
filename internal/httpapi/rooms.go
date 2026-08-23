@@ -100,13 +100,11 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		metrics.RoomsCreated.WithLabelValues(kind).Inc()
 
 		c.JSON(http.StatusCreated, gin.H{
-			"id":               id,
-			"nickname":         nickname,
-			"sourceKind":       kind,
-			"status":           status,
-			"uploadEndpoint":   "/api/upload/",
-			"streamStartBytes": cfg.StreamStartMB << 20,
-			"expiresAt":        r.ExpiresAt,
+			"id":         id,
+			"nickname":   nickname,
+			"sourceKind": kind,
+			"status":     status,
+			"expiresAt":  r.ExpiresAt,
 		})
 	}
 }

@@ -79,13 +79,9 @@ func TestChangeSourceToUploadReopensTheUploadWindow(t *testing.T) {
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	e := sourceRoom(t, cfg, store)
-	// A first upload is still reserved when the controller changes their mind.
+	// A first remux still holds its claim when the controller changes their mind.
 	require.NoError(t, store.SetStatus(t.Context(), "r1", "uploading"))
-	require.NoError(t, store.ReserveUpload(t.Context(), "r1", "upload-one", time.Now()))
-	incoming := filepath.Join(cfg.DataDir, "tus-incoming")
-	require.NoError(t, os.MkdirAll(incoming, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(incoming, "upload-one"), []byte("partial"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(incoming, "upload-one.info"), []byte("{}"), 0o644))
+	require.NoError(t, store.ReserveUpload(t.Context(), "r1", "claim-one", time.Now()))
 
 	canceled := make([]string, 0, 1)
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
@@ -102,14 +98,9 @@ func TestChangeSourceToUploadReopensTheUploadWindow(t *testing.T) {
 	require.Equal(t, room.SourceUpload, got.SourceKind)
 	require.Equal(t, []string{"r1"}, canceled)
 
-	// The abandoned upload's bytes are reclaimed; nothing else would sweep
-	// them once the reservation is gone.
-	require.NoFileExists(t, filepath.Join(incoming, "upload-one"))
-	require.NoFileExists(t, filepath.Join(incoming, "upload-one.info"))
-
-	// The replacement upload can reserve the room, which the previous
-	// reservation would otherwise have blocked forever.
-	require.NoError(t, store.ReserveUpload(t.Context(), "r1", "upload-two", time.Now()))
+	// The replacement remux can claim the room, which the previous claim
+	// would otherwise have blocked forever.
+	require.NoError(t, store.ReserveUpload(t.Context(), "r1", "claim-two", time.Now()))
 }
 
 func TestChangeSourceRejectsEveryoneButTheController(t *testing.T) {

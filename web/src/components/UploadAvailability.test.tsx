@@ -71,7 +71,7 @@ describe('UploadAvailability', () => {
   it('prefers the server count over this tab, so every viewer sees the same figure', () => {
     render(<UploadAvailability
       t={t}
-      progress={{ pct: 90, bytesUploaded: 90 * MB, bytesTotal: 100 * MB, streamStartBytes: MB }}
+      progress={{ pct: 90, bytesUploaded: 90 * MB, bytesTotal: 100 * MB }}
       preparation={{ sourceBytes: 100 * MB, receivedBytes: 10 * MB, previewPhase: 'receiving' }}
     />)
 
@@ -82,7 +82,7 @@ describe('UploadAvailability', () => {
   it('uses this tab as the fallback when the server has published nothing', () => {
     render(<UploadAvailability
       t={t}
-      progress={{ pct: 20, bytesUploaded: 20 * MB, bytesTotal: 100 * MB, streamStartBytes: MB }}
+      progress={{ pct: 20, bytesUploaded: 20 * MB, bytesTotal: 100 * MB }}
     />)
 
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20')

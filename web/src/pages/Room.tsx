@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
+import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
 import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
@@ -31,17 +32,19 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
-import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import { HelperRequiredError, type TorrentSession, type TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
   FILE_UNREADABLE,
+  SOURCE_UNREACHABLE,
+  UNSUPPORTED_MEDIA,
+  assertReadable,
   changeRoomSource,
-  prepareLocalFile,
   subscribeUploadDone,
   subscribeUploadProgress,
-  startRoomUpload,
-  startTorrentTransfer,
-  startUrlTransfer,
+  startFileUpload,
+  startTorrentUpload,
+  startUrlUpload,
   type RoomUploadProgress,
 } from '../upload'
 
@@ -157,6 +160,8 @@ function RoomGate({ step, onJoin, progress, preparation, failure, errorMessage }
           <div className="gate-centered gate-bad">
             <h1>{t('room.uploadFailed')}</h1>
             {failure === FILE_UNREADABLE ? <p>{t('error.fileChanged')}</p> : null}
+            {failure === UNSUPPORTED_MEDIA ? <p>{t('error.unsupportedMedia')}</p> : null}
+            {failure === SOURCE_UNREACHABLE ? <p>{t('error.sourceUnreachable')}</p> : null}
             <Link className="primary-button" to="/">{t('room.new')}</Link>
           </div>
         ) : null}
@@ -187,7 +192,16 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const sync = useSync(room.id, nickname, videoRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
-  const [chatOpen, setChatOpen] = useState(true)
+  // The dock on the right holds one thing at a time: the chat, or the
+  // chapter list, which replaces it rather than stacking beside it.
+  const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')
+  const chatOpen = sidePanel === 'chat'
+  const setChatOpen = (value: boolean | ((open: boolean) => boolean)) => {
+    setSidePanel((panel) => {
+      const next = typeof value === 'function' ? value(panel === 'chat') : value
+      return next ? 'chat' : panel === 'chat' ? null : panel
+    })
+  }
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
@@ -197,7 +211,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // than incrementing a tally keeps it right when history arrives at once.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
-  const [sourceError, setSourceError] = useState(false)
+  const [sourceError, setSourceError] = useState<'' | 'changeFailed' | 'torrentNeedsBridge'>('')
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -228,29 +242,29 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // Repointing the room is the controller's call alone; the server enforces it
   // too, so a stale client cannot swap what everyone is watching.
   const swapSource = async (run: () => Promise<void>) => {
-    setSourceError(false)
+    setSourceError('')
     setSourcePanel(null)
     try {
       await run()
     } catch (error) {
       console.error('change source failed', error)
-      setSourceError(true)
+      setSourceError(error instanceof HelperRequiredError ? 'torrentNeedsBridge' : 'changeFailed')
     }
   }
 
   const chooseFile = (file?: File) => {
     if (!file) return
     void swapSource(async () => {
-      const prepared = await prepareLocalFile(file)
-      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', prepared.name)
-      startRoomUpload(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, prepared)
+      await assertReadable(file)
+      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      startFileUpload(room.id, next.mediaGeneration, file)
     })
   }
 
   const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
     void swapSource(async () => {
       const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
-      await startTorrentTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, { file, session })
+      startTorrentUpload(room.id, next.mediaGeneration, { file, session })
     })
   }
 
@@ -268,19 +282,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     void swapSource(async () => {
       if (pick.stream.location.kind === 'url') {
         const { url } = pick.stream.location
-        await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
-        // No mediaGeneration here, and that is deliberate. The torrent path
-        // needs it because the browser writes the tus PATCHes itself and has
-        // to say which generation it is writing to. A url source is handed to
-        // the server, which creates the upload on its own — exactly like the
-        // /rooms/:id/torrent route, which takes no generation either.
-        await startUrlTransfer(room.id, url, `${pick.displayName}.mkv`, 0)
+        const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
+        startUrlUpload(room.id, next.mediaGeneration, url, `${pick.displayName}.mkv`, 0)
         return
       }
       const opened = await openCatalogStream(pick.stream)
       try {
         const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
-        await startTorrentTransfer(room.id, next.uploadEndpoint, next.streamStartBytes, next.mediaGeneration, opened)
+        startTorrentUpload(room.id, next.mediaGeneration, opened)
       } catch (error) {
         opened.session.destroy()
         throw error
@@ -300,7 +309,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         }
       })
     }).catch((error: unknown) => {
-      if (!isScreenShareCancelled(error)) setSourceError(true)
+      if (!isScreenShareCancelled(error)) setSourceError('changeFailed')
     })
   }
 
@@ -472,7 +481,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           {sync.isController ? (
             <MediaSwitch
               t={t}
-              onOpen={() => setSourceError(false)}
+              onOpen={() => setSourceError('')}
               onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
               onTorrent={() => setSourcePanel('torrent')}
               onFile={() => fileInputRef.current?.click()}
@@ -507,7 +516,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           />
         </div>
       </header>
-      <div className={`room-layout ${chatOpen ? 'chat-open' : ''}`}>
+      <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
         <section className="media-column">
           {isScreenRoom ? (
             <ScreenStage
@@ -526,6 +535,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               t={t}
               syncState={sync.state}
               serverOffsetMs={sync.serverOffsetMs}
+              onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={
                 <>
@@ -560,7 +570,18 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             ))}
           </div>
         </section>
-        <Chat open={chatOpen} onClose={() => setChatOpen(false)} messages={chatEntries} onSend={(text) => sync.send('chat', { text })} t={t} />
+        {sidePanel === 'chapters' ? (
+          <ChaptersPanel
+            chapters={liveRoom.chapters ?? []}
+            open
+            onClose={() => setSidePanel('chat')}
+            onSeek={sync.isController ? (seconds) => sync.send('seek', { positionMs: Math.round(seconds * 1000) }) : undefined}
+            videoRef={videoRef}
+            t={t}
+          />
+        ) : (
+          <Chat open={chatOpen} onClose={() => setChatOpen(false)} messages={chatEntries} onSend={(text) => sync.send('chat', { text })} t={t} />
+        )}
       </div>
       <input
         ref={fileInputRef}
@@ -569,7 +590,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         accept="video/*,.mkv"
         onChange={(event) => chooseFile(event.target.files?.[0])}
       />
-      {sourceError ? <div className="error-card compact" role="alert">{t('room.changeFailed')}</div> : null}
+      {sourceError ? <div className="error-card compact" role="alert">{t(sourceError === 'torrentNeedsBridge' ? 'home.torrentNeedsBridge' : 'room.changeFailed')}</div> : null}
       {visibleRequests.length > 0 ? (
         <div className="request-stack" aria-live="polite">
           {visibleRequests.map((request) => (
