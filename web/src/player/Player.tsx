@@ -45,6 +45,7 @@ const FEEDBACK_MS = 700
 // times. Past that the retry is the bug, not the fix.
 const MAX_MEDIA_RECOVERIES = 2
 const FRAME_WATCH_INTERVAL_MS = 1000
+const MANIFEST_RETRY_MS = 2000
 // Seconds the clock may advance without a single new displayed video frame
 // before the player declares the video dead. Even a slideshow-style encode
 // composites a frame well inside this budget.
@@ -349,6 +350,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             return
           }
           if (data.type === ErrorTypes.NETWORK_ERROR) {
+            // A 404 on the master playlist usually means the player mounted
+            // before the host's first publish landed: the upload is fine, the
+            // manifest just is not there yet. startLoad() cannot recover that
+            // (there are no levels to restart), so the source itself is
+            // reloaded on a leash until the publish catches up.
+            if (data.details === ErrorDetails.MANIFEST_LOAD_ERROR || data.details === ErrorDetails.MANIFEST_LOAD_TIMEOUT) {
+              window.setTimeout(() => {
+                if (!disposed && hlsRef.current === hls) hls.loadSource(source)
+              }, MANIFEST_RETRY_MS)
+              return
+            }
             hls.startLoad()
             return
           }
