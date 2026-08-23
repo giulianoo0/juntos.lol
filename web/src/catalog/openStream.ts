@@ -22,5 +22,12 @@ export async function openCatalogStream(
     session.destroy()
     throw new Error('stream torrent has no playable video file')
   }
+  // Focus the swarm on this one file; without it a season pack downloads whole.
+  try {
+    await session.select(file.path)
+  } catch (error) {
+    session.destroy()
+    throw error
+  }
   return { file, session }
 }
