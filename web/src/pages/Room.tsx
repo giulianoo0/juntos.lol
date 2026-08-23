@@ -286,7 +286,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         startUrlUpload(room.id, next.mediaGeneration, url, `${pick.displayName}.mkv`, 0)
         return
       }
-      const opened = await openCatalogStream(pick.stream)
+      const opened = await openCatalogStream(pick.stream, pick.target)
       try {
         const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
         startTorrentUpload(room.id, next.mediaGeneration, opened)

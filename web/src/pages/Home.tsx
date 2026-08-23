@@ -240,7 +240,7 @@ export function Home() {
         // Opening the torrent is part of the start: peers and metadata first,
         // then the room, so a dead stream never leaves an empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
-        const opened = await openCatalogStream(media.pick.stream)
+        const opened = await openCatalogStream(media.pick.stream, media.pick.target)
         setProgress(null)
         try {
           room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
