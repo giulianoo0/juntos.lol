@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import NumberFlow from '@number-flow/react'
 import type { Translator } from '../i18n/useT'
 import type { RoomPreparation } from '../types'
 import type { RoomUploadProgress } from '../upload'
-
-const BYTES_PER_MB = 1024 * 1024
 
 // How long a byte count stays in the rate window. Long enough that a swarm
 // pausing on one slow piece does not read as "stalled", short enough that the
@@ -14,15 +11,6 @@ const RATE_WINDOW_MS = 20_000
 // A rate below this is treated as no rate at all: dividing by it produces
 // estimates in the hours that say nothing anyone can act on.
 const MIN_USEFUL_BYTES_PER_SECOND = 16 * 1024
-
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 * BYTES_PER_MB) return `${(bytes / (1024 * BYTES_PER_MB)).toFixed(2)} GB`
-  return `${(bytes / BYTES_PER_MB).toFixed(1)} MB`
-}
-
-function formatRate(bytesPerSecond: number): string {
-  return `${(bytesPerSecond / BYTES_PER_MB).toFixed(1)} MB/s`
-}
 
 // Rounds a countdown to something a person would say out loud. A number that
 // looks measured to the second invites watching it, and it is not that precise.
@@ -94,63 +82,47 @@ export function UploadAvailability({
   const total = preparation?.sourceBytes ?? progress?.bytesTotal ?? 0
   const rate = useTransferRate(received)
 
-  // The surface belongs to the panel this is drawn inside; only the contents
-  // are this component's, so the wait can change shape without the card
-  // beneath it being replaced.
-  if (received === 0 && total === 0) {
-    return (
-      <div className="availability-card">
-        <h1>{t('room.processing')}</h1>
-        <p>{t('room.waitingInitial')}</p>
-      </div>
-    )
-  }
-
   const prep: RoomPreparation = preparation ?? {}
   const target = waitTarget(prep)
-  const transferPct = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0
 
   // The bar tracks the wait that is actually happening: progress towards
   // playable when that point is known, and progress through the file when it
-  // is not. It never fills before there is something to watch.
+  // is not. Deliberately never the whole file's size — a 7 GB total on screen
+  // reads as "you must download 7 GB", when playback starts from a sliver.
   const barTotal = target.bytes > 0 ? target.bytes : total
   const barPct = barTotal > 0 ? Math.min(100, Math.round((received / barTotal) * 100)) : 0
 
   const remaining = Math.max(0, barTotal - received)
   const eta = rate >= MIN_USEFUL_BYTES_PER_SECOND && remaining > 0 ? remaining / rate : null
-  const label = barPct >= 100 && prep.previewPhase !== 'unavailable'
-    ? t('prep.phaseSegmenting')
-    : t(phaseKey(prep))
+
+  const started = received > 0 || total > 0
+  const label = !started
+    ? t('room.waitingInitial')
+    : barPct >= 100 && prep.previewPhase !== 'unavailable'
+      ? t('prep.phaseSegmenting')
+      : t(phaseKey(prep))
+  const etaLabel = eta !== null ? formatDuration(eta, t) : barPct >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
 
   return (
     <div className="availability-card">
       <h1>{t('room.processing')}</h1>
       <p>{label}</p>
       <div className="availability-meter">
-        <div className="progress-copy">
-          <span>{target.bytes > 0 && !target.certain ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
-          <strong>
-            {eta !== null ? formatDuration(eta, t) : barPct >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')}
-          </strong>
-        </div>
+        {/* No size, no percentage: a calm shimmer that stays alive even at zero,
+            so a slow start never reads as stuck. */}
         <div
-          className="progress-track"
+          className={`prep-bar ${barPct > 0 ? 'is-progress' : 'is-indeterminate'}`}
           role="progressbar"
           aria-label={t('prep.untilPlayable')}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={barPct}
         >
-          <span style={{ width: `${barPct}%` }} />
+          <span style={barPct > 0 ? { width: `${barPct}%` } : undefined} />
         </div>
-        <div className="availability-detail">
-          <span>{formatSize(received)}{total > 0 ? ` / ${formatSize(total)}` : ''}</span>
-          <span>
-            {rate > 0 ? `${formatRate(rate)} · ` : ''}{t('home.uploading')}{' '}
-            {/* Counters that tick rather than jump: the digits are the only
-                thing on this screen reporting that anything is happening. */}
-            <NumberFlow value={transferPct} suffix="%" />
-          </span>
+        <div className="prep-eta">
+          <span>{target.bytes > 0 && !target.certain ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
+          <strong>{etaLabel}</strong>
         </div>
       </div>
     </div>

@@ -79,6 +79,16 @@ h1, h2, p { margin-top: 0; }
 .gate-bad h1 { color: #ffc4c7; }
 .join-card { text-align: left; }.join-card h1 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.035em; }.join-card p { margin: 0 0 22px; font-size: 14px; }.join-card label { display: block; margin-bottom: 7px; color: var(--text-dim); font-size: 12px; }.join-card input { width: 100%; padding: 13px 14px; border-radius: var(--r-field); }.join-card .primary-button { width: 100%; margin-top: 18px; }
 .availability-card { text-align: center; }.availability-card h1 { margin-bottom: 12px; }.availability-meter { margin-top: 26px; text-align: left; }.availability-meter strong { color: var(--text); font-variant-numeric: tabular-nums; }.availability-detail { display: flex; justify-content: space-between; margin-top: 9px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* Calm preparing bar: a shimmer that never sits still, so a slow start reads as
+   "working" rather than "stuck", and no scary total size anywhere. */
+.prep-bar { position: relative; height: 8px; border-radius: 99px; background: var(--well); overflow: hidden; }
+.prep-bar > span { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.22,.61,.36,1); background: linear-gradient(90deg, var(--primary), #8e94ff, var(--primary)); background-size: 200% 100%; animation: prep-flow 2.2s linear infinite; }
+.prep-bar.is-indeterminate::after { content: ""; position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 99px; background: linear-gradient(90deg, transparent, rgba(142,148,255,.6), transparent); animation: prep-drift 1.7s ease-in-out infinite; }
+@keyframes prep-flow { to { background-position: -200% 0; } }
+@keyframes prep-drift { 0% { left: -40%; } 100% { left: 100%; } }
+.prep-eta { display: flex; justify-content: space-between; margin-top: 13px; color: var(--text-dim); font-size: 13px; }
+.prep-eta strong { color: var(--text); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .prep-bar > span, .prep-bar.is-indeterminate::after { animation: none; } }
 .room-shell { height: 100dvh; padding: 12px; overflow: hidden; }.room-header { height: 56px; width: 100%; padding: 0 14px 0 18px; border: 0; background: transparent; position: relative; z-index: 20; }
 .room-heading { min-width: 0; flex: 1; }.room-header > div, .header-actions { display: flex; align-items: center; gap: 8px; }.room-file { color: var(--text-dim); max-width: min(52vw, 720px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.header-actions { flex: 0 0 auto; }.header-actions button:not(.icon-button) { padding: 7px 11px; }.header-actions button { border: 0; border-radius: 999px; background: rgba(255,255,255,.055); }
 /* Change media: the header pill that morphs into the source menu, on the
@@ -803,6 +813,20 @@ h1, h2, p { margin-top: 0; }
    same as Upload: adding a source is a setting, not the main action. */
 .header-plugins { color: var(--text-dim); }
 .home-header .header-plugins:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
+.bridge-status { font-size: 13px; color: var(--text-faint); }
+.home-header .bridge-status:hover { color: var(--text-dim); background: rgba(255,255,255,.06); }
+.bridge-status .bridge-dot { width: 7px; height: 7px; border-radius: 999px; background: #6b7080; flex: 0 0 auto; transition: background .3s var(--ease), box-shadow .3s var(--ease); }
+.bridge-status.is-on { color: #56d364; }
+.bridge-status.is-on .bridge-dot { background: #2ecc71; box-shadow: 0 0 0 3px rgba(46,204,113,.18); }
+.bridge-steps { margin: 6px 0 18px; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: bridge-step; }
+.bridge-steps li { position: relative; padding-left: 32px; color: var(--text-dim); font-size: 14px; line-height: 1.45; counter-increment: bridge-step; }
+.bridge-steps li::before { content: counter(bridge-step); position: absolute; left: 0; top: -1px; width: 21px; height: 21px; display: grid; place-items: center; border-radius: 999px; background: rgba(120,127,250,.16); color: #b8bcff; font-size: 12px; font-weight: 700; }
+.bridge-download { display: inline-flex; width: 100%; justify-content: center; text-decoration: none; }
+.bridge-other-os { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; color: var(--text-faint); }
+.bridge-other-os a { color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; }
+.bridge-other-os a:hover { color: var(--text); }
+.bridge-connected { margin: 6px 0 0; color: #56d364; font-size: 14px; }
 /* The overlay header lays its children out with space-between, so the button
    sits next to the title instead of being pushed to the far edge. */
 .catalog-overlay-head .header-plugins { margin-right: auto; margin-left: 16px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; background: transparent; font-size: 13px; }

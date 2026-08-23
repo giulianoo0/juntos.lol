@@ -1,6 +1,7 @@
 import webTorrentBundleURL from 'webtorrent/dist/webtorrent.min.js?url'
 import { isSubtitleFileName } from './subtitleFormats'
 import { mockOpenTorrent, mocksEnabled } from './mocks'
+import { openHelperTorrent, helperAvailable } from './localHelper'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
 // Sibling subtitle files are read whole in a single request, and the bridge
@@ -135,6 +136,16 @@ export async function openTorrent(
   onStats?: (stats: TorrentStats) => void,
 ): Promise<TorrentSession> {
   if (mocksEnabled) return mockOpenTorrent(onStats)
+  // The ss helper, when the host is running it, downloads on their own machine
+  // and streams the bytes straight here — the torrent never touches the VPS.
+  // If it is not running, everything falls back to exactly what it did before.
+  if (await helperAvailable()) {
+    try {
+      return await openHelperTorrent(torrentID, onStats)
+    } catch {
+      // Helper reachable but this torrent failed to open there; fall through.
+    }
+  }
   const bridge = await openBridge(torrentID)
   if (bridge) return openBridgeSession(bridge, onStats)
 

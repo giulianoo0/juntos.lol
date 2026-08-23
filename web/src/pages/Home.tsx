@@ -12,6 +12,7 @@ import { playError } from '../onboarding/sounds'
 import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { BridgeStatus } from '../components/BridgeStatus'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
@@ -406,6 +407,7 @@ export function Home() {
           ))}
         </div>
         <div className="header-end">
+          <BridgeStatus t={t} />
           <BuildInfo label={t('home.source')} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>

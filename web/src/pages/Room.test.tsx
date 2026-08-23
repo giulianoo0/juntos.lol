@@ -416,11 +416,11 @@ describe('RoomPage waiting screen', () => {
     })))
 
     renderRoom()
-    expect(await screen.findByText('10.0 MB / 100.0 MB')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '10'))
 
     received = 40 * 1024 * 1024
     // No socket frame is delivered: only the poll can move this.
-    await waitFor(() => expect(screen.getByText('40.0 MB / 100.0 MB')).toBeInTheDocument(),
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40'),
       { timeout: 6000 })
   }, 10_000)
 })

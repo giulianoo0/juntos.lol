@@ -35,7 +35,6 @@ describe('UploadAvailability', () => {
 
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
     expect(screen.getByText('Starts playing in')).toBeInTheDocument()
-    expect(screen.getByText('Uploading 5%')).toBeInTheDocument()
   })
 
   it('names the phase the source is actually in', () => {
@@ -76,7 +75,8 @@ describe('UploadAvailability', () => {
       preparation={{ sourceBytes: 100 * MB, receivedBytes: 10 * MB, previewPhase: 'receiving' }}
     />)
 
-    expect(screen.getByText('10.0 MB / 100.0 MB')).toBeInTheDocument()
+    // The bar tracks the server's 10 MB, not this tab's 90 MB.
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '10')
   })
 
   it('uses this tab as the fallback when the server has published nothing', () => {
@@ -85,7 +85,7 @@ describe('UploadAvailability', () => {
       progress={{ pct: 20, bytesUploaded: 20 * MB, bytesTotal: 100 * MB, streamStartBytes: MB }}
     />)
 
-    expect(screen.getByText('20.0 MB / 100.0 MB')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20')
   })
 
   describe('estimate', () => {
