@@ -8,7 +8,6 @@ import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } f
 import type { PlayState, RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
-import { getLocalPlayback, subscribeLocalPlayback } from '../pipeline/localPlayback'
 import { expectedPositionMs } from './position'
 import { Settings, type SettingGroup } from './Settings'
 import { SubtitleLayer } from './SubtitleLayer'
@@ -170,16 +169,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     return () => video.removeEventListener('volumechange', sync)
   }, [videoRef])
 
-  // When this browser is the host that remuxed the source, it plays straight
-  // from the fragments it produced — a local MediaSource — instead of fetching
-  // them back from the bucket. The URL appears once the local pipeline starts,
-  // which can be after this player mounts, so it is watched.
-  const [localUrl, setLocalUrl] = useState<string | null>(() => getLocalPlayback(room.id)?.url ?? null)
-  useEffect(() => {
-    setLocalUrl(getLocalPlayback(room.id)?.url ?? null)
-    return subscribeLocalPlayback(room.id, (playback) => setLocalUrl(playback.url))
-  }, [room.id])
-
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -196,15 +185,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // A republish of the same recording resumes where this player was; only a
     // different recording starts over from its beginning.
     const startPosition = resumeRef.current.generation === generation ? resumeRef.current.time : 0
-
-    // The host path: the MediaSource is already fed by the remux, so the
-    // element just points at it — no hls.js, no bucket fetch, no CORS.
-    if (localUrl) {
-      plog('info', 'playing from local remux buffer')
-      video.src = localUrl
-      if (startPosition > 0) video.currentTime = startPosition
-      return () => { disposed = true; video.removeAttribute('src'); video.load() }
-    }
 
     const failPlayback = (reason: string) => {
       if (disposed) return
@@ -383,7 +363,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, room.mediaVersion, localUrl, videoRef])
+  }, [room.id, room.mediaGeneration, room.mediaVersion, videoRef])
 
   // Subtitle modes are driven from state instead of the <select> handler so
   // the choice survives everything that reloads cues: a subsVersion bump
