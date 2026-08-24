@@ -6,26 +6,15 @@
  * never runs ffmpeg. A source this browser cannot remux is a room that does
  * not open, and the host is told why.
  */
-import {
-  createMatroskaSubtitleStream,
-  createSubtitleCollector,
-  isMatroska,
-  type SubtitleCollector,
-} from './subtitles'
-import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
 import { mockCreateRoom, mocksEnabled } from './mocks'
-import type { TorrentSession, TorrentSideFile, TorrentStats, TorrentVideoFile } from './torrent'
-import { fileInput, torrentInput, urlInput, type MediaInput } from './pipeline/mediaInput'
+import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
+import { torrentInput } from './pipeline/mediaInput'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
+import type { RemuxJob, RemuxSideFile, RemuxSource } from './pipeline/remuxJob'
+import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
 
-// Headroom under the server's per-room track cap for the tracks muxed into
-// the video itself.
-const MAX_EXTERNAL_SUBTITLES = 16
-// How often the cues seen so far are republished while bytes keep arriving.
-const SUBTITLE_SNAPSHOT_MS = 8_000
-// The slice a subtitle pass reads at a time. Big enough that a torrent read
-// is worth the round trip, small enough to keep memory flat on a 50 GB file.
-const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
+export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
+
 const REGISTRY_TTL_MS = 30_000
 
 interface CreateRoomResponse {
@@ -182,28 +171,11 @@ export async function changeRoomSource(
   return await response.json() as RoomSource
 }
 
-// The errors a transfer reports by name, because each has its own remedy and
-// the room page says a different thing for each.
-//
-// A file that changed on disk: wait for the download to finish, pick again.
-export const FILE_UNREADABLE = 'file-unreadable'
-// This browser cannot remux this source — a codec it cannot decode, a
-// container it cannot read. Another browser, or another release.
-export const UNSUPPORTED_MEDIA = 'unsupported-media'
-// A url source that refused the browser (no CORS, no Range). Nothing here can
-// fix that; a different stream can.
-export const SOURCE_UNREACHABLE = 'source-unreachable'
-
 // A picked File is a snapshot of a path, and browsers invalidate it the moment
 // the bytes underneath change. A file that is still downloading changes
 // constantly, so every read of it throws and the upload sends nothing at all.
 // Reading one byte up front turns that into an answer before a room exists,
 // instead of an empty room that never receives anything.
-export function isUnreadableFile(error: unknown): boolean {
-  if (error instanceof DOMException) return error.name === 'NotReadableError' || error.name === 'NotFoundError'
-  return error instanceof Error && error.message === FILE_UNREADABLE
-}
-
 export async function assertReadable(file: File): Promise<void> {
   // The tail is what moves while a file is being written, so it is the most
   // telling byte to ask for.
@@ -289,7 +261,7 @@ export function startFileUpload(
   file: File,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
-  startRoomUpload(roomID, mediaGeneration, fileInput(file), { onProgress })
+  startRoomUpload(roomID, mediaGeneration, { kind: 'file', file }, [], { onProgress })
 }
 
 // The helper keeps downloading for as long as the session lives, so it is
@@ -304,9 +276,20 @@ export function startTorrentUpload(
   if (session.magnet) {
     saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
   }
-  startRoomUpload(roomID, mediaGeneration, torrentInput(file), {
+  // With a stream url the job is plain data and runs in the worker; a
+  // session without one (mocks, tests) pins the job to this thread.
+  const source: RemuxSource = file.streamUrl
+    ? { kind: 'stream', url: file.streamUrl, name: file.name, size: file.size }
+    : { kind: 'input', input: torrentInput(file) }
+  const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
+    name: side.name,
+    path: side.path,
+    size: side.size,
+    url: side.streamUrl,
+    ...(side.streamUrl ? {} : { read: () => side.read() }),
+  }))
+  startRoomUpload(roomID, mediaGeneration, source, sideFiles, {
     onProgress,
-    sideFiles: session.subtitleFiles,
     cleanup: () => {
       // By identity: a source swap registers its own session before this
       // one's transfer notices it lost the room.
@@ -324,17 +307,13 @@ export function startUrlUpload(
   size: number,
 ): void {
   saveResumableSource(roomID, { kind: 'url', fileName, url, size })
-  startRoomUpload(roomID, mediaGeneration, urlInput(url, fileName, size), { unreachable: SOURCE_UNREACHABLE })
+  startRoomUpload(roomID, mediaGeneration, { kind: 'url', url, name: fileName, size }, [])
 }
 
 interface RoomUploadOptions {
   onProgress?: (progress: UploadProgress) => void
-  /** Subtitle files that shipped next to the video, read and published alongside. */
-  sideFiles?: TorrentSideFile[]
   /** Runs once the transfer ends, however it ends. */
   cleanup?: () => void
-  /** What to report when the source cannot even be read — a url that refused the browser. */
-  unreachable?: string
 }
 
 /**
@@ -347,13 +326,18 @@ interface RoomUploadOptions {
 export function startRoomUpload(
   roomID: string,
   mediaGeneration: number,
-  input: MediaInput,
-  { onProgress, sideFiles = [], cleanup = () => {}, unreachable = UNSUPPORTED_MEDIA }: RoomUploadOptions = {},
+  source: RemuxSource,
+  sideFiles: RemuxSideFile[],
+  { onProgress, cleanup = () => {} }: RoomUploadOptions = {},
 ): void {
   // The progress entry is registered synchronously: Room.tsx subscribes once
-  // on mount, and deferring the entry behind the dynamic import would show no
+  // on mount, and deferring the entry behind the worker spawn would show no
   // progress at all.
-  const entry = createEntry(input.size)
+  const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
+  const size = source.kind === 'file' ? source.file.size
+    : source.kind === 'input' ? source.input.size
+    : source.size
+  const entry = createEntry(size)
   uploads.set(roomID, entry)
   if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
   // Deleting by identity, never by key alone: a source swap starts the next
@@ -370,31 +354,47 @@ export function startRoomUpload(
     if (error === null) clearResumableSource(roomID)
     finishEntry(roomID, entry, error, cleanup)
   }
+  // The controller swapped the source; another upload owns the room now.
+  // Not a failure of this one, so nobody is told of it.
+  const movedOn = () => {
+    if (uploads.get(roomID) === entry) uploads.delete(roomID)
+    dropHandle()
+    cleanup()
+  }
+  const onProgressPct = (pct: number) => updateEntry(entry, Math.round((pct / 100) * size))
+
+  // The remux runs in its own thread whenever the job is plain data: the
+  // demux, the mux and every upload otherwise share the main thread with the
+  // page drawing the player, and the page visibly stutters for the whole
+  // preparo. The page-thread path stays for sources that cannot cross
+  // (mocks, tests) and environments without workers.
+  if (typeof Worker !== 'undefined' && source.kind !== 'input' && sideFiles.every((file) => file.url !== undefined)) {
+    const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
+    ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
+    const settle = (fn: () => void) => { fn(); worker.terminate() }
+    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string }>) => {
+      const message = event.data
+      if (message.type === 'progress') onProgressPct(message.pct ?? 0)
+      else if (message.type === 'handle' && ownHandle) remuxHandles.set(roomID, ownHandle)
+      else if (message.type === 'done') settle(() => finish(null))
+      else if (message.type === 'moved-on') settle(movedOn)
+      else if (message.type === 'failed') settle(() => finish(message.code ?? 'upload failed'))
+    }
+    worker.onerror = (event) => settle(() => finish(event.message || 'upload failed'))
+    worker.postMessage({ type: 'start', job })
+    return
+  }
 
   void (async () => {
     // A dynamic import so the remuxer and its WASM audio decoders live in
     // their own chunk, paid for only when an upload actually starts.
-    const pipeline = await import('./pipeline/clientMedia')
-    let plan: Awaited<ReturnType<typeof pipeline.planClientRemux>> = null
+    const [{ runRemuxJob, PlanFailedError, UnsupportedMediaError }, pipeline] = await Promise.all([
+      import('./pipeline/remuxJob'),
+      import('./pipeline/clientMedia'),
+    ])
     try {
-      plan = await pipeline.planClientRemux(input)
-    } catch (error) {
-      if (isUnreadableFile(error)) { finish(FILE_UNREADABLE); return }
-      finish(unreachable)
-      return
-    }
-    if (!plan) { finish(UNSUPPORTED_MEDIA); return }
-
-    // Subtitles run beside the remux, off the same bytes, and publish as they
-    // go; the room has them before the video finishes.
-    void publishSubtitles(input, sideFiles, roomID, mediaGeneration)
-    try {
-      await pipeline.runClientRemux({
-        roomID,
-        mediaGeneration,
-        file: input,
-        plan,
-        onProgress: (pct) => updateEntry(entry, Math.round((pct / 100) * input.size)),
+      await runRemuxJob(job, {
+        onProgress: onProgressPct,
         onHandle: (handle) => {
           ownHandle = handle
           remuxHandles.set(roomID, handle)
@@ -402,12 +402,11 @@ export function startRoomUpload(
       })
       finish(null)
     } catch (error) {
-      if (error instanceof pipeline.RoomMovedOnError) {
-        // The controller swapped the source; another upload owns the room
-        // now. Not a failure of this one, so nobody is told of it.
-        if (uploads.get(roomID) === entry) uploads.delete(roomID)
-        dropHandle()
-        cleanup()
+      if (error instanceof pipeline.RoomMovedOnError) { movedOn(); return }
+      if (error instanceof UnsupportedMediaError) { finish(UNSUPPORTED_MEDIA); return }
+      if (error instanceof PlanFailedError) {
+        if (isUnreadableFile(error.failure)) { finish(FILE_UNREADABLE); return }
+        finish(source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA)
         return
       }
       console.error('client media pipeline failed', error)
@@ -433,61 +432,4 @@ export function subscribeUploadDone(roomID: string, callback: (err: string | nul
   }
   entry.doneListeners.add(callback)
   return () => { entry.doneListeners.delete(callback) }
-}
-
-// Best effort, never rejects: the tracks muxed into a Matroska source are
-// parsed out of a sequential pass over it, and the sibling subtitle files are
-// read whole. Both publish as they arrive, and the collector holds the final
-// "complete" until every registered source has delivered.
-async function publishSubtitles(
-  input: MediaInput,
-  sideFiles: TorrentSideFile[],
-  roomID: string,
-  mediaGeneration: number,
-): Promise<void> {
-  const collector = createSubtitleCollector(roomID, mediaGeneration)
-  const external = sideFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
-  const embedded = isMatroska(input)
-  if (external.length > 0) collector.register('external')
-  if (embedded) collector.register('embedded')
-  if (external.length === 0 && !embedded) return
-  await Promise.all([
-    external.length > 0 ? loadExternalSubtitles(external, collector) : Promise.resolve(),
-    embedded ? extractEmbeddedSubtitles(input, collector) : Promise.resolve(),
-  ])
-}
-
-async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
-  try {
-    const stream = await createMatroskaSubtitleStream()
-    let lastSnapshotAt = Date.now()
-    for (let offset = 0; offset < input.size; offset += SUBTITLE_SLICE_BYTES) {
-      stream.write(await input.read(offset, Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)))
-      if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
-        lastSnapshotAt = Date.now()
-        collector.publish('embedded', stream.snapshot(), false)
-      }
-    }
-    collector.publish('embedded', await stream.finish(), true)
-  } catch (error) {
-    console.error('subtitle extraction failed', error)
-    collector.publish('embedded', [], true)
-  }
-  await collector.flush()
-}
-
-async function loadExternalSubtitles(files: TorrentSideFile[], collector: SubtitleCollector): Promise<void> {
-  const tracks: VttTrack[] = []
-  for (const file of files) {
-    try {
-      const track = convertSubtitleFile(file.path, await file.read())
-      if (!track) continue
-      tracks.push(track)
-      collector.publish('external', [...tracks], false)
-    } catch (error) {
-      console.warn('external subtitle unavailable', file.path, error)
-    }
-  }
-  collector.publish('external', tracks, true)
-  await collector.flush()
 }

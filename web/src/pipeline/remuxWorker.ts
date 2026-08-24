@@ -1,0 +1,59 @@
+/// <reference lib="webworker" />
+/**
+ * The remux job's thread. The page posts one job and forwards the room's
+ * playhead; everything heavy — demux, mux, uploads, subtitle extraction —
+ * happens here, and the page's main thread stays with the player.
+ */
+import { PlanFailedError, runRemuxJob, UnsupportedMediaError, type RemuxJob } from './remuxJob'
+import { RoomMovedOnError, type ClientRemuxHandle } from './clientMedia'
+import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from '../uploadErrors'
+
+export type WorkerToPage =
+  | { type: 'progress'; pct: number }
+  | { type: 'handle' }
+  | { type: 'done' }
+  | { type: 'moved-on' }
+  | { type: 'failed'; code: string }
+
+export type PageToWorker =
+  | { type: 'start'; job: RemuxJob }
+  | { type: 'follow'; absoluteMs: number }
+
+const post = (message: WorkerToPage) => { self.postMessage(message) }
+
+let handle: ClientRemuxHandle | null = null
+// A follow that lands before the pipeline's first region is remembered, not
+// dropped: it is exactly where the resumed room wants to start.
+let pendingFollowMs: number | null = null
+
+self.onmessage = (event: MessageEvent<PageToWorker>) => {
+  const message = event.data
+  if (message.type === 'follow') {
+    if (handle) handle.follow(message.absoluteMs)
+    else pendingFollowMs = message.absoluteMs
+    return
+  }
+  if (message.type !== 'start') return
+  void runRemuxJob(message.job, {
+    onProgress: (pct) => post({ type: 'progress', pct }),
+    onHandle: (next) => {
+      handle = next
+      if (pendingFollowMs !== null) next.follow(pendingFollowMs)
+      post({ type: 'handle' })
+    },
+  }).then(() => post({ type: 'done' })).catch((error: unknown) => {
+    if (error instanceof RoomMovedOnError) { post({ type: 'moved-on' }); return }
+    console.error('client media pipeline failed', error)
+    post({ type: 'failed', code: classify(error, message.job.source.kind) })
+  })
+}
+
+function classify(error: unknown, kind: RemuxJob['source']['kind']): string {
+  if (error instanceof UnsupportedMediaError) return UNSUPPORTED_MEDIA
+  if (error instanceof PlanFailedError) {
+    if (isUnreadableFile(error.failure)) return FILE_UNREADABLE
+    return kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
+  }
+  if (isUnreadableFile(error)) return FILE_UNREADABLE
+  return error instanceof Error ? error.message : 'upload failed'
+}

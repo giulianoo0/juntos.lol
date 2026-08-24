@@ -19,7 +19,12 @@ export default defineConfig({
     // a security downgrade caused by adding an import.
     rolldownOptions: {
       output: {
-        entryFileNames: 'assets/plugin-worker/[hash].js',
+        // The remux worker is the app's own code and must be able to fetch
+        // (the bridge, the bucket, the api); the plugin-worker CSP would
+        // strangle it, so its entry lives on a path the server leaves alone.
+        entryFileNames: (chunk) => chunk.name === 'remuxWorker'
+          ? 'assets/media-worker/[hash].js'
+          : 'assets/plugin-worker/[hash].js',
         chunkFileNames: 'assets/plugin-worker/[hash].js',
         assetFileNames: 'assets/plugin-worker/[hash][extname]',
       },

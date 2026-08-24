@@ -11,6 +11,9 @@ export interface TorrentVideoFile {
   type: string
   progress: number
   downloaded: number
+  // Where the helper serves this file's bytes over HTTP Range, when it does.
+  // What lets the remux worker read the swarm without the page in between.
+  streamUrl?: string
   read(start: number, endInclusive: number): Promise<ArrayBuffer>
 }
 
@@ -20,6 +23,7 @@ export interface TorrentSideFile {
   name: string
   path: string
   size: number
+  streamUrl?: string
   read(): Promise<ArrayBuffer>
 }
 
