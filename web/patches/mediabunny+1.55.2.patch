@@ -1,0 +1,76 @@
+diff --git a/node_modules/mediabunny/dist/modules/src/conversion.js b/node_modules/mediabunny/dist/modules/src/conversion.js
+index 79f4678..041475d 100644
+--- a/node_modules/mediabunny/dist/modules/src/conversion.js
++++ b/node_modules/mediabunny/dist/modules/src/conversion.js
+@@ -843,7 +843,6 @@ export class Conversion {
+         const firstTimestamp = await track.getFirstTimestamp();
+         let videoCodecs = this.output.format.getSupportedVideoCodecs();
+         const needsTranscode = !!trackOptions.forceTranscode
+-            || firstTimestamp < this._startTimestamp
+             || !!trackOptions.frameRate
+             || trackOptions.keyFrameInterval !== undefined
+             || trackOptions.process !== undefined
+@@ -868,13 +867,26 @@ export class Conversion {
+                 const sink = new EncodedPacketSink(track);
+                 const decoderConfig = await track.getDecoderConfig();
+                 const meta = { decoderConfig: decoderConfig ?? undefined };
+-                for await (const packet of sink.packets(undefined, undefined, { verifyKeyPackets: true })) {
++                // ss patch: a trimmed copy starts at the keyframe at or before
++                // the trim start instead of re-encoding the whole stream. When
++                // the trim start does not sit on a keyframe, the copy begins at
++                // the next one instead of emitting undecodable leading frames.
++                let startPacket = this._startTimestamp > 0
++                    ? await sink.getKeyPacket(this._startTimestamp, { verifyKeyPackets: true }) ?? undefined
++                    : undefined;
++                if (startPacket && startPacket.timestamp < this._startTimestamp - 1e-3) {
++                    startPacket = await sink.getNextKeyPacket(startPacket, { verifyKeyPackets: true }) ?? startPacket;
++                }
++                for await (const packet of sink.packets(startPacket, undefined, { verifyKeyPackets: true })) {
+                     if (this.state === 'canceled') {
+                         break;
+                     }
+                     if (packet.timestamp >= this._endTimestamp) {
+                         break;
+                     }
++                    if (packet.timestamp - this._startTimestamp < 0) {
++                        continue; // open-GOP leading frames before the start keyframe
++                    }
+                     const modifiedPacket = packet.clone({
+                         timestamp: packet.timestamp - this._startTimestamp,
+                         sideData: alpha === 'discard'
+@@ -1089,7 +1101,6 @@ export class Conversion {
+             && !trackOptions.bitrate
+             && numberOfChannels === originalNumberOfChannels
+             && sampleRate === originalSampleRate
+-            && !needsTrimming
+             && !needsPadding
+             && audioCodecs.includes(sourceCodec)
+             && (!trackOptions.codec || trackOptions.codec === sourceCodec)
+@@ -1102,13 +1113,26 @@ export class Conversion {
+                 const sink = new EncodedPacketSink(track);
+                 const decoderConfig = await track.getDecoderConfig();
+                 const meta = { decoderConfig: decoderConfig ?? undefined };
+-                for await (const packet of sink.packets()) {
++                // ss patch: a trimmed copy starts at the first packet at or
++                // after the trim start (audio packets are independent), off by
++                // at most one packet instead of re-encoding the whole track.
++                let startPacket;
++                if (this._startTimestamp > 0) {
++                    startPacket = await sink.getPacket(this._startTimestamp) ?? undefined;
++                    while (startPacket && startPacket.timestamp < this._startTimestamp) {
++                        startPacket = await sink.getNextPacket(startPacket) ?? undefined;
++                    }
++                }
++                for await (const packet of sink.packets(startPacket)) {
+                     if (this.state === 'canceled') {
+                         break;
+                     }
+                     if (packet.timestamp >= this._endTimestamp) {
+                         break;
+                     }
++                    if (packet.timestamp - this._startTimestamp < 0) {
++                        continue;
++                    }
+                     const modifiedPacket = packet.clone({
+                         timestamp: packet.timestamp - this._startTimestamp,
+                     });
