@@ -244,12 +244,16 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   let failure: unknown = null
   let metadataSent = false
 
+  // Wakes the region loop when it is parked between regions (see below).
+  let wakeFollow: (() => void) | null = null
+
   const fail = (error: unknown) => {
     // The first failure aborts everything: the conversion stops encoding, the
     // ticker stops publishing, and execute() throws — instead of paying to
     // upload the rest of a doomed run.
     failure ??= error
     void conversion?.cancel().catch(() => {})
+    wakeFollow?.()
   }
 
   // Backpressure: the muxer must not outrun the uplink. enqueue awaits a slot,
@@ -335,7 +339,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   let conversion: Conversion | null = null
   let region = -1
   let regionStartMs = 0
-  let segmentsEmitted = 0
+  // Segments per playlist: video and its audio rendition advance together,
+  // so the produced time is the largest playlist's count, not their sum.
+  const segmentCounts = new Map<number, number>()
+  const segmentsProduced = () => Math.max(0, ...segmentCounts.values())
   let seekTargetSeconds: number | null = null
   let nextStartSeconds = 0
 
@@ -346,7 +353,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const snapToKeyframe = async (seconds: number): Promise<number> => {
     try {
       const key = await packetSink?.getKeyPacket(seconds, { verifyKeyPackets: true })
-      return key ? key.timestamp : seconds
+      return key ? Math.max(key.timestamp, 0) : Math.max(seconds, 0)
     } catch {
       return seconds
     }
@@ -363,17 +370,26 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   }, PUBLISH_INTERVAL_MS)
 
   let restartPending = false
+  let pendingRestart: Promise<void> | null = null
   let lastFollowMs: number | null = null
+  // Where this region is heading: its own start, or the seek target it was
+  // started for when the nearest keyframe fell well before it. Without this
+  // a long GOP makes the fresh region look like it does not cover the very
+  // seek that created it, and the pipeline restarts in place forever.
+  let regionAimMs = 0
   const uncovered = (absoluteMs: number): boolean => {
-    const producedEndMs = regionStartMs + segmentsEmitted * SEGMENT_SECONDS * 1000
+    const producedEndMs = regionStartMs + segmentsProduced() * SEGMENT_SECONDS * 1000
+    const forwardEdge = Math.max(producedEndMs, regionAimMs)
     return absoluteMs < regionStartMs - COLD_BEHIND_MS
-      || absoluteMs > producedEndMs + COLD_AHEAD_MS
+      || absoluteMs > forwardEdge + COLD_AHEAD_MS
   }
   const restartAt = (absoluteMs: number) => {
     restartPending = true
-    void (async () => {
+    pendingRestart = (async () => {
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
+      regionAimMs = absoluteMs
       await conversion?.cancel().catch(() => {})
+      wakeFollow?.()
     })()
   }
   const handle: ClientRemuxHandle = {
@@ -391,7 +407,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     region += 1
     const startSeconds = nextStartSeconds
     regionStartMs = Math.round(startSeconds * 1000)
-    segmentsEmitted = 0
+    regionAimMs = Math.max(regionAimMs, regionStartMs)
+    segmentCounts.clear()
     seekTargetSeconds = null
     // The old region's playlists stay published on the server; only the
     // local map restarts, so the next publish carries the new region's
@@ -412,7 +429,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
         onPlaylist: (content, info) => { playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content) },
         onInit: (target, info) => { enqueue(`${prefix}cinit_${info.n}.mp4`, target) },
         onSegment: (target, info) => {
-          segmentsEmitted += 1
+          segmentCounts.set(info.playlist.n, (segmentCounts.get(info.playlist.n) ?? 0) + 1)
           enqueue(`${prefix}cs_${info.playlist.n}_${info.n}.m4s`, target)
         },
       }),
@@ -450,11 +467,32 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       if (!(error instanceof ConversionCanceledError)) fail(error)
     }
     if (failure) throw failure
+    // A restart may still be snapping its keyframe when the conversion ends
+    // on its own; settle it before deciding this was a natural finish.
+    if (pendingRestart) {
+      await pendingRestart
+      pendingRestart = null
+    }
     if (seekTargetSeconds !== null) {
       nextStartSeconds = seekTargetSeconds
       continue
     }
-    break
+    // The whole timeline is done. Within a breath of zero counts: the
+    // snap may have placed the region's start on the first keyframe rather
+    // than at exactly nothing.
+    if (startSeconds <= COLD_BEHIND_MS / 1000) break
+    // This region ran to the end of the file, but everything before its
+    // start is still unproduced. Park here: the next cold seek wakes the
+    // loop and re-prepares wherever the room went.
+    await new Promise<void>((resolve) => { wakeFollow = resolve })
+    wakeFollow = null
+    if (failure) throw failure
+    if (pendingRestart) {
+      await pendingRestart
+      pendingRestart = null
+    }
+    if (seekTargetSeconds === null) break
+    nextStartSeconds = seekTargetSeconds
   }
 
   await Promise.all([...inflight])

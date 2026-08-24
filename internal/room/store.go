@@ -451,9 +451,33 @@ func (s *Store) SetMediaDuration(ctx context.Context, id string, durationMs int6
 
 // SetMediaOffset stores where the current region's media timeline begins and
 // bumps the media version in the same atomic step, so a player never reloads
-// into an offset whose playlists are not the ones behind the URL.
+// into an offset whose playlists are not the ones behind the URL. The compare
+// happens inside the script: two publishes racing the same offset — the
+// ticker and the drain loop overlap — must produce one bump, not two reload
+// storms.
 func (s *Store) SetMediaOffset(ctx context.Context, id string, offsetMs int64) error {
-	return s.mutateRoomBump(ctx, id, false, "media_version", "media_offset_ms", strconv.FormatInt(offsetMs, 10))
+	result, err := s.rdb.Eval(ctx, `
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return -1 end
+if redis.call('HGET', KEYS[1], 'media_offset_ms') == ARGV[2] then return 0 end
+redis.call('HSET', KEYS[1], 'media_offset_ms', ARGV[2])
+redis.call('HINCRBY', KEYS[1], 'media_version', 1)
+redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
+return 1
+`, []string{roomKey(id)}, strconv.FormatInt(time.Now().UnixMilli(), 10), strconv.FormatInt(offsetMs, 10)).Int64()
+	if err != nil {
+		return fmt.Errorf("set media offset: %w", err)
+	}
+	if result == -1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetAudioTracks stores the probed audio tracks and bitmap-subtitle skip
@@ -523,7 +547,8 @@ redis.call('HSET', KEYS[1],
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
-  'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes')
+  'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
+  'duration_ms', 'media_offset_ms')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

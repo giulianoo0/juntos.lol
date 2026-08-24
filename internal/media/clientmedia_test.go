@@ -70,7 +70,7 @@ func TestClientNameGrammarsAcceptRegions(t *testing.T) {
 			t.Errorf("object %q refused", name)
 		}
 	}
-	for _, name := range []string{"r_cinit_0.mp4", "r1234_cs_0_1.m4s", "r1_master.m3u8", "x1_cs_0_1.m4s"} {
+	for _, name := range []string{"r_cinit_0.mp4", "r1234567_cs_0_1.m4s", "r1_master.m3u8", "x1_cs_0_1.m4s"} {
 		if _, ok := ClientObjectContentType(name); ok {
 			t.Errorf("object %q accepted", name)
 		}

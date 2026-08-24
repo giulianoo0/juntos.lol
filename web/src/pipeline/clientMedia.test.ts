@@ -151,7 +151,21 @@ describe('client remux regions', () => {
     ;(second.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
 
+    // Region 1 hits the end of the file: everything before 18:00 is still
+    // unproduced, so the pipeline parks. Seeking near zero wakes it into a
+    // region that starts at the very beginning...
     conversions[1].finish()
+    await flush()
+    await flush()
+    handle!.follow(500)
+    await flush()
+    await flush()
+    expect(conversions).toHaveLength(3)
+    expect(conversions[2].opts.trim).toBeUndefined()
+
+    // ...and a region from zero reaching the end is the whole timeline: the
+    // run completes, back on the zero offset.
+    conversions[2].finish()
     await run
 
     const presigned = calls
@@ -164,6 +178,59 @@ describe('client remux regions', () => {
     const publishes = calls.filter((call) => call.url.endsWith('/client-media/publish'))
     const last = publishes[publishes.length - 1].body!
     expect(last.complete).toBe(true)
-    expect(last.timeline).toEqual({ durationMs: 1_440_000, offsetMs: 1_078_000 })
+    expect(last.timeline).toEqual({ durationMs: 1_440_000, offsetMs: 0 })
   })
 })
+
+  it('parks at a region end instead of completing, and wakes on the next seek', async () => {
+    const calls = mockServer()
+    let handle: ClientRemuxHandle | null = null
+    const plan = {
+      input: { getPrimaryVideoTrack: async () => ({}) },
+      audioTracks: [],
+      durationSeconds: 1440,
+    }
+    // Never awaited on purpose: parking forever is this test's point.
+    void runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000 } as never,
+      plan: plan as never,
+      onHandle: (h) => { handle = h },
+    })
+    await flush()
+
+    // Straight to the middle: region 1 starts at the snapped keyframe.
+    handle!.follow(1_080_000)
+    await flush()
+    await flush()
+    expect(conversions).toHaveLength(2)
+    const second = conversions[1].opts.output.opts.format.options
+    ;(second.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    ;(second.onMaster as (c: string) => void)('#EXTM3U\n')
+    await flush()
+
+    // The region runs to the end of the file. Everything before 18:00 is
+    // still unproduced, so the run must not complete — it parks.
+    conversions[1].finish()
+    await flush()
+    await flush()
+    const completes = () => calls.filter((call) =>
+      call.url.endsWith('/client-media/publish') && call.body?.complete === true)
+    expect(completes()).toHaveLength(0)
+
+    // The next cold seek wakes the loop and re-prepares from the start.
+    handle!.follow(30_000)
+    await flush()
+    await flush()
+    expect(conversions).toHaveLength(3)
+    const third = conversions[2].opts.output.opts.format.options
+    ;(third.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    await flush()
+    // Region from ~0:28 runs to EOF; still not the whole timeline from zero,
+    // so it parks again rather than completing with the head missing.
+    conversions[2].finish()
+    await flush()
+    await flush()
+    expect(completes()).toHaveLength(0)
+  })

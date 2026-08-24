@@ -34,8 +34,8 @@ var (
 	// The optional r<N>_ prefix is a region: a contiguous stretch the host
 	// pipeline produced from one seek target. Regions never reuse names, so a
 	// restart can publish while the old region's objects still exist.
-	clientObjectName   = regexp.MustCompile(`^(r\d{1,3}_)?(cinit_\d{1,4}\.mp4|cs_\d{1,4}_\d{1,7}\.m4s)$`)
-	clientPlaylistName = regexp.MustCompile(`^(master\.m3u8|(r\d{1,3}_)?client_stream_\d{1,4}\.m3u8)$`)
+	clientObjectName   = regexp.MustCompile(`^(r\d{1,6}_)?(cinit_\d{1,4}\.mp4|cs_\d{1,4}_\d{1,7}\.m4s)$`)
+	clientPlaylistName = regexp.MustCompile(`^(master\.m3u8|(r\d{1,6}_)?client_stream_\d{1,4}\.m3u8)$`)
 )
 
 // ClientObjectContentType validates a client object name and answers the
