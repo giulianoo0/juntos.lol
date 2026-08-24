@@ -1,3 +1,4 @@
+import NumberFlow from '@number-flow/react'
 import { useT } from '../i18n/useT'
 import type { TorrentStats } from '../torrent'
 
@@ -20,22 +21,22 @@ export function TorrentReadout({ stats }: { stats: TorrentStats }) {
     <dl className="starting-swarm">
       <div>
         <dt>{t('home.swarmPeers')}</dt>
-        <dd>{stats.peers}</dd>
+        <dd><NumberFlow value={stats.peers} /></dd>
       </div>
       <div>
         <dt>{t('home.swarmSpeed')}</dt>
-        <dd>{round(stats.downloadSpeed / 1_048_576, 1)} MB/s</dd>
+        <dd><NumberFlow value={round(stats.downloadSpeed / 1_048_576, 1)} suffix=" MB/s" /></dd>
       </div>
       <div>
         <dt>{t('home.swarmDownloaded')}</dt>
-        <dd>{round(stats.downloaded / 1_073_741_824, 2)} GB</dd>
+        <dd><NumberFlow value={round(stats.downloaded / 1_073_741_824, 2)} suffix=" GB" /></dd>
       </div>
     </dl>
   )
 }
 
-// Rounded before display so the figure holds still between polls instead of
-// flickering through float noise.
+// NumberFlow animates between the values it is handed, so feeding it the raw
+// float would roll every decimal place on every poll.
 const round = (value: number, places: number): number => {
   const factor = 10 ** places
   return Math.round(value * factor) / factor
