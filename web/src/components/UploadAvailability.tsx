@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import type { RoomPreparation } from '../types'
 import type { RoomUploadProgress } from '../upload'
+import type { TorrentStats } from '../torrent'
+import { TorrentReadout } from './TorrentReadout'
 
 // How long a byte count stays in the rate window. Long enough that a swarm
 // pausing on one slow piece does not read as "stalled", short enough that the
@@ -69,10 +71,13 @@ function phaseKey(preparation: RoomPreparation): string {
 export function UploadAvailability({
   progress,
   preparation,
+  swarm,
   t,
 }: {
   progress: RoomUploadProgress | null
   preparation?: RoomPreparation | null
+  /** Live torrent numbers, present only on the machine fetching the swarm. */
+  swarm?: TorrentStats | null
   t: Translator
 }) {
   // The server's count covers every viewer; the local one only exists in the
@@ -125,6 +130,7 @@ export function UploadAvailability({
           <strong>{etaLabel}</strong>
         </div>
       </div>
+      {swarm ? <TorrentReadout stats={swarm} /> : null}
     </div>
   )
 }

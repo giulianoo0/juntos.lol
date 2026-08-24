@@ -47,8 +47,10 @@ import {
   startUrlUpload,
   type RoomUploadProgress,
   remuxHandleFor,
+  torrentStatsFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
+import type { TorrentStats } from '../torrent'
 
 // How long the copied tick stands before the button offers the copy again.
 const COPIED_MS = 1_800
@@ -103,11 +105,12 @@ type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'failed' | 'er
  * reporting, travelling between the sizes each state needs and dissolving
  * between them, rather than swapping whole screens.
  */
-function RoomGate({ step, onJoin, progress, preparation, failure, errorMessage }: {
+function RoomGate({ step, onJoin, progress, preparation, swarm, failure, errorMessage }: {
   step: GateStep
   onJoin?: (nickname: string) => void
   progress?: RoomUploadProgress | null
   preparation?: RoomInfo['preparation']
+  swarm?: TorrentStats | null
   failure?: string | null
   errorMessage?: string
 }) {
@@ -148,7 +151,7 @@ function RoomGate({ step, onJoin, progress, preparation, failure, errorMessage }
         ) : null}
 
         {shown === 'preparing' ? (
-          <UploadAvailability progress={progress ?? null} preparation={preparation} t={t} />
+          <UploadAvailability progress={progress ?? null} preparation={preparation} swarm={swarm} t={t} />
         ) : null}
 
         {shown === 'expired' ? (
@@ -198,6 +201,16 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
   mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
+  // The swarm behind this room's upload, when this tab is the one fetching
+  // it. Polled while mounted: the session keeps its own snapshot fresh, this
+  // just reads it onto the preparing screen.
+  const [swarmStats, setSwarmStats] = useState<TorrentStats | null>(null)
+  useEffect(() => {
+    const read = () => setSwarmStats(torrentStatsFor(room.id))
+    read()
+    const timer = window.setInterval(read, 1_000)
+    return () => window.clearInterval(timer)
+  }, [room.id])
   // The dock on the right holds one thing at a time: the chat, or the
   // chapter list, which replaces it rather than stacking beside it.
   const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')
@@ -450,6 +463,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         step={gate}
         progress={uploadProgress}
         preparation={liveRoom.preparation}
+        swarm={swarmStats}
         failure={uploadFailed}
         errorMessage={liveRoom.errorMessage}
       />

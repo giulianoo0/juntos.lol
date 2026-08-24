@@ -14,7 +14,7 @@ import {
 } from './subtitles'
 import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
 import { mockCreateRoom, mocksEnabled } from './mocks'
-import type { TorrentSession, TorrentSideFile, TorrentVideoFile } from './torrent'
+import type { TorrentSession, TorrentSideFile, TorrentStats, TorrentVideoFile } from './torrent'
 import { fileInput, torrentInput, urlInput, type MediaInput } from './pipeline/mediaInput'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
 
@@ -73,6 +73,16 @@ const remuxHandles = new Map<string, ClientRemuxHandle>()
 /** The running remux pipeline for this room, when this tab is its host. */
 export function remuxHandleFor(roomID: string): ClientRemuxHandle | undefined {
   return remuxHandles.get(roomID)
+}
+
+// The torrent sessions feeding rooms from this tab, so the room's preparing
+// screen can show what the swarm is doing — the wait is the swarm's, and only
+// this machine can see it.
+const torrentSessions = new Map<string, TorrentSession>()
+
+/** The swarm behind this room's upload, when this tab is fetching it. */
+export function torrentStatsFor(roomID: string): TorrentStats | null {
+  return torrentSessions.get(roomID)?.stats() ?? null
 }
 
 async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
@@ -237,10 +247,16 @@ export function startTorrentUpload(
   { file, session }: TorrentUploadSource,
   onProgress?: (progress: UploadProgress) => void,
 ): void {
+  torrentSessions.set(roomID, session)
   startRoomUpload(roomID, mediaGeneration, torrentInput(file), {
     onProgress,
     sideFiles: session.subtitleFiles,
-    cleanup: () => session.destroy(),
+    cleanup: () => {
+      // By identity: a source swap registers its own session before this
+      // one's transfer notices it lost the room.
+      if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
+      session.destroy()
+    },
   })
 }
 

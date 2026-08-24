@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'r
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
-import NumberFlow from '@number-flow/react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
@@ -14,6 +13,7 @@ import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { BridgeStatus } from '../components/BridgeStatus'
+import { TorrentReadout } from '../components/TorrentReadout'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { HelperRequiredError, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
@@ -32,42 +32,6 @@ export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024
 
 // The manual-upload panel's steps; false is the panel being shut.
 type ManualStep = false | 'menu' | 'file' | 'magnet'
-/**
- * What the swarm is doing, while the room is being built out of it.
- *
- * The wait here is the torrent's, not the app's: the remux reads the file
- * through the helper and blocks until those bytes have downloaded, so the
- * whole preparing state moves at whatever the peers are giving. Without these
- * numbers a slow swarm and a hung app look identical, and the only thing on
- * screen is a spinner that has been turning for four minutes.
- */
-function TorrentReadout({ stats }: { stats: TorrentStats }) {
-  const t = useT()
-  return (
-    <dl className="starting-swarm">
-      <div>
-        <dt>{t('home.swarmPeers')}</dt>
-        <dd><NumberFlow value={stats.peers} /></dd>
-      </div>
-      <div>
-        <dt>{t('home.swarmSpeed')}</dt>
-        <dd><NumberFlow value={round(stats.downloadSpeed / 1_048_576, 1)} suffix=" MB/s" /></dd>
-      </div>
-      <div>
-        <dt>{t('home.swarmDownloaded')}</dt>
-        <dd><NumberFlow value={round(stats.downloaded / 1_073_741_824, 2)} suffix=" GB" /></dd>
-      </div>
-    </dl>
-  )
-}
-
-// NumberFlow animates between the values it is handed, so feeding it the raw
-// float would roll every decimal place on every poll.
-const round = (value: number, places: number): number => {
-  const factor = 10 ** places
-  return Math.round(value * factor) / factor
-}
-
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
