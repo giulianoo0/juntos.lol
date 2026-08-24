@@ -270,9 +270,10 @@ func TestClientMediaCompleteReleasesTheClaim(t *testing.T) {
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_1_1.m4s",
 		strings.NewReader("s"), 1, media.ClientSegmentContentType, media.ClientObjectCacheControl))
 	playlist := "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"cinit_1.mp4\"\n#EXTINF:4.0,\ncs_1_1.m4s\n#EXT-X-ENDLIST\n"
+	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028\"\nclient_stream_1.m3u8\n"
 	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","confirm":["cinit_1.mp4","cs_1_1.m4s"],`+
-			`"playlists":{"client_stream_1.m3u8":`+strconvQuote(playlist)+`},"complete":true}`)
+			`"playlists":{"master.m3u8":`+strconvQuote(master)+`,"client_stream_1.m3u8":`+strconvQuote(playlist)+`},"complete":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	// The room is ready and the reservation is gone.
@@ -347,4 +348,45 @@ func TestClientMediaTimelineFollowsTheMaster(t *testing.T) {
 	bad := `{"claim":"` + claim + `","mediaGeneration":0,"timeline":{"durationMs":-1,"offsetMs":0}}`
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", bad)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+func TestClientMediaReadyWaitsForTheMaster(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	bucket := objectstore.NewFake()
+	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{})
+	claim := claimRoom(t, e, "r1")
+
+	// One rendition is playable, but the master also names an audio variant
+	// that has nothing confirmed yet: the master cannot render, and a ready
+	// room without a master serves the player's first request a 404.
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_1.mp4",
+		strings.NewReader("i"), 1, media.ClientInitContentType, media.ClientObjectCacheControl))
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_1_1.m4s",
+		strings.NewReader("s"), 1, media.ClientSegmentContentType, media.ClientObjectCacheControl))
+	video := "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"cinit_1.mp4\"\n#EXTINF:4.0,\ncs_1_1.m4s\n"
+	master := "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"jpn\",URI=\"client_stream_2.m3u8\"\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028\",AUDIO=\"a\"\nclient_stream_1.m3u8\n"
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
+		`{"claim":"`+claim+`","confirm":["cinit_1.mp4","cs_1_1.m4s"],`+
+			`"playlists":{"master.m3u8":`+strconvQuote(master)+`,"client_stream_1.m3u8":`+strconvQuote(video)+`}}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.NotEqual(t, "ready", got.Status)
+
+	// The audio's first segment lands, the master renders, and only now the
+	// room says ready.
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_2.mp4",
+		strings.NewReader("i"), 1, media.ClientInitContentType, media.ClientObjectCacheControl))
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_2_1.m4s",
+		strings.NewReader("s"), 1, media.ClientSegmentContentType, media.ClientObjectCacheControl))
+	audio := "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"cinit_2.mp4\"\n#EXTINF:4.0,\ncs_2_1.m4s\n"
+	w = postJSON(t, e, "/api/rooms/r1/client-media/publish",
+		`{"claim":"`+claim+`","confirm":["cinit_2.mp4","cs_2_1.m4s"],`+
+			`"playlists":{"master.m3u8":`+strconvQuote(master)+`,"client_stream_1.m3u8":`+strconvQuote(video)+`,"client_stream_2.m3u8":`+strconvQuote(audio)+`}}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got, err = store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "ready", got.Status)
 }

@@ -347,7 +347,17 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 		}
 
 		becameReady := false
-		if playable && storedRoom.Status != "ready" {
+		// Playable alone is one variant with a segment; the player's first
+		// request is for the master, and a ready room whose master is still
+		// waiting on its slowest rendition serves that request a 404 the
+		// player eventually gives up on. Ready means the master resolves.
+		masterReady := false
+		if _, ok := rendered["master.m3u8"]; ok {
+			masterReady = true
+		} else if has, err := store.HasPlaylist(ctx, roomID, "master.m3u8"); err == nil && has {
+			masterReady = true
+		}
+		if playable && masterReady && storedRoom.Status != "ready" {
 			if err := store.SetStatus(ctx, roomID, "ready"); err == nil {
 				becameReady = true
 				if hooks.NotifyStatus != nil {
