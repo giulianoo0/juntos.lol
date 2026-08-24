@@ -70,10 +70,16 @@ export function useSync(
   roomId: string,
   nickname: string,
   videoRef: MutableRefObject<HTMLVideoElement | null>,
+  // Where the current media region begins on the room's absolute timeline.
+  // A ref, because the socket handlers close over it once: every positionMs
+  // on the wire is absolute, every media.currentTime is region-relative, and
+  // this is the only place the two meet.
+  mediaOffsetMsRef?: MutableRefObject<number>,
 ): SyncResult {
   const socketRef = useRef<WebSocket | null>(null)
   const offsetRef = useRef(0)
   const bufferingRef = useRef(false)
+  const mediaOffset = () => mediaOffsetMsRef?.current ?? 0
   const [state, setState] = useState(initialState)
   const [controllerId, setControllerId] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -109,7 +115,7 @@ export function useSync(
   const sendReadiness = useCallback(() => {
     const media = videoRef.current
     if (!media) return
-    const positionMs = Math.round(media.currentTime * 1000)
+    const positionMs = Math.round(media.currentTime * 1000) + mediaOffset()
     let bufferAheadMs = 0
     for (let index = 0; index < media.buffered.length; index += 1) {
       if (media.buffered.start(index) > media.currentTime + 0.1 || media.currentTime > media.buffered.end(index)) continue
@@ -138,7 +144,7 @@ export function useSync(
       if (!media) return
       setState((current) => {
         const expected = expectedPositionMs(current, Date.now() + offsetRef.current)
-        if (needsResync(media.currentTime * 1000, expected)) media.currentTime = expected / 1000
+        if (needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
         return current
       })
     }
@@ -176,7 +182,7 @@ export function useSync(
       const media = videoRef.current
       if (!media) return
       const expected = expectedPositionMs(nextState, Date.now() + offsetRef.current)
-      if (!bufferingRef.current && needsResync(media.currentTime * 1000, expected)) media.currentTime = expected / 1000
+      if (!bufferingRef.current && needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
       media.playbackRate = nextState.rate || 1
       if (nextState.playing && media.paused) void media.play().catch(() => undefined)
       if (!nextState.playing && !media.paused) media.pause()
@@ -266,7 +272,7 @@ export function useSync(
       if (!media || bufferingRef.current) return
       setState((current) => {
         const expected = expectedPositionMs(current, Date.now() + offsetRef.current)
-        if (needsResync(media.currentTime * 1000, expected)) media.currentTime = expected / 1000
+        if (needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
         return current
       })
     }, 5000)

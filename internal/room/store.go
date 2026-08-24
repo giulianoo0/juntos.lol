@@ -253,6 +253,8 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r.GatingEnabled = fields["gating_disabled"] != "1"
 	r.ClientSubs = fields["client_subs"] == "1"
 	for field, target := range map[string]*int64{
+		"duration_ms":          &r.DurationMs,
+		"media_offset_ms":      &r.MediaOffsetMs,
 		"source_bytes":         &r.Preparation.SourceBytes,
 		"received_bytes":       &r.Preparation.ReceivedBytes,
 		"preview_target_bytes": &r.Preparation.PreviewTargetBytes,
@@ -439,6 +441,19 @@ func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) 
 // republished in place, telling players to reload the unchanged source URL.
 func (s *Store) BumpMediaVersion(ctx context.Context, id string) error {
 	return s.mutateRoomBump(ctx, id, false, "media_version")
+}
+
+// SetMediaDuration stores the source's full duration as measured by the
+// pipeline that read it.
+func (s *Store) SetMediaDuration(ctx context.Context, id string, durationMs int64) error {
+	return s.mutateRoom(ctx, id, false, "duration_ms", strconv.FormatInt(durationMs, 10))
+}
+
+// SetMediaOffset stores where the current region's media timeline begins and
+// bumps the media version in the same atomic step, so a player never reloads
+// into an offset whose playlists are not the ones behind the URL.
+func (s *Store) SetMediaOffset(ctx context.Context, id string, offsetMs int64) error {
+	return s.mutateRoomBump(ctx, id, false, "media_version", "media_offset_ms", strconv.FormatInt(offsetMs, 10))
 }
 
 // SetAudioTracks stores the probed audio tracks and bitmap-subtitle skip

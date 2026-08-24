@@ -18,6 +18,8 @@ import {
   BufferTarget,
   CmafOutputFormat,
   Conversion,
+  ConversionCanceledError,
+  EncodedPacketSink,
   HlsOutputFormat,
   Input,
   Output,
@@ -103,7 +105,25 @@ export interface RunClientRemuxOptions {
   file: MediaInput
   plan: ClientRemuxPlan
   onProgress?: (pct: number) => void
+  /** Hands out the live pipeline handle once the remux is running. */
+  onHandle?: (handle: ClientRemuxHandle) => void
 }
+
+/**
+ * The running pipeline, as the room page drives it: fed the room's absolute
+ * position, it decides for itself whether the current region covers it or the
+ * conversion has to restart there.
+ */
+export interface ClientRemuxHandle {
+  follow(absoluteMs: number): void
+}
+
+/** How far past the produced edge a position may run before the pipeline
+ * restarts there instead of letting production catch up. */
+const COLD_AHEAD_MS = 30_000
+/** Positions this close before the region start are treated as covered: the
+ * keyframe snap places region starts slightly before the requested time. */
+const COLD_BEHIND_MS = 1_000
 
 /**
  * Thrown when the room moved on under the run — the source was swapped, so the
@@ -154,7 +174,7 @@ async function serverError(response: Response): Promise<ServerError> {
  * any other error when the run itself failed (fall back to tus). The claim is
  * released on the way out either way, so the fallback upload can proceed.
  */
-export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress }: RunClientRemuxOptions): Promise<void> {
+export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress, onHandle }: RunClientRemuxOptions): Promise<void> {
   const claimResponse = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/claim`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -168,7 +188,7 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
   }
 
   try {
-    await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress })
+    await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle })
   } catch (error) {
     // The server releases the claim itself on a successful complete; this
     // covers every path that threw before it, so a retry from the host does
@@ -208,7 +228,7 @@ async function releaseClaimReliably(roomID: string, claim: string): Promise<void
   }
 }
 
-async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress }: RunClientRemuxOptions & { claim: string }): Promise<void> {
+async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle }: RunClientRemuxOptions & { claim: string }): Promise<void> {
   // Object flow: the muxer hands finished files to `pending`; `pump` drains
   // them through presign + PUT into `uploaded`; each publish confirms
   // `uploaded` names with the server, which HEADs the bucket and extends the
@@ -229,7 +249,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // ticker stops publishing, and execute() throws — instead of paying to
     // upload the rest of a doomed run.
     failure ??= error
-    void conversion.cancel().catch(() => {})
+    void conversion?.cancel().catch(() => {})
   }
 
   // Backpressure: the muxer must not outrun the uplink. enqueue awaits a slot,
@@ -283,6 +303,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       playlists: Object.fromEntries(playlists),
       complete,
       progress: { receivedBytes: uploadedBytes, sourceBytes: totalBytes },
+      // The offset is read at send time: after a seek it names the new
+      // region, and the server holds it back until that region's master
+      // actually renders.
+      timeline: { durationMs: Math.round(plan.durationSeconds * 1000), offsetMs: regionStartMs },
     }
     const chapters = metadataSent ? [] : await chaptersOnce
     if (!metadataSent) {
@@ -304,32 +328,29 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     return ready
   }
 
-  const output = new Output({
-    format: new HlsOutputFormat({
-      segmentFormat: new CmafOutputFormat(),
-      targetDuration: SEGMENT_SECONDS,
-      live: true,
-      getPlaylistPath: ({ n }) => `client_stream_${n}.m3u8`,
-      getSegmentPath: ({ playlist, n }) => `cs_${playlist.n}_${n}.m4s`,
-      getInitPath: ({ n }) => `cinit_${n}.mp4`,
-      onMaster: (content) => { playlists.set('master.m3u8', content) },
-      onPlaylist: (content, info) => { playlists.set(`client_stream_${info.n}.m3u8`, content) },
-      onInit: (target, info) => { enqueue(`cinit_${info.n}.mp4`, target) },
-      onSegment: (target, info) => { enqueue(`cs_${info.playlist.n}_${info.n}.m4s`, target) },
-    }),
-    target: new PathedTarget('master.m3u8', () => new BufferTarget()),
-  })
+  // One region at a time: a contiguous stretch of the source, converted in
+  // order from wherever the room last landed. The upload machinery above is
+  // shared across regions — segments of an abandoned region finish uploading
+  // harmlessly, since a region's names are never reused.
+  let conversion: Conversion | null = null
+  let region = -1
+  let regionStartMs = 0
+  let segmentsEmitted = 0
+  let seekTargetSeconds: number | null = null
+  let nextStartSeconds = 0
 
-  const conversion = await Conversion.init({
-    input: plan.input,
-    output,
-    audio: { codec: 'aac' },
-  })
-  if (!conversion.isValid) {
-    throw new Error('client remux plan rejected by conversion: '
-      + conversion.discardedTracks.map((track) => track.reason).join(', '))
+  // Seeks snap back to the keyframe at or before the target, so a region
+  // always starts on a frame the copied stream can actually begin at.
+  const videoTrack = await plan.input.getPrimaryVideoTrack()
+  const packetSink = videoTrack ? new EncodedPacketSink(videoTrack) : null
+  const snapToKeyframe = async (seconds: number): Promise<number> => {
+    try {
+      const key = await packetSink?.getKeyPacket(seconds, { verifyKeyPackets: true })
+      return key ? key.timestamp : seconds
+    } catch {
+      return seconds
+    }
   }
-  conversion.onProgress = (progress) => onProgress?.(Math.round(progress * 100))
 
   // Publishing runs alongside the remux for the same reason the server's
   // does: a room that only became watchable at the end would not be a
@@ -341,10 +362,103 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     void publish(false).catch(fail).finally(() => { publishing = false })
   }, PUBLISH_INTERVAL_MS)
 
+  let restartPending = false
+  let lastFollowMs: number | null = null
+  const uncovered = (absoluteMs: number): boolean => {
+    const producedEndMs = regionStartMs + segmentsEmitted * SEGMENT_SECONDS * 1000
+    return absoluteMs < regionStartMs - COLD_BEHIND_MS
+      || absoluteMs > producedEndMs + COLD_AHEAD_MS
+  }
+  const restartAt = (absoluteMs: number) => {
+    restartPending = true
+    void (async () => {
+      seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
+      await conversion?.cancel().catch(() => {})
+    })()
+  }
+  const handle: ClientRemuxHandle = {
+    follow: (absoluteMs) => {
+      // Remembered even mid-restart: a second seek while the first is still
+      // tearing down must win, and the new region rechecks it on arrival.
+      lastFollowMs = absoluteMs
+      if (failure || restartPending) return
+      if (uncovered(absoluteMs)) restartAt(absoluteMs)
+    },
+  }
+
   try {
-    await conversion.execute()
-    await Promise.all([...inflight])
+  while (true) {
+    region += 1
+    const startSeconds = nextStartSeconds
+    regionStartMs = Math.round(startSeconds * 1000)
+    segmentsEmitted = 0
+    seekTargetSeconds = null
+    // The old region's playlists stay published on the server; only the
+    // local map restarts, so the next publish carries the new region's
+    // master rather than a mix.
+    playlists.clear()
+    // Region zero keeps the unprefixed names existing rooms already use.
+    const prefix = region === 0 ? '' : `r${region}_`
+
+    const output = new Output({
+      format: new HlsOutputFormat({
+        segmentFormat: new CmafOutputFormat(),
+        targetDuration: SEGMENT_SECONDS,
+        live: true,
+        getPlaylistPath: ({ n }) => `${prefix}client_stream_${n}.m3u8`,
+        getSegmentPath: ({ playlist, n }) => `${prefix}cs_${playlist.n}_${n}.m4s`,
+        getInitPath: ({ n }) => `${prefix}cinit_${n}.mp4`,
+        onMaster: (content) => { playlists.set('master.m3u8', content) },
+        onPlaylist: (content, info) => { playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content) },
+        onInit: (target, info) => { enqueue(`${prefix}cinit_${info.n}.mp4`, target) },
+        onSegment: (target, info) => {
+          segmentsEmitted += 1
+          enqueue(`${prefix}cs_${info.playlist.n}_${info.n}.m4s`, target)
+        },
+      }),
+      target: new PathedTarget('master.m3u8', () => new BufferTarget()),
+    })
+
+    const current = await Conversion.init({
+      input: plan.input,
+      output,
+      audio: { codec: 'aac' },
+      ...(startSeconds > 0 ? { trim: { start: startSeconds } } : {}),
+    })
+    if (!current.isValid) {
+      throw new Error('client remux plan rejected by conversion: '
+        + current.discardedTracks.map((track) => track.reason).join(', '))
+    }
+    // Progress is the whole timeline's, not the region's: the bar must not
+    // jump back to zero because someone sought.
+    current.onProgress = (progress) => {
+      const regionSpan = Math.max(plan.durationSeconds - startSeconds, 0)
+      onProgress?.(Math.round(((startSeconds + progress * regionSpan) / plan.durationSeconds) * 100))
+    }
+    conversion = current
+    restartPending = false
+    if (region === 0) onHandle?.(handle)
+    // A seek that arrived while this region was being set up may point
+    // somewhere else entirely; honour it before paying for any conversion.
+    if (lastFollowMs !== null && uncovered(lastFollowMs)) restartAt(lastFollowMs)
+
+    try {
+      await current.execute()
+    } catch (error) {
+      // A cancel is either a seek (restart there) or fail() (throw below);
+      // anything else is the conversion's own failure.
+      if (!(error instanceof ConversionCanceledError)) fail(error)
+    }
     if (failure) throw failure
+    if (seekTargetSeconds !== null) {
+      nextStartSeconds = seekTargetSeconds
+      continue
+    }
+    break
+  }
+
+  await Promise.all([...inflight])
+  if (failure) throw failure
   } finally {
     clearInterval(ticker)
   }

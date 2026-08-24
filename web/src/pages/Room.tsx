@@ -46,7 +46,9 @@ import {
   startTorrentUpload,
   startUrlUpload,
   type RoomUploadProgress,
+  remuxHandleFor,
 } from '../upload'
+import { expectedPositionMs } from '../player/position'
 
 // How long the copied tick stands before the button offers the copy again.
 const COPIED_MS = 1_800
@@ -189,9 +191,13 @@ function guestName(): string {
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
-  const sync = useSync(room.id, nickname, videoRef)
+  // The region clock, read by the sync socket handlers through a ref so a
+  // region switch never re-opens the socket.
+  const mediaOffsetMsRef = useRef(0)
+  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
+  mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
   // The dock on the right holds one thing at a time: the chat, or the
   // chapter list, which replaces it rather than stacking beside it.
   const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')
@@ -351,6 +357,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // and its subtitles — at whatever the viewer joined with. Signals that land
   // mid-fetch coalesce into a single trailing refetch instead.
   const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
+  // The host's pipeline follows the shared playhead: a position outside what
+  // it has produced restarts the conversion there. Every other member has no
+  // handle here and this is a no-op.
+  useEffect(() => {
+    remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs))
+  }, [room.id, sync.state, sync.serverOffsetMs])
+
   useEffect(() => {
     const state = refetch.current
     state.latest = sync.roomVersion

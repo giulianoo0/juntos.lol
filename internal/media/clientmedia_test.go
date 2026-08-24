@@ -63,3 +63,24 @@ func TestJudgeClientMaster(t *testing.T) {
 		t.Fatalf("valid audio-group master judged %d", got)
 	}
 }
+
+func TestClientNameGrammarsAcceptRegions(t *testing.T) {
+	for _, name := range []string{"cinit_0.mp4", "r1_cinit_0.mp4", "r12_cs_0_33.m4s"} {
+		if _, ok := ClientObjectContentType(name); !ok {
+			t.Errorf("object %q refused", name)
+		}
+	}
+	for _, name := range []string{"r_cinit_0.mp4", "r1234_cs_0_1.m4s", "r1_master.m3u8", "x1_cs_0_1.m4s"} {
+		if _, ok := ClientObjectContentType(name); ok {
+			t.Errorf("object %q accepted", name)
+		}
+	}
+	for _, name := range []string{"master.m3u8", "client_stream_0.m3u8", "r3_client_stream_0.m3u8"} {
+		if !ValidClientPlaylistName(name) {
+			t.Errorf("playlist %q refused", name)
+		}
+	}
+	if ValidClientPlaylistName("r1_master.m3u8") {
+		t.Error("region-prefixed master accepted")
+	}
+}

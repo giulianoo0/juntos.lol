@@ -16,6 +16,7 @@ import { convertSubtitleFile, type VttTrack } from './subtitleFormats'
 import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentSideFile, TorrentVideoFile } from './torrent'
 import { fileInput, torrentInput, urlInput, type MediaInput } from './pipeline/mediaInput'
+import type { ClientRemuxHandle } from './pipeline/clientMedia'
 
 // Headroom under the server's per-room track cap for the tracks muxed into
 // the video itself.
@@ -64,6 +65,15 @@ interface TorrentUploadSource {
 // Uploads outlive the Home component, so keep the state module-level and let
 // the room page subscribe after navigation.
 const uploads = new Map<string, UploadEntry>()
+
+// The live remux pipelines by room, so the room page can feed the shared
+// playhead to the one producing its media. Only the host ever has an entry.
+const remuxHandles = new Map<string, ClientRemuxHandle>()
+
+/** The running remux pipeline for this room, when this tab is its host. */
+export function remuxHandleFor(roomID: string): ClientRemuxHandle | undefined {
+  return remuxHandles.get(roomID)
+}
 
 async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
   const response = await fetch('/api/rooms', {
@@ -273,7 +283,17 @@ export function startRoomUpload(
   const entry = createEntry(input.size)
   uploads.set(roomID, entry)
   if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
-  const finish = (error: string | null) => finishEntry(roomID, entry, error, cleanup)
+  // Deleting by identity, never by key alone: a source swap starts the next
+  // pipeline before this one notices it lost the room, and this one's exit
+  // must not take the successor's handle with it.
+  let ownHandle: ClientRemuxHandle | null = null
+  const dropHandle = () => {
+    if (ownHandle && remuxHandles.get(roomID) === ownHandle) remuxHandles.delete(roomID)
+  }
+  const finish = (error: string | null) => {
+    dropHandle()
+    finishEntry(roomID, entry, error, cleanup)
+  }
 
   void (async () => {
     // A dynamic import so the remuxer and its WASM audio decoders live in
@@ -299,6 +319,10 @@ export function startRoomUpload(
         file: input,
         plan,
         onProgress: (pct) => updateEntry(entry, Math.round((pct / 100) * input.size)),
+        onHandle: (handle) => {
+          ownHandle = handle
+          remuxHandles.set(roomID, handle)
+        },
       })
       finish(null)
     } catch (error) {
@@ -306,6 +330,7 @@ export function startRoomUpload(
         // The controller swapped the source; another upload owns the room
         // now. Not a failure of this one, so nobody is told of it.
         if (uploads.get(roomID) === entry) uploads.delete(roomID)
+        dropHandle()
         cleanup()
         return
       }

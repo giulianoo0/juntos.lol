@@ -283,3 +283,68 @@ func TestClientMediaCompleteReleasesTheClaim(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, held)
 }
+
+func TestClientMediaTimelineFollowsTheMaster(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	bucket := objectstore.NewFake()
+	updated := make(chan string, 4)
+	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{
+		NotifyRoomUpdated: func(id string) { updated <- id },
+	})
+	claim := claimRoom(t, e, "r1")
+
+	// Region 1's objects landed; region 0 never existed (a seek can arrive
+	// before the first segment of the initial region confirms).
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/r1_cinit_1.mp4",
+		strings.NewReader("init"), 4, media.ClientInitContentType, media.ClientObjectCacheControl))
+	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/r1_cs_1_1.m4s",
+		strings.NewReader("seg1"), 4, media.ClientSegmentContentType, media.ClientObjectCacheControl))
+	playlist := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n" +
+		"#EXT-X-MAP:URI=\"r1_cinit_1.mp4\"\n#EXTINF:4.0,\nr1_cs_1_1.m4s\n"
+	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028,mp4a.40.2\"\nr1_client_stream_1.m3u8\n"
+
+	// A publish whose master cannot render yet (its variant has no confirmed
+	// segments) stores the duration but must not move the offset.
+	early := `{"claim":"` + claim + `","mediaGeneration":0,` +
+		`"playlists":{"master.m3u8":` + strconvQuote(master) + `,"r1_client_stream_1.m3u8":` + strconvQuote(playlist) + `},` +
+		`"timeline":{"durationMs":1440000,"offsetMs":1080000}}`
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish", early)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, int64(1440000), got.DurationMs)
+	require.Zero(t, got.MediaOffsetMs)
+	baseVersion := got.MediaVersion
+
+	// Once the bucket vouches for the region and the master renders, the
+	// offset lands and the media version moves with it, atomically.
+	confirmed := `{"claim":"` + claim + `","mediaGeneration":0,` +
+		`"confirm":["r1_cinit_1.mp4","r1_cs_1_1.m4s"],` +
+		`"playlists":{"master.m3u8":` + strconvQuote(master) + `,"r1_client_stream_1.m3u8":` + strconvQuote(playlist) + `},` +
+		`"timeline":{"durationMs":1440000,"offsetMs":1080000}}`
+	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", confirmed)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got, err = store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, int64(1080000), got.MediaOffsetMs)
+	require.Equal(t, baseVersion+1, got.MediaVersion)
+	select {
+	case id := <-updated:
+		require.Equal(t, "r1", id)
+	case <-time.After(time.Second):
+		t.Fatal("room update notification never fired")
+	}
+
+	// Republishing the same offset is a no-op: no bump, no reload storm.
+	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", confirmed)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	got, err = store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, baseVersion+1, got.MediaVersion)
+
+	// Negative values are refused outright.
+	bad := `{"claim":"` + claim + `","mediaGeneration":0,"timeline":{"durationMs":-1,"offsetMs":0}}`
+	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", bad)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}

@@ -73,6 +73,14 @@ type Room struct {
 	// wait until every member has buffered the target. Stored inverted
 	// (gating_disabled) so rooms created before it existed read back as on.
 	GatingEnabled     bool        `json:"gatingEnabled"`
+	// DurationMs is the source's full duration as the host pipeline measured
+	// it, published before the first segment lands. The player draws the whole
+	// timeline from it instead of from how much media exists yet.
+	DurationMs int64 `json:"durationMs,omitempty"`
+	// MediaOffsetMs is where the current region's media timeline begins: the
+	// pipeline rebases each region to zero, so absolute room time is media
+	// time plus this. Moves only together with MediaVersion.
+	MediaOffsetMs int64 `json:"mediaOffsetMs,omitempty"`
 	ErrorMessage      string      `json:"errorMessage,omitempty"`
 	ControllerID      string      `json:"controllerId"`
 	AudioTracks       []TrackInfo `json:"audioTracks"`

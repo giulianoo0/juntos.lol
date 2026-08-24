@@ -114,6 +114,13 @@ export interface RoomInfo {
   // Increments when subtitle files are rewritten under their stable names, so
   // <track> elements refetch cues the browser would otherwise cache forever.
   subsVersion?: number
+  // The source's full duration as the host pipeline measured it, published
+  // before the first segment. The scrubber draws the whole timeline from it.
+  durationMs?: number
+  // Where the current region's media timeline begins: the pipeline rebases
+  // each region to zero, so absolute room time = media time + this offset.
+  // Moves only together with mediaVersion.
+  mediaOffsetMs?: number
   // Whether play and seek wait for every member to buffer the target.
   // Controller-owned; the live value travels over the sync protocol.
   gatingEnabled?: boolean

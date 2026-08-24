@@ -739,3 +739,45 @@ describe('Player', () => {
     expect(requestFullscreen).toHaveBeenCalledOnce()
   })
 })
+
+describe('region offset', () => {
+  // The media element only holds the current region, rebased to zero; the
+  // room speaks absolute time. These pin the mapping at the two edges the
+  // player owns: what the scrubber promises, and what a seek reports.
+  const offsetRoom: RoomInfo = {
+    ...room,
+    mediaOffsetMs: 1_080_000,
+    durationMs: 1_440_000,
+    mediaVersion: 3,
+  }
+
+  it('draws the whole episode, not the region, on the scrubber', () => {
+    const { container } = render(
+      <Player room={offsetRoom} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
+    )
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    expect(Number(scrubber.max)).toBe(1440)
+  })
+
+  it('reports seeks in absolute room time', () => {
+    const send = vi.fn()
+    const { container } = render(
+      <Player room={offsetRoom} isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />,
+    )
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    scrubber.focus()
+    fireEvent.keyDown(scrubber, { key: 'ArrowRight' })
+    // Region-relative zero, plus the region's start, plus the five-second step.
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_085_000 })
+  })
+
+  it('shows the clock as absolute time', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(
+      <Player room={offsetRoom} isController videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    fireEvent.timeUpdate(videoRef.current!)
+    // currentTime 0 in the element is 18 minutes into the room.
+    expect(container.textContent).toContain('18:00 / 24:00')
+  })
+})

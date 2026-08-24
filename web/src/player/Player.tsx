@@ -106,6 +106,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const [audioTrack, setAudioTrack] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  // Every position the room speaks is absolute; the media element only ever
+  // holds the current region, rebased to zero. These two lines are the whole
+  // mapping: element time + offset = room time.
+  const mediaOffsetMs = room.mediaOffsetMs ?? 0
+  const mediaOffsetSec = mediaOffsetMs / 1000
+  // The timeline is the room's, not the element's: the scrubber promises the
+  // whole episode from the first publish, while the element grows region by
+  // region behind it.
+  const timelineEnd = room.durationMs ? room.durationMs / 1000 : duration + mediaOffsetSec
   const [bufferedRanges, setBufferedRanges] = useState<BufferedRange[]>([])
   const [playing, setPlaying] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
@@ -184,7 +193,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     recoveriesRef.current = 0
     // A republish of the same recording resumes where this player was; only a
     // different recording starts over from its beginning.
-    const startPosition = resumeRef.current.generation === generation ? resumeRef.current.time : 0
+    const startPosition = resumeRef.current.generation === generation
+      ? Math.max(resumeRef.current.time - mediaOffsetSec, 0)
+      : 0
 
     const failPlayback = (reason: string) => {
       if (disposed) return
@@ -359,11 +370,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     return () => {
       disposed = true
       window.clearInterval(watchdog)
-      resumeRef.current = { generation, time: video.currentTime }
+      resumeRef.current = { generation, time: video.currentTime + mediaOffsetSec }
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, room.mediaVersion, videoRef])
+  }, [room.id, room.mediaGeneration, room.mediaVersion, mediaOffsetSec, videoRef])
 
   // Subtitle modes are driven from state instead of the <select> handler so
   // the choice survives everything that reloads cues: a subsVersion bump
@@ -402,7 +413,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       playRequestedRef.current = false
       if (isController) {
         send('play', {
-          positionMs: Math.round(video.currentTime * 1000),
+          positionMs: Math.round(video.currentTime * 1000) + mediaOffsetMs,
           rate: video.playbackRate,
         })
       }
@@ -457,7 +468,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     playRequestedRef.current = false
     video.pause()
     send('pause', {
-      positionMs: Math.round(video.currentTime * 1000),
+      positionMs: Math.round(video.currentTime * 1000) + mediaOffsetMs,
       rate: video.playbackRate,
     })
     return true
@@ -474,9 +485,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const video = videoRef.current
     if (!video || !syncState) return
     const expected = expectedPositionMs(syncState, Date.now() + serverOffsetMs)
-    if (Math.abs(video.currentTime * 1000 - expected) <= LIVE_SYNC_THRESHOLD_MS) return
-    video.currentTime = expected / 1000
-  }, [serverOffsetMs, syncState, videoRef])
+    if (Math.abs(video.currentTime * 1000 + mediaOffsetMs - expected) <= LIVE_SYNC_THRESHOLD_MS) return
+    video.currentTime = (expected - mediaOffsetMs) / 1000
+  }, [mediaOffsetMs, serverOffsetMs, syncState, videoRef])
 
   // Relative seeking goes through the same synchronized command as the
   // scrubber, so the controller's own picture moves only once the server has
@@ -488,13 +499,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       refuseControl()
       return false
     }
-    // An event playlist reports no duration until it has grown, so an unknown
-    // length must not become a zero ceiling: that would clamp every rewind to
-    // a negative position, which the server rejects outright.
-    const ceiling = duration > 0 ? duration : Number.POSITIVE_INFINITY
-    seek(Math.min(Math.max(video.currentTime + delta, 0), ceiling))
+    // An unknown length must not become a zero ceiling: that would clamp
+    // every rewind to a negative position, which the server rejects outright.
+    const ceiling = timelineEnd > 0 ? timelineEnd : Number.POSITIVE_INFINITY
+    seek(Math.min(Math.max(video.currentTime + mediaOffsetSec + delta, 0), ceiling))
     return true
-  }, [duration, isController, refuseControl, seek, videoRef])
+  }, [timelineEnd, mediaOffsetSec, isController, refuseControl, seek, videoRef])
 
   const applyVolume = useCallback((value: number) => {
     const video = videoRef.current
@@ -582,7 +592,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         case 'Home':
         case 'End': {
           handled()
-          const target = event.key === 'Home' ? 0 : Math.max(duration - 1, 0)
+          const target = event.key === 'Home' ? 0 : Math.max(timelineEnd - 1, 0)
           if (isController) {
             seek(target)
             showFeedback(event.key === 'Home' ? <SkipBack size={26} /> : <SkipForward size={26} />)
@@ -593,7 +603,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [applyVolume, duration, isController, revealControls, seek, seekBy, showFeedback, toggleFullscreen, toggleMute, togglePlay, videoRef])
+  }, [applyVolume, timelineEnd, isController, revealControls, seek, seekBy, showFeedback, toggleFullscreen, toggleMute, togglePlay, videoRef])
 
   const muteLabel = t(muted || volume === 0 ? 'room.unmute' : 'room.mute')
   const fullscreenLabel = t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')
@@ -658,7 +668,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     })
   }
 
-  const seekMax = Math.max(duration, 1)
+  const seekMax = Math.max(timelineEnd, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
   // The source's authored spans, clamped to what is seekable right now:
   // during the preview the playable range is still growing, and a marker past
@@ -752,15 +762,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           attemptPlay()
         }}
         onTimeUpdate={(event) => {
-          setCurrentTime(event.currentTarget.currentTime)
+          setCurrentTime(event.currentTarget.currentTime + mediaOffsetSec)
           setDuration(playableDuration(event.currentTarget))
-          setBufferedRanges(readBufferedRanges(event.currentTarget))
+          setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec))
         }}
         onDurationChange={(event) => setDuration(playableDuration(event.currentTarget))}
         onLoadedMetadata={(event) => setDuration(playableDuration(event.currentTarget))}
         onProgress={(event) => {
           setDuration(playableDuration(event.currentTarget))
-          setBufferedRanges(readBufferedRanges(event.currentTarget))
+          setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec))
         }}
       >
         {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track) => (
@@ -768,8 +778,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             // The versions are in the key on purpose: browsers do not reliably
             // refetch a <track> whose src attribute merely changed, so a grown
             // subtitle file only reaches the viewer as a fresh element.
-            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.subsVersion ?? 0}`}
+            // mediaVersion rides along so a region switch remounts the
+            // element: cues are shifted onto the region's rebased clock at
+            // load, and a fresh load is the only moment that shift is safe.
+            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.mediaVersion ?? 0}-${room.subsVersion ?? 0}`}
             kind="subtitles"
+            onLoad={(event) => shiftTrackCues(event.currentTarget.track, mediaOffsetSec)}
             src={subtitleSource(room, track.index, track.language)}
             srcLang={track.language || 'und'}
             label={track.title || track.language || `Subtitle ${track.index + 1}`}
@@ -857,7 +871,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             onPointerUp={(event) => event.currentTarget.blur()}
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
           <span className="timecode">
-            {formatTime(currentTime)} / {formatTime(duration)}
+            {formatTime(currentTime)} / {formatTime(timelineEnd)}
             {currentChapterIndex >= 0 && onChapters ? (
               <button
                 type="button"
@@ -987,6 +1001,30 @@ function readBufferedRanges(video: HTMLVideoElement): BufferedRange[] {
     ranges.push({ start: video.buffered.start(index), end: video.buffered.end(index) })
   }
   return ranges
+}
+
+// Buffered ranges come off the element's rebased clock; the scrubber speaks
+// absolute room time.
+function shiftRanges(ranges: BufferedRange[], offsetSec: number): BufferedRange[] {
+  if (offsetSec === 0) return ranges
+  return ranges.map((range) => ({ start: range.start + offsetSec, end: range.end + offsetSec }))
+}
+
+// Subtitle cues are timed against the source; a region's media clock starts
+// at the region, so every cue moves back by the offset. Cues that end before
+// the region simply leave.
+function shiftTrackCues(track: TextTrack | undefined, offsetSec: number): void {
+  if (!track || offsetSec === 0 || !track.cues) return
+  const cues = [...track.cues] as VTTCue[]
+  for (const cue of cues) {
+    const end = cue.endTime - offsetSec
+    if (end <= 0) {
+      track.removeCue(cue)
+      continue
+    }
+    cue.startTime = Math.max(cue.startTime - offsetSec, 0)
+    cue.endTime = end
+  }
 }
 
 function playableDuration(video: HTMLVideoElement): number {

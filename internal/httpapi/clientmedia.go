@@ -220,6 +220,13 @@ type publishRequest struct {
 		ReceivedBytes int64 `json:"receivedBytes"`
 		SourceBytes   int64 `json:"sourceBytes"`
 	} `json:"progress"`
+	// Timeline carries the source's full duration and the current region's
+	// start. The offset is applied only on the publish whose master actually
+	// rendered, and its change is what bumps the media version.
+	Timeline *struct {
+		DurationMs int64 `json:"durationMs"`
+		OffsetMs   int64 `json:"offsetMs"`
+	} `json:"timeline"`
 	Complete bool `json:"complete"`
 }
 
@@ -300,6 +307,30 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 
 		if !storeClientMetadata(c, store, roomID, req) {
 			return
+		}
+		if req.Timeline != nil {
+			if req.Timeline.DurationMs < 0 || req.Timeline.OffsetMs < 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+				return
+			}
+			if req.Timeline.DurationMs > 0 && req.Timeline.DurationMs != storedRoom.DurationMs {
+				if err := store.SetMediaDuration(ctx, roomID, req.Timeline.DurationMs); err != nil {
+					slog.WarnContext(ctx, "store media duration failed", "room_id", roomID, "error", err)
+				}
+			}
+			// The offset only moves once this publish carried a rendered
+			// master: reloading players into a master that still points at the
+			// old region would put their clock on the wrong timeline.
+			_, masterRendered := rendered["master.m3u8"]
+			if masterRendered && req.Timeline.OffsetMs != storedRoom.MediaOffsetMs {
+				if err := store.SetMediaOffset(ctx, roomID, req.Timeline.OffsetMs); err != nil {
+					c.Status(http.StatusInternalServerError)
+					return
+				}
+				if hooks.NotifyRoomUpdated != nil {
+					hooks.NotifyRoomUpdated(roomID)
+				}
+			}
 		}
 		if req.Progress != nil {
 			// The browser counts what it uploaded, which is the remux's output
