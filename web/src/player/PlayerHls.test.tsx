@@ -229,6 +229,9 @@ describe('Player HLS lifecycle', () => {
       let clock = 0
       Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
       Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      // A dead decoder holds data it is not displaying; without data the
+      // clock is merely waiting for a region and the watchdog stays quiet.
+      Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA })
       Object.defineProperty(video, 'getVideoPlaybackQuality', {
         configurable: true,
         value: () => ({ totalVideoFrames: 0 }),
@@ -243,6 +246,38 @@ describe('Player HLS lifecycle', () => {
 
       expect(view.getByRole('alert')).toHaveTextContent(unplayableMessage)
       expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('no new video frames'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits out a clock running ahead of an empty buffer without giving up', async () => {
+    // A cold seek parks the playhead where no region exists yet: the resync
+    // clock advances, nothing decodes, and that must read as waiting.
+    vi.useFakeTimers()
+    try {
+      const videoRef = createRef<HTMLVideoElement>()
+      const view = render(
+        <Player room={room} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+      )
+      const video = videoRef.current!
+      let clock = 0
+      Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
+      Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_NOTHING })
+      Object.defineProperty(video, 'getVideoPlaybackQuality', {
+        configurable: true,
+        value: () => ({ totalVideoFrames: 0 }),
+      })
+
+      await act(async () => {
+        for (let tick = 0; tick < 12; tick += 1) {
+          clock += 1
+          await vi.advanceTimersByTimeAsync(1000)
+        }
+      })
+
+      expect(view.queryByRole('alert')).toBeNull()
     } finally {
       vi.useRealTimers()
     }

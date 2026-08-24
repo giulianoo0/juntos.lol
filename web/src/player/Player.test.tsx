@@ -781,3 +781,40 @@ describe('region offset', () => {
     expect(container.textContent).toContain('18:00 / 24:00')
   })
 })
+
+describe('scrubbing', () => {
+  const longRoom: RoomInfo = { ...room, durationMs: 1_440_000 }
+
+  it('sends one seek per drag, on release, at the released position', () => {
+    const send = vi.fn()
+    const { container } = render(
+      <Player room={longRoom} isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />,
+    )
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    fireEvent.pointerDown(scrubber)
+    fireEvent.change(scrubber, { target: { value: '600' } })
+    fireEvent.change(scrubber, { target: { value: '1220' } })
+    // Mid-drag nothing goes on the wire; the thumb follows the finger.
+    expect(send).not.toHaveBeenCalled()
+    expect(scrubber.value).toBe('1220')
+    fireEvent.pointerUp(scrubber)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_220_000 })
+  })
+
+  it('keeps the thumb on the target while the video has not arrived', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    fireEvent.pointerDown(scrubber)
+    fireEvent.change(scrubber, { target: { value: '1220' } })
+    fireEvent.pointerUp(scrubber)
+    // The room is still preparing the region; a timeupdate far from the
+    // target — the restored render that used to spawn the phantom second
+    // seek — must not pull the thumb back.
+    fireEvent.timeUpdate(videoRef.current!)
+    expect(scrubber.value).toBe('1220')
+  })
+})

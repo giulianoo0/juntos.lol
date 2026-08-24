@@ -106,6 +106,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const [audioTrack, setAudioTrack] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  // The scrubber's value while a drag is in flight, and the committed target
+  // while the room is still travelling there. Without them the controlled
+  // input snaps back to currentTime on every render, and the native change
+  // event that closes the gesture fires with that restored value — a second
+  // seek to where the room already was, overwriting the real one.
+  const [scrubSec, setScrubSec] = useState<number | null>(null)
+  const [pendingSeekSec, setPendingSeekSec] = useState<number | null>(null)
+  const scrubbingRef = useRef(false)
   // Every position the room speaks is absolute; the media element only ever
   // holds the current region, rebased to zero. These two lines are the whole
   // mapping: element time + offset = room time.
@@ -226,7 +234,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         starvedSeconds = 0
         return
       }
-      if (video.paused || advanced <= 0) return
+      // A clock dragged forward by resync over an empty buffer is data
+      // starvation, not a dead decoder: a cold seek waits there for its
+      // region to arrive, and the watchdog must wait with it.
+      if (video.paused || advanced <= 0 || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
       starvedSeconds += advanced
       if (starvedSeconds < VIDEO_STARVATION_SECONDS) return
       // A counter that has never moved is ambiguous: some platforms render
@@ -477,8 +488,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
     if (!video || !isController) return
+    setPendingSeekSec(seconds)
     send('seek', { positionMs: Math.round(seconds * 1000) })
   }, [isController, send, videoRef])
+
+  // The thumb holds the committed target until the video actually gets
+  // there — on a cold seek that is however long the new region takes.
+  useEffect(() => {
+    if (pendingSeekSec !== null && Math.abs(currentTime - pendingSeekSec) < 3) setPendingSeekSec(null)
+  }, [currentTime, pendingSeekSec])
 
   // A viewer catching up moves only itself: never a room-wide command.
   const goLive = useCallback(() => {
@@ -823,7 +841,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           onPointerCancel={() => setSeekHover(null)}
         >
           <div className="seek-track" aria-hidden="true">
-            <div className="seek-played" style={{ width: pct(currentTime) }} />
+            <div className="seek-played" style={{ width: pct(scrubSec ?? pendingSeekSec ?? currentTime) }} />
             {behindBands.map((band) => (
               <div
                 key={`b${band.from}`}
@@ -853,9 +871,29 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             type="range"
             min="0"
             max={seekMax}
-            value={Math.min(currentTime, seekMax)}
+            value={Math.min(scrubSec ?? pendingSeekSec ?? currentTime, seekMax)}
             disabled={!isController}
-            onChange={(event) => seek(Number(event.target.value))}
+            onPointerDown={() => { scrubbingRef.current = true }}
+            onPointerUp={(event) => {
+              if (scrubbingRef.current) {
+                scrubbingRef.current = false
+                seek(Number(event.currentTarget.value))
+                setScrubSec(null)
+              }
+              event.currentTarget.blur()
+            }}
+            onPointerCancel={() => {
+              scrubbingRef.current = false
+              setScrubSec(null)
+            }}
+            onChange={(event) => {
+              const seconds = Number(event.target.value)
+              // Mid-drag the gesture only moves the thumb; the one seek is
+              // sent on release. Keyboard changes have no gesture and commit
+              // immediately.
+              if (scrubbingRef.current) setScrubSec(seconds)
+              else seek(seconds)
+            }}
           />
           {seekHover ? (
             <span className="seek-tooltip" aria-hidden="true" style={{ left: `${seekHover.leftPct}%` }}>{seekHover.text}</span>
