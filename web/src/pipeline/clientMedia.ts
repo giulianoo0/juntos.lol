@@ -277,6 +277,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // a huge file over a slow connection — the OOM the 50 GB ceiling would
   // otherwise invite.
   const inflight = new Set<Promise<void>>()
+  const inflightAborts = new Set<AbortController>()
   const enqueue = async (name: string, target: unknown): Promise<void> => {
     if (failure) return
     const buffer = (target as BufferTarget).buffer
@@ -292,9 +293,24 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const pump = async () => {
     const batch = pending.splice(0, PRESIGN_BATCH)
     if (batch.length === 0) return
+    const abort = new AbortController()
+    inflightAborts.add(abort)
+    try {
+      await pumpBatch(batch, abort.signal)
+    } catch (error) {
+      // An aborted batch belonged to a region the room already left; its
+      // names simply never confirm.
+      if (!abort.signal.aborted) throw error
+    } finally {
+      inflightAborts.delete(abort)
+    }
+  }
+
+  const pumpBatch = async (batch: PendingObject[], signal: AbortSignal) => {
     const presign = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal,
       body: JSON.stringify({
         claim,
         objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
@@ -306,7 +322,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     await Promise.all(batch.map(async (object) => {
       const signed = byName.get(object.name)
       if (!signed) throw new Error(`presign missing ${object.name}`)
-      await putWithRetry(signed.url, signed.headers, object.bytes)
+      await putWithRetry(signed.url, signed.headers, object.bytes, signal)
       uploaded.push(object.name)
       uploadedBytes += object.bytes.byteLength
     }))
@@ -315,6 +331,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // Returns whether the server considers the room playable, which is the
   // only trustworthy "done" signal on the complete pass.
   const publish = async (complete: boolean): Promise<boolean> => {
+    // The current region's names confirm first: after a seek, hundreds of
+    // the dead region's uploads would otherwise queue ahead of the very
+    // segments the master is waiting on, at 128 names a round.
+    const prefix = `r${region}_`
+    const current = (name: string) => (region <= 0 ? !/^r\d+_/.test(name) : name.startsWith(prefix))
+    uploaded.sort((a, b) => Number(current(b)) - Number(current(a)))
     const confirm = uploaded.splice(0, 128)
     const body: Record<string, unknown> = {
       claim,
@@ -404,10 +426,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     pendingRestart = (async () => {
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
       regionAimMs = absoluteMs
-      // The abandoned region's unsent segments would otherwise hold the
-      // upload queue for a minute; the new region's first segments are what
-      // the room is waiting on.
+      // The abandoned region's queued and in-flight segments would otherwise
+      // hold the uplink for a minute; the new region's first segments are
+      // what the room is waiting on. Aborted names simply never confirm.
       pending.length = 0
+      for (const abort of inflightAborts) abort.abort()
       await conversion?.cancel().catch(() => {})
       wakeFollow?.()
     })()
@@ -528,11 +551,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   await publish(true)
 }
 
-async function putWithRetry(url: string, headers: Record<string, string>, bytes: Uint8Array): Promise<void> {
+async function putWithRetry(url: string, headers: Record<string, string>, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {
   let lastError: unknown = null
   for (let attempt = 0; attempt <= PUT_RETRIES; attempt += 1) {
+    if (signal?.aborted) break
     try {
-      const response = await fetch(url, { method: 'PUT', headers, body: bytes as unknown as BodyInit })
+      const response = await fetch(url, { method: 'PUT', headers, signal, body: bytes as unknown as BodyInit })
       if (response.ok) return
       lastError = new Error(`segment PUT failed: ${response.status}`)
     } catch (error) {
