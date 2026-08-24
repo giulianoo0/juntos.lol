@@ -169,6 +169,8 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"sourceKind":        r.SourceKind,
 			"mediaGeneration":   r.MediaGeneration,
 			"mediaVersion":      r.MediaVersion,
+			"durationMs":        r.DurationMs,
+			"mediaOffsetMs":     r.MediaOffsetMs,
 			"subsVersion":       r.SubsVersion,
 			"gatingEnabled":     r.GatingEnabled,
 			"errorMessage":      r.ErrorMessage,
