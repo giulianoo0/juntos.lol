@@ -485,18 +485,30 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     return true
   }, [attemptPlay, isController, refuseControl, send, syncState, videoRef])
 
+  const pendingSentServerMs = useRef(0)
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
     if (!video || !isController) return
+    pendingSentServerMs.current = Date.now() + serverOffsetMs
     setPendingSeekSec(seconds)
     send('seek', { positionMs: Math.round(seconds * 1000) })
-  }, [isController, send, videoRef])
+  }, [isController, send, serverOffsetMs, videoRef])
 
   // The thumb holds the committed target until the video actually gets
   // there — on a cold seek that is however long the new region takes.
   useEffect(() => {
     if (pendingSeekSec !== null && Math.abs(currentTime - pendingSeekSec) < 3) setPendingSeekSec(null)
   }, [currentTime, pendingSeekSec])
+
+  // Unless the room moves on without it: a state written after our seek
+  // that sits somewhere else means another command won, and a thumb still
+  // pinned to the lost target would disagree with the clock forever.
+  useEffect(() => {
+    if (pendingSeekSec === null || !syncState) return
+    if (syncState.serverTimeMs < pendingSentServerMs.current - 500) return
+    const expected = expectedPositionMs(syncState, Date.now() + serverOffsetMs)
+    if (Math.abs(expected - pendingSeekSec * 1000) > 15_000) setPendingSeekSec(null)
+  }, [pendingSeekSec, serverOffsetMs, syncState])
 
   // A viewer catching up moves only itself: never a room-wide command.
   const goLive = useCallback(() => {
