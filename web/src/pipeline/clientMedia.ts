@@ -425,16 +425,16 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     restartPending = true
     console.log(`[remux-worker] restart at ${absoluteMs}`)
     pendingRestart = (async () => {
-      seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
-      console.log(`[remux-worker] snapped to ${seekTargetSeconds}`)
-      regionAimMs = absoluteMs
-      // The abandoned region's queued and in-flight segments would otherwise
-      // hold the uplink for a minute; the new region's first segments are
-      // what the room is waiting on. Aborted names simply never confirm.
+      // The dying region goes first: its queued and in-flight segments would
+      // otherwise hold the uplink, and its conversion would compete with the
+      // keyframe snap for the worker. Aborted names simply never confirm.
       pending.length = 0
       for (const abort of inflightAborts) abort.abort()
       await conversion?.cancel().catch(() => {})
       console.log('[remux-worker] old region canceled')
+      seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
+      console.log(`[remux-worker] snapped to ${seekTargetSeconds}`)
+      regionAimMs = absoluteMs
       wakeFollow?.()
     })()
   }
