@@ -32,7 +32,7 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { HelperRequiredError, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { HelperRequiredError, openTorrent, type TorrentSession, type TorrentVideoFile } from '../torrent'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
   FILE_UNREADABLE,
@@ -48,6 +48,9 @@ import {
   type RoomUploadProgress,
   remuxHandleFor,
   torrentStatsFor,
+  uploadActive,
+  resumableSourceFor,
+  clearResumableSource,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
 import type { TorrentStats } from '../torrent'
@@ -211,6 +214,51 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     const timer = window.setInterval(read, 1_000)
     return () => window.clearInterval(timer)
   }, [room.id])
+  // Retomar o preparo: the pipeline died with this tab's last life (a reload,
+  // a crash), but the source survives in localStorage. Reopen it and point
+  // the room at a fresh generation; the playhead-following pipeline then
+  // jumps to wherever the room is. One attempt per mount — a failure means
+  // the bridge is gone or someone else controls the room now, and retrying
+  // would just swap generations in a loop.
+  const resumeTried = useRef(false)
+  useEffect(() => {
+    if (resumeTried.current || !sync.memberId || !sync.capability) return
+    if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
+    if (uploadActive(room.id) || remuxHandleFor(room.id)) { resumeTried.current = true; return }
+    const source = resumableSourceFor(room.id)
+    if (!source) { resumeTried.current = true; return }
+    resumeTried.current = true
+    toast(t('room.resuming'))
+    void (async () => {
+      try {
+        if (source.kind === 'url') {
+          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', source.fileName)
+          startUrlUpload(room.id, next.mediaGeneration, source.url ?? '', source.fileName, source.size ?? 0)
+          return
+        }
+        const session = await openTorrent(source.magnet ?? '')
+        const file = session.files.find((candidate) => candidate.path === source.filePath) ?? session.files[0]
+        if (!file) {
+          session.destroy()
+          throw new Error('resumable file missing from torrent')
+        }
+        await session.select(file.path)
+        try {
+          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+          startTorrentUpload(room.id, next.mediaGeneration, { file, session })
+        } catch (error) {
+          session.destroy()
+          throw error
+        }
+      } catch (error) {
+        console.error('resume preparation failed', error)
+        toast(t('room.resumeFailed'))
+        // A helper that is simply closed keeps the entry for the next visit;
+        // anything else (controller lost, source gone) will fail every time.
+        if (!(error instanceof HelperRequiredError)) clearResumableSource(room.id)
+      }
+    })()
+  }, [room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
   // The dock on the right holds one thing at a time: the chat, or the
   // chapter list, which replaces it rather than stacking beside it.
   const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')
@@ -562,6 +610,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               t={t}
               syncState={sync.state}
               serverOffsetMs={sync.serverOffsetMs}
+              swarm={swarmStats}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={

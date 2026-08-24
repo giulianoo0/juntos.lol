@@ -85,6 +85,59 @@ export function torrentStatsFor(roomID: string): TorrentStats | null {
   return torrentSessions.get(roomID)?.stats() ?? null
 }
 
+/** Whether this tab still has a transfer running (or freshly failed) for the room. */
+export function uploadActive(roomID: string): boolean {
+  const entry = uploads.get(roomID)
+  return entry !== undefined && !entry.done
+}
+
+// ---- resumable sources ----
+//
+// The pipeline lives in the host's tab, so a reload kills the room's preparo
+// with it. The source is remembered here — the magnet or the URL, never the
+// bytes — so re-entering the room can reopen the swarm and pick up where the
+// playhead is. A plain file upload has no way back: the File handle dies with
+// the page.
+
+export interface ResumableSource {
+  kind: 'torrent' | 'url'
+  fileName: string
+  magnet?: string
+  filePath?: string
+  url?: string
+  size?: number
+  savedAt: number
+}
+
+// Matches the room's own five-hour life; a stale entry only wastes a swap.
+const RESUME_TTL_MS = 5 * 60 * 60 * 1000
+const resumeKey = (roomID: string) => `ss.resume.${roomID}`
+
+function saveResumableSource(roomID: string, source: Omit<ResumableSource, 'savedAt'>): void {
+  try {
+    localStorage.setItem(resumeKey(roomID), JSON.stringify({ ...source, savedAt: Date.now() }))
+  } catch { /* private mode: the preparo just will not survive a reload */ }
+}
+
+export function resumableSourceFor(roomID: string): ResumableSource | null {
+  try {
+    const raw = localStorage.getItem(resumeKey(roomID))
+    if (!raw) return null
+    const source = JSON.parse(raw) as ResumableSource
+    if (!source || typeof source.savedAt !== 'number' || Date.now() - source.savedAt > RESUME_TTL_MS) {
+      localStorage.removeItem(resumeKey(roomID))
+      return null
+    }
+    return source
+  } catch {
+    return null
+  }
+}
+
+export function clearResumableSource(roomID: string): void {
+  try { localStorage.removeItem(resumeKey(roomID)) } catch { /* nothing to clear */ }
+}
+
 async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
   const response = await fetch('/api/rooms', {
     method: 'POST',
@@ -248,6 +301,9 @@ export function startTorrentUpload(
   onProgress?: (progress: UploadProgress) => void,
 ): void {
   torrentSessions.set(roomID, session)
+  if (session.magnet) {
+    saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
+  }
   startRoomUpload(roomID, mediaGeneration, torrentInput(file), {
     onProgress,
     sideFiles: session.subtitleFiles,
@@ -267,6 +323,7 @@ export function startUrlUpload(
   fileName: string,
   size: number,
 ): void {
+  saveResumableSource(roomID, { kind: 'url', fileName, url, size })
   startRoomUpload(roomID, mediaGeneration, urlInput(url, fileName, size), { unreachable: SOURCE_UNREACHABLE })
 }
 
@@ -308,6 +365,9 @@ export function startRoomUpload(
   }
   const finish = (error: string | null) => {
     dropHandle()
+    // A finished conversion has nothing left to resume; a failed one keeps
+    // its source so re-entering the room can try the preparo again.
+    if (error === null) clearResumableSource(roomID)
     finishEntry(roomID, entry, error, cleanup)
   }
 

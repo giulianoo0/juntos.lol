@@ -32,6 +32,9 @@ export interface TorrentStats {
 
 export interface TorrentSession {
   name: string
+  // The magnet this session was opened from — what a reloaded host needs to
+  // reopen the same swarm and resume preparing the room.
+  magnet?: string
   files: TorrentVideoFile[]
   subtitleFiles: TorrentSideFile[]
   stats(): TorrentStats

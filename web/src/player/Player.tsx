@@ -12,6 +12,8 @@ import { expectedPositionMs } from './position'
 import { Settings, type SettingGroup } from './Settings'
 import { SubtitleLayer } from './SubtitleLayer'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
+import { TorrentReadout } from '../components/TorrentReadout'
+import type { TorrentStats } from '../torrent'
 import { useToast } from '../ui/toastContext'
 
 interface PlayerProps {
@@ -23,6 +25,9 @@ interface PlayerProps {
   // The shared playback state and clock offset, for the viewer LIVE control.
   syncState?: PlayState
   serverOffsetMs?: number
+  // The swarm feeding this room's source, when this tab is the host: shown
+  // while playback is stuck waiting for a part that is still downloading.
+  swarm?: TorrentStats | null
   // Extra content rendered inside the fullscreen-capable wrap.
   overlay?: ReactNode
   // Opens the room's chapter list, when the room has one to show.
@@ -76,7 +81,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, overlay, onChapters }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -731,6 +736,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // The spinner is the only thing that distinguishes them, and a room whose
   // source is still downloading spends real time here.
   const [loading, setLoading] = useState(true)
+  // A short wait is buffering; a long one on a downloading source is the
+  // swarm, and saying so beats a bare spinner turning for minutes.
+  const [stalledLong, setStalledLong] = useState(false)
+  useEffect(() => {
+    if (!loading) {
+      setStalledLong(false)
+      return
+    }
+    const timer = window.setTimeout(() => setStalledLong(true), 3_000)
+    return () => window.clearTimeout(timer)
+  }, [loading])
 
   // The controller defines the room position, so it can never be out of sync
   // with itself; LIVE exists only for viewers.
@@ -767,6 +783,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       {loading ? (
         <div className="player-loading" role="status" aria-live="polite">
           <span className="player-spinner" aria-hidden="true" />
+          {stalledLong ? (
+            <div className="player-preparing">
+              <span>{t('room.preparingPart')}</span>
+              {swarm ? <TorrentReadout stats={swarm} /> : null}
+            </div>
+          ) : null}
           <span className="sr-only">{t('status.buffering')}</span>
         </div>
       ) : null}

@@ -262,6 +262,7 @@ export async function openHelperTorrent(
 
   return {
     name: added.name,
+    magnet,
     files,
     subtitleFiles,
     stats: () => currentStats,
