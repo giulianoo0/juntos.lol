@@ -404,6 +404,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     pendingRestart = (async () => {
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
       regionAimMs = absoluteMs
+      // The abandoned region's unsent segments would otherwise hold the
+      // upload queue for a minute; the new region's first segments are what
+      // the room is waiting on.
+      pending.length = 0
       await conversion?.cancel().catch(() => {})
       wakeFollow?.()
     })()
