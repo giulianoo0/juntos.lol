@@ -789,6 +789,12 @@ button.timecode-chapter:hover { color: var(--text); }
 .starting-card h2 { margin: 8px 0 0; font-size: 22px; letter-spacing: -.03em; }
 .starting-file { margin: 0; max-width: min(480px, 80vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 .starting-phase { margin: 0; color: var(--text-faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+/* The swarm readout sits under the phase line, quieter than it: it explains
+   how long the wait will be, it is not the wait itself. */
+.starting-swarm { display: flex; gap: 22px; margin: 6px 0 0; padding: 10px 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.02); }
+.starting-swarm > div { display: grid; gap: 2px; justify-items: center; }
+.starting-swarm dt { color: var(--text-faint); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.starting-swarm dd { margin: 0; color: var(--text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
 
 /* --- slow-connection skeletons ------------------------------------------ */
 .details-skeleton { display: grid; gap: 10px; margin-top: 16px; }

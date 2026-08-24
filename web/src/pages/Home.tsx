@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'r
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
+import NumberFlow from '@number-flow/react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
@@ -15,7 +16,7 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { BridgeStatus } from '../components/BridgeStatus'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
-import { HelperRequiredError, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { HelperRequiredError, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
@@ -31,6 +32,42 @@ export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024
 
 // The manual-upload panel's steps; false is the panel being shut.
 type ManualStep = false | 'menu' | 'file' | 'magnet'
+/**
+ * What the swarm is doing, while the room is being built out of it.
+ *
+ * The wait here is the torrent's, not the app's: the remux reads the file
+ * through the helper and blocks until those bytes have downloaded, so the
+ * whole preparing state moves at whatever the peers are giving. Without these
+ * numbers a slow swarm and a hung app look identical, and the only thing on
+ * screen is a spinner that has been turning for four minutes.
+ */
+function TorrentReadout({ stats }: { stats: TorrentStats }) {
+  const t = useT()
+  return (
+    <dl className="starting-swarm">
+      <div>
+        <dt>{t('home.swarmPeers')}</dt>
+        <dd><NumberFlow value={stats.peers} /></dd>
+      </div>
+      <div>
+        <dt>{t('home.swarmSpeed')}</dt>
+        <dd><NumberFlow value={round(stats.downloadSpeed / 1_048_576, 1)} suffix=" MB/s" /></dd>
+      </div>
+      <div>
+        <dt>{t('home.swarmDownloaded')}</dt>
+        <dd><NumberFlow value={round(stats.downloaded / 1_073_741_824, 2)} suffix=" GB" /></dd>
+      </div>
+    </dl>
+  )
+}
+
+// NumberFlow animates between the values it is handed, so feeding it the raw
+// float would roll every decimal place on every poll.
+const round = (value: number, places: number): number => {
+  const factor = 10 ** places
+  return Math.round(value * factor) / factor
+}
+
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -138,6 +175,11 @@ export function Home() {
   // the swarm back to the picker instead of dropping it.
   const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const [startingLabel, setStartingLabel] = useState('')
+  // What the swarm is doing while the room is being built. The preparing state
+  // is otherwise a spinner over a wait whose length is set entirely by the
+  // torrent, and a stalled swarm looks exactly like a broken app.
+  const [torrentStats, setTorrentStats] = useState<TorrentStats | null>(null)
+  const [statsSession, setStatsSession] = useState<TorrentSession | null>(null)
 
   // The details panel is URL-driven: /title/:type/:id renders it over the
   // board, so every title is deep-linkable. A click also stashes the poster's
@@ -217,6 +259,7 @@ export function Home() {
         room = await createRoomAndUpload(media.file, draftNickname.trim(), setProgress)
         fileName = media.file.name
       } else if (media.kind === 'torrent') {
+        setStatsSession(media.session)
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
         fileName = media.file.name
       } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
@@ -240,7 +283,7 @@ export function Home() {
         // Opening the torrent is part of the start: peers and metadata first,
         // then the room, so a dead stream never leaves an empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
-        const opened = await openCatalogStream(media.pick.stream, media.pick.target)
+        const opened = await openCatalogStream(media.pick.stream, media.pick.target, setTorrentStats)
         setProgress(null)
         try {
           room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
@@ -290,8 +333,20 @@ export function Home() {
       }
       setStarting(false)
       setProgress(null)
+      setTorrentStats(null)
+      setStatsSession(null)
     }
   }
+
+  // A session opened elsewhere (the magnet picker) already polls the helper
+  // for itself; reading its last snapshot is cheaper than a second poll.
+  useEffect(() => {
+    if (!starting || !statsSession) return
+    const read = () => setTorrentStats(statsSession.stats())
+    read()
+    const timer = window.setInterval(read, 1_000)
+    return () => window.clearInterval(timer)
+  }, [starting, statsSession])
 
   const onDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault()
@@ -462,6 +517,7 @@ export function Home() {
                   ? `${progress.pct}%`
                   : t('catalog.opening')}
               </p>
+              {torrentStats ? <TorrentReadout stats={torrentStats} /> : null}
             </motion.div>
           </motion.div>
         ) : null}
