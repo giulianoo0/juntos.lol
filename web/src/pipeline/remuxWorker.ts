@@ -14,12 +14,25 @@ export type WorkerToPage =
   | { type: 'done' }
   | { type: 'moved-on' }
   | { type: 'failed'; code: string }
+  | { type: 'trouble'; detail: string }
 
 export type PageToWorker =
   | { type: 'start'; job: RemuxJob }
   | { type: 'follow'; absoluteMs: number }
 
 const post = (message: WorkerToPage) => { self.postMessage(message) }
+
+// Surfaced on the page's console: a worker's own console is easy to never
+// look at, and a silent death here is a room that quietly stops preparing.
+self.addEventListener('unhandledrejection', (event) => {
+  const reason = (event as PromiseRejectionEvent).reason as unknown
+  console.error('[remux-worker] unhandled rejection', reason)
+  post({ type: 'trouble', detail: reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason) })
+})
+self.addEventListener('error', (event) => {
+  console.error('[remux-worker] uncaught error', (event as ErrorEvent).message)
+  post({ type: 'trouble', detail: (event as ErrorEvent).message })
+})
 
 let handle: ClientRemuxHandle | null = null
 // A follow that lands before the pipeline's first region is remembered, not

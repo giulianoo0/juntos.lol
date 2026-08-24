@@ -372,9 +372,10 @@ export function startRoomUpload(
     const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
     ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
     const settle = (fn: () => void) => { fn(); worker.terminate() }
-    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string; detail?: string }>) => {
       const message = event.data
-      if (message.type === 'progress') onProgressPct(message.pct ?? 0)
+      if (message.type === 'trouble') console.error('[remux-worker]', message.detail)
+      else if (message.type === 'progress') onProgressPct(message.pct ?? 0)
       else if (message.type === 'handle' && ownHandle) remuxHandles.set(roomID, ownHandle)
       else if (message.type === 'done') settle(() => finish(null))
       else if (message.type === 'moved-on') settle(movedOn)

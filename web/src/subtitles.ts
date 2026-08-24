@@ -58,6 +58,25 @@ let parserBundlePromise: Promise<MatroskaSubtitlesGlobal> | null = null
 
 function loadParserBundle(): Promise<MatroskaSubtitlesGlobal> {
   if (globalThis.MatroskaSubtitles) return Promise.resolve(globalThis.MatroskaSubtitles)
+  // A worker has no document to hang a script tag on, and importing the UMD
+  // bundle as a module would trap its `var` in module scope. Indirect eval
+  // runs it in the worker's global scope, where it lands on globalThis.
+  if (typeof document === 'undefined') {
+    parserBundlePromise ??= fetch(parserBundleUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error(`failed to load matroska-subtitles bundle (${response.status})`)
+        return response.text()
+      })
+      .then((code) => {
+        // The bundle reaches for `window` at parse time; a worker calls it
+        // globalThis. The alias is scoped to this worker's global.
+        ;(globalThis as { window?: unknown }).window ??= globalThis
+        ;(0, eval)(code)
+        if (!globalThis.MatroskaSubtitles) throw new Error('matroska-subtitles bundle did not initialize')
+        return globalThis.MatroskaSubtitles
+      })
+    return parserBundlePromise
+  }
   parserBundlePromise ??= new Promise((resolve, reject) => {
     const script = document.createElement('script')
     script.src = parserBundleUrl

@@ -36,7 +36,22 @@ import type { MediaInput } from './mediaInput'
 // carries one of these codecs.
 registerAc3Decoder()
 registerDtsDecoder()
-registerAacEncoder()
+// The AAC encoder is different: a registered custom encoder takes absolute
+// priority over WebCodecs in mediabunny, so registering it unconditionally
+// makes every transcoded region spin up one WASM instance per audio track —
+// a MULTi release re-encoding ten of them ran a worker out of memory. It is
+// registered only where the native encoder is missing, as a true fallback.
+let codecsReady: Promise<void> | null = null
+function ensureCodecs(): Promise<void> {
+  codecsReady ??= (async () => {
+    const native = typeof AudioEncoder !== 'undefined'
+      && await AudioEncoder.isConfigSupported({ codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: 48000 })
+        .then((support) => support.supported === true)
+        .catch(() => false)
+    if (!native) registerAacEncoder()
+  })()
+  return codecsReady
+}
 
 /** The codecs the pipeline will copy — the same set the server refuses to
  * transcode away from. */
@@ -63,6 +78,7 @@ export interface ClientRemuxPlan {
  */
 export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan | null> {
   try {
+    await ensureCodecs()
     const input = new Input({ source: file.source(), formats: ALL_FORMATS })
     if (!(await input.canRead())) return null
     const video = await input.getPrimaryVideoTrack()
