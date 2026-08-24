@@ -453,6 +453,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   }, [])
   useEffect(() => cancelPendingTap, [cancelPendingTap])
 
+  // Where a cold seek parked the room, waiting for its region to publish.
+  const resumeAtMsRef = useRef<number | null>(null)
+
   // togglePlay reports whether it actually changed anything, so a refused
   // gesture does not flash feedback for something that did not happen.
   const togglePlay = useCallback((): boolean => {
@@ -474,6 +477,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       return false
     }
 
+    resumeAtMsRef.current = null
     if (video.paused) {
       // Calling play inside the gesture preserves browser user activation. A
       // WebSocket round trip first would make browsers reject audible autoplay.
@@ -497,7 +501,34 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     pendingSentServerMs.current = Date.now() + serverOffsetMs
     setPendingSeekSec(seconds)
     send('seek', { positionMs: Math.round(seconds * 1000) })
-  }, [isController, send, serverOffsetMs, videoRef])
+    // A jump into media the pipeline has not produced yet parks the room at
+    // the target: left running, the clock walks away while the region is
+    // prepared and the video comes back minutes past where the viewer
+    // pointed. The room resumes on its own when the new region publishes.
+    const coveredEnd = mediaOffsetSec + (Number.isFinite(duration) ? duration : 0)
+    const cold = duration > 0 && (seconds < mediaOffsetSec - 1 || seconds > coveredEnd + 5)
+    resumeAtMsRef.current = null
+    if (cold && syncState?.playing) {
+      resumeAtMsRef.current = Math.round(seconds * 1000)
+      send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
+    }
+  }, [duration, isController, mediaOffsetSec, send, serverOffsetMs, syncState, videoRef])
+
+  // The parked room wakes up when the region it waited on arrives. A play or
+  // pause anyone sends in the meantime takes the room over instead.
+  const lastVersionRef = useRef(room.mediaVersion ?? 0)
+  useEffect(() => {
+    const version = room.mediaVersion ?? 0
+    if (version === lastVersionRef.current) return
+    lastVersionRef.current = version
+    const at = resumeAtMsRef.current
+    if (at === null) return
+    resumeAtMsRef.current = null
+    send('play', { positionMs: at, rate: videoRef.current?.playbackRate ?? 1 })
+  }, [room.mediaVersion, send, videoRef])
+  useEffect(() => {
+    if (syncState?.playing) resumeAtMsRef.current = null
+  }, [syncState?.playing])
 
   // The thumb holds the committed target until the video actually gets
   // there — on a cold seek that is however long the new region takes.

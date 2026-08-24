@@ -817,4 +817,57 @@ describe('scrubbing', () => {
     fireEvent.timeUpdate(videoRef.current!)
     expect(scrubber.value).toBe('1220')
   })
+
+  it('parks a playing room on a cold seek and resumes when the region lands', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const playing = { playing: true, positionMs: 120_000, rate: 1, serverTimeMs: 100_000 }
+    const { container, rerender } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    // The current region covers only the first 300s of the timeline; 1220 is
+    // media the pipeline has not produced yet.
+    Object.defineProperty(video, 'duration', { configurable: true, value: 300 })
+    fireEvent.durationChange(video)
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    fireEvent.pointerDown(scrubber)
+    fireEvent.change(scrubber, { target: { value: '1220' } })
+    fireEvent.pointerUp(scrubber)
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_220_000 })
+    expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 1_220_000 }))
+    send.mockClear()
+    // The new region publishing bumps mediaVersion; the room wakes up at the
+    // parked target instead of wherever the clock would have walked to.
+    rerender(
+      <Player
+        room={{ ...longRoom, mediaVersion: 1, mediaOffsetMs: 1_219_000 }}
+        isController
+        videoRef={videoRef}
+        send={send}
+        t={t}
+        syncState={{ ...playing, playing: false, positionMs: 1_220_000 }}
+        serverOffsetMs={0}
+      />,
+    )
+    expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
+  })
+
+  it('does not park when the target is already covered', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const playing = { playing: true, positionMs: 120_000, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    Object.defineProperty(video, 'duration', { configurable: true, value: 1_440 })
+    fireEvent.durationChange(video)
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    fireEvent.pointerDown(scrubber)
+    fireEvent.change(scrubber, { target: { value: '1220' } })
+    fireEvent.pointerUp(scrubber)
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_220_000 })
+    expect(send).not.toHaveBeenCalledWith('pause', expect.anything())
+  })
 })
