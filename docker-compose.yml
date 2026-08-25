@@ -34,6 +34,7 @@ services:
       TRUSTED_EDGE: ${TRUSTED_EDGE:-}
       WORKER_ENROLLMENT_SECRET: ${WORKER_ENROLLMENT_SECRET:-}
       WORKER_SIGNING_KEY_FILE: ${WORKER_SIGNING_KEY_FILE:-/data/worker-signing.key}
+      WORKER_RELAY_BASE: ${WORKER_RELAY_BASE:-}
     volumes:
       - ss-data:/data
       # The documentation is built from its own repository and rsynced here,
@@ -112,6 +113,7 @@ services:
       SS_WORKER_TRANSFER_MBIT: ${WORKER_TRANSFER_MBIT:-0}
       SS_WORKER_ACME_CONTACT: ${WORKER_ACME_CONTACT:-}
       SS_WORKER_ACME_DIRECTORY: ${WORKER_ACME_DIRECTORY:-}
+      SS_WORKER_RELAY_UPSTREAM: http://app:8080
     ports:
       - "8443:8443"
       - "${WORKER_ACME_BIND:-127.0.0.1:18081}:8081"
