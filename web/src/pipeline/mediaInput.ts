@@ -1,21 +1,42 @@
 /**
  * What the client pipeline reads from. Every source the site can play — a
- * picked file, a torrent the ss-bridge is downloading, a url a plugin handed
+ * picked file, a torrent a worker is downloading, a url a plugin handed
  * over — is reduced to the same two things: a size, and a way to read any
  * byte range. The remuxer does random access (an MKV's cues sit at the end,
  * an MP4's moov often does), so a sequential stream would not do.
+ *
+ * Remote reads can also be abandoned: a seek moves the remux somewhere
+ * else, and the reads parked on the old region must stop holding the
+ * origin's attention. mediabunny hands `read` no signal, so the input owns a
+ * gate the seek pulls.
  */
-import { BlobSource, CustomSource, UrlSource, type Source } from 'mediabunny'
+import { BlobSource, CustomSource, type Source } from 'mediabunny'
 import type { TorrentVideoFile } from '../torrent'
+import { ReadAbortedError, ReadGate, rangeBytes, rangeStream } from './rangeRead'
+
+/** What a read is for; a remote origin uses it to order its swarm. */
+export type ReadPriority = 'head' | 'playhead' | 'scan'
+
+export interface ReadHint {
+  prio?: ReadPriority
+}
 
 export interface MediaInput {
   name: string
   size: number
   /** Reads `[start, end)`, like `Blob.slice`. */
-  read(start: number, end: number): Promise<Uint8Array>
+  read(start: number, end: number, hint?: ReadHint): Promise<Uint8Array>
   /** A fresh mediabunny source over the same bytes. */
   source(): Source
+  /** Rejects every read in flight with ReadAbortedError; later reads run. */
+  abortReads(): void
+  /** Aborts and refuses every read from now on. */
+  dispose(): void
 }
+
+/** The cache a remote source keeps: larger than the prefetch extent, or the
+ * two fight and every sequential pass rereads what it just dropped. */
+const REMOTE_CACHE_BYTES = 96 * 2 ** 20
 
 export function fileInput(file: File): MediaInput {
   return {
@@ -23,19 +44,31 @@ export function fileInput(file: File): MediaInput {
     size: file.size,
     read: async (start, end) => new Uint8Array(await file.slice(start, end).arrayBuffer()),
     source: () => new BlobSource(file),
+    abortReads: () => {},
+    dispose: () => {},
   }
 }
 
 /**
- * A torrent file served by the ss-bridge. The helper answers a range once
- * those pieces have downloaded and raises their priority for the wait, so
- * reading the tail first costs a seek in the swarm, not a full download.
+ * A torrent file served by the ss-bridge on loopback. The helper's reads
+ * take no signal, so an abort here rejects the caller and lets the helper
+ * finish on its own; the whole path goes away with the helper.
  */
 export function torrentInput(file: TorrentVideoFile): MediaInput {
+  const gate = new ReadGate()
   const read = async (start: number, end: number): Promise<Uint8Array> => {
     const clamped = Math.min(end, file.size)
     if (clamped <= start) return new Uint8Array(0)
-    return new Uint8Array(await file.read(start, clamped - 1))
+    const signal = gate.signal
+    if (signal.aborted) throw new ReadAbortedError()
+    return await new Promise<Uint8Array>((resolve, reject) => {
+      const onAbort = () => reject(new ReadAbortedError())
+      signal.addEventListener('abort', onAbort, { once: true })
+      file.read(start, clamped - 1).then(
+        (buffer) => { signal.removeEventListener('abort', onAbort); resolve(new Uint8Array(buffer)) },
+        (error: unknown) => { signal.removeEventListener('abort', onAbort); reject(error) },
+      )
+    })
   }
   return {
     name: file.name,
@@ -44,29 +77,44 @@ export function torrentInput(file: TorrentVideoFile): MediaInput {
     source: () => new CustomSource({
       read,
       getSize: async () => file.size,
-      // The helper sits on loopback, but every read still waits on the swarm;
-      // the network profile batches reads and prefetches ahead on sequential
-      // access, which is what the remux mostly does.
       prefetchProfile: 'network',
+      maxCacheSize: REMOTE_CACHE_BYTES,
     }),
+    abortReads: () => gate.abort(),
+    dispose: () => gate.close(),
   }
 }
 
 /**
- * A url a plugin produced, read straight from this browser. The origin has to
- * allow it (CORS, and Range requests): there is no server in between any more
- * to fetch on the page's behalf.
+ * Bytes at a url that answers Range requests: a plugin's stream, or the
+ * dev fixture standing in for a worker. Every read streams the body as it
+ * arrives, resumes across capped or truncated responses, and retries
+ * blips — mediabunny only ever sees the bytes it asked for, or an abort.
+ * The priority rides in the query string so the request stays a simple
+ * GET with no preflight.
  */
-export function urlInput(url: string, name: string, size: number): MediaInput {
-  const read = async (start: number, end: number): Promise<Uint8Array> => {
-    const response = await fetch(url, { headers: { Range: `bytes=${start}-${end - 1}` } })
-    if (!response.ok && response.status !== 206) throw new Error(`url read failed (${response.status})`)
-    return new Uint8Array(await response.arrayBuffer())
-  }
+export function rangeInput(url: string, name: string, size: number): MediaInput {
+  const gate = new ReadGate()
+  const opts = (hint?: ReadHint) => ({
+    url: () => (hint?.prio ? withParam(url, 'prio', hint.prio) : url),
+    size,
+    gate,
+  })
   return {
     name,
     size,
-    read,
-    source: () => new UrlSource(url),
+    read: (start, end, hint) => rangeBytes(opts(hint), start, end),
+    source: () => new CustomSource({
+      read: (start, end) => rangeStream(opts({ prio: 'playhead' }), start, end),
+      getSize: async () => size,
+      prefetchProfile: 'network',
+      maxCacheSize: REMOTE_CACHE_BYTES,
+    }),
+    abortReads: () => gate.abort(),
+    dispose: () => gate.close(),
   }
+}
+
+function withParam(url: string, key: string, value: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}${key}=${encodeURIComponent(value)}`
 }

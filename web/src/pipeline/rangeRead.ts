@@ -134,7 +134,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
         signal: requestAbort.signal,
         headers: { ...opts.headers, Range: `bytes=${cursor}-${target - 1}` },
       })
-    } catch (error) {
+    } catch {
       clearTimeout(firstByte)
       if (signal.aborted) throw new ReadAbortedError()
       return null
@@ -177,7 +177,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
           let result: ReadableStreamReadResult<Uint8Array>
           try {
             result = await reader.read()
-          } catch (error) {
+          } catch {
             if (signal.aborted) throw new ReadAbortedError()
             // The body died under us — network, or the origin ending it early.
             reader = null

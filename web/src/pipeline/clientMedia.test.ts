@@ -122,7 +122,7 @@ describe('client remux regions', () => {
     const run = runClientRemux({
       roomID: 'r1',
       mediaGeneration: 0,
-      file: { size: 1000 } as never,
+      file: { size: 1000, abortReads: () => {} } as never,
       plan: plan as never,
       onHandle: (h) => { handle = h },
     })
@@ -194,7 +194,7 @@ describe('client remux regions', () => {
     void runClientRemux({
       roomID: 'r1',
       mediaGeneration: 0,
-      file: { size: 1000 } as never,
+      file: { size: 1000, abortReads: () => {} } as never,
       plan: plan as never,
       onHandle: (h) => { handle = h },
     })

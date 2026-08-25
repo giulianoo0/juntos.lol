@@ -31,6 +31,8 @@ import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
 import { readMkvChapters } from './mkvChapters'
 import type { MediaInput } from './mediaInput'
+import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
+import { isUnreadableFile } from '../uploadErrors'
 
 // The WASM decoders register lazily: nothing loads until a file actually
 // carries one of these codecs.
@@ -64,6 +66,9 @@ const PUBLISH_INTERVAL_MS = 2_000
 const PUT_RETRIES = 2
 /** How many extra drain rounds a stuck object gets before the complete pass. */
 const DRAIN_ROUNDS = 10
+/** How long a seek waits for its keyframe before starting unsnapped: the
+ * probe reads from the swarm and may sit on pieces nobody has yet. */
+const KEYFRAME_SNAP_MS = 60_000
 
 export interface ClientRemuxPlan {
   input: Input
@@ -99,7 +104,10 @@ export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan
       audioTracks: audioTracks.map((track) => ({ language: track.languageCode })),
       durationSeconds,
     }
-  } catch {
+  } catch (error) {
+    // Bytes that could not be read are not a verdict on the media; the
+    // caller names that failure for what it is.
+    if (error instanceof ReadUnreachableError || error instanceof ReadFailedError || isUnreadableFile(error)) throw error
     return null
   }
 }
@@ -390,7 +398,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const packetSink = videoTrack ? new EncodedPacketSink(videoTrack) : null
   const snapToKeyframe = async (seconds: number): Promise<number> => {
     try {
-      const key = await packetSink?.getKeyPacket(seconds, { verifyKeyPackets: true })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), KEYFRAME_SNAP_MS) })
+      const key = await Promise.race([
+        packetSink?.getKeyPacket(seconds, { verifyKeyPackets: true }),
+        deadline,
+      ]).finally(() => clearTimeout(timer))
       return key ? Math.max(key.timestamp, 0) : Math.max(seconds, 0)
     } catch {
       return seconds
@@ -430,6 +443,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // keyframe snap for the worker. Aborted names simply never confirm.
       pending.length = 0
       for (const abort of inflightAborts) abort.abort()
+      // The reads go before the conversion: a cancel waits on the demuxer,
+      // and the demuxer may be parked on a range the swarm has not fetched.
+      file.abortReads()
       await conversion?.cancel().catch(() => {})
       console.log('[remux-worker] old region canceled')
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
@@ -510,8 +526,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       await current.execute()
     } catch (error) {
       // A cancel is either a seek (restart there) or fail() (throw below);
-      // anything else is the conversion's own failure.
-      if (!(error instanceof ConversionCanceledError)) fail(error)
+      // anything else is the conversion's own failure. A seek may also
+      // surface as the aborted read the demuxer was waiting on.
+      const seekAbort = error instanceof ReadAbortedError && restartPending
+      if (!(error instanceof ConversionCanceledError || seekAbort)) fail(error)
     }
     if (failure) throw failure
     // A restart may still be snapping its keyframe when the conversion ends

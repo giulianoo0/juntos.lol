@@ -236,6 +236,14 @@ inviável e força `Input.dispose()`+rebuild (com custo de perder o cache e
 re-sniffar o container). Isto é um OPEN_QUESTION que 0B tem de fechar
 empiricamente contra o fixture 0A.
 
+**FECHADA em 2026-08-25 (`web/dev/measure.html?abortAt=6&resumeAt=900`):** o
+abort do gate no meio da conversão fez `execute()` rejeitar com
+`ReadAbortedError`; uma segunda `Conversion.init({input, trim:{start:900}})`
+sobre o **mesmo** `Input` produziu 259 segmentos, o primeiro em 643 ms, sem
+erro. O abort por epoch não envenena o `Input`; nada de `dispose()`+rebuild.
+O único efeito colateral é a rejeição não-tratada dos workers de prefetch da
+mediabunny, que o `remuxWorker.ts` agora ignora quando é `ReadAbortedError`.
+
 ---
 
 ### Tarefa 0C — Identidade anônima + quotas + blocklist
@@ -676,7 +684,8 @@ joga o viewer pro fim? Se não tolera, o design de N-playlists muda
    `network`) contra `cmd/rangefixture` em h2/TLS com cap de 16 MiB por
    resposta, num Chrome real via `web/dev/measure.mjs`, MKV de 1,7 GB:
    **83,7 Mbit/s sustentados a 100 ms de RTT (18× tempo real)** e 44 Mbit/s a
-   200 ms (8,6×); primeiro segmento em 385 ms / 639 ms. Com 30% de 206
+   200 ms (8,6×); primeiro segmento em 385 ms / 639 ms. (Esses números são
+   o teto do jitter por chunk do fixture; sem jitter, a 100 ms, ~900 Mbit/s.) Com 30% de 206
    truncados + 10% de 503 + 10% de stalls de 3 s, ainda 8,6× tempo real sem
    erro. Nota: em download a janela de flow-control que limita é a do
    **receptor** (Chrome anuncia ~6 MiB por stream), não a do hyper — o teto

@@ -6,7 +6,8 @@
  */
 import { PlanFailedError, runRemuxJob, UnsupportedMediaError, type RemuxJob } from './remuxJob'
 import { RoomMovedOnError, type ClientRemuxHandle } from './clientMedia'
-import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from '../uploadErrors'
+import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from '../uploadErrors'
+import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
 
 export type WorkerToPage =
   | { type: 'progress'; pct: number }
@@ -26,6 +27,9 @@ const post = (message: WorkerToPage) => { self.postMessage(message) }
 // look at, and a silent death here is a room that quietly stops preparing.
 self.addEventListener('unhandledrejection', (event) => {
   const reason = (event as PromiseRejectionEvent).reason as unknown
+  // A seek aborts the reads of the region it left; mediabunny's prefetch
+  // workers surface that as a rejection nobody awaits. Expected, not trouble.
+  if (reason instanceof ReadAbortedError) { event.preventDefault(); return }
   console.error('[remux-worker] unhandled rejection', reason)
   post({ type: 'trouble', detail: reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason) })
 })
@@ -68,5 +72,8 @@ function classify(error: unknown, kind: RemuxJob['source']['kind']): string {
     return kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
   }
   if (isUnreadableFile(error)) return FILE_UNREADABLE
+  if (error instanceof ReadUnreachableError || error instanceof ReadFailedError) {
+    return kind === 'url' ? SOURCE_UNREACHABLE : WORKER_UNREACHABLE
+  }
   return error instanceof Error ? error.message : 'upload failed'
 }

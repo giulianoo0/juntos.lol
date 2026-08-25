@@ -32,6 +32,7 @@ interface Measure {
   producedSeconds: number
   realtimeRatio: number | null
   windows: number[]
+  abort?: { firstError: string | null; resumedSegments: number; resumedError: string | null; resumedFirstSegmentMs: number | null }
 }
 
 const params = new URLSearchParams(location.search)
@@ -39,6 +40,12 @@ const base = params.get('base') ?? 'http://127.0.0.1:8099/f'
 const seconds = Number(params.get('seconds') ?? '60')
 const withAudio = params.get('audio') === '1'
 const cacheMiB = Number(params.get('cache') ?? '96')
+// The abort experiment: after `abortAt` seconds the reads are aborted from
+// under the running conversion (as a seek does), and a second conversion is
+// started on the SAME Input from `resumeAt` seconds. Whether it produces
+// segments answers whether an aborted read poisons the shared input.
+const abortAt = Number(params.get('abortAt') ?? '0')
+const resumeAt = Number(params.get('resumeAt') ?? '600')
 const out = document.getElementById('out')!
 const result: Measure = {
   done: false, size: 0, seconds, bytesRead: 0, requests: 0, mbitPerSecond: 0, sustainedMbitPerSecond: 0,
@@ -104,15 +111,50 @@ async function main() {
     result.realtimeRatio = elapsed > 0 ? Math.round(result.producedSeconds / elapsed * 100) / 100 : null
     render()
   }, 5000)
-  const stop = setTimeout(() => { void conversion.cancel() }, seconds * 1000)
+  const stop = setTimeout(() => {
+    if (abortAt > 0) { gate.abort(); void conversion.cancel() } else void conversion.cancel()
+  }, (abortAt > 0 ? abortAt : seconds) * 1000)
   try {
     await conversion.execute()
+    if (abortAt > 0) result.abort = { firstError: null, resumedSegments: 0, resumedError: null, resumedFirstSegmentMs: null }
   } catch (error) {
-    if (!(error instanceof Error && error.name === 'ConversionCanceledError')) throw error
+    const named = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    if (abortAt > 0) result.abort = { firstError: named, resumedSegments: 0, resumedError: null, resumedFirstSegmentMs: null }
+    else if (!(error instanceof Error && error.name === 'ConversionCanceledError')) throw error
   } finally {
     clearTimeout(stop)
-    clearInterval(ticker)
   }
+  if (abortAt > 0 && result.abort) {
+    const t1 = performance.now()
+    const second = await Conversion.init({
+      input,
+      output: new Output({
+        format: new HlsOutputFormat({
+          segmentFormat: new CmafOutputFormat(),
+          targetDuration: 4,
+          live: true,
+          onSegment: () => {
+            result.abort!.resumedSegments += 1
+            result.abort!.resumedFirstSegmentMs ??= Math.round(performance.now() - t1)
+          },
+        }),
+        target: new PathedTarget('master.m3u8', () => new BufferTarget()),
+      }),
+      audio: withAudio ? { codec: 'aac' } : { discard: true },
+      trim: { start: resumeAt },
+    })
+    const stop2 = setTimeout(() => { void second.cancel() }, Math.max(seconds - abortAt, 5) * 1000)
+    try {
+      await second.execute()
+    } catch (error) {
+      if (!(error instanceof Error && error.name === 'ConversionCanceledError')) {
+        result.abort.resumedError = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      }
+    } finally {
+      clearTimeout(stop2)
+    }
+  }
+  clearInterval(ticker)
   const elapsed = (performance.now() - t0) / 1000
   result.seconds = Math.round(elapsed * 10) / 10
   result.mbitPerSecond = Math.round(result.bytesRead * 8 / elapsed / 1e6 * 10) / 10

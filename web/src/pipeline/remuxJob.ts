@@ -5,7 +5,6 @@
  * demux, the mux and every upload stop sharing a thread with the page that
  * is drawing the player.
  */
-import { CustomSource } from 'mediabunny'
 import {
   createMatroskaSubtitleStream,
   createSubtitleCollector,
@@ -13,7 +12,8 @@ import {
   type SubtitleCollector,
 } from '../subtitles'
 import { convertSubtitleFile, type VttTrack } from '../subtitleFormats'
-import { fileInput, urlInput, type MediaInput } from './mediaInput'
+import { fileInput, rangeInput, type MediaInput } from './mediaInput'
+import { ReadAbortedError } from './rangeRead'
 import { planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
 // Headroom under the server's per-room track cap for the tracks muxed into
@@ -24,6 +24,9 @@ const SUBTITLE_SNAPSHOT_MS = 8_000
 // The slice a subtitle pass reads at a time. Big enough that a torrent read
 // is worth the round trip, small enough to keep memory flat on a 50 GB file.
 const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
+// How many times in a row a subtitle slice may be aborted from under the
+// scan (a seek storm) before the scan gives up rather than spin.
+const SUBTITLE_ABORT_LIMIT = 8
 
 // Every source the site can play, as data. 'input' is the one page-bound
 // escape hatch — a live MediaInput object that cannot cross into a worker
@@ -89,40 +92,14 @@ export function jobIsCloneable(job: RemuxJob): boolean {
   return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined)
 }
 
-// A source the ss-bridge streams: every read is a ranged fetch the helper
-// answers once those pieces have downloaded, raising their priority for the
-// wait — reading the tail costs a seek in the swarm, not a full download.
-function streamInput(url: string, name: string, size: number): MediaInput {
-  const read = async (start: number, end: number): Promise<Uint8Array> => {
-    const clamped = Math.min(end, size)
-    if (clamped <= start) return new Uint8Array(0)
-    const response = await fetch(url, { headers: { Range: `bytes=${start}-${clamped - 1}` } })
-    if (!response.ok && response.status !== 206) throw new Error(`helper stream failed (${response.status})`)
-    const data = await response.arrayBuffer()
-    const expected = clamped - start
-    if (data.byteLength !== expected) throw new Error(`helper short read (${data.byteLength}/${expected})`)
-    return new Uint8Array(data)
-  }
-  return {
-    name,
-    size,
-    read,
-    source: () => new CustomSource({
-      read,
-      getSize: async () => size,
-      // The helper sits on loopback, but every read still waits on the swarm;
-      // the network profile batches reads and prefetches ahead on sequential
-      // access, which is what the remux mostly does.
-      prefetchProfile: 'network',
-    }),
-  }
-}
-
+// 'stream' is a torrent origin (the ss-bridge today, a worker next) and
+// 'url' a plugin's own server; both are bytes behind Range requests, read
+// the same resilient way. Only the error they turn into differs.
 function buildInput(source: RemuxSource): MediaInput {
   switch (source.kind) {
     case 'file': return fileInput(source.file)
-    case 'stream': return streamInput(source.url, source.name, source.size)
-    case 'url': return urlInput(source.url, source.name, source.size)
+    case 'stream': return rangeInput(source.url, source.name, source.size)
+    case 'url': return rangeInput(source.url, source.name, source.size)
     case 'input': return source.input
   }
 }
@@ -144,15 +121,24 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: Remux
 
   // Subtitles run beside the remux, off the same bytes, and publish as they
   // go; the room has them before the video finishes.
-  void publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
-  await runClientRemux({
-    roomID: job.roomID,
-    mediaGeneration: job.mediaGeneration,
-    file: input,
-    plan,
-    onProgress,
-    onHandle,
-  })
+  const subtitles = publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
+  try {
+    await runClientRemux({
+      roomID: job.roomID,
+      mediaGeneration: job.mediaGeneration,
+      file: input,
+      plan,
+      onProgress,
+      onHandle,
+    })
+  } catch (error) {
+    // A failed run takes the subtitle scan down with it: the room is not
+    // getting this source, so nothing should keep asking the origin for it.
+    input.dispose()
+    throw error
+  }
+  // The job owns the input; it goes away once the scan is through too.
+  void subtitles.finally(() => input.dispose())
 }
 
 // Subtitles arrive from two places: muxed into the video, found by a
@@ -177,12 +163,28 @@ async function publishSubtitles(
   ])
 }
 
+// The scan reads the whole file, at scan priority so it trails the remux
+// in the swarm. A seek aborts whatever read it was on; the scan simply asks
+// for the same slice again — its position has nothing to do with the seek.
 async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
   try {
     const stream = await createMatroskaSubtitleStream()
     let lastSnapshotAt = Date.now()
+    let aborts = 0
     for (let offset = 0; offset < input.size; offset += SUBTITLE_SLICE_BYTES) {
-      stream.write(await input.read(offset, Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)))
+      const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
+      let slice: Uint8Array
+      try {
+        slice = await input.read(offset, end, { prio: 'scan' })
+      } catch (error) {
+        if (!(error instanceof ReadAbortedError) || aborts >= SUBTITLE_ABORT_LIMIT) throw error
+        aborts += 1
+        offset -= SUBTITLE_SLICE_BYTES
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        continue
+      }
+      aborts = 0
+      stream.write(slice)
       if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
         lastSnapshotAt = Date.now()
         collector.publish('embedded', stream.snapshot(), false)
