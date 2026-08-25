@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
-import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
+import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { torrentCapacity } from '../remoteTorrent'
 import { torrentErrorKey } from '../torrentErrors'
 import { useMorphingSize } from '../ui/useMorphingSize'
@@ -48,6 +48,9 @@ function formatBytes(bytes: number): string {
 export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
+  // The fleet as this browser measured it, shown while it happens: which
+  // workers answered, how fast each one is from here, and which one won.
+  const [probes, setProbes] = useState<WorkerProbe[]>([])
   // Whether the fleet can take a magnet at all right now. Asked once when the
   // picker opens: metadata needs a worker, so the answer belongs at the paste,
   // not at play.
@@ -117,9 +120,10 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
     setSession(null)
     setError('')
     setStats(EMPTY_TORRENT_STATS)
+    setProbes([])
     setLoading(true)
     try {
-      const opened = await openTorrent(magnet, setStats)
+      const opened = await openTorrent(magnet, setStats, { onProbe: setProbes })
       owned.current = opened
       setSession(opened)
       if (opened.files.length === 0) setError(t('home.torrentNoVideos'))
@@ -215,6 +219,23 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
             </div>
           ) : <p className="empty-copy torrent-empty">{t('home.torrentNoMatch')}</p>}
         </>
+      ) : null}
+      {probes.length > 0 ? (
+        <div className="worker-probes" aria-live="polite">
+          <span className="worker-probes-title">
+            {probes.some((p) => p.state === 'testing') ? t('home.workersTesting') : t('home.workersTested')}
+          </span>
+          {probes.map((probe) => (
+            <span key={probe.id} className={`worker-probe ${probe.chosen ? 'is-chosen' : ''} ${probe.state === 'down' ? 'is-down' : ''}`}>
+              <code>{probe.id.replace(/^w_/, '').slice(0, 6)}</code>
+              {probe.state === 'testing' ? t('home.workerTesting')
+                : probe.state === 'down' ? t('home.workerOffline')
+                  : `${probe.mbit} Mbit/s${probe.ttfbMs !== undefined ? ` · ${probe.ttfbMs}ms` : ''}`}
+              {probe.holds ? <em>{t('home.workerHolds')}</em> : null}
+              {probe.chosen ? <strong>{t('home.workerChosen')}</strong> : null}
+            </span>
+          ))}
+        </div>
       ) : null}
       {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
       {!listing ? (

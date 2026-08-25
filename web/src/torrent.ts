@@ -1,7 +1,8 @@
 import { mockOpenTorrent, mocksEnabled } from './mocks'
-import { openRemoteTorrent } from './remoteTorrent'
+import { openRemoteTorrent, type OpenTorrentOptions } from './remoteTorrent'
 
-export { NoWorkersError, TorrentQuotaError, TorrentRejectedError, WorkersBusyError, parseMagnet } from './remoteTorrent'
+export { NoWorkersError, TorrentQuotaError, TorrentRejectedError, WorkersBusyError, parseMagnet, probeWorkers } from './remoteTorrent'
+export type { OpenTorrentOptions, WorkerProbe } from './remoteTorrent'
 
 /**
  * Where a worker serves a selected file from. Everything a remux job needs
@@ -79,7 +80,8 @@ export interface TorrentSession {
 export async function openTorrent(
   magnet: string,
   onStats?: (stats: TorrentStats) => void,
+  options?: OpenTorrentOptions,
 ): Promise<TorrentSession> {
   if (mocksEnabled) return mockOpenTorrent(onStats)
-  return await openRemoteTorrent(magnet, onStats)
+  return await openRemoteTorrent(magnet, onStats, options)
 }

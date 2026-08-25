@@ -19,7 +19,6 @@ import (
 
 // previewPublishPatterns are the playlists the progressive preview owns, and
 // finalPublishPatterns the ones a finished encode owns.
-//
 const (
 	// uploadTimeout bounds one object upload. It is deliberately generous
 	// because the alternative to a slow upload is an aborted one, and an

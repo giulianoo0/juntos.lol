@@ -66,6 +66,24 @@ async fn main() -> anyhow::Result<()> {
             slot.install(chain, key)?;
             (Some(slot), None)
         }
+        TlsMode::File => {
+            let slot = Arc::new(http::tls::CertSlot::default());
+            let (cert, key) = (cfg.tls_cert_file.clone().unwrap(), cfg.tls_key_file.clone().unwrap());
+            http::tls::install_from_files(&slot, &cert, &key)?;
+            tracing::info!(not_after = ?slot.not_after(), cert = %cert.display(), "certificate loaded from files");
+            // Whoever renews the files does it on their own clock; an hourly
+            // re-read is early enough for any real certificate lifetime.
+            let reload = slot.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(3600)).await;
+                    if let Err(e) = http::tls::install_from_files(&reload, &cert, &key) {
+                        tracing::warn!(error = %e, "certificate re-read failed; keeping the loaded one");
+                    }
+                }
+            });
+            (Some(slot), None)
+        }
         TlsMode::Acme => {
             let slot = Arc::new(http::tls::CertSlot::default());
             let acme = Arc::new(http::acme::Acme::new(cfg.clone(), slot.clone()));

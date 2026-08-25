@@ -10,7 +10,7 @@ function fleetFetch(routes: Record<string, Handler>) {
   const calls: { url: string; init?: RequestInit }[] = []
   const fn = vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
-    const key = `${init?.method ?? 'GET'} ${url.startsWith('/') ? url : new URL(url).pathname}`
+    const key = `${init?.method ?? 'GET'} ${(url.startsWith('/') ? url : new URL(url).pathname).split('?')[0]}`
     const handler = routes[key]
     if (!handler) throw new Error(`unexpected fetch ${key}`)
     return handler(init)
@@ -24,11 +24,17 @@ describe('openTorrent', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('names a fleet that is missing, and one that is full', async () => {
-    const { fn } = fleetFetch({ 'POST /api/torrents': () => json({ error: 'no_workers' }, 503) })
+    const { fn } = fleetFetch({
+      'GET /api/torrents/workers': () => json({ workers: [] }),
+      'POST /api/torrents': () => json({ error: 'no_workers' }, 503),
+    })
     vi.stubGlobal('fetch', fn)
     await expect(openTorrent(MAGNET)).rejects.toBeInstanceOf(NoWorkersError)
 
-    const busy = fleetFetch({ 'POST /api/torrents': () => json({ error: 'workers_busy' }, 503) })
+    const busy = fleetFetch({
+      'GET /api/torrents/workers': () => json({ workers: [] }),
+      'POST /api/torrents': () => json({ error: 'workers_busy' }, 503),
+    })
     vi.stubGlobal('fetch', busy.fn)
     await expect(openTorrent(MAGNET)).rejects.toBeInstanceOf(WorkersBusyError)
   })
@@ -43,9 +49,17 @@ describe('openTorrent', () => {
   it('registers, waits for the listing, selects, and reads from the worker', async () => {
     let polls = 0
     const { fn, calls } = fleetFetch({
+      'GET /api/torrents/workers': () => json({
+        workers: [
+          { id: 'w_far', readBase: 'https://far.test', holds: false, probe: 'https://far.test/v1/probe/PF' },
+          { id: 'w_near', readBase: 'https://w.test', holds: true, probe: 'https://w.test/v1/probe/PN' },
+        ],
+      }),
+      'GET /v1/probe/PN': () => new Response(new Uint8Array(1024), { status: 200 }),
+      'GET /v1/probe/PF': () => new Response('', { status: 503 }),
       'POST /api/torrents': (init) => {
-        const body = JSON.parse(String(init?.body)) as { infoHash: string; trackers: string[]; dn: string }
-        expect(body).toEqual({ infoHash: 'ab'.repeat(20), trackers: ['udp://t.example:1337'], dn: 'Show' })
+        const body = JSON.parse(String(init?.body)) as { infoHash: string; trackers: string[]; dn: string; preferred: string[] }
+        expect(body).toEqual({ infoHash: 'ab'.repeat(20), trackers: ['udp://t.example:1337'], dn: 'Show', preferred: ['w_near'] })
         return json({ jobId: 'j1', state: 'resolving' }, 202)
       },
       'GET /api/torrents/j1': () => {
@@ -97,6 +111,7 @@ describe('openTorrent', () => {
 
   it('a listing the worker refused is a rejection, and the job is released', async () => {
     const { fn, calls } = fleetFetch({
+      'GET /api/torrents/workers': () => json({ workers: [] }),
       'POST /api/torrents': () => json({ jobId: 'j2', state: 'resolving' }, 202),
       'GET /api/torrents/j2': () => json({ jobId: 'j2', state: 'failed', error: 'not_video' }),
       'DELETE /api/torrents/j2': () => new Response(null, { status: 204 }),

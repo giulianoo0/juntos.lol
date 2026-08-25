@@ -7,6 +7,9 @@ use anyhow::{bail, Context};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TlsMode {
     Acme,
+    /// Certificate and key from files someone else renews (tailscale cert,
+    /// an existing proxy's PKI). Re-read periodically so renewals land.
+    File,
     SelfSigned,
     Off,
 }
@@ -26,6 +29,9 @@ pub struct WorkerConfig {
     pub acme_directory: String,
     pub acme_contact: Option<String>,
     pub acme_profile: String,
+    /// TLS=file: the PEM pair to serve, re-read hourly.
+    pub tls_cert_file: Option<std::path::PathBuf>,
+    pub tls_key_file: Option<std::path::PathBuf>,
     pub disk_quota_bytes: u64,
     pub disk_high_water_pct: u8,
     pub max_torrents: usize,
@@ -87,9 +93,10 @@ impl WorkerConfig {
     pub fn load() -> anyhow::Result<Self> {
         let tls = match env("SS_WORKER_TLS").as_deref().unwrap_or("acme") {
             "acme" => TlsMode::Acme,
+            "file" => TlsMode::File,
             "self-signed" => TlsMode::SelfSigned,
             "off" => TlsMode::Off,
-            other => bail!("SS_WORKER_TLS={other}: expected acme, self-signed or off"),
+            other => bail!("SS_WORKER_TLS={other}: expected acme, file, self-signed or off"),
         };
         let public_ip = match env("SS_WORKER_PUBLIC_IP") {
             Some(v) => Some(v.parse().context("SS_WORKER_PUBLIC_IP")?),
@@ -110,6 +117,8 @@ impl WorkerConfig {
                 .unwrap_or_else(|| "https://acme-v02.api.letsencrypt.org/directory".into()),
             acme_contact: env("SS_WORKER_ACME_CONTACT"),
             acme_profile: env("SS_WORKER_ACME_PROFILE").unwrap_or_else(|| "shortlived".into()),
+            tls_cert_file: env("SS_WORKER_TLS_CERT").map(Into::into),
+            tls_key_file: env("SS_WORKER_TLS_KEY").map(Into::into),
             disk_quota_bytes: env_parse::<u64>("SS_WORKER_DISK_QUOTA_GB", 120)? * 1024 * 1024 * 1024,
             disk_high_water_pct: env_parse("SS_WORKER_DISK_HIGH_WATER_PCT", 90)?,
             max_torrents: env_parse("SS_WORKER_MAX_TORRENTS", 12)?,
@@ -128,6 +137,9 @@ impl WorkerConfig {
         };
         if cfg.tls == TlsMode::Acme && cfg.public_ip.is_none() && cfg.public_hostname.is_none() {
             bail!("SS_WORKER_TLS=acme needs SS_WORKER_PUBLIC_IP and/or SS_WORKER_PUBLIC_HOSTNAME");
+        }
+        if cfg.tls == TlsMode::File && (cfg.tls_cert_file.is_none() || cfg.tls_key_file.is_none()) {
+            bail!("SS_WORKER_TLS=file needs SS_WORKER_TLS_CERT and SS_WORKER_TLS_KEY");
         }
         if !(50..=99).contains(&cfg.disk_high_water_pct) {
             bail!("SS_WORKER_DISK_HIGH_WATER_PCT must be 50..99");

@@ -74,6 +74,14 @@ pub fn self_signed(names: Vec<String>) -> anyhow::Result<(Vec<CertificateDer<'st
     Ok((vec![cert.der().clone()], key_der))
 }
 
+/// Reads a PEM pair from disk into the slot.
+pub fn install_from_files(slot: &CertSlot, cert: &std::path::Path, key: &std::path::Path) -> anyhow::Result<()> {
+    let cert_pem = std::fs::read_to_string(cert).with_context(|| format!("read {}", cert.display()))?;
+    let key_pem = std::fs::read_to_string(key).with_context(|| format!("read {}", key.display()))?;
+    let (chain, key) = parse_pem(&cert_pem, &key_pem)?;
+    slot.install(chain, key)
+}
+
 pub fn parse_pem(cert_pem: &str, key_pem: &str) -> anyhow::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let chain = rustls_pemfile::certs(&mut cert_pem.as_bytes())
         .collect::<Result<Vec<_>, _>>()

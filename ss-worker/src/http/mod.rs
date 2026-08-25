@@ -117,6 +117,34 @@ async fn preflight_sub(State(state): State<Arc<AppState>>, Path((ticket, _)): Pa
     preflight(State(state), Path(ticket)).await
 }
 
+// A short-lived signed ticket buys a few megabytes of zeros: what the page
+// measures each worker with before choosing one. The size is capped and the
+// ticket expires in seconds, so it is not a free bandwidth endpoint.
+async fn probe(
+    State(state): State<Arc<AppState>>,
+    Path(ticket): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let ticket = match state.verify(&ticket) {
+        Ok(t) => t,
+        Err(e) => return fail(StatusCode::UNAUTHORIZED, "*", &e.to_string()),
+    };
+    const PROBE_CAP: usize = 8 * 1024 * 1024;
+    let bytes = query
+        .get("bytes")
+        .and_then(|b| b.parse::<usize>().ok())
+        .unwrap_or(2 * 1024 * 1024)
+        .min(PROBE_CAP);
+    let mut response = (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        vec![0u8; bytes],
+    )
+        .into_response();
+    cors::apply(&mut response, &ticket.audience);
+    response
+}
+
 async fn healthz(State(state): State<Arc<AppState>>) -> Response {
     let snapshot = state.engine.snapshot();
     (StatusCode::OK, serde_json::json!({ "ok": true, "torrents": snapshot.torrents.len(), "leases": snapshot.leases }).to_string())
@@ -130,6 +158,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/hint/:ticket", post(hint::post).options(preflight))
         .route("/v1/file/:ticket/:index", get(file::get).options(preflight_sub))
         .route("/v1/t/:ticket/haves", get(haves::get).options(preflight_sub))
+        .route("/v1/probe/:ticket", get(probe).options(preflight))
         .layer(axum::middleware::from_fn_with_state(state.clone(), in_flight))
         .with_state(state)
 }

@@ -44,6 +44,7 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	if access.Sessions != nil {
 		group.Use(access.Sessions.Middleware())
 	}
+	group.GET("/workers", listWorkers(access.Service, cfg))
 	start := []gin.HandlerFunc{}
 	if access.Quota != nil {
 		start = append(start, access.Quota.Dispatch())
@@ -60,6 +61,21 @@ type startRequest struct {
 	InfoHash string   `json:"infoHash"`
 	Trackers []string `json:"trackers"`
 	DN       string   `json:"dn"`
+	// The page's own worker ranking, best first, from its probes.
+	Preferred []string `json:"preferred"`
+}
+
+// listWorkers hands the page what it needs to measure the fleet before a
+// dispatch: every healthy worker, its read base, and a probe ticket.
+func listWorkers(service *worker.Service, cfg config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		infoHash := strings.ToLower(c.Query("infoHash"))
+		if infoHash != "" && !infohashRe.MatchString(infoHash) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_infohash"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"workers": service.ProbeList(infoHash, audience(c, cfg))})
+	}
 }
 
 func startTorrent(service *worker.Service) gin.HandlerFunc {
@@ -72,7 +88,10 @@ func startTorrent(service *worker.Service) gin.HandlerFunc {
 		if len(req.Trackers) > 20 {
 			req.Trackers = req.Trackers[:20]
 		}
-		job, err := service.Start(c.Request.Context(), SessionID(c), strings.ToLower(req.InfoHash), req.DN, req.Trackers)
+		if len(req.Preferred) > 8 {
+			req.Preferred = req.Preferred[:8]
+		}
+		job, err := service.Start(c.Request.Context(), SessionID(c), strings.ToLower(req.InfoHash), req.DN, req.Trackers, req.Preferred)
 		if err != nil {
 			status, code := torrentErrorStatus(err)
 			c.JSON(status, gin.H{"error": code})

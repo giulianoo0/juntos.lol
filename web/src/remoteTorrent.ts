@@ -146,19 +146,120 @@ export async function torrentCapacity(): Promise<string> {
   }
 }
 
+/** One worker as the page measured it. */
+export interface WorkerProbe {
+  id: string
+  readBase: string
+  /** The worker already holds this torrent's pieces on disk. */
+  holds: boolean
+  state: 'testing' | 'ok' | 'down'
+  mbit?: number
+  ttfbMs?: number
+  chosen?: boolean
+}
+
+const PROBE_BYTES = 3 * 1024 * 1024
+const PROBE_BUDGET_MS = 6_000
+
+// Measures one worker from this browser: reachability, first byte, and
+// throughput over up to three megabytes or six seconds, whichever ends
+// first — a slow link still yields an honest number from what arrived.
+async function probeOne(target: { id: string; readBase: string; holds: boolean; probe: string }): Promise<WorkerProbe> {
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), PROBE_BUDGET_MS)
+  const t0 = performance.now()
+  try {
+    const response = await fetch(`${target.probe}?bytes=${PROBE_BYTES}`, { signal: abort.signal })
+    if (!response.ok || !response.body) throw new Error(String(response.status))
+    const ttfbMs = Math.round(performance.now() - t0)
+    const reader = response.body.getReader()
+    let received = 0
+    while (true) {
+      const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }))
+      if (done) break
+      received += value?.byteLength ?? 0
+    }
+    const seconds = (performance.now() - t0) / 1000
+    if (received === 0 || seconds <= 0) throw new Error('empty probe')
+    return {
+      id: target.id,
+      readBase: target.readBase,
+      holds: target.holds,
+      state: 'ok',
+      ttfbMs,
+      mbit: Math.round(received * 8 / seconds / 1e6 * 10) / 10,
+    }
+  } catch {
+    return { id: target.id, readBase: target.readBase, holds: target.holds, state: 'down' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// Reachable beats unreachable; a worker already holding the pieces beats a
+// bare one (warm disk over a cold swarm); then raw speed decides.
+function rankProbes(probes: WorkerProbe[]): WorkerProbe[] {
+  const ranked = [...probes].sort((a, b) => {
+    if ((a.state === 'ok') !== (b.state === 'ok')) return a.state === 'ok' ? -1 : 1
+    if (a.holds !== b.holds) return a.holds ? -1 : 1
+    return (b.mbit ?? 0) - (a.mbit ?? 0)
+  })
+  return ranked.map((p, i) => ({ ...p, chosen: i === 0 && p.state === 'ok' }))
+}
+
+/**
+ * Measures every healthy worker from this browser, reporting progressively
+ * through `onProbe`. Resolves with the final ranking, best first.
+ */
+export async function probeWorkers(
+  infoHash: string,
+  onProbe?: (probes: WorkerProbe[]) => void,
+): Promise<WorkerProbe[]> {
+  let targets: { id: string; readBase: string; holds: boolean; probe: string }[]
+  try {
+    const body = await api<{ workers: { id: string; readBase: string; holds: boolean; probe: string }[] | null }>(
+      `/workers?infoHash=${encodeURIComponent(infoHash)}`,
+    )
+    targets = body.workers ?? []
+  } catch {
+    return []
+  }
+  let current: WorkerProbe[] = targets.map((t) => ({ id: t.id, readBase: t.readBase, holds: t.holds, state: 'testing' as const }))
+  onProbe?.(current)
+  await Promise.all(targets.map(async (target) => {
+    const result = await probeOne(target)
+    current = current.map((p) => (p.id === result.id ? result : p))
+    onProbe?.(current.some((p) => p.state === 'testing') ? current : rankProbes(current))
+  }))
+  const ranked = rankProbes(current)
+  onProbe?.(ranked)
+  return ranked
+}
+
+export interface OpenTorrentOptions {
+  /** Fleet measurements as they land, for the page to show. */
+  onProbe?: (probes: WorkerProbe[]) => void
+}
+
 /**
  * Registers a magnet with the server and waits for the worker's listing.
- * The session it returns reads bytes from the worker directly.
+ * The session it returns reads bytes from the worker directly. Before the
+ * dispatch, every worker is measured from this browser and the ranking
+ * rides along, so the server places the job on the path that is actually
+ * fast from here.
  */
 export async function openRemoteTorrent(
   magnet: string,
   onStats?: (stats: TorrentStats) => void,
+  options?: OpenTorrentOptions,
 ): Promise<TorrentSession> {
   const parsed = parseMagnet(magnet)
   if (!parsed) throw new TorrentRejectedError('invalid_infohash')
+  const probes = await probeWorkers(parsed.infoHash, options?.onProbe)
+  const preferred = probes.filter((p) => p.state === 'ok').map((p) => p.id)
   const started = await api<{ jobId: string }>('', {
     method: 'POST',
-    body: JSON.stringify({ infoHash: parsed.infoHash, trackers: parsed.trackers, dn: parsed.dn }),
+    body: JSON.stringify({ infoHash: parsed.infoHash, trackers: parsed.trackers, dn: parsed.dn, preferred }),
   })
   const jobId = started.jobId
   const gate = new ReadGate()

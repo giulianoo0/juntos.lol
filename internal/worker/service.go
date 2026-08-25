@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -78,10 +79,46 @@ func (s *Service) Capacity() string {
 	}
 }
 
+// ProbeTarget is one worker the page may measure before choosing.
+type ProbeTarget struct {
+	ID       string `json:"id"`
+	ReadBase string `json:"readBase"`
+	Probe    string `json:"probe"`
+	Holds    bool   `json:"holds"`
+}
+
+// ProbeList hands the page every healthy worker with a short-lived probe
+// ticket each, so it can measure reachability and speed itself — a server
+// in one datacenter cannot know which worker is fast from THIS browser.
+func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
+	now := time.Now()
+	var out []ProbeTarget
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) {
+			continue
+		}
+		ticket, err := s.Signer.MintTicket(Ticket{
+			RoomID:   "probe",
+			Infohash: strings.Repeat("0", 40),
+			Audience: audience,
+			WorkerID: w.ID,
+			Exp:      now.Add(90 * time.Second).Unix(),
+		})
+		if err != nil {
+			continue
+		}
+		_, holds := w.Holds(infohash)
+		out = append(out, ProbeTarget{ID: w.ID, ReadBase: w.PublicBase, Probe: w.PublicBase + "/v1/probe/" + ticket, Holds: holds})
+	}
+	return out
+}
+
 // Start registers an infohash for a session: blocklist, quota, placement,
 // then the lease job in the background. Returns as soon as the job is
-// placed; the listing arrives through Get.
-func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, trackers []string) (*JobRecord, error) {
+// placed; the listing arrives through Get. `preferred` is the page's own
+// ranking from its probes; the first of them that passes the hard filters
+// wins, because the page measured a path the server cannot see.
+func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, trackers, preferred []string) (*JobRecord, error) {
 	if s.Blocklist.Rejects(infohash, name) {
 		return nil, ErrBlocked
 	}
@@ -91,6 +128,14 @@ func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, t
 	worker, err := s.Registry.Place(infohash, 0, time.Now())
 	if err != nil {
 		return nil, err
+	}
+	now := time.Now()
+	for _, id := range preferred {
+		candidate, ok := s.Registry.Get(id)
+		if ok && candidate.Healthy(now) && hasRoom(candidate, 0) {
+			worker = candidate
+			break
+		}
 	}
 	job := &JobRecord{
 		ID:         "j_" + randomID(8),

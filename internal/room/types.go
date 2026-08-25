@@ -72,7 +72,7 @@ type Room struct {
 	// GatingEnabled is the controller-owned setting that makes play and seek
 	// wait until every member has buffered the target. Stored inverted
 	// (gating_disabled) so rooms created before it existed read back as on.
-	GatingEnabled     bool        `json:"gatingEnabled"`
+	GatingEnabled bool `json:"gatingEnabled"`
 	// DurationMs is the source's full duration as the host pipeline measured
 	// it, published before the first segment lands. The player draws the whole
 	// timeline from it instead of from how much media exists yet.
@@ -85,16 +85,16 @@ type Room struct {
 	// for this generation, each with its own playlists (rN_master.m3u8). A
 	// player picks the region for the time it wants and switches at the
 	// edges; the offset above is only the one still growing.
-	MediaRegions []MediaRegion `json:"mediaRegions,omitempty"`
-	ErrorMessage      string      `json:"errorMessage,omitempty"`
-	ControllerID      string      `json:"controllerId"`
-	AudioTracks       []TrackInfo `json:"audioTracks"`
-	SubtitleTracks    []TrackInfo `json:"subtitleTracks"`
+	MediaRegions   []MediaRegion `json:"mediaRegions,omitempty"`
+	ErrorMessage   string        `json:"errorMessage,omitempty"`
+	ControllerID   string        `json:"controllerId"`
+	AudioTracks    []TrackInfo   `json:"audioTracks"`
+	SubtitleTracks []TrackInfo   `json:"subtitleTracks"`
 	// Chapters are the source's authored spans, when it carries any: the
 	// player draws them on the timeline so "the opening" is a place.
 	Chapters          []Chapter `json:"chapters,omitempty"`
 	BitmapSubsSkipped int       `json:"bitmapSubsSkipped"`
-	ClientSubs        bool        `json:"clientSubs,omitempty"`
+	ClientSubs        bool      `json:"clientSubs,omitempty"`
 	// Preparation is how far the room is from being playable. It exists so a
 	// viewer waiting on a source is told what is happening and roughly how
 	// long, instead of watching a bar that fills to 100% and then sits there.
