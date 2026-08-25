@@ -3,3 +3,5 @@ web/node_modules
 web/dist
 .git
 ss-worker/
+ss-worker/target
+.worktrees/
