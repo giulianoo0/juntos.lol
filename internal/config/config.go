@@ -45,6 +45,18 @@ type Config struct {
 	// MediaPublicURL is the origin the bucket is served from. Playlists point
 	// segments at it, so it is what a viewer actually fetches media from.
 	MediaPublicURL string
+
+	// Torrent access. Opening a magnet spends a worker's disk and uplink, so
+	// the anonymous browser asking for it gets a session and a budget; the
+	// rooms themselves stay as open as they are.
+	SessionTTLDays         int
+	SessionsPerIPPerHour   int
+	TorrentDispatchPerHour int
+	TorrentConcurrentJobs  int
+	TorrentBytesPerDayGB   int64
+	// TorrentBlocklistFile lists infohashes and name keywords never dispatched.
+	// Empty means no list.
+	TorrentBlocklistFile string
 }
 
 func Load() (Config, error) {
@@ -62,6 +74,12 @@ func Load() (Config, error) {
 		LivekitURL:        "",
 		LivekitAPIKey:     "",
 		LivekitAPISecret:  "",
+
+		SessionTTLDays:         7,
+		SessionsPerIPPerHour:   20,
+		TorrentDispatchPerHour: 10,
+		TorrentConcurrentJobs:  2,
+		TorrentBytesPerDayGB:   60,
 	}
 
 	var err error
@@ -115,6 +133,23 @@ func Load() (Config, error) {
 	if err := cfg.validateMedia(); err != nil {
 		return Config{}, err
 	}
+
+	if cfg.SessionTTLDays, err = envInt("SESSION_TTL_DAYS", cfg.SessionTTLDays); err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionsPerIPPerHour, err = envInt("SESSIONS_PER_IP_PER_HOUR", cfg.SessionsPerIPPerHour); err != nil {
+		return Config{}, err
+	}
+	if cfg.TorrentDispatchPerHour, err = envInt("TORRENT_DISPATCH_PER_HOUR", cfg.TorrentDispatchPerHour); err != nil {
+		return Config{}, err
+	}
+	if cfg.TorrentConcurrentJobs, err = envInt("TORRENT_CONCURRENT_JOBS", cfg.TorrentConcurrentJobs); err != nil {
+		return Config{}, err
+	}
+	if cfg.TorrentBytesPerDayGB, err = envInt64("TORRENT_BYTES_PER_DAY_GB", cfg.TorrentBytesPerDayGB); err != nil {
+		return Config{}, err
+	}
+	cfg.TorrentBlocklistFile = os.Getenv("TORRENT_BLOCKLIST_FILE")
 
 	return cfg, nil
 }
