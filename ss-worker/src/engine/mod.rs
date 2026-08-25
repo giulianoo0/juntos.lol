@@ -376,10 +376,24 @@ impl Engine {
     /// Opens a read at `start`. The playhead and scan classes park their
     /// stream in a slot so librqbit's priority window keeps following them
     /// between requests; head probes use a throwaway stream.
+    ///
+    /// A torrent still paused or checking its files cannot open a stream
+    /// yet; that window follows every select and is seconds long, so the
+    /// open waits it out instead of bouncing the client through a 503.
     pub async fn open(&self, infohash: &str, index: usize, start: u64, prio: Prio) -> anyhow::Result<Reader> {
         let handle = self.touch(infohash).context("unknown torrent")?;
-        if handle.with_state(|s| matches!(s, ManagedTorrentState::Error(_))) {
-            bail!("torrent failed");
+        let live_deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+        loop {
+            if handle.with_state(|s| matches!(s, ManagedTorrentState::Error(_))) {
+                bail!("torrent failed");
+            }
+            if handle.live().is_some() {
+                break;
+            }
+            if tokio::time::Instant::now() >= live_deadline {
+                bail!("torrent not live");
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
         let size = self.file_size(infohash, index)?;
         if start >= size {

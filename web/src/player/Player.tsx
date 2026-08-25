@@ -118,6 +118,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  // The live sync state, readable from effects without re-running them.
+  const syncRef = useRef<PlayState | undefined>(syncState)
+  syncRef.current = syncState
+  const serverOffsetRef = useRef(serverOffsetMs)
+  serverOffsetRef.current = serverOffsetMs
   const playRequestedRef = useRef(false)
   const playAttemptRef = useRef(false)
   const controlsTimerRef = useRef<number | null>(null)
@@ -250,11 +255,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     let disposed = false
     setUnplayable(false)
     recoveriesRef.current = 0
-    // A republish of the same recording resumes where this player was; only a
-    // different recording starts over from its beginning.
-    const startPosition = resumeRef.current.generation === generation
-      ? Math.max(resumeRef.current.time - mediaOffsetSec, 0)
-      : 0
+    // A republish of the same recording resumes where this player was; only
+    // a different recording starts over from its beginning. When the room's
+    // clock is known it wins: a region switch rebuilds the player exactly
+    // because the room moved somewhere the old region did not hold, and
+    // resuming at the old position would open the new region in the wrong
+    // place.
+    const sync = syncRef.current
+    const resumeAbs = resumeRef.current.generation === generation ? resumeRef.current.time : 0
+    const wantedAbs = sync ? expectedPositionMs(sync, Date.now() + serverOffsetRef.current) / 1000 : resumeAbs
+    const startPosition = Math.max(wantedAbs - mediaOffsetSec, 0)
 
     const failPlayback = (reason: string) => {
       if (disposed) return

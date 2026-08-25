@@ -680,6 +680,20 @@ recarga que já existe para `mediaVersion`, agora dirigido por região.
 
 ---
 
+## Estado da implementação (2026-08-25)
+
+Todas as 12 tarefas implementadas nesta branch, inline. Diferenças relevantes
+contra o plano: (1) a Fase 3 usa **N playlists por região + mapa
+`mediaRegions` na sala** em vez da playlist esparsa única (ver o resultado do
+protótipo na Tarefa 3 — o hls.js tolera GAP/MAP, mas o casamento por `sn` nas
+atualizações live inviabiliza região crescendo no meio); `mediaOffsetMs`
+continua existindo como fallback para salas sem mapa e como "região em
+crescimento". (2) `setLimits` em runtime não é suportado pelo worker (o cap
+de upload é fixado no add). (3) O e2e da fase 3 vive em
+`web/dev/e2e-seek.mjs` (stack local: redis + minio + servidor + worker
+self-signed): seek frio servido sem o prefixo baixado, back-seek sem
+restart, seek-storm. Medições e portões registrados nas seções acima.
+
 ## Decisões em aberto (do dono, antes de fechar as tarefas que dependem)
 
 1. **Chaveamento do R2:** objetos por-sala + TTL-deletados, ou content-addressed

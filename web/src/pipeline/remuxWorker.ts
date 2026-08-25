@@ -28,8 +28,12 @@ const post = (message: WorkerToPage) => { self.postMessage(message) }
 self.addEventListener('unhandledrejection', (event) => {
   const reason = (event as PromiseRejectionEvent).reason as unknown
   // A seek aborts the reads of the region it left; mediabunny's prefetch
-  // workers surface that as a rejection nobody awaits. Expected, not trouble.
-  if (reason instanceof ReadAbortedError) { event.preventDefault(); return }
+  // workers surface that as a rejection nobody awaits. Expected, not
+  // trouble. Matched by name: the error may have crossed a bundle seam.
+  if (reason instanceof ReadAbortedError || (reason instanceof Error && reason.name === 'ReadAbortedError')) {
+    event.preventDefault()
+    return
+  }
   console.error('[remux-worker] unhandled rejection', reason)
   post({ type: 'trouble', detail: reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason) })
 })

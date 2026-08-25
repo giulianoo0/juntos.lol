@@ -77,7 +77,10 @@ pub async fn get(
 
     let reader = match state.engine.open(&ticket.infohash, ticket.file_index, start, prio).await {
         Ok(r) => r,
-        Err(e) => return fail(StatusCode::SERVICE_UNAVAILABLE, &aud, &format!("open: {e:#}")),
+        Err(e) => {
+            tracing::info!(infohash = %ticket.infohash, error = %format!("{e:#}"), "range open refused");
+            return fail(StatusCode::SERVICE_UNAVAILABLE, &aud, &format!("open: {e:#}"));
+        }
     };
     let (tx, mut rx) = mpsc::channel::<bytes::Bytes>(4);
     let chunk = state.engine.read_chunk_size();
