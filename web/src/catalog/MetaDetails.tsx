@@ -142,6 +142,10 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   // once. The prop's identity is unstable across parent re-renders, and
   // re-applying it would snap the panel back over whatever the host picked.
   const focusAppliedRef = useRef(false)
+  // The hero's blur is driven from the scroll handler; these hold the pending
+  // frame and the radius already written, so neither is done twice.
+  const blurFrameRef = useRef(0)
+  const heroBlurRef = useRef(0)
   useEffect(() => {
     if (!focus || !detail || focusAppliedRef.current) return
     const match = detail.videos.find((video) => video.season === focus.season && video.episode === focus.episode)
@@ -194,7 +198,18 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
       },
       { duration: 0.42, ease: MORPH_EASE },
     )
+    // The panel's width is animated, and everything inside it — the hero, the
+    // season tabs, the episode carousel — re-resolves against it on every one
+    // of the 25 frames. Pinning the contents to the width they will end at
+    // leaves only the clip box moving; they are invisible until `revealed`
+    // anyway, so there is nothing to see change.
+    const content = panel.querySelector<HTMLElement>('.details-content')
+    const hero = panel.querySelector<HTMLElement>('.details-hero')
+    if (content) content.style.width = `${final.width}px`
+    if (hero) hero.style.width = `${final.width}px`
     void morph.then(() => {
+      content?.style.removeProperty('width')
+      hero?.style.removeProperty('width')
       for (const property of ['position', 'margin', 'top', 'left', 'width', 'height', 'borderRadius']) {
         panel.style.removeProperty(property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`))
       }
@@ -314,9 +329,21 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
         tabIndex={-1}
         // Scrolling the sources reads over the hero; blurring it with the
         // scroll keeps the copy legible without a heavy static scrim.
+        //
+        // A wheel reports 100+ scroll events a second and every distinct
+        // radius re-rasterizes the whole 300px hero, images and all. One write
+        // per frame, quantized to 2px steps, turns a continuous re-raster into
+        // nine discrete ones — indistinguishable on a 16px ramp.
         onScroll={(event) => {
           const panel = event.currentTarget
-          panel.style.setProperty('--hero-blur', `${Math.min(panel.scrollTop / 24, 16)}px`)
+          if (blurFrameRef.current) return
+          blurFrameRef.current = requestAnimationFrame(() => {
+            blurFrameRef.current = 0
+            const radius = Math.min(Math.round(panel.scrollTop / 48) * 2, 16)
+            if (radius === heroBlurRef.current) return
+            heroBlurRef.current = radius
+            panel.style.setProperty('--hero-blur', `${radius}px`)
+          })
         }}
       >
         <div className="details-hero">

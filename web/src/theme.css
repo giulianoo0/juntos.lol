@@ -83,9 +83,9 @@ h1, h2, p { margin-top: 0; }
    "working" rather than "stuck", and no scary total size anywhere. */
 .prep-bar { position: relative; height: 8px; border-radius: 99px; background: var(--well); overflow: hidden; }
 .prep-bar > span { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.22,.61,.36,1); background: linear-gradient(90deg, var(--primary), #8e94ff, var(--primary)); background-size: 200% 100%; animation: prep-flow 2.2s linear infinite; }
-.prep-bar.is-indeterminate::after { content: ""; position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 99px; background: linear-gradient(90deg, transparent, rgba(142,148,255,.6), transparent); animation: prep-drift 1.7s ease-in-out infinite; }
+.prep-bar.is-indeterminate::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 38%; border-radius: 99px; background: linear-gradient(90deg, transparent, rgba(142,148,255,.6), transparent); animation: prep-drift 1.7s ease-in-out infinite; will-change: transform; }
 @keyframes prep-flow { to { background-position: -200% 0; } }
-@keyframes prep-drift { 0% { left: -40%; } 100% { left: 100%; } }
+@keyframes prep-drift { 0% { transform: translateX(-105%); } 100% { transform: translateX(263%); } }
 .prep-eta { display: flex; justify-content: space-between; margin-top: 13px; color: var(--text-dim); font-size: 13px; }
 .prep-eta strong { color: var(--text); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .prep-bar > span, .prep-bar.is-indeterminate::after { animation: none; } }
@@ -99,7 +99,7 @@ h1, h2, p { margin-top: 0; }
 .media-switch-menu button svg, .media-switch-menu .magnet-glyph { color: #b8bcff; flex: 0 0 auto; }
 .media-switch-menu .magnet-glyph { font-size: 15px; width: 15px; text-align: center; }
 .upload-chip { padding: 5px 10px; border: 1px solid var(--border); border-radius: 99px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }.upload-chip.is-error { border-color: rgba(239,107,115,.35); background: rgba(239,107,115,.1); color: #ffc4c7; }
-.room-layout { height: calc(100dvh - 80px); min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 320px; }.media-column { min-width: 0; min-height: 0; padding: 12px 0 0; display: grid; grid-template-rows: minmax(0,1fr) auto; gap: 10px; }.player-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 0; border-radius: 30px; background: #030407; box-shadow: none; }.video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.room-layout { height: calc(100dvh - 80px); min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 320px; }.media-column { min-width: 0; min-height: 0; padding: 12px 0 0; display: grid; grid-template-rows: minmax(0,1fr) auto; gap: 10px; }.player-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 0; border-radius: 30px; background: #030407; box-shadow: none; contain: layout paint; }.video { width: 100%; height: 100%; object-fit: contain; display: block; }
 .player-wrap:fullscreen { width: 100vw; height: 100vh; border: 0; border-radius: 0; aspect-ratio: auto; background: #000; }
 /* Subtitle cues, drawn by SubtitleLayer rather than by the browser. These were
    ::cue rules until Chrome was found to render a native track in the operating
@@ -180,7 +180,7 @@ h1, h2, p { margin-top: 0; }
 .chat-panel header { display: flex; align-items: center; justify-content: space-between; padding: 16px 17px 10px; }
 .chat-panel h2 { margin: 0; font-size: 14px; }
 .chat-messages { flex: 1; overflow: auto; padding: 6px 14px 14px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 10px, #000 26px, #000 calc(100% - 26px), rgba(0,0,0,.35) calc(100% - 10px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 10px, #000 26px, #000 calc(100% - 26px), rgba(0,0,0,.35) calc(100% - 10px), transparent 100%); }
-.chat-message { padding: 11px 12px; margin-bottom: 8px; border: 0; border-radius: 15px; background: rgba(255,255,255,.045); animation: chat-enter var(--t-open) var(--ease) both; }
+.chat-message { padding: 11px 12px; margin-bottom: 8px; border: 0; border-radius: 15px; background: rgba(255,255,255,.045); animation: chat-enter var(--t-open) var(--ease) both; animation-delay: min(calc(var(--i, 0) * 35ms), 300ms); }
 .chat-message strong { font-size: 12px; color: #b8bcff; }
 .chat-message p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty-copy { color: var(--text-faint); font-size: 13px; }
@@ -275,7 +275,7 @@ button.timecode-chapter:hover { color: var(--text); }
 /* --- dialog ------------------------------------------------------------ */
 /* Radix owns focus, Escape and the scroll lock; these rules only dress it,
    and give the open and close their motion. */
-.ui-dialog-overlay { position: fixed; inset: 0; z-index: 57; background: rgba(0,0,0,.72); backdrop-filter: blur(2px); animation: overlay-in var(--t-open) var(--ease); }
+.ui-dialog-overlay { position: fixed; inset: 0; z-index: 57; background: rgba(0,0,0,.74); animation: overlay-in var(--t-open) var(--ease); }
 .ui-dialog { position: fixed; top: 50%; left: 50%; z-index: 58; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; transform: translate(-50%, -50%); border-radius: 26px; color: var(--text); background: #171923; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; animation: dialog-in var(--t-open) var(--ease); }
 .ui-dialog.torrent-dialog { width: min(580px, calc(100vw - 32px)); }
 .ui-dialog-body { position: relative; padding: 26px; }
@@ -349,7 +349,7 @@ button.timecode-chapter:hover { color: var(--text); }
 .player-preparing { display: grid; justify-items: center; gap: 8px; padding: 10px 16px; border-radius: 14px; background: rgba(7,8,12,.72); color: var(--text-dim); font-size: 13px; }
 .player-preparing .starting-swarm { margin: 0; }
 .player-spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.16); border-top-color: #c9ccff; border-radius: 50%; animation: torrent-spin .8s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .player-spinner { animation-duration: 2s; } }
+@media (prefers-reduced-motion: reduce) { .player-spinner { animation-duration: 2s !important; } }
 
 /* Links the running deployment back to the commit it was built from, so a
    room that misbehaves can be pinned to a version without guessing. */
@@ -372,6 +372,9 @@ button.timecode-chapter:hover { color: var(--text); }
    in. `backwards` rather than `both` — the elements have to land on their own
    styles so the frame's hover lift and the pane's morph still apply after. */
 @keyframes home-rise { from { opacity: 0; transform: translateY(18px) scale(.98); filter: blur(12px); } }
+/* The same arrival without the blur: a catalog row is the largest surface on
+   the page, and an animated filter re-rasterizes all of it every frame. */
+@keyframes row-rise { from { opacity: 0; transform: translateY(18px) scale(.98); } }
 @keyframes home-lift { from { opacity: 0; transform: translateY(10px); } }
 @keyframes home-bloom { from { opacity: 0; transform: scale(1.3) translateY(-6%); } }
 
@@ -430,10 +433,10 @@ button.timecode-chapter:hover { color: var(--text); }
 .source-row:not([data-step='drop'])[data-next='drop'] .source-morph { opacity: 0; transition-duration: 90ms; }
 .source-row:not([data-step='drop']) .source-morph { width: var(--morph-w); height: auto; border-color: rgba(255,255,255,.1); background: var(--glass); box-shadow: inset 0 1px rgba(255,255,255,.06), 0 26px 70px rgba(0,0,0,.32); }
 /* The hover belongs to the box, since the box is what is being pressed. */
-.source-row[data-step='drop'] .source-morph:has(.morph-trigger:hover) { border-color: rgba(120,127,250,.45); background: rgba(120,127,250,.08); }
-.source-morph:has(.morph-trigger:active) { transform: scale(.97); }
+.source-row[data-step='drop'] .source-morph:hover { border-color: rgba(120,127,250,.45); background: rgba(120,127,250,.08); }
+.source-morph:active { transform: scale(.97); }
 .morph-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: calc(var(--pill-h) - 2px); padding: 0 16px; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); font-size: 13px; white-space: nowrap; }
-.source-morph:has(.morph-trigger:hover) .morph-trigger { color: var(--text); }
+.source-morph:hover .morph-trigger { color: var(--text); }
 .morph-trigger .magnet-glyph { color: #b8bcff; flex: 0 0 auto; }
 .morph-trigger:hover:not(:disabled), .morph-trigger:active:not(:disabled) { background: transparent; border-color: transparent; transform: none; }
 
@@ -630,7 +633,10 @@ button.timecode-chapter:hover { color: var(--text); }
 .carousel-arrow--next { right: -10px; }
 .carousel-arrow:hover:not(:disabled) { background: transparent; border-color: transparent; opacity: 1; transform: translateY(-70%) scale(1.12); }
 .carousel-arrow:active:not(:disabled) { transform: translateY(-70%) scale(1); }
-.carousel-viewport { mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); }
+/* Declared only in the states that use it: a row that fits on screen has no
+   reason to allocate a mask layer to hide nothing. */
+.carousel[data-can-prev] .carousel-viewport,
+.carousel[data-can-next] .carousel-viewport { mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); }
 .carousel[data-can-prev] .carousel-viewport { --fade-l: 52px; }
 .carousel[data-can-next] .carousel-viewport { --fade-r: 52px; }
 .catalog-empty { padding: 18px 2px; }
@@ -639,7 +645,7 @@ button.timecode-chapter:hover { color: var(--text); }
 /* One poster. The hover lift is CSS-only and pointer-gated: this card is
    seen far too often to earn real animation. */
 .poster-card { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
-.poster-art { position: relative; display: grid; place-items: center; aspect-ratio: 2 / 3; width: 100%; overflow: hidden; border-radius: 14px; background: var(--card); color: var(--text-faint); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 8px 26px rgba(0,0,0,.32); transition: transform 150ms var(--ease), box-shadow 150ms var(--ease); }
+.poster-art { position: relative; display: grid; place-items: center; aspect-ratio: 2 / 3; width: 100%; overflow: hidden; border-radius: 14px; background: var(--card); color: var(--text-faint); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 8px 26px rgba(0,0,0,.32); transition: transform 150ms var(--ease); }
 .poster-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 @media (hover: hover) and (pointer: fine) {
   .poster-card:hover .poster-art { transform: translateY(-3px) scale(1.03); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 16px 40px rgba(0,0,0,.42), 0 0 0 1px rgba(120,127,250,.35); }
@@ -654,9 +660,9 @@ button.timecode-chapter:hover { color: var(--text); }
 /* The panel that morphs out of a poster. Its resting geometry lives here in
    CSS; the morph borrows it, then hands it back. */
 .details-layer { position: fixed; inset: 0; z-index: 55; }
-.details-backdrop { position: absolute; inset: 0; background: rgba(4,5,8,.78); backdrop-filter: blur(3px); }
-.details-panel { position: absolute; inset: 0; margin: auto; width: 90svw; height: 90svh; overflow: hidden auto; border-radius: 26px; background: #12141d; outline: none; }
-.details-hero { position: sticky; top: 0; height: 300px; margin-bottom: -230px; background-size: cover; background-position: center 20%; filter: blur(var(--hero-blur, 0px)); will-change: filter; }
+.details-backdrop { position: absolute; inset: 0; background: rgba(4,5,8,.82); }
+.details-panel { position: absolute; inset: 0; margin: auto; width: 90svw; height: 90svh; overflow: hidden auto; border-radius: 26px; background: #12141d; outline: none; contain: layout paint; }
+.details-hero { position: sticky; top: 0; height: 300px; margin-bottom: -230px; background-size: cover; background-position: center 20%; filter: blur(var(--hero-blur, 0px)); }
 .details-hero-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
 .details-hero-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(30px) brightness(.7); transform: scale(1.1); }
 .details-hero-scrim { position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(18,20,29,.1), rgba(18,20,29,.86) 72%, #12141d); }
@@ -720,7 +726,7 @@ button.timecode-chapter:hover { color: var(--text); }
 .stream-source { margin-left: auto; color: var(--text-dim); }
 
 /* --- in-room catalog overlay ------------------------------------------- */
-.catalog-overlay { position: fixed; inset: 0; z-index: 45; background: rgba(7,8,12,.94); backdrop-filter: blur(20px) saturate(120%); }
+.catalog-overlay { position: fixed; inset: 0; z-index: 45; background: rgba(7,8,12,.97); }
 .catalog-overlay-head { position: absolute; inset: 0 0 auto; z-index: 5; display: flex; align-items: center; justify-content: space-between; padding: 16px clamp(16px, 4vw, 44px) 22px; }
 .catalog-overlay-head h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
 .catalog-overlay-head .dialog-close { position: static; }
@@ -786,7 +792,7 @@ button.timecode-chapter:hover { color: var(--text); }
 .next-episode-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
 
 /* --- starting overlay --------------------------------------------------- */
-.starting-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(6,7,11,.88); backdrop-filter: blur(10px); }
+.starting-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(6,7,11,.92); }
 .starting-card { display: grid; justify-items: center; gap: 10px; padding: 24px; text-align: center; }
 .starting-card h2 { margin: 8px 0 0; font-size: 22px; letter-spacing: -.03em; }
 .starting-file { margin: 0; max-width: min(480px, 80vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
@@ -819,21 +825,31 @@ button.timecode-chapter:hover { color: var(--text); }
   .next-episode-card { right: 10px; bottom: 74px; }
 }
 
-/* --- progressive blur --------------------------------------------------- */
-/* Stacked backdrop layers whose blur radius doubles each step while its mask
-   ends higher up: the blur builds along an ease-out ramp instead of a single
-   masked slab, which is what removes the hard glass edge. The tint over it
-   follows an ease-in curve for the same reason. Generated values — see
-   ProgressiveBlur.tsx. */
+/* --- header fade -------------------------------------------------------- */
+/* This was a real progressive blur: five stacked backdrop-filter layers, each
+   snapshotting the strip under the header, running a two-pass gaussian over it
+   and masking the result. Five backdrop roots across the full window width,
+   redone on every scrolled pixel — and, inside a room, on every video frame
+   painted behind the overlay. The read it bought (the board dissolving under
+   the header) is carried by one painted gradient instead: a single quad, no
+   readback. The stops sample an ease-in-out ramp, so the fade has no band and
+   no edge. */
 .catalog-shell .home-header { background: transparent; }
 /* The ramp runs past the header's own box, so it finishes in clear air. */
-.progressive-blur { position: absolute; inset: 0 0 -60% 0; z-index: -1; pointer-events: none; }
-.progressive-blur span { position: absolute; inset: 0; display: block; }
-.progressive-blur span:nth-child(1) { backdrop-filter: blur(0.9px); mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 52.1%, transparent 80.8%); }
-.progressive-blur span:nth-child(2) { backdrop-filter: blur(1.8px); mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 25.4%, transparent 70.2%); }
-.progressive-blur span:nth-child(3) { backdrop-filter: blur(3.6px); mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 11.8%, transparent 64.7%); }
-.progressive-blur span:nth-child(4) { backdrop-filter: blur(7.2px); mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.7%, transparent 62.7%); }
-.progressive-blur span:nth-child(5) { backdrop-filter: blur(14.4px); mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); -webkit-mask-image: linear-gradient(to bottom, black 0%, black 6.0%, transparent 62.4%); }
+.progressive-blur {
+  position: absolute; inset: 0 0 -60% 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(to bottom,
+    rgba(10, 11, 16, .94)   0%,
+    rgba(10, 11, 16, .93)  24%,
+    rgba(10, 11, 16, .90)  38%,
+    rgba(10, 11, 16, .84)  48%,
+    rgba(10, 11, 16, .73)  57%,
+    rgba(10, 11, 16, .57)  65%,
+    rgba(10, 11, 16, .39)  73%,
+    rgba(10, 11, 16, .22)  81%,
+    rgba(10, 11, 16, .09)  90%,
+    rgba(10, 11, 16, 0)   100%);
+}
 
 /* --- home tabs ---------------------------------------------------------- */
 /* Both ways of starting a room, weighted the same and centred between the two
@@ -879,7 +895,7 @@ button.timecode-chapter:hover { color: var(--text); }
 
 /* Same surface vocabulary as the upload dialog: this is the same kind of
    object, and it should not read as a second design. */
-.plugins-backdrop { position: fixed; inset: 0; z-index: 57; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.72); backdrop-filter: blur(2px); animation: overlay-in var(--t-open) var(--ease); }
+.plugins-backdrop { position: fixed; inset: 0; z-index: 57; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.74); animation: overlay-in var(--t-open) var(--ease); }
 .plugins-morph { width: min(520px, calc(100vw - 32px)); }
 .plugins-panel { position: relative; padding: 26px; border-radius: 26px; color: var(--text); background: #171923; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; }
 .plugins-close { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; color: var(--text-dim); background: rgba(255,255,255,.05); }
@@ -931,7 +947,7 @@ button.timecode-chapter:hover { color: var(--text); }
    and settles, dealt top to bottom, so the board reads as arriving rather
    than being switched on. */
 .catalog-search { animation: home-rise 620ms var(--ease) 320ms backwards; }
-.catalog-row { animation: home-rise 640ms var(--ease) backwards; }
+.catalog-row { animation: row-rise 640ms var(--ease) backwards; }
 .catalog-row:nth-of-type(1) { animation-delay: 150ms; }
 .catalog-row:nth-of-type(2) { animation-delay: 230ms; }
 .catalog-row:nth-of-type(3) { animation-delay: 310ms; }

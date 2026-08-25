@@ -12,8 +12,11 @@ import {
   type SubtitleCollector,
 } from '../subtitles'
 import { convertSubtitleFile, type VttTrack } from '../subtitleFormats'
-import { fileInput, rangeInput, workerInput, type MediaInput } from './mediaInput'
-import type { WorkerGrant } from '../torrent'
+import { fileInput, rangeInput, torrentInput, workerInput, type MediaInput } from './mediaInput'
+// Re-exported so every existing import site keeps working; the declarations
+// themselves live in a leaf module the page can load without the remuxer.
+export * from './remuxTypes'
+import type { RemuxJob, RemuxSideFile, RemuxSource } from './remuxTypes'
 import { ReadAbortedError } from './rangeRead'
 import { planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
@@ -25,36 +28,6 @@ const SUBTITLE_SNAPSHOT_MS = 8_000
 // The slice a subtitle pass reads at a time. Big enough that a torrent read
 // is worth the round trip, small enough to keep memory flat on a 50 GB file.
 const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
-
-// Every source the site can play, as data. 'input' is the one page-bound
-// escape hatch — a live MediaInput object that cannot cross into a worker
-// and pins the job to the page's thread (mocks and tests live there).
-export type RemuxSource =
-  | { kind: 'file'; file: File }
-  | { kind: 'stream'; url: string; name: string; size: number }
-  | { kind: 'url'; url: string; name: string; size: number }
-  | { kind: 'worker'; grant: WorkerGrant }
-  | { kind: 'input'; input: MediaInput }
-
-// A subtitle file shipped next to the video. With a url it clones into the
-// worker; a read function pins the job to the page like 'input' does.
-export interface RemuxSideFile {
-  name: string
-  path: string
-  size: number
-  url?: string
-  // A sibling of a worker-served video: read through the video's own input,
-  // so the ticket in the url is whichever is current, not the one at start.
-  workerIndex?: number
-  read?: () => Promise<ArrayBuffer>
-}
-
-export interface RemuxJob {
-  roomID: string
-  mediaGeneration: number
-  source: RemuxSource
-  sideFiles: RemuxSideFile[]
-}
 
 export interface RemuxJobCallbacks {
   onProgress?: (pct: number) => void
@@ -83,18 +56,6 @@ export class PlanFailedError extends Error {
   }
 }
 
-export function sourceSize(source: RemuxSource): number {
-  return source.kind === 'file' ? source.file.size
-    : source.kind === 'input' ? source.input.size
-    : source.kind === 'worker' ? source.grant.size
-    : source.size
-}
-
-/** Whether the job is plain data end to end and may cross into a worker. */
-export function jobIsCloneable(job: RemuxJob): boolean {
-  return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined || file.workerIndex !== undefined)
-}
-
 // 'worker' is a torrent file on the fleet, 'stream' any plain Range origin
 // (the dev fixture), 'url' a plugin's own server. All are bytes behind
 // Range requests, read the same resilient way; only the error they turn
@@ -105,6 +66,7 @@ function buildInput(source: RemuxSource, roomID: string): MediaInput {
     case 'stream': return rangeInput(source.url, source.name, source.size)
     case 'url': return rangeInput(source.url, source.name, source.size)
     case 'worker': return workerInput(source.grant, roomID)
+    case 'torrentFile': return torrentInput(source.file)
     case 'input': return source.input
   }
 }

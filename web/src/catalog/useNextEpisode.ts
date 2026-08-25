@@ -51,6 +51,12 @@ export function useNextEpisode(
   const [pending, setPending] = useState<PendingNext | null>(null)
   const [seconds, setSeconds] = useState(AUTOPLAY_SECONDS)
   const requestSeqRef = useRef(0)
+  // Held rather than depended on: the caller re-creates this function on every
+  // render of the room, and the countdown below must not restart with it.
+  // Written after the commit, never during the render — a render can be
+  // thrown away, and a ref written by one that was is a lie.
+  const onPlayRef = useRef(onPlay)
+  useEffect(() => { onPlayRef.current = onPlay })
 
   useEffect(() => {
     setPending(null)
@@ -105,20 +111,24 @@ export function useNextEpisode(
     if (seconds <= 0) {
       const pick = pending.pick
       setPending(null)
-      onPlay(pick)
+      onPlayRef.current(pick)
       return
     }
     const timer = window.setTimeout(() => setSeconds((value) => value - 1), 1000)
     return () => window.clearTimeout(timer)
-  }, [pending, seconds, onPlay])
+    // onPlay is read through a ref: it is re-created on every render of the
+    // room, and depending on it re-armed this 1s timer often enough that the
+    // countdown could sit still.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, seconds])
 
   const dismiss = useCallback(() => setPending(null), [])
   const playNow = useCallback(() => {
     if (!pending) return
     const pick = pending.pick
     setPending(null)
-    onPlay(pick)
-  }, [pending, onPlay])
+    onPlayRef.current(pick)
+  }, [pending])
 
   return { pending, seconds, dismiss, playNow }
 }

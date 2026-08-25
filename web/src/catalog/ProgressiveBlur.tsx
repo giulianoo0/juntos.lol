@@ -1,18 +1,8 @@
-// A real progressive blur: five stacked backdrop layers, each blurring twice
-// as much as the one before and masked to end higher up, so the blur builds
-// from nothing at the bottom edge to its full strength at the top. A single
-// masked layer would fade a constant blur in and out — this ramps the blur
-// radius itself, which is what stops the hard "glass slab" edge.
-//
-// Layer geometry and the tint alpha are sampled from easing curves rather
-// than spaced evenly, so no band reads as a seam. The stops live in
-// theme.css next to the rest of the header styling.
-const LAYERS = 5
-
+// The fade that dissolves the board under the header. It used to be five
+// stacked backdrop-filter layers — a real progressive blur, and an expensive
+// one: five backdrop roots across the full window width, redone on every video
+// frame that played behind them. It is one painted gradient now (theme.css),
+// and the component survives only so its two mount points stay untouched.
 export function ProgressiveBlur({ className }: { className?: string }) {
-  return (
-    <div className={`progressive-blur ${className ?? ''}`} aria-hidden="true">
-      {Array.from({ length: LAYERS }, (_, index) => <span key={index} />)}
-    </div>
-  )
+  return <div className={`progressive-blur ${className ?? ''}`} aria-hidden="true" />
 }

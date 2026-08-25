@@ -1,4 +1,9 @@
-import parserBundleUrl from 'matroska-subtitles/dist/matroska-subtitles.min.js?url'
+// Served from public/ rather than imported with `?url`: this module is
+// reachable from both the page graph and the worker graph, and each graph
+// emitted its own copy of the same 147 kB file under its own name — two
+// downloads, two cache entries, for one parser. The copy is refreshed by
+// postinstall, so a version bump cannot leave it behind.
+const parserBundleUrl = '/matroska-subtitles.min.js'
 import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
 import type { VttTrack } from './subtitleFormats'
 

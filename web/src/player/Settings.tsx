@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Settings as SettingsIcon } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { useMorphingSize } from '../ui/useMorphingSize'
@@ -32,7 +32,7 @@ export interface SettingGroup {
  * quality off screen, or the settings stop being one surface and become a
  * stack of menus.
  */
-export function Settings({ groups, t }: { groups: SettingGroup[]; t: Translator }) {
+export const Settings = memo(function Settings({ groups, t }: { groups: SettingGroup[]; t: Translator }) {
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -118,4 +118,4 @@ export function Settings({ groups, t }: { groups: SettingGroup[]; t: Translator 
       <span className="settings-slot" aria-hidden="true" />
     </div>
   )
-}
+})

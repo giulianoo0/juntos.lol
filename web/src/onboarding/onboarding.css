@@ -9,8 +9,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(0, 0, 0, .78);
-  backdrop-filter: blur(3px);
+  background: rgba(0, 0, 0, .8);
   animation: overlay-in var(--t-open) var(--ease);
 }
 

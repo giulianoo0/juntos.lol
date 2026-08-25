@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
+import { Suspense, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { MonitorUp, Puzzle, Upload } from 'lucide-react'
@@ -21,14 +21,17 @@ import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
 import { CatalogBrowser } from '../catalog/CatalogBrowser'
 import { ProgressiveBlur } from '../catalog/ProgressiveBlur'
-import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
+import type { TitlePick } from '../catalog/MetaDetails'
+import { MetaDetails } from '../catalog/lazyDetails'
 import { openCatalogStream } from '../catalog/openStream'
 import { WorkerProbes } from '../components/WorkerProbes'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024
+import { MAX_UPLOAD_BYTES } from '../limits'
+// Re-exported so anything already importing it from the page keeps working.
+export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
 type ManualStep = false | 'menu' | 'file' | 'magnet'
@@ -473,14 +476,16 @@ export function Home() {
       </AnimatePresence>
 
       {detailsOpen ? (
-        <MetaDetails
-          onOpenPlugins={() => setPluginsOpen(true)}
-          key={`${detailsOpen.meta.type}:${detailsOpen.meta.id}`}
-          open={detailsOpen}
-          mode="create"
-          onClose={closeTitle}
-          onPickStream={pickStream}
-        />
+        <Suspense fallback={null}>
+          <MetaDetails
+            onOpenPlugins={() => setPluginsOpen(true)}
+            key={`${detailsOpen.meta.type}:${detailsOpen.meta.id}`}
+            open={detailsOpen}
+            mode="create"
+            onClose={closeTitle}
+            onPickStream={pickStream}
+          />
+        </Suspense>
       ) : null}
 
       {/* Shown once, before anything else, because neither tab name explains

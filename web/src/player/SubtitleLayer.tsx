@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from 'react'
+import { memo, type RefObject, useEffect, useRef, useState } from 'react'
 
 import { type ContentRect, subtitleFontSize, videoContentRect } from './subtitleLayout'
 
@@ -20,7 +20,7 @@ interface SubtitleLayerProps {
  * track still parses the file and still reports which cues are active; only
  * the drawing moves here.
  */
-export function SubtitleLayer({ videoRef, position, revision }: SubtitleLayerProps) {
+export const SubtitleLayer = memo(function SubtitleLayer({ videoRef, position, revision }: SubtitleLayerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [rect, setRect] = useState<ContentRect | null>(null)
 
@@ -29,13 +29,32 @@ export function SubtitleLayer({ videoRef, position, revision }: SubtitleLayerPro
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    const measure = () => setRect(videoContentRect(video))
-    measure()
+    // The chat column closing animates the video's width for 250ms, and the
+    // observer reports every frame of it. Coalescing to one measurement per
+    // frame — and dropping the ones that name the same box — turns a burst of
+    // renders into the two that actually change anything.
+    let frame = 0
+    const apply = () => {
+      frame = 0
+      const next = videoContentRect(video)
+      setRect((prev) => (
+        prev && next && prev.left === next.left && prev.top === next.top
+          && prev.width === next.width && prev.height === next.height
+          ? prev
+          : next
+      ))
+    }
+    const measure = () => {
+      if (frame) return
+      frame = requestAnimationFrame(apply)
+    }
+    apply()
     const observer = new ResizeObserver(measure)
     observer.observe(video)
     video.addEventListener('loadedmetadata', measure)
     video.addEventListener('resize', measure)
     return () => {
+      if (frame) cancelAnimationFrame(frame)
       observer.disconnect()
       video.removeEventListener('loadedmetadata', measure)
       video.removeEventListener('resize', measure)
@@ -83,4 +102,4 @@ export function SubtitleLayer({ videoRef, position, revision }: SubtitleLayerPro
       }
     : undefined
   return <div className="subtitle-layer" ref={hostRef} style={style} aria-hidden="true" />
-}
+})
