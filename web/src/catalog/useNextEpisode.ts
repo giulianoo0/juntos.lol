@@ -53,8 +53,10 @@ export function useNextEpisode(
   const requestSeqRef = useRef(0)
   // Held rather than depended on: the caller re-creates this function on every
   // render of the room, and the countdown below must not restart with it.
+  // Written after the commit, never during the render — a render can be
+  // thrown away, and a ref written by one that was is a lie.
   const onPlayRef = useRef(onPlay)
-  onPlayRef.current = onPlay
+  useEffect(() => { onPlayRef.current = onPlay })
 
   useEffect(() => {
     setPending(null)
