@@ -36,7 +36,7 @@ function install(script: Script) {
   }))
 }
 
-const opts = (gate = new ReadGate()) => ({ url: () => 'http://x/f', size: SIZE, gate, maxAttempts: 3 })
+const opts = (gate = new ReadGate()) => ({ url: () => 'http://x/f', size: SIZE, gate, maxAttempts: 3, backoffMs: 4 })
 
 beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }) })
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })

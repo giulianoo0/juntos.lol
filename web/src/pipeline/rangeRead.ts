@@ -81,6 +81,8 @@ export interface RangeReaderOptions {
   stallMs?: number
   /** How many "alive but slow" answers (504) are tolerated per read. */
   maxSlowRetries?: number
+  /** Base of the exponential backoff between failed attempts. */
+  backoffMs?: number
   /** Called on 401/403 once per read; a true return means "try again". */
   refresh?: () => Promise<boolean>
   /** Bytes delivered, for throughput accounting. */
@@ -100,8 +102,8 @@ const BACKOFF_BASE_MS = 250
 const BACKOFF_CAP_MS = 8_000
 const TERMINAL_STATUSES = new Set([400, 404, 410, 416])
 
-function backoff(attempt: number): number {
-  const base = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempt)
+function backoff(attempt: number, baseMs: number): number {
+  const base = Math.min(BACKOFF_CAP_MS, baseMs * 2 ** attempt)
   return base / 2 + Math.random() * base / 2
 }
 
@@ -227,7 +229,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
             reader = await open()
             if (!reader) {
               attempts += 1
-              await sleep(backoff(attempts), gate, signal)
+              await sleep(backoff(attempts, opts.backoffMs ?? BACKOFF_BASE_MS), gate, signal)
               continue
             }
           }
@@ -242,7 +244,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
             reader = null
             if (deliveredByBody === 0) {
               attempts += 1
-              await sleep(backoff(attempts), gate, signal)
+              await sleep(backoff(attempts, opts.backoffMs ?? BACKOFF_BASE_MS), gate, signal)
             }
             continue
           }
@@ -253,7 +255,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
             reader = null
             if (deliveredByBody === 0) {
               attempts += 1
-              await sleep(backoff(attempts), gate, signal)
+              await sleep(backoff(attempts, opts.backoffMs ?? BACKOFF_BASE_MS), gate, signal)
             }
             continue
           }
