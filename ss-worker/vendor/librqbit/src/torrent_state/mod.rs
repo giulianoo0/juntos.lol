@@ -261,7 +261,7 @@ impl ManagedTorrent {
         f(&mut self.locked.write().state)
     }
 
-    pub(crate) fn with_chunk_tracker<R>(
+    pub fn with_chunk_tracker<R>(
         &self,
         f: impl FnOnce(&ChunkTracker) -> R,
     ) -> anyhow::Result<R> {
