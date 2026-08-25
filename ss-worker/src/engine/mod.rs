@@ -383,12 +383,20 @@ impl Engine {
     pub async fn open(&self, infohash: &str, index: usize, start: u64, prio: Prio) -> anyhow::Result<Reader> {
         let handle = self.touch(infohash).context("unknown torrent")?;
         let live_deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+        let mut unpaused = false;
         loop {
             if handle.with_state(|s| matches!(s, ManagedTorrentState::Error(_))) {
                 bail!("torrent failed");
             }
             if handle.live().is_some() {
                 break;
+            }
+            // A torrent the reaper paused stays paused until someone asks for
+            // it again; a read with a valid ticket is exactly that.
+            if !unpaused && handle.is_paused() {
+                unpaused = true;
+                let _ = self.session.unpause(&handle).await;
+                continue;
             }
             if tokio::time::Instant::now() >= live_deadline {
                 bail!("torrent not live");

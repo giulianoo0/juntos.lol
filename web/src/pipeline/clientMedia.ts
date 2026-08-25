@@ -405,11 +405,17 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     }
     return reach >= durationMs - SEGMENT_SECONDS * 1000
   }
-  // A region that stops growing keeps what it produced.
-  const closeRegion = () => {
+  // A region that stops growing keeps what it produced, minus what the
+  // caller is about to throw away: a seek abandons queued and in-flight
+  // uploads, and segments that never reach the bucket must not be claimed —
+  // the map would cover a tail the playlists cut off. The discard estimate
+  // errs high on purpose; re-producing a breath of tail is cheap, a hole
+  // that reads as covered is not.
+  const closeRegion = (discardedSegments = 0) => {
     const current = regions.find((r) => r.growing)
     if (!current) return
-    current.producedMs = segmentsProduced() * SEGMENT_SECONDS * 1000
+    const kept = Math.max(segmentsProduced() - discardedSegments, 0)
+    current.producedMs = kept * SEGMENT_SECONDS * 1000
     current.growing = false
   }
   // Segments per playlist: video and its audio rendition advance together,
@@ -469,7 +475,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const restartAt = (absoluteMs: number) => {
     restartPending = true
     console.log(`[remux-worker] restart at ${absoluteMs}`)
-    closeRegion()
+    closeRegion(pending.length + inflightAborts.size * PRESIGN_BATCH)
     pendingRestart = (async () => {
       // The dying region goes first: its queued and in-flight segments would
       // otherwise hold the uplink, and its conversion would compete with the
@@ -503,9 +509,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     const startSeconds = nextStartSeconds
     regionStartMs = Math.round(startSeconds * 1000)
     regionAimMs = Math.max(regionAimMs, regionStartMs)
+    closeRegion()
     segmentCounts.clear()
     seekTargetSeconds = null
-    closeRegion()
     regions.push({ n: region, startMs: regionStartMs, producedMs: 0, growing: true })
     // The old region's playlists stay published on the server; only the
     // local map restarts, so the next publish carries the new region's

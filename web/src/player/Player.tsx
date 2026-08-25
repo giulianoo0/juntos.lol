@@ -123,6 +123,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   syncRef.current = syncState
   const serverOffsetRef = useRef(serverOffsetMs)
   serverOffsetRef.current = serverOffsetMs
+  // The offset of the source the element actually holds. The state-derived
+  // offset moves a render before the element reloads; anything comparing it
+  // with the element's own clock must use this one instead.
+  const loadedOffsetSecRef = useRef(0)
   const playRequestedRef = useRef(false)
   const playAttemptRef = useRef(false)
   const controlsTimerRef = useRef<number | null>(null)
@@ -159,7 +163,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // before the first publish) has only the offset the room names. Either
   // way: element time + offset = room time.
   const regions = room.mediaRegions && room.mediaRegions.length > 0 ? room.mediaRegions : null
-  const [activeRegionN, setActiveRegionN] = useState<number | null>(null)
+  // Initialised to the region the room is already at, so the first load
+  // opens the right playlists instead of loading the bare master and
+  // immediately tearing it down for the region's own.
+  const [activeRegionN, setActiveRegionN] = useState<number | null>(() => {
+    if (!room.mediaRegions || room.mediaRegions.length === 0) return null
+    const wantedMs = syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : 0
+    return regionFor(room.mediaRegions, wantedMs, null)
+  })
   const activeRegion = regions?.find((r) => r.n === activeRegionN) ?? null
   const mediaOffsetMs = activeRegion ? activeRegion.startMs : (room.mediaOffsetMs ?? 0)
   const mediaOffsetSec = mediaOffsetMs / 1000
@@ -265,6 +276,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const resumeAbs = resumeRef.current.generation === generation ? resumeRef.current.time : 0
     const wantedAbs = sync ? expectedPositionMs(sync, Date.now() + serverOffsetRef.current) / 1000 : resumeAbs
     const startPosition = Math.max(wantedAbs - mediaOffsetSec, 0)
+    loadedOffsetSecRef.current = mediaOffsetSec
 
     const failPlayback = (reason: string) => {
       if (disposed) return
@@ -903,13 +915,19 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           attemptPlay()
         }}
         onTimeUpdate={(event) => {
-          const absoluteSec = event.currentTarget.currentTime + mediaOffsetSec
+          // The element's clock belongs to the source it holds: between a
+          // region choice and its reload the state offset is already the new
+          // one, and pairing it with the old element's time would name an
+          // absolute position nobody is at.
+          const loadedOffset = loadedOffsetSecRef.current
+          const absoluteSec = event.currentTarget.currentTime + loadedOffset
           setCurrentTime(absoluteSec)
           setDuration(playableDuration(event.currentTarget))
-          setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec))
+          setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), loadedOffset))
           // Playback walking off the end of a finished region continues in
-          // the region that picks up there, if one does.
-          if (regions) {
+          // the region that picks up there, if one does — judged only while
+          // the element holds the region the state says it does.
+          if (regions && loadedOffset === mediaOffsetSec) {
             const next = regionFor(regions, absoluteSec * 1000, activeRegionN)
             if (next !== null && next !== activeRegionN) setActiveRegionN(next)
           }

@@ -320,7 +320,7 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			}
 			// The region map only names regions whose master has rendered:
 			// a player sent to rN_master.m3u8 must find it.
-			if regions := renderedRegions(ctx, store, roomID, req.Timeline.Regions, rendered); regions != nil && !sameRegions(regions, storedRoom.MediaRegions) {
+			if regions := renderedRegions(ctx, store, roomID, req.Timeline.Regions, rendered, storedRoom.MediaRegions); regions != nil && !sameRegions(regions, storedRoom.MediaRegions) {
 				if err := store.SetMediaRegions(ctx, roomID, regions); err != nil {
 					c.Status(http.StatusInternalServerError)
 					return
@@ -492,10 +492,16 @@ func validRegions(regions []room.MediaRegion) bool {
 
 // renderedRegions keeps the regions whose master the server holds, so the
 // map never points a player at a playlist that is not there. Nil means the
-// request carried no regions at all.
-func renderedRegions(ctx context.Context, store *room.Store, roomID string, regions []room.MediaRegion, rendered map[string]string) []room.MediaRegion {
+// request carried no regions at all. A failed lookup must not shrink the
+// map: a region already published stays in it, because dropping it would
+// yank every player off a playlist that is in fact still there.
+func renderedRegions(ctx context.Context, store *room.Store, roomID string, regions []room.MediaRegion, rendered map[string]string, current []room.MediaRegion) []room.MediaRegion {
 	if regions == nil {
 		return nil
+	}
+	known := make(map[int]struct{}, len(current))
+	for _, r := range current {
+		known[r.N] = struct{}{}
 	}
 	out := make([]room.MediaRegion, 0, len(regions))
 	for _, r := range regions {
@@ -504,7 +510,14 @@ func renderedRegions(ctx context.Context, store *room.Store, roomID string, regi
 			out = append(out, r)
 			continue
 		}
-		if has, err := store.HasPlaylist(ctx, roomID, name); err == nil && has {
+		has, err := store.HasPlaylist(ctx, roomID, name)
+		if err != nil {
+			if _, ok := known[r.N]; ok {
+				out = append(out, r)
+			}
+			continue
+		}
+		if has {
 			out = append(out, r)
 		}
 	}

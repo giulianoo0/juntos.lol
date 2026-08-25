@@ -206,7 +206,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
-  mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
+  // With a region map the Player owns this ref (the offset is its region
+  // choice); the room's scalar only seeds it while there is no map.
+  if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
+    mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
+  }
   // The swarm behind this room's torrent. The host's own session refreshes
   // it every second; everyone else reads what the worker reported through
   // the room, a heartbeat behind. Either way the preparing screen shows it.
