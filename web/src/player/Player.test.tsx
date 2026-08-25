@@ -872,6 +872,37 @@ describe('scrubbing', () => {
     })
   })
 
+  it('holds the element still and parks the play while no region covers the room', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    // Room parked at 1220s; the only region covers the first 300s.
+    const regioned = { ...longRoom, mediaRegions: [{ n: 0, startMs: 0, producedMs: 300_000, growing: true }] }
+    const parked = { playing: false, positionMs: 1_220_000, rate: 1, serverTimeMs: 100_000 }
+    const { container, rerender } = render(
+      <Player room={regioned} isController videoRef={videoRef} send={send} t={t} syncState={parked} serverOffsetMs={0} />,
+    )
+    // The wait is shown, not silently played through.
+    expect(container.querySelector('.player-loading')).not.toBeNull()
+    const video = videoRef.current!
+    video.play = vi.fn(() => Promise.resolve())
+    fireEvent.click(container.querySelector('button.is-play')! as HTMLButtonElement)
+    // No play goes on the wire while nothing covers the target...
+    expect(send).not.toHaveBeenCalledWith('play', expect.anything())
+    // ...and the region landing resumes the room right at it.
+    rerender(
+      <Player
+        room={{ ...regioned, mediaVersion: 1, mediaRegions: [{ n: 0, startMs: 0, producedMs: 300_000, growing: false }, { n: 1, startMs: 1_219_000, producedMs: 8_000, growing: true }] }}
+        isController
+        videoRef={videoRef}
+        send={send}
+        t={t}
+        syncState={parked}
+        serverOffsetMs={0}
+      />,
+    )
+    expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
+  })
+
   it('does not park when the target is already covered', () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()

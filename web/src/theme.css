@@ -1060,3 +1060,6 @@ button.timecode-chapter:hover { color: var(--text); }
   .name-dialog { inset: auto 0 0 0; width: 100%; margin: 0; border-radius: 22px 22px 0 0; animation: drawer-in var(--t-open) cubic-bezier(.22,.61,.36,1); }
   .name-dialog form { padding-bottom: calc(26px + env(safe-area-inset-bottom)); }
 }
+.pipeline-chip { display: inline-flex; align-items: center; gap: 7px; }
+.pipeline-metric { display: inline-flex; align-items: center; gap: 3px; }
+.pipeline-dot { opacity: .45; }

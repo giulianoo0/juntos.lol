@@ -38,6 +38,11 @@ interface PlayerProps {
   // Hands the room-aware seek out, so a jump from outside the bar (the
   // chapter list) parks and resumes the room exactly like the scrubber.
   seekRef?: MutableRefObject<((seconds: number) => void) | null>
+  // Raised while the room's position is in media no region has produced yet.
+  // The sync layer reads it to stop steering the element: resyncing then
+  // would clamp into the old region and play the wrong minutes under a
+  // clock that says otherwise.
+  coldWaitRef?: MutableRefObject<boolean>
 }
 
 // How far past a growing region's produced edge a position still counts as
@@ -113,7 +118,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -188,6 +193,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const next = regionFor(regions, wantedMs, activeRegionN)
     if (next !== null && next !== activeRegionN) setActiveRegionN(next)
   }, [regions, syncState, serverOffsetMs, activeRegionN, mediaOffsetMs, videoRef])
+  // Where the room is pointed, and whether any region has media under it.
+  // While none does, the pipeline is on its way: the element must not play —
+  // hls.js would clamp into the old region and show the wrong minutes — and
+  // the viewer is told what the wait is instead.
+  const coldTargetMs = syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : null
+  const coldWait = regions !== null && coldTargetMs !== null
+    && !regions.some((r) => regionHolds(r, coldTargetMs))
+  if (coldWaitRef) coldWaitRef.current = coldWait
+  useEffect(() => {
+    if (coldWait) videoRef.current?.pause()
+  }, [coldWait, videoRef])
   // The timeline is the room's, not the element's: the scrubber promises the
   // whole episode from the first publish, while the element grows region by
   // region behind it.
@@ -508,7 +524,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const video = videoRef.current
     if (!video || !playRequestedRef.current || playAttemptRef.current) return
     playAttemptRef.current = true
-    void video.play().then(() => {
+    void Promise.resolve(video.play()).then(() => {
       playAttemptRef.current = false
       if (!playRequestedRef.current) return
       playRequestedRef.current = false
@@ -521,6 +537,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       playAttemptRef.current = false
     })
   }, [commandPositionMs, isController, send, videoRef])
+
+  // When the wait ends with the room playing — the region landed while the
+  // element was held paused — nobody sends a new state message, so the
+  // element is nudged back into playback here. Only the transition out of
+  // the wait nudges; an ordinary mount plays through its own paths.
+  const wasColdRef = useRef(false)
+  useEffect(() => {
+    const wasCold = wasColdRef.current
+    wasColdRef.current = coldWait
+    if (coldWait || !wasCold || !syncRef.current?.playing) return
+    const video = videoRef.current
+    if (!video || !video.paused) return
+    playRequestedRef.current = true
+    attemptPlay()
+  }, [coldWait, attemptPlay, videoRef])
 
   // A double click fullscreens the player, and its first click is
   // indistinguishable from a single one until the second arrives. Acting
@@ -561,6 +592,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 
     resumeAtMsRef.current = null
     if (video.paused) {
+      // A play pointed at media no region holds yet cannot start anything:
+      // the pipeline is still building it. Park the intent; the room plays
+      // by itself the moment the region publishes.
+      if (coldWait && coldTargetMs !== null) {
+        resumeAtMsRef.current = Math.round(coldTargetMs)
+        return true
+      }
       // Calling play inside the gesture preserves browser user activation. A
       // WebSocket round trip first would make browsers reject audible autoplay.
       playRequestedRef.current = true
@@ -571,7 +609,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     video.pause()
     send('pause', { positionMs: commandPositionMs(video), rate: video.playbackRate })
     return true
-  }, [attemptPlay, commandPositionMs, isController, refuseControl, send, syncState, videoRef])
+  }, [attemptPlay, commandPositionMs, coldWait, coldTargetMs, isController, refuseControl, send, syncState, videoRef])
 
   const pendingSentServerMs = useRef(0)
   const seek = useCallback((seconds: number) => {
@@ -893,10 +931,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         toggleFullscreen()
       }}
     >
-      {loading ? (
+      {loading || coldWait ? (
         <div className="player-loading" role="status" aria-live="polite">
           <span className="player-spinner" aria-hidden="true" />
-          {stalledLong ? (
+          {stalledLong || coldWait ? (
             <div className="player-preparing">
               <span>{t('room.preparingPart')}</span>
               {swarm ? <TorrentReadout stats={swarm} /> : null}

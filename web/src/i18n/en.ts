@@ -97,6 +97,8 @@ export const en: Record<string, string> = {
   'room.switchScreen': 'Share screen',
   'room.changeFailed': 'Could not change what is playing. Try again.',
   'room.resuming': 'Resuming the video preparation…',
+  'room.bufferAhead': 'Buffer ahead of playback',
+  'room.bufferAheadShort': 'buffer',
   'room.preparingPart': 'Preparing this part of the video…',
   'room.resumeFailed': 'Could not resume the preparation. Reopen the torrent under Change media.',
   'room.screenWaiting': 'Waiting for the host to start sharing',

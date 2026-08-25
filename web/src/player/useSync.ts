@@ -75,11 +75,16 @@ export function useSync(
   // on the wire is absolute, every media.currentTime is region-relative, and
   // this is the only place the two meet.
   mediaOffsetMsRef?: MutableRefObject<number>,
+  // Raised by the player while the room points at media no region has
+  // produced yet. Steering the element then would clamp it into the old
+  // region: the sync layer holds still and keeps it paused instead.
+  coldWaitRef?: MutableRefObject<boolean>,
 ): SyncResult {
   const socketRef = useRef<WebSocket | null>(null)
   const offsetRef = useRef(0)
   const bufferingRef = useRef(false)
   const mediaOffset = () => mediaOffsetMsRef?.current ?? 0
+  const coldWait = () => coldWaitRef?.current ?? false
   const [state, setState] = useState(initialState)
   const [controllerId, setControllerId] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -144,7 +149,7 @@ export function useSync(
       if (!media) return
       setState((current) => {
         const expected = expectedPositionMs(current, Date.now() + offsetRef.current)
-        if (needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
+        if (!coldWait() && needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
         return current
       })
     }
@@ -181,6 +186,13 @@ export function useSync(
       setState(nextState)
       const media = videoRef.current
       if (!media) return
+      if (coldWait()) {
+        // The wrong region is all the element has; playing it would show the
+        // wrong minutes under the room's clock. The player reloads it onto
+        // the right region when that region publishes.
+        if (!media.paused) media.pause()
+        return
+      }
       const expected = expectedPositionMs(nextState, Date.now() + offsetRef.current)
       if (!bufferingRef.current && needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
       media.playbackRate = nextState.rate || 1
@@ -269,7 +281,7 @@ export function useSync(
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'heartbeat', clientTimeMs }))
       sendReadiness()
       const media = videoRef.current
-      if (!media || bufferingRef.current) return
+      if (!media || bufferingRef.current || coldWait()) return
       setState((current) => {
         const expected = expectedPositionMs(current, Date.now() + offsetRef.current)
         if (needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000

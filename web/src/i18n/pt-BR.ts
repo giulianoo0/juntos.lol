@@ -97,6 +97,8 @@ export const ptBR: Record<string, string> = {
   'room.switchScreen': 'Compartilhar tela',
   'room.changeFailed': 'Não foi possível trocar o que está tocando. Tente de novo.',
   'room.resuming': 'Retomando o preparo do vídeo…',
+  'room.bufferAhead': 'Buffer à frente da reprodução',
+  'room.bufferAheadShort': 'buffer',
   'room.preparingPart': 'Preparando essa parte do vídeo…',
   'room.resumeFailed': 'Não deu para retomar o preparo. Abra o torrent de novo em Trocar mídia.',
   'room.screenWaiting': 'Esperando o anfitrião começar a compartilhar',

@@ -33,6 +33,7 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
 import { MAX_UPLOAD_BYTES } from './Home'
@@ -207,7 +208,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // The Player's own seek, for jumps that start outside it (chapter list):
   // it parks a playing room on a cold target and resumes it on publish.
   const playerSeekRef = useRef<((seconds: number) => void) | null>(null)
-  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef)
+  // Raised by the player while the room points at media still being built;
+  // the sync layer stops steering the element until the region lands.
+  const coldWaitRef = useRef(false)
+  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
   // With a region map the Player owns this ref (the offset is its region
@@ -564,7 +568,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
-          {uploadProgress !== null ? <span className="upload-chip">{t('home.uploading')} {uploadProgress.pct}%</span> : null}
+          {uploadProgress !== null ? <PipelineChip swarm={swarmStats} progress={uploadProgress} videoRef={videoRef} t={t} /> : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController && !isScreenRoom ? (
@@ -642,6 +646,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               swarm={swarmStats}
               mediaOffsetMsRef={mediaOffsetMsRef}
               seekRef={playerSeekRef}
+              coldWaitRef={coldWaitRef}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={
