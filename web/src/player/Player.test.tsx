@@ -931,6 +931,25 @@ describe('scrubbing', () => {
     expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
   })
 
+  it('parks a room with no region map that has run past what the element holds', () => {
+    // A tab that slept comes back with the room minutes ahead of the media.
+    // Chasing it means hls.js clamping to the live edge and the sync layer
+    // dragging it forward again, forever.
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const ahead = { playing: true, positionMs: 1_220_000, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={ahead} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    video.pause = vi.fn()
+    Object.defineProperty(video, 'duration', { configurable: true, value: 300 })
+    fireEvent.durationChange(video)
+
+    expect(container.querySelector('.player-preparing')).not.toBeNull()
+    expect(video.pause).toHaveBeenCalled()
+  })
+
   it('does not park when the target is already covered', () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()

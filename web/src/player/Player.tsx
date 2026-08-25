@@ -52,7 +52,7 @@ interface PlayerProps {
 const REGION_AHEAD_MS = 30_000
 const REGION_BEHIND_MS = 1_000
 
-function regionHolds(region: MediaRegion, ms: number): boolean {
+export function regionHolds(region: MediaRegion, ms: number): boolean {
   const end = region.startMs + region.producedMs + (region.growing ? REGION_AHEAD_MS : 0)
   return ms >= region.startMs - REGION_BEHIND_MS && ms <= end
 }
@@ -203,8 +203,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // hls.js would clamp into the old region and show the wrong minutes — and
   // the viewer is told what the wait is instead.
   const coldTargetMs = syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : null
-  const coldWait = regions !== null && coldTargetMs !== null
-    && !regions.some((r) => regionHolds(r, coldTargetMs))
+  // A room with no region map is read as the one region it is: the element's
+  // own loaded span, from the room's offset, still growing. Without this the
+  // wait only protected rooms that had already been sought in, and a room
+  // whose clock ran past what exists — a tab that slept, a laptop that
+  // closed — went back to hls.js clamping to the live edge and the sync
+  // layer dragging it forward again, over and over.
+  const coldRegions = regions ?? (duration > 0
+    ? [{ n: 0, startMs: mediaOffsetMs, producedMs: Math.round(duration * 1000), growing: true }]
+    : null)
+  const coldWait = coldRegions !== null && coldTargetMs !== null
+    && !coldRegions.some((r) => regionHolds(r, coldTargetMs))
   if (coldWaitRef) coldWaitRef.current = coldWait
   useEffect(() => {
     if (coldWait) videoRef.current?.pause()

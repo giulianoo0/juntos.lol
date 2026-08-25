@@ -7,7 +7,7 @@ import { StatusPill } from '../components/StatusPill'
 import { UploadAvailability } from '../components/UploadAvailability'
 import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
-import { Player } from '../player/Player'
+import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
 import {
   dropScreenStream,
@@ -245,9 +245,22 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // jumps to wherever the room is. One attempt per mount — a failure means
   // the fleet is gone or someone else controls the room now, and retrying
   // would just swap generations in a loop.
+  //
+  // It waits until the room actually needs it. A fresh generation is a fresh
+  // start: nothing produced survives it. Firing on mount meant reloading a
+  // room that played perfectly threw the whole episode away and rebuilt it
+  // from zero — so the trigger is the room pointing somewhere no region
+  // holds, which is the one thing a dead pipeline cannot fix by itself.
+  const resumeWanted = sync.state ? expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs) : null
+  const liveRegions = liveRoom.mediaRegions ?? []
+  const needsPreparo = liveRoom.status !== 'ready'
+    || (resumeWanted !== null && liveRegions.length > 0
+      && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
+      && !liveRegions.some((region) => regionHolds(region, resumeWanted)))
   const resumeTried = useRef(false)
   useEffect(() => {
     if (resumeTried.current || !sync.memberId || !sync.capability) return
+    if (!needsPreparo) return
     if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
     if (uploadActive(room.id) || remuxHandleFor(room.id)) { resumeTried.current = true; return }
     const source = resumableSourceFor(room.id)
@@ -284,7 +297,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         if (!torrentErrorRetryable(error)) clearResumableSource(room.id)
       }
     })()
-  }, [room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
+  }, [needsPreparo, room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
   // The dock on the right holds one thing at a time: the chat, or the
   // chapter list, which replaces it rather than stacking beside it.
   const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')

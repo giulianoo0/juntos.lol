@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
-import { changeRoomSource } from '../upload'
+import { changeRoomSource, startUrlUpload } from '../upload'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 
 const screenStream = { getTracks: () => [], getVideoTracks: () => [] } as unknown as MediaStream
@@ -21,6 +21,7 @@ vi.mock('../upload', async (importOriginal) => ({
     status: 'uploading', sourceKind: 'upload', fileName: 'next.mkv',
     mediaGeneration: 1, uploadEndpoint: '/api/upload/', streamStartBytes: 1024,
   }),
+  startUrlUpload: vi.fn(),
 }))
 
 class FakeWebSocket {
@@ -246,6 +247,66 @@ describe('RoomPage source swap', () => {
     await waitFor(() => expect(requestScreenStream).toHaveBeenCalled())
     expect(changeRoomSource).not.toHaveBeenCalled()
     expect(stashScreenStream).not.toHaveBeenCalled()
+  })
+})
+
+describe('RoomPage retomar o preparo', () => {
+  // Resuming reopens the source on a fresh generation, and nothing already
+  // produced survives that. It has to wait until the room is actually
+  // pointing at media no region holds.
+  const roomWith = (mediaRegions: unknown) => ({
+    id: 'abc123', fileName: 'movie.mkv', status: 'ready',
+    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+    durationMs: 600_000, mediaRegions,
+    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
+  })
+
+  const setup = (mediaRegions: unknown) => {
+    localStorage.clear()
+    localStorage.setItem('ss.nickname', 'Giuli')
+    localStorage.setItem('ss.resume.abc123', JSON.stringify({
+      kind: 'url', fileName: 'movie.mkv', url: 'https://example.test/movie.mkv', size: 10, savedAt: Date.now(),
+    }))
+    vi.clearAllMocks()
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => roomWith(mediaRegions) }))
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const welcome = () => act(() => {
+    FakeWebSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'welcome', memberId: 'm1', controllerId: 'm1', capability: 'cap-token',
+        members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }],
+        state: { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 },
+      }),
+    })
+  })
+
+  it('leaves a room alone when a region already covers where it is', async () => {
+    setup([{ n: 0, startMs: 0, producedMs: 600_000, growing: false }])
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome()
+
+    await screen.findByRole('button', { name: /copy link|copiar link/i })
+    expect(changeRoomSource).not.toHaveBeenCalled()
+    expect(startUrlUpload).not.toHaveBeenCalled()
+  })
+
+  it('reopens the source when nothing holds the position the room is at', async () => {
+    setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }])
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome()
+
+    await waitFor(() => expect(changeRoomSource).toHaveBeenCalled())
   })
 })
 
