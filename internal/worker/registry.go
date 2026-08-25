@@ -29,11 +29,19 @@ type Heartbeat struct {
 		Used  int64 `json:"used"`
 		Quota int64 `json:"quota"`
 	} `json:"disk"`
+	Transfer     *TransferStats  `json:"transfer"`
 	Leases       int             `json:"leases"`
 	MaxLeases    int             `json:"maxLeases"`
 	MaxTorrents  int             `json:"maxTorrents"`
 	PermitsInUse int64           `json:"permitsInUse"`
 	Torrents     []TorrentDigest `json:"torrents"`
+}
+
+// TransferStats is the worker's serving-bandwidth ceiling and how much of
+// it the last stretch actually used.
+type TransferStats struct {
+	CapBps  int64 `json:"capBps"`
+	UsedBps int64 `json:"usedBps"`
 }
 
 // TorrentDigest is one torrent as the worker sees it.

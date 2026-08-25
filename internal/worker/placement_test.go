@@ -93,20 +93,12 @@ func TestAffinityDropsWithTheHeartbeat(t *testing.T) {
 
 func TestPlacementRefusesAWorkerNearItsBandwidthCeiling(t *testing.T) {
 	r := newRegistry(t)
-	hot := Heartbeat{Leases: 0, MaxLeases: 8}
-	hot.Transfer = &struct {
-		CapBps  int64 `json:"capBps"`
-		UsedBps int64 `json:"usedBps"`
-	}{CapBps: 75_000_000, UsedBps: 70_000_000}
+	hot := Heartbeat{Leases: 0, MaxLeases: 8, Transfer: &TransferStats{CapBps: 75_000_000, UsedBps: 70_000_000}}
 	live(r, "hot", hot)
 	_, err := r.Place(strings.Repeat("f", 40), 0, time.Now())
 	require.ErrorIs(t, err, ErrWorkersBusy)
 
-	cool := Heartbeat{Leases: 0, MaxLeases: 8}
-	cool.Transfer = &struct {
-		CapBps  int64 `json:"capBps"`
-		UsedBps int64 `json:"usedBps"`
-	}{CapBps: 75_000_000, UsedBps: 10_000_000}
+	cool := Heartbeat{Leases: 0, MaxLeases: 8, Transfer: &TransferStats{CapBps: 75_000_000, UsedBps: 10_000_000}}
 	live(r, "cool", cool)
 	w, err := r.Place(strings.Repeat("f", 40), 0, time.Now())
 	require.NoError(t, err)
