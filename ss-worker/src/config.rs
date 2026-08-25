@@ -33,6 +33,9 @@ pub struct WorkerConfig {
     pub per_torrent_peer_limit: usize,
     pub upload_bps: u32,
     pub download_bps: u32,
+    /// Ceiling on the data plane's egress to browsers, bytes per second.
+    /// 0 is uncapped. A worker near this ceiling reports itself full.
+    pub transfer_bps: u64,
     pub idle_grace: Duration,
     pub reap_ttl: Duration,
     pub runtime_worker_threads: usize,
@@ -58,6 +61,26 @@ where
 
 fn env_secs(name: &str, default: u64) -> anyhow::Result<Duration> {
     Ok(Duration::from_secs(env_parse(name, default)?))
+}
+
+/// Loads KEY=VALUE lines into the environment, real env winning. The setup
+/// wizard writes this file so a bare `ss-worker` starts configured.
+pub fn load_env_file(path: &std::path::Path) -> anyhow::Result<usize> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut loaded = 0;
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let (key, value) = (key.trim(), value.trim().trim_matches('"'));
+        if std::env::var(key).map(|v| v.is_empty()).unwrap_or(true) {
+            std::env::set_var(key, value);
+            loaded += 1;
+        }
+    }
+    Ok(loaded)
 }
 
 impl WorkerConfig {
@@ -94,6 +117,7 @@ impl WorkerConfig {
             per_torrent_peer_limit: env_parse("SS_WORKER_PEER_LIMIT", 80)?,
             upload_bps: env_parse::<u32>("SS_WORKER_UPLOAD_MBIT", 3)? * 125_000,
             download_bps: env_parse::<u32>("SS_WORKER_DOWNLOAD_MBIT", 0)? * 125_000,
+            transfer_bps: env_parse::<u64>("SS_WORKER_TRANSFER_MBIT", 0)? * 125_000,
             idle_grace: env_secs("SS_WORKER_IDLE_GRACE_SECS", 120)?,
             reap_ttl: env_secs("SS_WORKER_REAP_TTL_SECS", 180)?,
             runtime_worker_threads: env_parse("SS_WORKER_RUNTIME_THREADS", 0)?,

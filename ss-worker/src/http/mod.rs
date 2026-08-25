@@ -1,5 +1,6 @@
 pub mod acme;
 mod cors;
+pub mod throttle;
 mod file;
 mod haves;
 mod hint;
@@ -26,6 +27,7 @@ use crate::ticket::{self, Ticket};
 /// against, this worker's id, the revoked set, and the counters.
 pub struct AppState {
     pub engine: Arc<Engine>,
+    pub throttle: Arc<throttle::Throttle>,
     pub server_key: RwLock<Option<VerifyingKey>>,
     pub worker_id: RwLock<String>,
     pub revoked: Mutex<HashMap<String, u64>>,

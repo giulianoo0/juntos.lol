@@ -67,6 +67,11 @@ func hasRoom(w Worker, sizeHint int64) bool {
 			return false
 		}
 	}
+	// A worker serving near its bandwidth ceiling is full: another room
+	// there would only split a pipe that is already spoken for.
+	if hb.Transfer != nil && hb.Transfer.CapBps > 0 && hb.Transfer.UsedBps >= hb.Transfer.CapBps*85/100 {
+		return false
+	}
 	return true
 }
 

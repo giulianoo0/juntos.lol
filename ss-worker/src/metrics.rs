@@ -6,6 +6,7 @@ use crate::http::{tls::CertSlot, AppState, FIRST_BYTE_BOUNDS};
 /// Prometheus text exposition, hand-rolled: a dozen series do not need a
 /// client library.
 pub fn render(state: &AppState, slot: Option<&CertSlot>) -> String {
+    let cap = state.throttle.cap_bps();
     let m = &state.metrics;
     let snap = state.engine.snapshot();
     let mut out = String::new();
@@ -31,6 +32,7 @@ pub fn render(state: &AppState, slot: Option<&CertSlot>) -> String {
     let _ = writeln!(out, "# TYPE ssw_range_stall_seconds_sum counter\nssw_range_stall_seconds_sum {}", m.stall_sum_ms.load(Ordering::Relaxed) as f64 / 1000.0);
     let expiry = slot.and_then(|s| s.not_after()).map(|t| t - crate::ticket::now_secs() as i64).unwrap_or(0);
     let _ = writeln!(out, "# TYPE ssw_cert_expiry_seconds gauge\nssw_cert_expiry_seconds {expiry}");
+    let _ = writeln!(out, "# TYPE ssw_transfer_cap_bps gauge\nssw_transfer_cap_bps {cap}");
     let peers: u64 = snap.torrents.iter().map(|t| t.peers).sum();
     let _ = writeln!(out, "# TYPE ssw_peers gauge\nssw_peers {peers}");
     out

@@ -38,6 +38,8 @@ pub struct Control {
     nonces: NonceStore,
     drain: Arc<Notify>,
     started: Instant,
+    // For the egress figure in the heartbeat: bytes at the last beat.
+    egress_mark: std::sync::Mutex<(u64, Instant)>,
 }
 
 const HEARTBEAT: Duration = Duration::from_secs(10);
@@ -61,7 +63,18 @@ impl Control {
         *app.worker_id.write().unwrap() = identity.worker_id.clone();
         *app.server_key.write().unwrap() = identity.server_key()?;
         let nonces = NonceStore::open(cfg.data_dir.join("nonces.json"));
-        Ok(Self { cfg, engine, app, slot, acme_result: acme, identity: std::sync::Mutex::new(identity), nonces, drain, started: Instant::now() })
+        Ok(Self {
+            cfg,
+            engine,
+            app,
+            slot,
+            acme_result: acme,
+            identity: std::sync::Mutex::new(identity),
+            nonces,
+            drain,
+            started: Instant::now(),
+            egress_mark: std::sync::Mutex::new((0, Instant::now())),
+        })
     }
 
     fn hello(&self) -> anyhow::Result<String> {
@@ -98,6 +111,14 @@ impl Control {
             Some(slot) => slot.ready(30 * 60) && !snap.draining,
             None => !snap.draining,
         };
+        let used_bps = {
+            let total = self.app.metrics.bytes_served.load(std::sync::atomic::Ordering::Relaxed);
+            let mut mark = self.egress_mark.lock().unwrap();
+            let elapsed = mark.1.elapsed().as_secs_f64().max(0.5);
+            let delta = total.saturating_sub(mark.0);
+            *mark = (total, Instant::now());
+            (delta as f64 / elapsed) as u64
+        };
         json!({
             "type": "heartbeat",
             "version": env!("CARGO_PKG_VERSION"),
@@ -107,6 +128,7 @@ impl Control {
             "draining": snap.draining,
             "cert": cert,
             "disk": { "used": snap.disk_used, "quota": snap.disk_quota },
+            "transfer": { "capBps": self.cfg.transfer_bps, "usedBps": used_bps },
             "leases": snap.leases,
             "maxLeases": self.cfg.max_leases,
             "maxTorrents": self.cfg.max_torrents,

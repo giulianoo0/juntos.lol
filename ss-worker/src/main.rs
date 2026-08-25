@@ -1,3 +1,4 @@
+mod cli;
 mod config;
 mod control;
 mod engine;
@@ -18,8 +19,29 @@ use tracing_subscriber::EnvFilter;
 // touch it.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    match std::env::args().nth(1).as_deref() {
+        Some("setup") => return cli::setup(),
+        Some("--help" | "-h" | "help") => {
+            cli::help();
+            return Ok(());
+        }
+        Some("--version" | "-V") => {
+            println!("ss-worker {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Some(other) => anyhow::bail!("unknown argument {other}; try --help"),
+        None => {}
+    }
+    // The env file the wizard writes; explicit env always wins over it.
+    let env_file = std::env::var("SS_WORKER_ENV_FILE").unwrap_or_else(|_| "ss-worker.env".into());
+    if std::path::Path::new(&env_file).exists() {
+        let loaded = config::load_env_file(std::path::Path::new(&env_file))?;
+        eprintln!("loaded {loaded} settings from {env_file}");
+    }
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,librqbit=warn")))
+        .with_target(false)
+        .compact()
         .init();
     let _ = rustls::crypto::ring::default_provider().install_default();
     let cfg = WorkerConfig::load()?;
@@ -29,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let engine = engine::Engine::new(cfg.clone()).await?;
     let app = Arc::new(http::AppState {
         engine: engine.clone(),
+        throttle: Arc::new(http::throttle::Throttle::new(cfg.transfer_bps)),
         server_key: RwLock::new(None),
         worker_id: RwLock::new(String::new()),
         revoked: Mutex::new(Default::default()),

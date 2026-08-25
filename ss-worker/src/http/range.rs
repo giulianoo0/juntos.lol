@@ -87,7 +87,8 @@ pub async fn get(
     let stall = state.engine.cfg.stall_deadline;
     let first_byte = state.engine.cfg.first_byte_deadline + Duration::from_secs(1);
     let metrics = state.metrics.clone();
-    tokio::spawn(pump(reader, len, chunk, first_byte, stall, gen, tx, metrics));
+    let throttle = state.throttle.clone();
+    tokio::spawn(pump(reader, len, chunk, first_byte, stall, gen, tx, metrics, throttle));
 
     // Headers wait for the first chunk: a piece nobody has yet is a 504 the
     // client waits out on its own budget, not a silent open body.
@@ -132,6 +133,7 @@ async fn pump(
     gen: u64,
     tx: mpsc::Sender<bytes::Bytes>,
     metrics: Arc<super::Metrics>,
+    throttle: Arc<super::throttle::Throttle>,
 ) {
     let mut left = len;
     let mut buf = vec![0u8; chunk];
@@ -168,6 +170,7 @@ async fn pump(
         }
         left -= n as u64;
         metrics.bytes_served.fetch_add(n as u64, Ordering::Relaxed);
+        throttle.acquire(n).await;
         if tx.send(bytes::Bytes::copy_from_slice(&buf[..n])).await.is_err() {
             return;
         }
