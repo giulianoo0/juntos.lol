@@ -3,7 +3,11 @@
 // emitted its own copy of the same 147 kB file under its own name — two
 // downloads, two cache entries, for one parser. The copy is refreshed by
 // postinstall, so a version bump cannot leave it behind.
-const parserBundleUrl = '/matroska-subtitles.min.js'
+// The version is a cache key, not a path: the edge caches this URL for hours,
+// and a copy that changed under the same address would be served stale. It is
+// kept in step by scripts/sync-parser.mjs, which fails the install if the
+// package it copies no longer matches.
+const parserBundleUrl = '/matroska-subtitles.min.js?v=3.3.2'
 import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
 import type { VttTrack } from './subtitleFormats'
 
