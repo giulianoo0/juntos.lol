@@ -26,13 +26,15 @@ func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if len(r.workers) == 0 {
-		return Worker{}, ErrNoWorkers
-	}
 	var best *Worker
 	bestLoad := 2.0
+	healthy := 0
 	for _, w := range r.workers {
-		if !w.Healthy(now) || !hasRoom(*w, sizeHint) {
+		if !w.Healthy(now) {
+			continue
+		}
+		healthy++
+		if !hasRoom(*w, sizeHint) {
 			continue
 		}
 		load := loadOf(*w)
@@ -41,6 +43,9 @@ func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker
 		}
 	}
 	if best == nil {
+		if healthy == 0 {
+			return Worker{}, ErrNoWorkers
+		}
 		return Worker{}, ErrWorkersBusy
 	}
 	return *best, nil

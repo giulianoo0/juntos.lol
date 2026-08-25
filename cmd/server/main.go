@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -90,7 +89,7 @@ func main() {
 	}
 	workerHub.OnHeartbeat(torrents.Charge)
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
-	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.PublicOrigin == "" || strings.HasPrefix(cfg.PublicOrigin, "https://"))
+	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)
 
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),

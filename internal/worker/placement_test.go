@@ -20,8 +20,9 @@ func newRegistry(t *testing.T) *Registry {
 
 func live(r *Registry, id string, hb Heartbeat) {
 	hb.Ready = true
-	r.Attach(t0ctx(), id, "pk", "https://"+id, &link{})
-	r.Observe(t0ctx(), id, hb)
+	l := &link{}
+	r.Attach(t0ctx(), id, "pk", "https://"+id, l)
+	r.Observe(t0ctx(), id, l, hb)
 }
 
 func TestPlacementPrefersAffinityThenLeastLoaded(t *testing.T) {
@@ -60,12 +61,25 @@ func TestPlacementRefusals(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "tight", w.ID)
 
-	// Stale: a worker whose heartbeat is old is not healthy.
+	// Stale: a worker whose heartbeat is old is not healthy, and a fleet
+	// with nothing healthy in it is no fleet.
 	r.mu.Lock()
-	r.workers["tight"].LastSeen = time.Now().Add(-time.Minute)
+	for _, w := range r.workers {
+		w.LastSeen = time.Now().Add(-time.Minute)
+	}
 	r.mu.Unlock()
 	_, err = r.Place(strings.Repeat("e", 40), 0, time.Now())
-	require.ErrorIs(t, err, ErrWorkersBusy)
+	require.ErrorIs(t, err, ErrNoWorkers)
+}
+
+func TestZombieLinkCannotObserve(t *testing.T) {
+	r := newRegistry(t)
+	old := &link{}
+	r.Attach(t0ctx(), "w", "pk", "https://w", old)
+	fresh := &link{}
+	r.Attach(t0ctx(), "w", "pk", "https://w", fresh)
+	require.False(t, r.Observe(t0ctx(), "w", old, Heartbeat{Ready: true}), "the old link's numbers are refused")
+	require.True(t, r.Observe(t0ctx(), "w", fresh, Heartbeat{Ready: true}))
 }
 
 func TestAffinityDropsWithTheHeartbeat(t *testing.T) {

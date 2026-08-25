@@ -123,8 +123,10 @@ func (s *Signer) MintTicket(t Ticket) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
 
-// VerifyHello checks a worker's signature over its hello line.
-func VerifyHello(pubkeyB64, workerID string, ts int64, sigB64 string) bool {
+// VerifyHello checks a worker's signature over its hello line. The public
+// base is signed too: it is what every browser is later sent to, so a
+// replayed hello must not be able to swap it.
+func VerifyHello(pubkeyB64, workerID, publicBase string, ts int64, sigB64 string) bool {
 	pub, err := base64.RawURLEncoding.DecodeString(pubkeyB64)
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return false
@@ -133,7 +135,7 @@ func VerifyHello(pubkeyB64, workerID string, ts int64, sigB64 string) bool {
 	if err != nil {
 		return false
 	}
-	message := fmt.Sprintf("hello|%s|%s|%d", workerID, pubkeyB64, ts)
+	message := fmt.Sprintf("hello|%s|%s|%s|%d", workerID, pubkeyB64, publicBase, ts)
 	return ed25519.Verify(ed25519.PublicKey(pub), []byte(message), sig)
 }
 

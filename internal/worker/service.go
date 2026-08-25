@@ -109,6 +109,9 @@ func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, t
 		}
 	}
 	if err := s.Registry.SaveJob(ctx, job, s.JobTTL); err != nil {
+		if s.Quota != nil {
+			_ = s.Quota.ReleaseJob(ctx, sessionID, job.ID)
+		}
 		return nil, err
 	}
 	go s.resolve(*job, trackers)
@@ -132,7 +135,10 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 	}
 	switch {
 	case err != nil:
+		// The worker may well have finished the lease and be holding the
+		// torrent; nothing here will read it, so it is released.
 		current.State, current.Error = JobFailed, mapDispatchError(err)
+		_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
 	case !result.OK:
 		current.State, current.Error = JobFailed, result.Error
 		if result.Detail != "" {
@@ -164,7 +170,8 @@ func mapDispatchError(err error) string {
 	}
 }
 
-// Get answers a job the session owns.
+// Get answers a job the session owns. Polling is a sign of life: a job
+// still being watched is not idle.
 func (s *Service) Get(ctx context.Context, sessionID, jobID string) (*JobRecord, error) {
 	job, err := s.Registry.LoadJob(ctx, jobID)
 	if err != nil {
@@ -175,6 +182,10 @@ func (s *Service) Get(ctx context.Context, sessionID, jobID string) (*JobRecord,
 	}
 	if job.SessionID != sessionID {
 		return nil, ErrNotYours
+	}
+	if time.Since(job.LastSeenAt) > 30*time.Second {
+		job.LastSeenAt = time.Now()
+		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
 	}
 	return job, nil
 }
@@ -235,13 +246,15 @@ func (s *Service) Select(ctx context.Context, sessionID, jobID string, fileIndex
 		FileIndex: &fileIndex,
 		RoomID:    roomID,
 	}, 60*time.Second)
+	// A select that did not land leaves the job listed: the lease is alive,
+	// the worker may hold the file, and the next select costs no dispatch.
 	if err != nil {
-		job.State, job.Error = JobFailed, mapDispatchError(err)
+		job.State, job.Error = JobListed, mapDispatchError(err)
 		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
 		return nil, &WorkerError{Code: job.Error, Detail: err.Error()}
 	}
 	if !result.OK {
-		job.State, job.Error = JobFailed, result.Error
+		job.State, job.Error = JobListed, result.Error
 		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
 		return nil, &WorkerError{Code: result.Error, Detail: result.Detail}
 	}
@@ -271,14 +284,20 @@ func (s *Service) grant(job *JobRecord, file *FileEntry) (*Grant, error) {
 }
 
 // Token renews the ticket of a serving job and tells the worker the lease
-// is still wanted. A remux of a big file outlives any single ticket.
-func (s *Service) Token(ctx context.Context, sessionID, jobID string) (*Grant, error) {
+// is still wanted. A remux of a big file outlives any single ticket. The
+// first renewal also names the room the job feeds, which is what lets a
+// source swap or the room's end release it — after the room exists, so
+// the swap that created it cannot cancel it.
+func (s *Service) Token(ctx context.Context, sessionID, jobID, roomID string) (*Grant, error) {
 	job, err := s.Get(ctx, sessionID, jobID)
 	if err != nil {
 		return nil, err
 	}
 	if job.State != JobServing || job.FileIndex == nil {
 		return nil, ErrNotListed
+	}
+	if roomID != "" && job.RoomID != roomID {
+		job.RoomID = roomID
 	}
 	var file *FileEntry
 	for i := range job.Files {
@@ -348,12 +367,12 @@ func (s *Service) Sweep(ctx context.Context, idle time.Duration) {
 			_ = s.Registry.DeleteJob(ctx, &JobRecord{ID: id})
 			continue
 		}
-		if now.Sub(job.LastSeenAt) > idle {
-			slog.Info("worker job idle, releasing", "job", id, "room", job.RoomID)
+		if now.Sub(job.LastSeenAt) > idle || (job.State == JobFailed && now.Sub(job.LastSeenAt) > 10*time.Minute) {
+			slog.Info("worker job idle, releasing", "job", id, "room", job.RoomID, "state", job.State)
 			s.release(ctx, job)
 			continue
 		}
-		if w, ok := s.Registry.Get(job.WorkerID); (!ok || now.Sub(w.LastSeen) > 2*time.Minute) && job.State == JobServing {
+		if w, ok := s.Registry.Get(job.WorkerID); (!ok || now.Sub(w.LastSeen) > 2*time.Minute) && job.State != JobFailed {
 			job.State, job.Error = JobFailed, "worker_gone"
 			_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
 			if s.Quota != nil {
@@ -363,9 +382,12 @@ func (s *Service) Sweep(ctx context.Context, idle time.Duration) {
 	}
 }
 
-// Charge accounts a heartbeat's per-torrent growth to the sessions whose
-// jobs sit on that worker. It is the only byte signal there is: the browser
-// never reports, and the worker's number is trusted as far as the fleet is.
+// Charge accounts a heartbeat's per-torrent growth to the session whose
+// job sits on that torrent. It is the only byte signal there is: the
+// browser never reports, and the worker's number is trusted as far as the
+// fleet is. The damage a wrong number can do is bounded: growth is charged
+// once per torrent per worker, never past the selected file's size, and a
+// reset restarts the count instead of charging the re-download.
 func (s *Service) Charge(workerID string, hb Heartbeat) {
 	if s.Quota == nil {
 		return
@@ -376,20 +398,45 @@ func (s *Service) Charge(workerID string, hb Heartbeat) {
 	if err != nil {
 		return
 	}
+	jobs := make([]*JobRecord, 0, len(ids))
 	for _, id := range ids {
 		job, err := s.Registry.LoadJob(ctx, id)
 		if err != nil || job == nil {
 			continue
 		}
-		for _, t := range hb.Torrents {
-			if t.Infohash != job.Infohash || t.HaveBytes <= job.HaveBytes {
-				continue
+		jobs = append(jobs, job)
+	}
+	for _, t := range hb.Torrents {
+		delta := s.Registry.ChargeMark(ctx, workerID, t.Infohash, t.HaveBytes)
+		if delta <= 0 {
+			continue
+		}
+		var owner *JobRecord
+		for _, job := range jobs {
+			if job.Infohash == t.Infohash && (owner == nil || job.CreatedAt.Before(owner.CreatedAt)) {
+				owner = job
 			}
-			_ = s.Quota.AddBytes(ctx, job.SessionID, t.HaveBytes-job.HaveBytes)
-			job.HaveBytes = t.HaveBytes
-			_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+		}
+		if owner == nil {
+			continue
+		}
+		if size := selectedSize(owner); size > 0 && delta > size {
+			delta = size
+		}
+		_ = s.Quota.AddBytes(ctx, owner.SessionID, delta)
+	}
+}
+
+func selectedSize(job *JobRecord) int64 {
+	if job.FileIndex == nil {
+		return 0
+	}
+	for _, f := range job.Files {
+		if f.Index == *job.FileIndex {
+			return f.Size
 		}
 	}
+	return 0
 }
 
 // StartSweeper runs Sweep on an interval until ctx ends.

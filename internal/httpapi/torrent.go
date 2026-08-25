@@ -145,9 +145,17 @@ func selectTorrent(service *worker.Service, cfg config.Config) gin.HandlerFunc {
 	}
 }
 
+type tokenRequest struct {
+	RoomID string `json:"roomId"`
+}
+
 func tokenTorrent(service *worker.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		grant, err := service.Token(c.Request.Context(), SessionID(c), c.Param("jobId"))
+		var req tokenRequest
+		if c.Request.ContentLength > 0 {
+			_ = c.ShouldBindJSON(&req)
+		}
+		grant, err := service.Token(c.Request.Context(), SessionID(c), c.Param("jobId"), req.RoomID)
 		if err != nil {
 			status, code := torrentErrorStatus(err)
 			c.JSON(status, gin.H{"error": code})

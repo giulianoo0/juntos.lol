@@ -69,6 +69,9 @@ type Config struct {
 	// PublicOrigin is the origin browsers load the app from, which tickets
 	// are scoped to. Empty falls back to the request's own Origin header.
 	PublicOrigin string
+	// BehindCloudflare says CF-Connecting-IP is the client's address. Only
+	// set when the origin is unreachable except through Cloudflare.
+	BehindCloudflare bool
 }
 
 func Load() (Config, error) {
@@ -168,6 +171,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.PublicOrigin = strings.TrimSuffix(os.Getenv("PUBLIC_ORIGIN"), "/")
+	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
 
 	return cfg, nil
 }

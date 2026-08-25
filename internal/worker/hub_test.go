@@ -38,7 +38,7 @@ func dialWorker(t *testing.T, url string) *fakeWorker {
 func (w *fakeWorker) hello(workerID, token string) map[string]any {
 	pubB64 := base64.RawURLEncoding.EncodeToString(w.pub)
 	ts := time.Now().Unix()
-	sig := ed25519.Sign(w.priv, []byte(fmt.Sprintf("hello|%s|%s|%d", workerID, pubB64, ts)))
+	sig := ed25519.Sign(w.priv, []byte(fmt.Sprintf("hello|%s|%s|https://w.test|%d", workerID, pubB64, ts)))
 	msg := map[string]any{"type": "hello", "workerId": workerID, "pubkey": pubB64, "version": "test", "publicBase": "https://w.test", "ts": ts, "sig": base64.RawURLEncoding.EncodeToString(sig)}
 	if token != "" {
 		msg["enrollmentToken"] = token

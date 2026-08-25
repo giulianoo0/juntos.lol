@@ -35,7 +35,7 @@ func TestSessionMintedOnFirstSightAndRecognisedAfter(t *testing.T) {
 	c := cookies[0]
 	require.Equal(t, sessionCookie, c.Name)
 	require.True(t, c.HttpOnly)
-	require.True(t, c.Secure)
+	require.False(t, c.Secure, "plain http in tests: Secure follows the request")
 	require.Equal(t, http.SameSiteLaxMode, c.SameSite)
 	require.Equal(t, c.Value, w.Body.String())
 	require.True(t, mr.Exists("sess:"+c.Value))
@@ -58,6 +58,34 @@ func TestUnknownCookieIsReplaced(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Len(t, w.Result().Cookies(), 1)
 	require.NotEqual(t, "deadbeef", w.Body.String())
+}
+
+func TestSecureCookieBehindTLSEdge(t *testing.T) {
+	r, _ := newSessionRig(t, 0)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	r.ServeHTTP(w, req)
+	require.True(t, w.Result().Cookies()[0].Secure)
+}
+
+func TestNoEdgeHeaderIsIgnoredAndLoopbackIsUncapped(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	sessions := NewSessions(rdb, time.Hour, 1, false)
+	r := gin.New()
+	r.GET("/t", sessions.Middleware(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	// The header means nothing without the edge, and a loopback peer is a
+	// proxy: no cap, or one proxy would exhaust it for everyone.
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/t", nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set(clientIPHeader, "203.0.113."+string(rune('1'+i)))
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code)
+	}
 }
 
 func TestSessionMintingIsCappedPerClientAddress(t *testing.T) {

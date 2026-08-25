@@ -132,7 +132,7 @@ const RENEW_FRACTION = 2 / 3
  * Each seek bumps the generation, and the worker stops feeding responses
  * from before it.
  */
-export function workerInput(grant: WorkerGrant): MediaInput {
+export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   const gate = new ReadGate()
   let current = grant
   let gen = 1
@@ -140,9 +140,16 @@ export function workerInput(grant: WorkerGrant): MediaInput {
   let renewTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
+  // Every renewal names the room this job feeds; the first one, sent right
+  // away, is what attaches the job to it — after the room exists, so the
+  // source swap that made the room cannot cancel the job it is for.
   const renew = async (): Promise<boolean> => {
     try {
-      const response = await fetch(`/api/torrents/${encodeURIComponent(current.jobId)}/token`, { method: 'POST' })
+      const response = await fetch(`/api/torrents/${encodeURIComponent(current.jobId)}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: roomID }),
+      })
       if (!response.ok) return false
       const next = await response.json() as Partial<WorkerGrant>
       current = { ...current, ...next }
@@ -159,7 +166,8 @@ export function workerInput(grant: WorkerGrant): MediaInput {
     if (!Number.isFinite(life) || life <= 0) return
     renewTimer = setTimeout(() => { void renew() }, life * RENEW_FRACTION)
   }
-  scheduleRenewal()
+  if (roomID) void renew()
+  else scheduleRenewal()
 
   const hint = (offset: number) => {
     if (Math.abs(offset - lastHintAt) < HINT_STRIDE_BYTES) return

@@ -47,11 +47,12 @@ func TestVerifyHello(t *testing.T) {
 	require.NoError(t, err)
 	pubB64 := base64.RawURLEncoding.EncodeToString(pub)
 	ts := time.Now().Unix()
-	message := "hello|w1|" + pubB64 + "|" + itoa(ts)
+	message := "hello|w1|" + pubB64 + "|https://w|" + itoa(ts)
 	sig := base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, []byte(message)))
-	require.True(t, VerifyHello(pubB64, "w1", ts, sig))
-	require.False(t, VerifyHello(pubB64, "w2", ts, sig))
-	require.False(t, VerifyHello(pubB64, "w1", ts+1, sig))
+	require.True(t, VerifyHello(pubB64, "w1", "https://w", ts, sig))
+	require.False(t, VerifyHello(pubB64, "w2", "https://w", ts, sig))
+	require.False(t, VerifyHello(pubB64, "w1", "https://evil", ts, sig), "the public base is signed")
+	require.False(t, VerifyHello(pubB64, "w1", "https://w", ts+1, sig))
 }
 
 func itoa(n int64) string {

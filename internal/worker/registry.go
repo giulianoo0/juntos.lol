@@ -136,21 +136,42 @@ func (r *Registry) Detach(id string, l *link) {
 	}
 }
 
-// Observe records a heartbeat.
-func (r *Registry) Observe(ctx context.Context, id string, hb Heartbeat) {
+// Observe records a heartbeat from a link; false when that link is no
+// longer the worker's current one.
+func (r *Registry) Observe(ctx context.Context, id string, l *link, hb Heartbeat) bool {
 	r.mu.Lock()
-	if w := r.workers[id]; w != nil {
-		w.LastSeen = time.Now()
-		w.Heartbeat = hb
-		if hb.PublicBase != "" {
-			w.PublicBase = hb.PublicBase
-		}
+	w := r.workers[id]
+	if w == nil || (l != nil && w.link != l) {
+		r.mu.Unlock()
+		return false
+	}
+	w.LastSeen = time.Now()
+	w.Heartbeat = hb
+	if hb.PublicBase != "" {
+		w.PublicBase = hb.PublicBase
 	}
 	r.mu.Unlock()
 	r.rdb.ZAdd(ctx, workersBySeen, redis.Z{Score: float64(time.Now().Unix()), Member: id})
 	if hb.Cert != nil && hb.Cert.NotAfter != nil {
 		r.rdb.HSet(ctx, workerKey(id), "certNotAfter", strconv.FormatInt(*hb.Cert.NotAfter, 10))
 	}
+	return true
+}
+
+// ChargeMark remembers how many bytes of an infohash on a worker were
+// already charged, so a heartbeat's growth is charged once, and a reset
+// (the worker reaped and re-downloaded) starts a fresh count.
+func (r *Registry) ChargeMark(ctx context.Context, workerID, infohash string, have int64) (delta int64) {
+	key := "charged:" + workerID + ":" + infohash
+	last, err := r.rdb.Get(ctx, key).Int64()
+	if err != nil {
+		last = 0
+	}
+	if have < last {
+		last = 0
+	}
+	r.rdb.Set(ctx, key, have, 48*time.Hour)
+	return have - last
 }
 
 // Get answers a copy of a worker's live state.

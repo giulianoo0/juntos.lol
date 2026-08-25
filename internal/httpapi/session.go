@@ -41,14 +41,17 @@ type Sessions struct {
 	rdb          *redis.Client
 	ttl          time.Duration
 	perIPPerHour int
-	// secure marks the cookie Secure; off only for plain-http development.
-	secure bool
+	// behindEdge says the edge proxy's client-address header is to be
+	// believed. Off, the header is ignored and a request that arrives from
+	// loopback (some other proxy in front) cannot be told apart from the
+	// next one, so the per-address cap does not apply to it.
+	behindEdge bool
 }
 
 // NewSessions returns a session minter. perIPPerHour caps how many fresh
 // sessions one client address may create; 0 disables the cap.
-func NewSessions(rdb *redis.Client, ttl time.Duration, perIPPerHour int, secure bool) *Sessions {
-	return &Sessions{rdb: rdb, ttl: ttl, perIPPerHour: perIPPerHour, secure: secure}
+func NewSessions(rdb *redis.Client, ttl time.Duration, perIPPerHour int, behindEdge bool) *Sessions {
+	return &Sessions{rdb: rdb, ttl: ttl, perIPPerHour: perIPPerHour, behindEdge: behindEdge}
 }
 
 func sessionKey(id string) string { return "sess:" + id }
@@ -59,17 +62,31 @@ func ipSessionsKey(ip string) string {
 // ErrTooManySessions is returned when a client address minted too many.
 var ErrTooManySessions = errors.New("too many sessions")
 
-// clientIP is the address the edge saw. Without the edge header (local
-// development, tests) the connection's own address is what there is.
-func clientIP(r *http.Request) string {
-	if ip := strings.TrimSpace(r.Header.Get(clientIPHeader)); ip != "" {
-		return ip
+// clientIP is the address to rate-limit on, or "" when there is no
+// trustworthy one: the edge header only counts behind the edge, and a
+// loopback peer without it is a proxy, not a person.
+func (s *Sessions) clientIP(r *http.Request) string {
+	if s.behindEdge {
+		if ip := strings.TrimSpace(r.Header.Get(clientIPHeader)); ip != "" {
+			return ip
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !s.behindEdge {
+		if parsed := net.ParseIP(host); parsed != nil && parsed.IsLoopback() {
+			return ""
+		}
 	}
 	return host
+}
+
+// secureRequest is whether the cookie may be marked Secure: the request
+// came over TLS, here or at the edge.
+func secureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // Lookup answers whether a session id is live, refreshing its expiry.
@@ -86,7 +103,7 @@ func (s *Sessions) Lookup(ctx context.Context, id string) (bool, error) {
 
 // Mint creates a session for a client address, subject to the per-address cap.
 func (s *Sessions) Mint(ctx context.Context, ip string) (string, error) {
-	if s.perIPPerHour > 0 {
+	if s.perIPPerHour > 0 && ip != "" {
 		key := ipSessionsKey(ip)
 		n, err := s.rdb.Incr(ctx, key).Result()
 		if err != nil {
@@ -128,7 +145,7 @@ func (s *Sessions) Middleware() gin.HandlerFunc {
 				return
 			}
 		}
-		id, err := s.Mint(ctx, clientIP(c.Request))
+		id, err := s.Mint(ctx, s.clientIP(c.Request))
 		if errors.Is(err, ErrTooManySessions) {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too_many_sessions"})
 			return
@@ -144,7 +161,7 @@ func (s *Sessions) Middleware() gin.HandlerFunc {
 			Path:     "/",
 			MaxAge:   int(s.ttl / time.Second),
 			HttpOnly: true,
-			Secure:   s.secure,
+			Secure:   secureRequest(c.Request),
 			SameSite: http.SameSiteLaxMode,
 		})
 		c.Set(sessionContextKey, id)

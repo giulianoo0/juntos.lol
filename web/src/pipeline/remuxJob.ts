@@ -96,12 +96,12 @@ export function jobIsCloneable(job: RemuxJob): boolean {
 // (the dev fixture), 'url' a plugin's own server. All are bytes behind
 // Range requests, read the same resilient way; only the error they turn
 // into differs.
-function buildInput(source: RemuxSource): MediaInput {
+function buildInput(source: RemuxSource, roomID: string): MediaInput {
   switch (source.kind) {
     case 'file': return fileInput(source.file)
     case 'stream': return rangeInput(source.url, source.name, source.size)
     case 'url': return rangeInput(source.url, source.name, source.size)
-    case 'worker': return workerInput(source.grant)
+    case 'worker': return workerInput(source.grant, roomID)
     case 'input': return source.input
   }
 }
@@ -112,7 +112,7 @@ function buildInput(source: RemuxSource): MediaInput {
  * report them through different seams.
  */
 export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: RemuxJobCallbacks): Promise<void> {
-  const input = buildInput(job.source)
+  const input = buildInput(job.source, job.roomID)
   let plan: Awaited<ReturnType<typeof planClientRemux>>
   try {
     plan = await planClientRemux(input)

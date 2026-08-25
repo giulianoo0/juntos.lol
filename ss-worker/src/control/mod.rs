@@ -23,6 +23,7 @@ use identity::Identity;
 ///
 /// Wire format, JSON text frames:
 ///   → {type:"hello", workerId, pubkey, version, publicBase, ts, sig, enrollmentToken?}
+///     sig = Ed25519 over "hello|{workerId}|{pubkey}|{publicBase}|{ts}"; ts within ±2 min
 ///   ← {type:"welcome", workerId, serverPubkey} | {type:"reject", error}
 ///   → {type:"heartbeat", ...engine snapshot, cert, ready}
 ///   ← {type:"job", payload, sig}          (payload: base64url JSON Job)
@@ -67,13 +68,14 @@ impl Control {
         let id = self.identity.lock().unwrap();
         let ts = crate::ticket::now_secs();
         let pubkey = id.pubkey_b64()?;
-        let message = format!("hello|{}|{}|{}", id.worker_id, pubkey, ts);
+        let public_base = self.cfg.public_base();
+        let message = format!("hello|{}|{}|{}|{}", id.worker_id, pubkey, public_base, ts);
         let mut hello = json!({
             "type": "hello",
             "workerId": id.worker_id,
             "pubkey": pubkey,
             "version": env!("CARGO_PKG_VERSION"),
-            "publicBase": self.cfg.public_base(),
+            "publicBase": public_base,
             "ts": ts,
             "sig": id.sign(message.as_bytes())?,
         });

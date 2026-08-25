@@ -23,7 +23,7 @@ const (
 	helloTimeout  = 15 * time.Second
 	writeTimeout  = 10 * time.Second
 	readTimeout   = 45 * time.Second
-	helloSkew     = 5 * time.Minute
+	helloSkew     = 2 * time.Minute
 	resultTimeout = 120 * time.Second
 	maxFrameBytes = 4 << 20
 )
@@ -153,7 +153,11 @@ func (h *Hub) serve(conn *websocket.Conn) {
 			if json.Unmarshal(raw, &hb) != nil {
 				continue
 			}
-			h.registry.Observe(ctx, workerID, hb)
+			if !h.registry.Observe(ctx, workerID, l, hb) {
+				// A newer link took this identity over; this one is a zombie
+				// and its numbers must not poison placement.
+				return
+			}
 			if h.onBeat != nil {
 				h.onBeat(workerID, hb)
 			}
@@ -184,7 +188,7 @@ func (h *Hub) admit(ctx context.Context, hi hello) (string, error) {
 	if hi.TS < now-int64(helloSkew.Seconds()) || hi.TS > now+int64(helloSkew.Seconds()) {
 		return "", errors.New("hello_clock_skew")
 	}
-	if !VerifyHello(hi.PubKey, hi.WorkerID, hi.TS, hi.Sig) {
+	if !VerifyHello(hi.PubKey, hi.WorkerID, hi.PublicBase, hi.TS, hi.Sig) {
 		return "", errors.New("hello_signature")
 	}
 	if hi.WorkerID == "" {
