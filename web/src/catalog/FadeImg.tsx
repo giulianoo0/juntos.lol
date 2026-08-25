@@ -21,12 +21,19 @@ function placeholderGradient(src: string): string {
 // in rather than blot out what it is covering.
 export function FadeImg({ src, className, style, overlay = false, ...props }: ImgHTMLAttributes<HTMLImageElement> & { overlay?: boolean }) {
   const [shown, setShown] = useState<string | undefined>(undefined)
+  // A detached loader is not in the document, so `loading="lazy"` on the img
+  // below gated nothing: the bytes were already downloaded by the time the
+  // element got a src. Two hundred posters are mounted at once in the catalog
+  // and six of them are on screen. Where the caller asked for lazy, the
+  // browser's own gate does the work and the fade rides the img's own load.
+  const lazy = props.loading === 'lazy'
   const gradient = useMemo(
     () => (!overlay && typeof src === 'string' && src ? placeholderGradient(src) : undefined),
     [src, overlay],
   )
 
   useEffect(() => {
+    if (lazy) return
     if (!src || typeof src !== 'string') {
       setShown(undefined)
       return
@@ -43,13 +50,24 @@ export function FadeImg({ src, className, style, overlay = false, ...props }: Im
       cancelled = true
       loader.onload = null
     }
-  }, [src])
+  }, [src, lazy])
 
   // The gradient lives on a wrapper: the img itself sits at opacity 0 until
   // decoded, and a background on an invisible element would be invisible too.
   return (
     <span className={`fade-frame ${className ?? ''}`} style={{ ...style, background: gradient }}>
-      <img {...props} alt={props.alt ?? ''} src={shown} className={`fade-img ${shown ? 'is-loaded' : ''}`} />
+      {lazy ? (
+        <img
+          {...props}
+          alt={props.alt ?? ''}
+          src={src}
+          decoding="async"
+          onLoad={() => setShown(typeof src === 'string' ? src : undefined)}
+          className={`fade-img ${shown === src ? 'is-loaded' : ''}`}
+        />
+      ) : (
+        <img {...props} alt={props.alt ?? ''} src={shown} decoding="async" className={`fade-img ${shown ? 'is-loaded' : ''}`} />
+      )}
     </span>
   )
 }

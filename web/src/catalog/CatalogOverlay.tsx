@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { Puzzle, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { CatalogBrowser } from './CatalogBrowser'
 import { ProgressiveBlur } from './ProgressiveBlur'
 import { PluginsPanel } from '../plugins/PluginsPanel'
-import { MetaDetails, type DetailsMode, type TitlePick } from './MetaDetails'
+import type { DetailsMode, TitlePick } from './MetaDetails'
+import { MetaDetails } from './lazyDetails'
 import type { TitleOpen } from './PosterCard'
 
 export interface OverlayFocus {
@@ -78,18 +79,20 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
         <CatalogBrowser compact onOpenTitle={setDetails} hideSearch={details !== null} />
       </div>
       {details ? (
-        <MetaDetails
-          onOpenPlugins={() => setPluginsOpen(true)}
-          key={`${details.meta.type}:${details.meta.id}`}
-          open={details}
-          mode={mode}
-          focus={focus && focus.open.meta.id === details.meta.id && focus.season != null && focus.episode != null
-            ? { season: focus.season, episode: focus.episode }
-            : undefined}
-          onClose={() => setDetails(null)}
-          onPickStream={onPickStream}
-          onRequestTitle={(episode) => onRequestTitle(details, episode)}
-        />
+        <Suspense fallback={null}>
+          <MetaDetails
+            onOpenPlugins={() => setPluginsOpen(true)}
+            key={`${details.meta.type}:${details.meta.id}`}
+            open={details}
+            mode={mode}
+            focus={focus && focus.open.meta.id === details.meta.id && focus.season != null && focus.episode != null
+              ? { season: focus.season, episode: focus.episode }
+              : undefined}
+            onClose={() => setDetails(null)}
+            onPickStream={onPickStream}
+            onRequestTitle={(episode) => onRequestTitle(details, episode)}
+          />
+        </Suspense>
       ) : null}
 
       <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />

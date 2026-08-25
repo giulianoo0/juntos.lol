@@ -10,7 +10,7 @@
     "lint": "oxlint",
     "test": "vitest run",
     "preview": "vite preview",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package && node -e \"require('fs').copyFileSync('node_modules/matroska-subtitles/dist/matroska-subtitles.min.js', 'public/matroska-subtitles.min.js')\""
   },
   "dependencies": {
     "@mediabunny/aac-encoder": "^1.55.2",

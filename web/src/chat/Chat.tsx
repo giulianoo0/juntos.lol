@@ -1,5 +1,6 @@
-import { useEffect, useState, type KeyboardEvent } from 'react'
+import { memo, useEffect, useState, type KeyboardEvent } from 'react'
 import { SendHorizontal, X } from 'lucide-react'
+import type { CSSProperties } from 'react'
 import type { ChatEntry } from '../types'
 import { Button } from '../ui/Button'
 import type { Translator } from '../i18n/useT'
@@ -14,7 +15,7 @@ interface ChatProps {
   t: Translator
 }
 
-export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
+export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
   const [text, setText] = useState('')
   const [mobile, setMobile] = useState(() => matchMedia(mobileMediaQuery).matches)
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -55,7 +56,7 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
       </header>
       <div className="chat-messages">
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
-          <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ animationDelay: `${Math.min(index * 35, 300)}ms` }}>
+          <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ '--i': index } as CSSProperties}>
             {message.system
               ? <p>{message.author} {message.text}</p>
               : <><strong>{message.author}</strong><p>{message.text}</p></>}
@@ -70,4 +71,4 @@ export function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
       </div>
     </aside>
   )
-}
+})

@@ -8,9 +8,11 @@
  */
 import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
-import { torrentInput } from './pipeline/mediaInput'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
-import { sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxJob'
+// From the leaf module, never from remuxJob: a value import of remuxJob here
+// pulls mediabunny and its WASM decoders into the chunk the browser parses
+// before the first paint, and defeats the dynamic import further down.
+import { sourceIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
 import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
 
 export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
@@ -199,11 +201,12 @@ function createEntry(bytesTotal: number): UploadEntry {
 }
 
 function updateEntry(entry: UploadEntry, bytesUploaded: number) {
-  entry.progress = {
-    ...entry.progress,
-    pct: entry.progress.bytesTotal > 0 ? Math.round((bytesUploaded / entry.progress.bytesTotal) * 100) : 0,
-    bytesUploaded,
-  }
+  const pct = entry.progress.bytesTotal > 0 ? Math.round((bytesUploaded / entry.progress.bytesTotal) * 100) : 0
+  // The remux posts progress many times a second and the readout is rounded:
+  // most of those emissions carry the numbers already on screen, and each one
+  // re-rendered the whole room. Nothing changed, nothing is announced.
+  if (pct === entry.progress.pct && bytesUploaded === entry.progress.bytesUploaded) return
+  entry.progress = { ...entry.progress, pct, bytesUploaded }
   for (const listener of entry.progressListeners) listener(entry.progress)
 }
 
@@ -280,7 +283,7 @@ export function startTorrentUpload(
   // a session without one (mocks, tests) pins the job to this thread.
   const source: RemuxSource = file.worker
     ? { kind: 'worker', grant: file.worker }
-    : { kind: 'input', input: torrentInput(file) }
+    : { kind: 'torrentFile', file }
   const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
     name: side.name,
     path: side.path,
@@ -367,7 +370,7 @@ export function startRoomUpload(
   // page drawing the player, and the page visibly stutters for the whole
   // preparo. The page-thread path stays for sources that cannot cross
   // (mocks, tests) and environments without workers.
-  if (typeof Worker !== 'undefined' && source.kind !== 'input' && sideFiles.every((file) => file.url !== undefined)) {
+  if (typeof Worker !== 'undefined' && sourceIsCloneable(source) && sideFiles.every((file) => file.url !== undefined)) {
     const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
     ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
     const settle = (fn: () => void) => { fn(); worker.terminate() }

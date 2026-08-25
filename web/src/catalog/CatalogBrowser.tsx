@@ -5,6 +5,7 @@ import { useT } from '../i18n/useT'
 import { fetchCatalog, searchCatalog, type CatalogMeta, type MetaType } from './cinemeta'
 import { PosterCard, type TitleOpen } from './PosterCard'
 import { Carousel } from './Carousel'
+import { prefetchMetaDetails } from './lazyDetails'
 
 const SEARCH_DEBOUNCE_MS = 300
 
@@ -69,6 +70,19 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
     return () => document.body.classList.remove('catalog-search-open')
   }, [searchCompact])
 
+  // The details panel is loaded on demand, and every route to it starts on
+  // this board. Warming it once the browser is idle keeps it off the first
+  // paint without ever making a click on a poster wait for the network.
+  useEffect(() => {
+    const idle = window.requestIdleCallback
+    if (typeof idle === 'function') {
+      const handle = idle(prefetchMetaDetails, { timeout: 4_000 })
+      return () => window.cancelIdleCallback?.(handle)
+    }
+    const timer = window.setTimeout(prefetchMetaDetails, 2_000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
   useEffect(() => {
     // The board scrolls on the page at home and on the overlay's own body in
     // a room; listen to whichever scrollable ancestor this instance lives in.
@@ -80,13 +94,16 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
         break
       }
     }
+    // Built once: matchMedia parses the query and allocates a list object,
+    // and this runs on every scroll tick.
+    const mobileQuery = window.matchMedia('(max-width: 620px)')
     let lastY = target instanceof Window ? target.scrollY : target.scrollTop
     const onScroll = () => {
       const y = target instanceof Window ? target.scrollY : target.scrollTop
       const delta = y - lastY
       lastY = y
       // Mobile drives the search by focus and content, not scroll.
-      if (isMobile()) return
+      if (mobileQuery.matches) return
       // A field being typed in, or already holding a query, never collapses
       // out from under the cursor — scrolling the results is part of using it.
       if (focusedRef.current || queryRef.current.trim() !== '') return

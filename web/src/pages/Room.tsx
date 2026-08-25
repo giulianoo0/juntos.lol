@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
@@ -26,7 +26,8 @@ import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
 import { playJoinChime } from '../ui/chime'
 import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
-import { CatalogOverlay, type OverlayFocus } from '../catalog/CatalogOverlay'
+import type { OverlayFocus } from '../catalog/CatalogOverlay'
+const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
 import { openCatalogStream } from '../catalog/openStream'
 import { WorkerProbes } from '../components/WorkerProbes'
 import type { TitlePick } from '../catalog/MetaDetails'
@@ -36,7 +37,7 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
-import { MAX_UPLOAD_BYTES } from './Home'
+import { MAX_UPLOAD_BYTES } from '../limits'
 import {
   FILE_UNREADABLE,
   SOURCE_UNREACHABLE,
@@ -230,12 +231,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return () => window.clearInterval(timer)
   }, [room.id])
   const reported = liveRoom.preparation?.swarm
-  const swarmStats: TorrentStats | null = localSwarm ?? (reported ? {
+  // Kept by identity, not rebuilt: this is a player prop, and a new object on
+  // every render of the room is a new render of the player.
+  const swarmStats: TorrentStats | null = useMemo(() => localSwarm ?? (reported ? {
     peers: reported.peers,
     downloadSpeed: reported.downSpeed,
     downloaded: reported.haveBytes,
     progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
-  } : null)
+  } : null), [localSwarm, reported])
   // Retomar o preparo: the pipeline died with this tab's last life (a reload,
   // a crash), but the source survives in localStorage. Reopen it and point
   // the room at a fresh generation; the playhead-following pipeline then
@@ -514,6 +517,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     chooseCatalogStream,
   )
 
+  const closeChat = useCallback(() => setChatOpen(false), [])
+  // Through the local binding so the dependency is the function itself, which
+  // the sync layer keeps stable — depending on `sync` would rebuild this on
+  // every frame the room receives and undo the chat's memo.
+  const send = sync.send
+  const sendChat = useCallback((text: string) => send('chat', { text }), [send])
+
   const copyLink = async () => {
     // The clipboard is refused outright on an insecure origin and can be
     // denied on a secure one. Confirming a copy that did not happen is worse
@@ -696,7 +706,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             t={t}
           />
         ) : (
-          <Chat open={chatOpen} onClose={() => setChatOpen(false)} messages={chatEntries} onSend={(text) => sync.send('chat', { text })} t={t} />
+          <Chat open={chatOpen} onClose={closeChat} messages={chatEntries} onSend={sendChat} t={t} />
         )}
       </div>
       <input
@@ -738,24 +748,26 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         </div>
       ) : null}
       {catalogOpen ? (
-        <CatalogOverlay
-          mode={sync.isController ? 'host' : 'viewer'}
-          focus={catalogFocus}
-          onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
-          onPickStream={chooseCatalogStream}
-          onRequestTitle={(open, episode) => {
-            sync.send('titleRequest', {
-              title: {
-                metaId: open.meta.id,
-                metaType: open.meta.type,
-                name: open.meta.name,
-                poster: open.meta.poster,
-                season: episode.season,
-                episode: episode.episode,
-              },
-            })
-          }}
-        />
+        <Suspense fallback={null}>
+          <CatalogOverlay
+            mode={sync.isController ? 'host' : 'viewer'}
+            focus={catalogFocus}
+            onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
+            onPickStream={chooseCatalogStream}
+            onRequestTitle={(open, episode) => {
+              sync.send('titleRequest', {
+                title: {
+                  metaId: open.meta.id,
+                  metaType: open.meta.type,
+                  name: open.meta.name,
+                  poster: open.meta.poster,
+                  season: episode.season,
+                  episode: episode.episode,
+                },
+              })
+            }}
+          />
+        </Suspense>
       ) : null}
       <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
         {sourcePanel !== null ? (

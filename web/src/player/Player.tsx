@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import {
   FastForward, Lock, Maximize, Minimize, Pause, Play, Rewind,
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
@@ -75,6 +75,8 @@ export function regionFor(regions: MediaRegion[], ms: number, current: number | 
 // first half of a double click. Long enough for a deliberate double click,
 // short enough that pausing still feels like it happened on contact.
 const TAP_TOGGLE_DELAY_MS = 200
+
+const NO_SUBTITLE_TRACKS: NonNullable<RoomInfo['subtitleTracks']> = []
 
 const SEEK_STEP_SECONDS = 5
 const SEEK_STEP_LARGE_SECONDS = 10
@@ -219,11 +221,25 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const recoveriesRef = useRef(0)
   const resumeRef = useRef({ generation: -1, time: 0 })
 
+  // A pointer sweep across the video calls this once per pointermove — a
+  // clearTimeout, a setTimeout and a state dispatch each time, while the
+  // decoder is already competing for the main thread. While a hide is already
+  // pending, re-arming it again within the same 150ms changes nothing anyone
+  // can see: the bar still goes 2.5s after the last movement, to within the
+  // gate. With no timer pending there is nothing to skip, and the reveal runs.
+  const lastRevealRef = useRef(0)
   const revealControls = useCallback((autoHide = true) => {
+    const now = performance.now()
+    if (autoHide && controlsTimerRef.current !== null && now - lastRevealRef.current < 150) return
+    lastRevealRef.current = now
     if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
     setControlsVisible(true)
-    if (!autoHide) return
+    if (!autoHide) {
+      controlsTimerRef.current = null
+      return
+    }
     controlsTimerRef.current = window.setTimeout(() => {
+      controlsTimerRef.current = null
       setControlsVisible(false)
     }, 2500)
   }, [])
@@ -492,7 +508,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // track once it holds its first cue, and a forced track joining late lands
   // ahead of languages already listed. A remembered position would slide onto
   // one of them mid-episode.
-  const subtitleTracks = room.subtitleTracks ?? []
+  // The empty case is a shared constant, not a fresh literal: a room with no
+  // subtitles handed every memo and every effect below a new array on each
+  // render, which is the same as having no memo at all.
+  const subtitleTracks = room.subtitleTracks ?? NO_SUBTITLE_TRACKS
   const subtitleCount = subtitleTracks.length
   useEffect(() => {
     const textTracks = videoRef.current?.textTracks
@@ -798,61 +817,64 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // Only what there is a choice about: a single rendition, a single dub or no
   // subtitles at all is a group with nothing in it, and an empty group is
   // worse than none.
-  const settingGroups: SettingGroup[] = []
-  // Gated on the bucket the same way the <track> elements are: without one
-  // these are tracks the browser can never fetch, so offering them is offering
-  // a choice that cannot take effect.
-  if (room.mediaBaseUrl && subtitleTracks.length > 0) {
-    settingGroups.push({
-      id: 'subtitles',
-      label: t('room.subtitles'),
-      current: subtitle,
-      onPick: setSubtitle,
-      options: [
-        { value: -1, label: t('room.off') },
-        // Keyed by the track's own number, never by its place in the list:
-        // the list grows as the extraction runs, and a choice remembered as a
-        // position slides onto another language mid-episode.
-        ...subtitleTracks.map((track) => ({
-          value: track.index,
-          label: track.title || track.language || String(track.index + 1),
-        })),
-      ],
-    })
-  }
-  if (audioTracks.length > 1) {
-    settingGroups.push({
-      id: 'audio',
-      label: t('room.audio'),
-      current: audioTrack,
-      onPick: (value) => {
-        setAudioTrack(value)
-        if (hlsRef.current) hlsRef.current.audioTrack = value
-      },
-      options: audioTracks.map((track, index) => ({
-        value: index,
-        label: audioTrackLabel(track, t.language, index),
-      })),
-    })
-  }
-  if (levels.length > 1) {
-    settingGroups.push({
-      id: 'quality',
-      label: t('room.quality'),
-      current: level,
-      onPick: (value) => {
-        setLevel(value)
-        if (hlsRef.current) hlsRef.current.currentLevel = value
-      },
-      options: [
-        { value: -1, label: t('room.qualityAuto') },
-        ...levels.map((entry, index) => ({
+  const settingGroups: SettingGroup[] = useMemo(() => {
+    const groups: SettingGroup[] = []
+    // Gated on the bucket the same way the <track> elements are: without one
+    // these are tracks the browser can never fetch, so offering them is offering
+    // a choice that cannot take effect.
+    if (room.mediaBaseUrl && subtitleTracks.length > 0) {
+      groups.push({
+        id: 'subtitles',
+        label: t('room.subtitles'),
+        current: subtitle,
+        onPick: setSubtitle,
+        options: [
+          { value: -1, label: t('room.off') },
+          // Keyed by the track's own number, never by its place in the list:
+          // the list grows as the extraction runs, and a choice remembered as a
+          // position slides onto another language mid-episode.
+          ...subtitleTracks.map((track) => ({
+            value: track.index,
+            label: track.title || track.language || String(track.index + 1),
+          })),
+        ],
+      })
+    }
+    if (audioTracks.length > 1) {
+      groups.push({
+        id: 'audio',
+        label: t('room.audio'),
+        current: audioTrack,
+        onPick: (value) => {
+          setAudioTrack(value)
+          if (hlsRef.current) hlsRef.current.audioTrack = value
+        },
+        options: audioTracks.map((track, index) => ({
           value: index,
-          label: entry.height ? `${entry.height}p` : `${Math.round(entry.bitrate / 1000)} kbps`,
+          label: audioTrackLabel(track, t.language, index),
         })),
-      ],
-    })
-  }
+      })
+    }
+    if (levels.length > 1) {
+      groups.push({
+        id: 'quality',
+        label: t('room.quality'),
+        current: level,
+        onPick: (value) => {
+          setLevel(value)
+          if (hlsRef.current) hlsRef.current.currentLevel = value
+        },
+        options: [
+          { value: -1, label: t('room.qualityAuto') },
+          ...levels.map((entry, index) => ({
+            value: index,
+            label: entry.height ? `${entry.height}p` : `${Math.round(entry.bitrate / 1000)} kbps`,
+          })),
+        ],
+      })
+    }
+    return groups
+  }, [room.mediaBaseUrl, subtitleTracks, subtitle, audioTracks, audioTrack, levels, level, t])
 
   const seekMax = Math.max(timelineEnd, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
@@ -861,28 +883,32 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // its end would sit on the far edge pointing at nothing. Each keeps its
   // position in the full list, so unnamed chapters are numbered as the
   // source counts them, not as the clamp happens to leave them.
-  const chapters = (room.chapters ?? [])
+  const chapters = useMemo(() => (room.chapters ?? [])
     .map((chapter, index) => ({ ...chapter, ordinal: index + 1 }))
-    .filter((chapter) => chapter.startMs / 1000 < seekMax)
-  const chapterLabel = (index: number) =>
-    chapters[index].title || `${t('player.chapter')} ${chapters[index].ordinal}`
-  const chapterIndexAt = (seconds: number) =>
-    chapters.findIndex((chapter) => seconds * 1000 >= chapter.startMs && seconds * 1000 < chapter.endMs)
+    .filter((chapter) => chapter.startMs / 1000 < seekMax), [room.chapters, seekMax])
+  const chapterLabel = useCallback((index: number) =>
+    chapters[index].title || `${t('player.chapter')} ${chapters[index].ordinal}`, [chapters, t])
+  const chapterIndexAt = useCallback((seconds: number) =>
+    chapters.findIndex((chapter) => seconds * 1000 >= chapter.startMs && seconds * 1000 < chapter.endMs), [chapters])
   const currentChapterIndex = chapterIndexAt(currentTime)
   // What the pointer is over on the scrubber: a chapter and its span, or just
   // the time, floating above the bar.
   const [seekHover, setSeekHover] = useState<{ leftPct: number; text: string } | null>(null)
+  const hoverRectRef = useRef<DOMRect | null>(null)
   // Each buffered range is split at the playhead: buffer kept behind it is a
   // different fact than buffer ready ahead of it, and both are drawn over the
   // played and unbuffered ground.
-  const behindBands: Array<{ from: number; to: number }> = []
-  const aheadBands: Array<{ from: number; to: number }> = []
-  for (const range of bufferedRanges) {
-    const start = Math.min(Math.max(range.start, 0), seekMax)
-    const end = Math.min(Math.max(range.end, 0), seekMax)
-    if (start < Math.min(currentTime, end)) behindBands.push({ from: start, to: Math.min(currentTime, end) })
-    if (end > Math.max(start, currentTime)) aheadBands.push({ from: Math.max(start, currentTime), to: end })
-  }
+  const [behindBands, aheadBands] = useMemo(() => {
+    const behind: Array<{ from: number; to: number }> = []
+    const ahead: Array<{ from: number; to: number }> = []
+    for (const range of bufferedRanges) {
+      const start = Math.min(Math.max(range.start, 0), seekMax)
+      const end = Math.min(Math.max(range.end, 0), seekMax)
+      if (start < Math.min(currentTime, end)) behind.push({ from: start, to: Math.min(currentTime, end) })
+      if (end > Math.max(start, currentTime)) ahead.push({ from: Math.max(start, currentTime), to: end })
+    }
+    return [behind, ahead]
+  }, [bufferedRanges, currentTime, seekMax])
   // A player waiting on data looks exactly like one that has stopped working.
   // The spinner is the only thing that distinguishes them, and a room whose
   // source is still downloading spends real time here.
@@ -973,7 +999,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           const absoluteSec = event.currentTarget.currentTime + loadedOffset
           setCurrentTime(absoluteSec)
           setDuration(playableDuration(event.currentTarget))
-          setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), loadedOffset))
+          setBufferedRanges(keepRanges(shiftRanges(readBufferedRanges(event.currentTarget), loadedOffset)))
           // Playback walking off the end of a finished region continues in
           // the region that picks up there, if one does — judged only while
           // the element holds the region the state says it does.
@@ -986,7 +1012,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         onLoadedMetadata={(event) => setDuration(playableDuration(event.currentTarget))}
         onProgress={(event) => {
           setDuration(playableDuration(event.currentTarget))
-          setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec))
+          setBufferedRanges(keepRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec)))
         }}
       >
         {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track) => (
@@ -1018,12 +1044,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             what it points at sits underneath it. */}
         <div
           className="seek-control"
+          // The bar's rect is read once on entry rather than on every move:
+          // getBoundingClientRect is a forced layout, and the bar cannot
+          // change size while a pointer is travelling across it.
+          onPointerEnter={(event) => { hoverRectRef.current = event.currentTarget.getBoundingClientRect() }}
           onPointerMove={(event) => {
             // A finger is not a hover: on touch the only pointermove is the
             // drag itself, and with no pointerout coming the label would
             // stay pinned wherever the drag ended.
             if (event.pointerType === 'touch') return
-            const rect = event.currentTarget.getBoundingClientRect()
+            const rect = hoverRectRef.current ?? event.currentTarget.getBoundingClientRect()
+            hoverRectRef.current = rect
             if (rect.width <= 0) return
             const frac = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
             const seconds = frac * seekMax
@@ -1033,10 +1064,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             const text = index >= 0
               ? `${chapterLabel(index)} · ${formatTime(seconds)}`
               : formatTime(seconds)
-            setSeekHover({ leftPct: Math.min(Math.max(frac * 100, 6), 94), text })
+            const leftPct = Math.min(Math.max(frac * 100, 6), 94)
+            // A pointer reports 100+ moves a second and the label is a whole
+            // second wide: rendering every one of them re-renders the player
+            // to redraw the same tooltip in the same place.
+            setSeekHover((prev) => (
+              prev && prev.text === text && Math.abs(prev.leftPct - leftPct) < 0.25 ? prev : { leftPct, text }
+            ))
           }}
-          onPointerLeave={() => setSeekHover(null)}
-          onPointerCancel={() => setSeekHover(null)}
+          onPointerLeave={() => { hoverRectRef.current = null; setSeekHover(null) }}
+          onPointerCancel={() => { hoverRectRef.current = null; setSeekHover(null) }}
         >
           <div className="seek-track" aria-hidden="true">
             <div className="seek-played" style={{ width: pct(scrubSec ?? pendingSeekSec ?? currentTime) }} />
@@ -1237,6 +1274,18 @@ function readBufferedRanges(video: HTMLVideoElement): BufferedRange[] {
     ranges.push({ start: video.buffered.start(index), end: video.buffered.end(index) })
   }
   return ranges
+}
+
+// The ranges are rebuilt from the element several times a second and are
+// almost always the same ones; handing React a new array every time meant a
+// full player render for a scrub bar that did not move. This keeps the old
+// array whenever nothing actually changed, so the render bails out.
+function keepRanges(next: BufferedRange[]): (prev: BufferedRange[]) => BufferedRange[] {
+  return (prev) => (
+    prev.length === next.length && prev.every((range, index) => range.start === next[index].start && range.end === next[index].end)
+      ? prev
+      : next
+  )
 }
 
 // Buffered ranges come off the element's rebased clock; the scrubber speaks

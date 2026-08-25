@@ -18,5 +18,10 @@ createRoot(document.getElementById('root')!).render(
 
 // Plugins check their locked origin once per load. Deliberately not awaited
 // and deliberately silent: an update is never the reason the catalog takes
-// longer to appear, and a failed network call is not an event.
-void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined)
+// longer to appear, and a failed network call is not an event. Held until the
+// browser is idle for that same reason — started at boot it raced the bundle
+// the first paint was waiting on.
+const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
+const idle = window.requestIdleCallback
+if (typeof idle === 'function') idle(checkPlugins, { timeout: 3_000 })
+else window.setTimeout(checkPlugins, 1_500)
