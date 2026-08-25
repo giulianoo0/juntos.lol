@@ -22,6 +22,17 @@ type serverOptions struct {
 	subtitlePublisher SubtitlePublisher
 	clientMediaBucket ClientMediaBucket
 	clientMediaHooks  ClientMediaHooks
+	torrentAccess     TorrentAccess
+	workerLink        gin.HandlerFunc
+}
+
+// WithTorrents mounts the torrent routes over the worker fleet, and the
+// control link the workers dial.
+func WithTorrents(access TorrentAccess, workerLink gin.HandlerFunc) ServerOption {
+	return func(o *serverOptions) {
+		o.torrentAccess = access
+		o.workerLink = workerLink
+	}
 }
 
 // WithSourceHooks connects the room source endpoint to the media pipeline.
@@ -79,8 +90,12 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	}
 	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
+	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
+	}
+	if options.workerLink != nil {
+		r.GET("/ws/worker-link", options.workerLink)
 	}
 	registerFrontend(r, cfg.WebDir)
 	return r

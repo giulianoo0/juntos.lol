@@ -134,8 +134,7 @@ impl WorkerConfig {
             (None, Some(IpAddr::V4(ip))) => ip.to_string(),
             (None, None) => "127.0.0.1".into(),
         };
-        let port = self.https_addr.port();
-        let default = if self.tls == TlsMode::Off { 80 } else { 443 };
+        let (port, default) = if self.tls == TlsMode::Off { (self.http_addr.port(), 80) } else { (self.https_addr.port(), 443) };
         if port == default {
             format!("{scheme}://{host}")
         } else {

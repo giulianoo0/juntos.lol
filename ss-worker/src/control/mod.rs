@@ -40,6 +40,10 @@ pub struct Control {
 }
 
 const HEARTBEAT: Duration = Duration::from_secs(10);
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+// The server answers every heartbeat; this many beats without any frame
+// from it means the link is dead even if the socket says otherwise.
+const SILENCE_LIMIT: Duration = Duration::from_secs(45);
 const RECONNECT_MIN: Duration = Duration::from_secs(1);
 const RECONNECT_MAX: Duration = Duration::from_secs(60);
 
@@ -128,9 +132,13 @@ impl Control {
     }
 
     async fn session(&self) -> anyhow::Result<()> {
-        let (ws, _) = tokio_tungstenite::connect_async(&self.cfg.server_url).await.context("connect")?;
+        let (ws, _) = tokio::time::timeout(Duration::from_secs(15), tokio_tungstenite::connect_async(&self.cfg.server_url))
+            .await
+            .context("connect timeout")?
+            .context("connect")?;
         let (mut tx, mut rx) = ws.split();
-        tx.send(Message::Text(self.hello()?)).await?;
+        let hello = self.hello()?;
+        tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Text(hello))).await.context("hello send timeout")??;
         let first = tokio::time::timeout(Duration::from_secs(15), rx.next()).await.context("welcome timeout")?;
         let Some(Ok(Message::Text(text))) = first else { anyhow::bail!("no welcome") };
         let msg: serde_json::Value = serde_json::from_str(&text)?;
@@ -139,23 +147,30 @@ impl Control {
             Some("reject") => anyhow::bail!("server rejected: {}", msg["error"]),
             other => anyhow::bail!("unexpected first message {other:?}"),
         }
-        tx.send(Message::Text(self.heartbeat())).await?;
+        tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Text(self.heartbeat()))).await.context("send timeout")??;
         let mut ticker = tokio::time::interval(HEARTBEAT);
         ticker.tick().await;
         let (results_tx, mut results_rx) = tokio::sync::mpsc::channel::<String>(64);
+        let mut last_frame = Instant::now();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    tx.send(Message::Text(self.heartbeat())).await?;
+                    if last_frame.elapsed() > SILENCE_LIMIT {
+                        anyhow::bail!("server silent for {:?}", last_frame.elapsed());
+                    }
+                    tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Text(self.heartbeat()))).await.context("send timeout")??;
                 }
                 Some(result) = results_rx.recv() => {
-                    tx.send(Message::Text(result)).await?;
+                    tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Text(result))).await.context("send timeout")??;
                 }
                 incoming = rx.next() => {
                     let Some(frame) = incoming else { anyhow::bail!("server closed") };
+                    last_frame = Instant::now();
                     match frame? {
                         Message::Text(text) => self.on_message(&text, results_tx.clone()),
-                        Message::Ping(p) => tx.send(Message::Pong(p)).await?,
+                        Message::Ping(p) => {
+                            tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Pong(p))).await.context("send timeout")??;
+                        }
                         Message::Close(_) => anyhow::bail!("server closed"),
                         _ => {}
                     }

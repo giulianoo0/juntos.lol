@@ -61,7 +61,7 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
         }
         "drain" => {
             engine.drain();
-            drain.notify_waiters();
+            drain.notify_one();
             ok(json!({}))
         }
         "setLimits" => {

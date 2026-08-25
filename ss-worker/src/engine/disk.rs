@@ -42,6 +42,10 @@ impl DiskAccountant {
         true
     }
 
+    pub fn reserved(&self, infohash: &str) -> u64 {
+        self.reserved.lock().unwrap().get(infohash).copied().unwrap_or(0)
+    }
+
     pub fn reserve_unchecked(&self, infohash: &str, bytes: u64) {
         self.reserved.lock().unwrap().insert(infohash.to_string(), bytes);
     }

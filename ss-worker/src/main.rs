@@ -83,9 +83,12 @@ async fn main() -> anyhow::Result<()> {
     let control = Arc::new(control::Control::new(cfg.clone(), engine.clone(), app.clone(), slot, acme, drain.clone())?);
     tokio::spawn(control.run());
 
-    // Shutdown: stop taking leases, let responses in flight finish (bounded),
-    // then close the listener.
-    shutdown_signal().await;
+    // Shutdown — a signal, or a drain job from the server: stop taking
+    // leases, let responses in flight finish (bounded), close the listener.
+    tokio::select! {
+        _ = shutdown_signal() => {}
+        _ = drain.notified() => {}
+    }
     tracing::info!("draining");
     engine.drain();
     let deadline = tokio::time::Instant::now() + cfg.drain_deadline;

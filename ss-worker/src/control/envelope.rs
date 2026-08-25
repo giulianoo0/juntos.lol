@@ -55,9 +55,25 @@ pub struct NonceStore {
     seen: Mutex<HashMap<String, u64>>,
 }
 
+// A nonce is remembered for as long as its job could be replayed, capped
+// so a far-off expiry cannot grow the file without bound.
+const NONCE_TTL_CAP: u64 = 6 * 3600;
+
 impl NonceStore {
     pub fn open(path: PathBuf) -> Self {
-        let seen = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let seen = match std::fs::read_to_string(&path) {
+            Ok(raw) => match serde_json::from_str::<HashMap<String, u64>>(&raw) {
+                Ok(seen) => seen,
+                Err(e) => {
+                    // A truncated store must not pass as an empty one in
+                    // silence; the bad file is kept aside for inspection.
+                    tracing::error!(error = %e, path = %path.display(), "nonce store unreadable; starting empty");
+                    let _ = std::fs::rename(&path, path.with_extension("corrupt"));
+                    HashMap::new()
+                }
+            },
+            Err(_) => HashMap::new(),
+        };
         Self { path, seen: Mutex::new(seen) }
     }
 
@@ -69,12 +85,22 @@ impl NonceStore {
         if seen.contains_key(nonce) {
             return false;
         }
-        seen.insert(nonce.to_string(), exp);
+        seen.insert(nonce.to_string(), exp.min(now + NONCE_TTL_CAP));
         if let Ok(raw) = serde_json::to_string(&*seen) {
-            let _ = std::fs::write(&self.path, raw);
+            if let Err(e) = write_atomic(&self.path, raw.as_bytes()) {
+                tracing::warn!(error = %e, "nonce store not persisted");
+            }
         }
         true
     }
+}
+
+/// Writes through a sibling temp file and a rename, so a crash leaves
+/// either the old file or the new one, never a torn one.
+pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(&tmp, path)
 }
 
 pub fn verify(envelope: &Envelope, key: &VerifyingKey, worker_id: &str, nonces: &NonceStore) -> anyhow::Result<Job> {

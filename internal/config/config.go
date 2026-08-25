@@ -57,6 +57,18 @@ type Config struct {
 	// TorrentBlocklistFile lists infohashes and name keywords never dispatched.
 	// Empty means no list.
 	TorrentBlocklistFile string
+
+	// The worker fleet. Without an enrollment secret no worker can join and
+	// the torrent path reports itself disabled; the instance still boots.
+	WorkerEnrollmentSecret string
+	// WorkerSigningKeyFile persists the Ed25519 key jobs and tickets are
+	// signed with. Empty means a fresh key per boot (tickets die with it).
+	WorkerSigningKeyFile string
+	// WorkerTicketMinutes is how long a data-plane ticket stays valid.
+	WorkerTicketMinutes int
+	// PublicOrigin is the origin browsers load the app from, which tickets
+	// are scoped to. Empty falls back to the request's own Origin header.
+	PublicOrigin string
 }
 
 func Load() (Config, error) {
@@ -150,6 +162,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.TorrentBlocklistFile = os.Getenv("TORRENT_BLOCKLIST_FILE")
+	cfg.WorkerEnrollmentSecret = os.Getenv("WORKER_ENROLLMENT_SECRET")
+	cfg.WorkerSigningKeyFile = os.Getenv("WORKER_SIGNING_KEY_FILE")
+	if cfg.WorkerTicketMinutes, err = envInt("WORKER_TICKET_MINUTES", 15); err != nil {
+		return Config{}, err
+	}
+	cfg.PublicOrigin = strings.TrimSuffix(os.Getenv("PUBLIC_ORIGIN"), "/")
 
 	return cfg, nil
 }

@@ -71,7 +71,8 @@ pub async fn get(
     let end = end.min(start + state.engine.cfg.response_cap - 1);
     let len = end - start + 1;
     let prio = Prio::parse(query.prio.as_deref());
-    let gen = query.gen.unwrap_or(0);
+    // A request that names no generation is never superseded by a hint.
+    let gen = query.gen.unwrap_or(u64::MAX);
     state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
 
     let reader = match state.engine.open(&ticket.infohash, ticket.file_index, start, prio).await {
@@ -81,8 +82,9 @@ pub async fn get(
     let (tx, mut rx) = mpsc::channel::<bytes::Bytes>(4);
     let chunk = state.engine.read_chunk_size();
     let stall = state.engine.cfg.stall_deadline;
+    let first_byte = state.engine.cfg.first_byte_deadline + Duration::from_secs(1);
     let metrics = state.metrics.clone();
-    tokio::spawn(pump(reader, len, chunk, stall, gen, tx, metrics));
+    tokio::spawn(pump(reader, len, chunk, first_byte, stall, gen, tx, metrics));
 
     // Headers wait for the first chunk: a piece nobody has yet is a 504 the
     // client waits out on its own budget, not a silent open body.
@@ -112,13 +114,17 @@ pub async fn get(
 }
 
 // Reads `len` bytes into the channel. A chunk that takes longer than the
-// stall deadline ends the body early — the client resumes from wherever it
-// got to; so does a reader superseded by a hint. A receiver that went away
-// (the browser aborted) stops the pump on its next send.
+// deadline (first-byte for the first, stall for the rest) ends the body
+// early — the client resumes from wherever it got to; so does a reader
+// superseded by a hint. A receiver that went away — the browser aborted,
+// or the handler gave up waiting for the first byte — cancels the read in
+// progress, so the slot and the permit go back at once.
+#[allow(clippy::too_many_arguments)]
 async fn pump(
     mut reader: Reader,
     len: u64,
     chunk: usize,
+    first_byte: Duration,
     stall: Duration,
     gen: u64,
     tx: mpsc::Sender<bytes::Bytes>,
@@ -133,7 +139,11 @@ async fn pump(
             return;
         }
         let want = (left as usize).min(buf.len());
-        let read = tokio::time::timeout(stall.max(if first { Duration::from_secs(3600) } else { stall }), reader.read(&mut buf[..want])).await;
+        let deadline = if first { first_byte } else { stall };
+        let read = tokio::select! {
+            r = tokio::time::timeout(deadline, reader.read(&mut buf[..want])) => r,
+            _ = tx.closed() => return,
+        };
         let n = match read {
             Ok(Ok(0)) => return,
             Ok(Ok(n)) => n,
@@ -142,8 +152,10 @@ async fn pump(
                 return;
             }
             Err(_) => {
-                metrics.stalls.fetch_add(1, Ordering::Relaxed);
-                metrics.observe_stall(started.elapsed());
+                if !first {
+                    metrics.stalls.fetch_add(1, Ordering::Relaxed);
+                    metrics.observe_stall(started.elapsed());
+                }
                 return;
             }
         };

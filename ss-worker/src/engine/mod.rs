@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context};
 use librqbit::{
     AddTorrent, AddTorrentOptions, ConnectionOptions, ListenerMode, ListenerOptions, ManagedTorrent,
-    PeerConnectionOptions, Session, SessionOptions,
+    ManagedTorrentState, PeerConnectionOptions, Session, SessionOptions,
 };
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -53,7 +53,11 @@ pub struct Engine {
     disk: DiskAccountant,
     pub cfg: WorkerConfig,
     draining: AtomicBool,
-    permits_in_use: AtomicU64,
+    permits_in_use: Arc<AtomicU64>,
+    // Throwaway streams each hold one of librqbit's blocking permits for
+    // their whole life; unbounded they would exhaust the pool and wedge
+    // every request, including the inits. Bounded here, refused beyond.
+    transients: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -96,7 +100,9 @@ pub struct Reader {
     slot: Option<Arc<slots::StreamSlot>>,
     stream: Option<tokio::sync::OwnedMutexGuard<slots::BoxStream>>,
     transient: Option<slots::BoxStream>,
+    _transient_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     pub position: u64,
+    prio: Prio,
     gen_floor: Arc<AtomicU64>,
     permits: Arc<AtomicU64>,
 }
@@ -114,9 +120,11 @@ impl Reader {
         }
         Ok(n)
     }
-    /// A hint moved the reader's owner past this response; stop feeding it.
+    /// A hint moved the remux past this response; stop feeding it. Only
+    /// playhead reads carry a generation — probes and scans are their own
+    /// cursors and never superseded by a seek.
     pub fn superseded(&self, gen: u64) -> bool {
-        gen < self.gen_floor.load(Ordering::Relaxed)
+        self.prio == Prio::Playhead && gen < self.gen_floor.load(Ordering::Relaxed)
     }
 }
 
@@ -161,9 +169,10 @@ impl Engine {
             session,
             torrents: Mutex::new(HashMap::new()),
             disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), dir),
+            transients: Arc::new(tokio::sync::Semaphore::new(cfg.max_leases * 2)),
             cfg,
             draining: AtomicBool::new(false),
-            permits_in_use: AtomicU64::new(0),
+            permits_in_use: Arc::new(AtomicU64::new(0)),
         });
         engine.adopt_persisted();
         reaper::spawn(Arc::downgrade(&engine));
@@ -230,9 +239,17 @@ impl Engine {
         let listed = match listed {
             librqbit::AddTorrentResponse::ListOnly(l) => l,
             other => {
-                // Raced another lease on the same hash; attach to that one.
+                // Raced another lease on the same hash, or librqbit still
+                // manages a torrent the map forgot; either way this lease
+                // attaches to that handle, and the map learns it.
                 if let Some(handle) = other.into_handle() {
-                    self.attach_existing(&infohash, lease_id);
+                    if self.attach_existing(&infohash, lease_id).is_none() {
+                        let mut map = self.torrents.lock().unwrap();
+                        let entry = map
+                            .entry(infohash.clone())
+                            .or_insert_with(|| Entry::new(handle.clone(), Phase::Ready, 0));
+                        entry.take_lease(lease_id);
+                    }
                     return admission::lease_info(&handle).map_err(Rejection::Internal);
                 }
                 return Err(Rejection::Internal(anyhow!("unexpected add response")));
@@ -277,7 +294,14 @@ impl Engine {
     pub async fn select(&self, infohash: &str, file_index: usize) -> Result<u64, Rejection> {
         let infohash = infohash.to_ascii_lowercase();
         let handle = self.handle(&infohash).ok_or(Rejection::Unknown)?;
-        let (only, selected_bytes) = {
+        let previously = self
+            .torrents
+            .lock()
+            .unwrap()
+            .get(&infohash)
+            .map(|e| e.ever_selected.clone())
+            .unwrap_or_default();
+        let (only, selected_bytes, reserve_bytes, ever) = {
             let guard = handle.metadata.load();
             let meta = guard.as_ref().ok_or_else(|| Rejection::Internal(anyhow!("no metadata")))?;
             let mut only = HashSet::new();
@@ -292,25 +316,29 @@ impl Engine {
             if !only.contains(&file_index) {
                 return Err(Rejection::NoSuchFile);
             }
-            (only, total)
+            // Deselecting a file does not delete what it already downloaded,
+            // so the reservation covers every file ever selected here.
+            let mut ever = previously;
+            ever.extend(only.iter().copied());
+            let reserve: u64 = ever.iter().filter_map(|i| meta.file_infos.get(*i)).map(|f| f.len).sum();
+            (only, total, reserve, ever)
         };
-        // The download can only ever reach the selected files, so that is the
-        // reservation; the advisory streaming window means it will reach all
-        // of them given time.
-        if !self.disk.reserve(&infohash, selected_bytes) {
-            self.evict_idle_until_room(selected_bytes).await;
-            if !self.disk.reserve(&infohash, selected_bytes) {
+        let before = self.disk.reserved(&infohash);
+        if !self.disk.reserve(&infohash, reserve_bytes) {
+            self.evict_idle_until_room(reserve_bytes).await;
+            if !self.disk.reserve(&infohash, reserve_bytes) {
                 return Err(Rejection::DiskFull);
             }
         }
-        self.session
-            .update_only_files(&handle, &only)
-            .await
-            .map_err(|e| Rejection::Internal(anyhow!(e)))?;
+        if let Err(e) = self.session.update_only_files(&handle, &only).await {
+            self.disk.reserve_unchecked(&infohash, before);
+            return Err(Rejection::Internal(anyhow!(e)));
+        }
         let _ = self.session.unpause(&handle).await;
         if let Some(entry) = self.torrents.lock().unwrap().get_mut(&infohash) {
             entry.selected_bytes = selected_bytes;
             entry.selected_file = Some(file_index);
+            entry.ever_selected = ever;
             entry.phase = Phase::Serving;
             entry.touch();
         }
@@ -350,6 +378,9 @@ impl Engine {
     /// between requests; head probes use a throwaway stream.
     pub async fn open(&self, infohash: &str, index: usize, start: u64, prio: Prio) -> anyhow::Result<Reader> {
         let handle = self.touch(infohash).context("unknown torrent")?;
+        if handle.with_state(|s| matches!(s, ManagedTorrentState::Error(_))) {
+            bail!("torrent failed");
+        }
         let size = self.file_size(infohash, index)?;
         if start >= size {
             bail!("start past end");
@@ -370,22 +401,30 @@ impl Engine {
                     slot: Some(slot),
                     stream: Some(stream),
                     transient: None,
+                    _transient_permit: None,
                     position: start,
+                    prio,
                     gen_floor,
-                    permits: Arc::new(AtomicU64::new(0)),
+                    permits: self.permits_in_use.clone(),
                 });
             }
         }
-        let mut stream = handle.clone().stream(index).await.context("stream")?;
+        let permit = self.transients.clone().try_acquire_owned().map_err(|_| anyhow!("too many readers"))?;
+        let mut stream = tokio::time::timeout(Duration::from_secs(10), handle.clone().stream(index))
+            .await
+            .context("stream open timed out")?
+            .context("stream")?;
         stream.seek(SeekFrom::Start(start)).await?;
         self.permits_in_use.fetch_add(1, Ordering::Relaxed);
         Ok(Reader {
             slot: None,
             stream: None,
             transient: Some(Box::new(stream)),
+            _transient_permit: Some(permit),
             position: start,
+            prio,
             gen_floor,
-            permits: Arc::new(AtomicU64::new(0)),
+            permits: self.permits_in_use.clone(),
         })
     }
 
@@ -405,7 +444,10 @@ impl Engine {
                 return Ok(slot.clone());
             }
         }
-        let stream = handle.clone().stream(index).await.context("stream")?;
+        let stream = tokio::time::timeout(Duration::from_secs(10), handle.clone().stream(index))
+            .await
+            .context("stream open timed out")?
+            .context("stream")?;
         let slot = Arc::new(slots::StreamSlot::new(Box::new(stream), start));
         let mut map = self.torrents.lock().unwrap();
         let entry = map.get_mut(infohash).context("unknown torrent")?;
@@ -482,8 +524,51 @@ impl Engine {
         self.disk.release(infohash);
     }
 
-    pub(crate) async fn pause(&self, handle: &Handle) {
+    /// Pauses an idle torrent, unless a lease arrived meanwhile — the pause
+    /// runs outside the lock, so the decision is re-taken after it.
+    pub(crate) async fn pause_if_idle(&self, infohash: &str, handle: &Handle) {
         let _ = self.session.pause(handle).await;
+        let still_idle = {
+            let mut map = self.torrents.lock().unwrap();
+            match map.get_mut(infohash) {
+                Some(entry) if entry.leases.is_empty() => {
+                    entry.phase = Phase::Idle;
+                    entry.slots.clear();
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !still_idle {
+            let _ = self.session.unpause(handle).await;
+        }
+    }
+
+    /// A torrent librqbit gave up on (ENOSPC, a storage error) gets one
+    /// restart in place; a second failure is final and the room's reads
+    /// fail fast instead of waiting on pieces that will never come.
+    pub(crate) async fn retry_failed(&self) {
+        let failed: Vec<(String, Handle, bool)> = {
+            let map = self.torrents.lock().unwrap();
+            map.iter()
+                .filter(|(_, e)| e.handle.with_state(|s| matches!(s, ManagedTorrentState::Error(_))))
+                .map(|(id, e)| (id.clone(), e.handle.clone(), e.retried))
+                .collect()
+        };
+        for (id, handle, retried) in failed {
+            if retried {
+                continue;
+            }
+            let error = handle.with_state(|s| match s {
+                ManagedTorrentState::Error(e) => format!("{e:#}"),
+                _ => String::new(),
+            });
+            tracing::warn!(infohash = %id, error, "torrent failed; restarting once");
+            if let Some(entry) = self.torrents.lock().unwrap().get_mut(&id) {
+                entry.retried = true;
+            }
+            let _ = self.session.unpause(&handle).await;
+        }
     }
 
     pub(crate) fn idle_candidates(&self) -> Vec<(String, Handle, Phase, Duration)> {

@@ -18,13 +18,13 @@ pub fn spawn(engine: Weak<Engine>) {
             tokio::time::sleep(SWEEP).await;
             let Some(engine) = engine.upgrade() else { break };
             engine.expire_stale_leases(LEASE_TTL);
+            engine.retry_failed().await;
             let grace = engine.cfg.idle_grace;
             let ttl = engine.cfg.reap_ttl;
             for (id, handle, phase, idle) in engine.idle_candidates() {
                 match phase {
                     Phase::Ready | Phase::Serving if idle > grace => {
-                        engine.pause(&handle).await;
-                        engine.set_phase(&id, Phase::Idle);
+                        engine.pause_if_idle(&id, &handle).await;
                     }
                     Phase::Idle if idle > grace + ttl => {
                         engine.set_phase(&id, Phase::Reaping);

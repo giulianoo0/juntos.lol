@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -15,6 +16,7 @@ import (
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
+	"github.com/giulianoo0/ss/internal/worker"
 )
 
 // The server does no media work. It creates rooms, keeps their members in
@@ -64,13 +66,40 @@ func main() {
 	hub := syncapi.NewHub(store, cfg, bucket)
 	defer hub.Close()
 
+	// The worker fleet. Without an enrollment secret the torrent path reports
+	// itself disabled and everything else runs as before.
+	signer, err := worker.LoadOrCreateSigner(cfg.WorkerSigningKeyFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	blocklist, err := worker.LoadBlocklist(cfg.TorrentBlocklistFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	registry := worker.NewRegistry(rdb)
+	workerHub := worker.NewHub(registry, signer, cfg.WorkerEnrollmentSecret)
+	quota := httpapi.NewQuota(rdb, cfg.TorrentDispatchPerHour, cfg.TorrentConcurrentJobs, cfg.TorrentBytesPerDayGB<<30)
+	torrents := &worker.Service{
+		Registry:  registry,
+		Hub:       workerHub,
+		Signer:    signer,
+		Blocklist: blocklist,
+		Quota:     quota,
+		TicketTTL: time.Duration(cfg.WorkerTicketMinutes) * time.Minute,
+		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
+	}
+	workerHub.OnHeartbeat(torrents.Charge)
+	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
+	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.PublicOrigin == "" || strings.HasPrefix(cfg.PublicOrigin, "https://"))
+
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),
 		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{
 			NotifyStatus:      hub.NotifyStatus,
 			NotifyRoomUpdated: hub.NotifyRoomUpdated,
 		}),
-		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus}),
+		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, CancelMedia: torrents.CancelRoom}),
+		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents}, workerHub.HandleLink),
 	)
 
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {

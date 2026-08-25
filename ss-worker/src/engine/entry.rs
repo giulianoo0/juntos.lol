@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,8 +32,12 @@ pub struct Entry {
     pub phase: Phase,
     pub selected_file: Option<usize>,
     pub selected_bytes: u64,
+    /// Every file index ever selected: what may be on disk.
+    pub ever_selected: HashSet<usize>,
     pub slots: HashMap<(usize, Prio), Arc<StreamSlot>>,
     pub gen_floor: Arc<AtomicU64>,
+    /// Whether the one in-place restart after a failure was spent.
+    pub retried: bool,
 }
 
 impl Entry {
@@ -45,8 +49,10 @@ impl Entry {
             phase,
             selected_file: None,
             selected_bytes,
+            ever_selected: HashSet::new(),
             slots: HashMap::new(),
             gen_floor: Arc::new(AtomicU64::new(0)),
+            retried: false,
         }
     }
 
@@ -67,6 +73,7 @@ impl Entry {
 
     pub fn digest(&self, infohash: &str) -> TorrentDigest {
         let stats = self.handle.stats();
+        let failed = self.handle.with_state(|s| matches!(s, librqbit::ManagedTorrentState::Error(_)));
         let (peers, down, up) = stats
             .live
             .as_ref()
@@ -81,7 +88,7 @@ impl Entry {
         TorrentDigest {
             infohash: infohash.to_string(),
             name: self.handle.name().unwrap_or_default(),
-            phase: self.phase.name(),
+            phase: if failed { "failed" } else { self.phase.name() },
             have_bytes: stats.progress_bytes,
             selected_bytes: self.selected_bytes,
             peers,
