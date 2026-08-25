@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>sparse HLS timeline prototype</title>
+  <style>body{font:14px ui-monospace,monospace;padding:1rem;background:#111;color:#ddd}pre{white-space:pre-wrap}video{width:480px;background:#000;display:block;margin:8px 0}</style>
+</head>
+<body>
+  <p>Three disjoint regions of one file, published as ONE playlist with EXT-X-GAP fillers and a MAP per discontinuity. Does hls.js seek across them? Query: <code>?base=http://127.0.0.1:8099/f&amp;regions=0-30,600-630,1200-1230&amp;fill=4</code></p>
+  <video id="v" muted playsinline controls></video>
+  <pre id="out">starting…</pre>
+  <script type="module" src="./sparse.ts"></script>
+</body>
+</html>

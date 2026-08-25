@@ -659,6 +659,25 @@ playlist com MAP variando por descontinuidade, ou vai para live-recovery e
 joga o viewer pro fim? Se não tolera, o design de N-playlists muda
 `mediaOffsetMs` de escalar para mapa de regiões pelo player/servidor/pipeline.
 
+**Protótipo rodado em 2026-08-25 (`web/dev/sparse.html`, hls.js 1.7.0, Chrome
+real, três regiões 0–30 / 600–630 / 1200–1230 de um MKV, GAP de 4 s entre
+elas, MAP por descontinuidade, `startPosition: 0`):** o hls.js **tolera** —
+EVENT sem `ENDLIST` e VOD se comportam igual: toca a região 0, seek em 610
+cai em 615 tocando, seek num buraco (830) pula para a região seguinte
+(1204,6), seek de volta em 5 toca em 10, seek na cauda de uma região toca
+até o fim dela e pula o buraco. Nenhum live-recovery, nenhum erro fatal; só
+`mediaError/fragGap` não-fatal por segmento de buraco pulado (o handler de
+erro do player tem de ignorá-lo). **Mas** a playlist única esbarra noutra
+coisa: em atualizações live o hls.js casa fragmentos por `sn`, e uma região
+crescendo NO MEIO da lista (seek para trás com uma região posterior já
+publicada, o caso comum) inseriria segmentos no meio a cada publish — o
+`mergeDetails` assumiria fragmentos "iguais" com conteúdo diferente. Uma
+recarga a cada 2 s enquanto se assiste essa região é inaceitável. Logo a
+implementação é a alternativa prevista: **N playlists (uma por região,
+append-only) + mapa de regiões na sala**, e o player escolhe a região pelo
+tempo absoluto e troca de playlist nas fronteiras/seeks — o mecanismo de
+recarga que já existe para `mediaVersion`, agora dirigido por região.
+
 ---
 
 ## Decisões em aberto (do dono, antes de fechar as tarefas que dependem)
