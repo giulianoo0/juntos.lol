@@ -41,9 +41,15 @@ func LoadBlocklist(path string) (*Blocklist, error) {
 			b.hashes[strings.ToLower(line)] = struct{}{}
 			continue
 		}
-		b.keywords = append(b.keywords, strings.ToLower(line))
+		b.keywords = append(b.keywords, normalize(line))
 	}
 	return b, scanner.Err()
+}
+
+// normalize folds case and the separators release names use, so a keyword
+// written with spaces matches a name written with dots.
+func normalize(s string) string {
+	return strings.ToLower(strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(s))
 }
 
 func isInfohash(s string) bool {
@@ -67,7 +73,7 @@ func (b *Blocklist) Rejects(infohash, name string) bool {
 	if name == "" {
 		return false
 	}
-	lower := strings.ToLower(name)
+	lower := normalize(name)
 	for _, kw := range b.keywords {
 		if strings.Contains(lower, kw) {
 			return true
