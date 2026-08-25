@@ -24,9 +24,6 @@ const SUBTITLE_SNAPSHOT_MS = 8_000
 // The slice a subtitle pass reads at a time. Big enough that a torrent read
 // is worth the round trip, small enough to keep memory flat on a 50 GB file.
 const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
-// How many times in a row a subtitle slice may be aborted from under the
-// scan (a seek storm) before the scan gives up rather than spin.
-const SUBTITLE_ABORT_LIMIT = 8
 
 // Every source the site can play, as data. 'input' is the one page-bound
 // escape hatch — a live MediaInput object that cannot cross into a worker
@@ -165,25 +162,23 @@ async function publishSubtitles(
 
 // The scan reads the whole file, at scan priority so it trails the remux
 // in the swarm. A seek aborts whatever read it was on; the scan simply asks
-// for the same slice again — its position has nothing to do with the seek.
+// for the same slice again, however many seeks it takes — its position has
+// nothing to do with the seek. Only the input closing for good ends it.
 async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
   try {
     const stream = await createMatroskaSubtitleStream()
     let lastSnapshotAt = Date.now()
-    let aborts = 0
     for (let offset = 0; offset < input.size; offset += SUBTITLE_SLICE_BYTES) {
       const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
       let slice: Uint8Array
       try {
         slice = await input.read(offset, end, { prio: 'scan' })
       } catch (error) {
-        if (!(error instanceof ReadAbortedError) || aborts >= SUBTITLE_ABORT_LIMIT) throw error
-        aborts += 1
+        if (!(error instanceof ReadAbortedError) || error.closed) throw error
         offset -= SUBTITLE_SLICE_BYTES
         await new Promise((resolve) => setTimeout(resolve, 250))
         continue
       }
-      aborts = 0
       stream.write(slice)
       if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
         lastSnapshotAt = Date.now()

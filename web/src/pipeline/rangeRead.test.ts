@@ -167,3 +167,62 @@ describe('abort', () => {
     expect(seen!.aborted).toBe(true)
   })
 })
+
+describe('origin policies', () => {
+  it('a body that ends clean with nothing delivered spends the budget, with backoff', async () => {
+    install((s, e, n) => (n < 3 ? body(s, e, 0) : body(s, e)))
+    expect(await rangeBytes(opts(), 0, 50)).toEqual(FILE.subarray(0, 50))
+    expect(calls).toHaveLength(3)
+  })
+
+  it('a body that never delivers anything runs out of attempts', async () => {
+    install((s, e) => body(s, e, 0))
+    await expect(rangeBytes(opts(), 0, 50)).rejects.toBeInstanceOf(ReadUnreachableError)
+    expect(calls).toHaveLength(3)
+  })
+
+  it('a stalled body is abandoned and the read resumes', async () => {
+    install((s, e, n) => {
+      if (n > 1) return body(s, e)
+      const slice = FILE.subarray(s, e + 1)
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) { c.enqueue(slice.subarray(0, 10)) /* then silence */ },
+      })
+      return new Response(stream, { status: 206, headers: { 'Content-Range': `bytes ${s}-${e}/${SIZE}` } })
+    })
+    const read = rangeBytes({ ...opts(), stallMs: 500 }, 0, 50)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(await read).toEqual(FILE.subarray(0, 50))
+    expect(calls).toEqual([{ start: 0, end: 49 }, { start: 10, end: 49 }])
+  })
+
+  it('a 504 is waited out without spending the failure budget', async () => {
+    install((s, e, n) => (n <= 5 ? new Response('', { status: 504 }) : body(s, e)))
+    expect(await rangeBytes({ ...opts(), maxAttempts: 2 }, 0, 50)).toEqual(FILE.subarray(0, 50))
+    expect(calls).toHaveLength(6)
+  })
+
+  it('too many 504s is unreachable', async () => {
+    install(() => new Response('', { status: 504 }))
+    await expect(rangeBytes({ ...opts(), maxSlowRetries: 3 }, 0, 50)).rejects.toBeInstanceOf(ReadUnreachableError)
+    expect(calls).toHaveLength(4)
+  })
+
+  it('a 206 answering the wrong offset is terminal, never spliced in', async () => {
+    install((s, e) => {
+      const r = body(s, e)
+      r.headers.set('Content-Range', `bytes ${s + 7}-${e}/${SIZE}`)
+      return r
+    })
+    await expect(rangeBytes(opts(), 10, 50)).rejects.toBeInstanceOf(ReadFailedError)
+  })
+
+  it('a closed gate is told apart from a seek abort', async () => {
+    const gate = new ReadGate()
+    gate.close()
+    install((s, e) => body(s, e))
+    const error = await rangeBytes(opts(gate), 0, 50).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ReadAbortedError)
+    expect((error as ReadAbortedError).closed).toBe(true)
+  })
+})

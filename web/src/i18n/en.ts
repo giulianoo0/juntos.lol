@@ -143,6 +143,7 @@ export const en: Record<string, string> = {
   'error.fileChanged': 'That file is still being written. Wait for the download to finish, then choose it again.',
   'error.unsupportedMedia': 'This browser cannot prepare this video: the codec or container is not supported here. Try another browser or another release.',
   'error.sourceUnreachable': 'This source does not let the browser read the file directly. Pick another stream.',
+  'error.workerUnreachable': 'The torrent origin stopped answering, or refused this file. Open the torrent again to retry.',
   'catalog.tab': 'Catalog',
   'catalog.search': 'Search movies and series',
   'catalog.searchPlaceholder': 'Search for a movie or series…',

@@ -12,7 +12,7 @@
  */
 import { BlobSource, CustomSource, type Source } from 'mediabunny'
 import type { TorrentVideoFile } from '../torrent'
-import { ReadAbortedError, ReadGate, rangeBytes, rangeStream } from './rangeRead'
+import { ReadGate, rangeBytes, rangeStream } from './rangeRead'
 
 /** What a read is for; a remote origin uses it to order its swarm. */
 export type ReadPriority = 'head' | 'playhead' | 'scan'
@@ -60,9 +60,9 @@ export function torrentInput(file: TorrentVideoFile): MediaInput {
     const clamped = Math.min(end, file.size)
     if (clamped <= start) return new Uint8Array(0)
     const signal = gate.signal
-    if (signal.aborted) throw new ReadAbortedError()
+    if (signal.aborted) throw gate.aborted()
     return await new Promise<Uint8Array>((resolve, reject) => {
-      const onAbort = () => reject(new ReadAbortedError())
+      const onAbort = () => reject(gate.aborted())
       signal.addEventListener('abort', onAbort, { once: true })
       file.read(start, clamped - 1).then(
         (buffer) => { signal.removeEventListener('abort', onAbort); resolve(new Uint8Array(buffer)) },

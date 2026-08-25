@@ -143,6 +143,7 @@ export const ptBR: Record<string, string> = {
   'error.fileChanged': 'Esse arquivo ainda está sendo gravado. Espere o download terminar e escolha de novo.',
   'error.unsupportedMedia': 'Esse vídeo não dá para preparar neste navegador: o codec ou o formato não é suportado aqui. Tente outro navegador ou outra versão do arquivo.',
   'error.sourceUnreachable': 'Essa fonte não deixa o navegador ler o arquivo direto. Escolha outro stream.',
+  'error.workerUnreachable': 'A origem do torrent parou de responder, ou recusou esse arquivo. Abra o torrent de novo para tentar outra vez.',
   'catalog.tab': 'Catálogo',
   'catalog.search': 'Buscar filmes e séries',
   'catalog.searchPlaceholder': 'Busque um filme ou série…',

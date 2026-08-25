@@ -178,7 +178,14 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 		end = start + f.k.cap - 1
 	}
 	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, f.size))
-	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	// A body that may end early must not promise its length: with an explicit
+	// Content-Length, net/http turns the short body into a connection error,
+	// whereas the worker ends a stalled body cleanly (END_STREAM) and leaves
+	// the client to notice the Content-Range promised more. That clean EOF
+	// is the case mediabunny is strict about, so it has to be reproducible.
+	if f.k.truncatePct == 0 && f.k.stallPct == 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	}
 	w.WriteHeader(http.StatusPartialContent)
 	if r.Method == http.MethodHead {
 		return
@@ -187,8 +194,9 @@ func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // stream writes [start, end] in chunks, applying RTT, jitter, truncation and
-// stalls. A body that ends early does so by returning — the connection is
-// left healthy, exactly like a worker that gave up on a piece.
+// stalls. A body that ends early does so by returning; without a declared
+// length that is a clean end of body, exactly like a worker that gave up on
+// a piece.
 func (f *fixture) stream(w http.ResponseWriter, r *http.Request, start, end, n int64) {
 	src, err := os.Open(f.k.file)
 	if err != nil {

@@ -38,6 +38,7 @@ import {
   FILE_UNREADABLE,
   SOURCE_UNREACHABLE,
   UNSUPPORTED_MEDIA,
+  WORKER_UNREACHABLE,
   assertReadable,
   changeRoomSource,
   subscribeUploadDone,
@@ -170,6 +171,7 @@ function RoomGate({ step, onJoin, progress, preparation, swarm, failure, errorMe
             {failure === FILE_UNREADABLE ? <p>{t('error.fileChanged')}</p> : null}
             {failure === UNSUPPORTED_MEDIA ? <p>{t('error.unsupportedMedia')}</p> : null}
             {failure === SOURCE_UNREACHABLE ? <p>{t('error.sourceUnreachable')}</p> : null}
+            {failure === WORKER_UNREACHABLE ? <p>{t('error.workerUnreachable')}</p> : null}
             <Link className="primary-button" to="/">{t('room.new')}</Link>
           </div>
         ) : null}

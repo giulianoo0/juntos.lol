@@ -13,7 +13,7 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 import type { RemuxJob, RemuxSideFile, RemuxSource } from './pipeline/remuxJob'
 import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
 
-export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
+export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
 const REGISTRY_TTL_MS = 30_000
 
