@@ -12,7 +12,8 @@ import {
   type SubtitleCollector,
 } from '../subtitles'
 import { convertSubtitleFile, type VttTrack } from '../subtitleFormats'
-import { fileInput, rangeInput, type MediaInput } from './mediaInput'
+import { fileInput, rangeInput, workerInput, type MediaInput } from './mediaInput'
+import type { WorkerGrant } from '../torrent'
 import { ReadAbortedError } from './rangeRead'
 import { planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
@@ -32,6 +33,7 @@ export type RemuxSource =
   | { kind: 'file'; file: File }
   | { kind: 'stream'; url: string; name: string; size: number }
   | { kind: 'url'; url: string; name: string; size: number }
+  | { kind: 'worker'; grant: WorkerGrant }
   | { kind: 'input'; input: MediaInput }
 
 // A subtitle file shipped next to the video. With a url it clones into the
@@ -81,6 +83,7 @@ export class PlanFailedError extends Error {
 export function sourceSize(source: RemuxSource): number {
   return source.kind === 'file' ? source.file.size
     : source.kind === 'input' ? source.input.size
+    : source.kind === 'worker' ? source.grant.size
     : source.size
 }
 
@@ -89,14 +92,16 @@ export function jobIsCloneable(job: RemuxJob): boolean {
   return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined)
 }
 
-// 'stream' is a torrent origin (the ss-bridge today, a worker next) and
-// 'url' a plugin's own server; both are bytes behind Range requests, read
-// the same resilient way. Only the error they turn into differs.
+// 'worker' is a torrent file on the fleet, 'stream' any plain Range origin
+// (the dev fixture), 'url' a plugin's own server. All are bytes behind
+// Range requests, read the same resilient way; only the error they turn
+// into differs.
 function buildInput(source: RemuxSource): MediaInput {
   switch (source.kind) {
     case 'file': return fileInput(source.file)
     case 'stream': return rangeInput(source.url, source.name, source.size)
     case 'url': return rangeInput(source.url, source.name, source.size)
+    case 'worker': return workerInput(source.grant)
     case 'input': return source.input
   }
 }

@@ -164,6 +164,17 @@ func (r *Registry) Get(id string) (Worker, bool) {
 	return *w, true
 }
 
+// Digest answers what a worker last reported about an infohash.
+func (r *Registry) Digest(workerID, infohash string) (TorrentDigest, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	w := r.workers[workerID]
+	if w == nil {
+		return TorrentDigest{}, false
+	}
+	return w.Holds(infohash)
+}
+
 // Link answers the live link to a worker, nil when it is not connected here.
 func (r *Registry) Link(id string) *link {
 	r.mu.RLock()

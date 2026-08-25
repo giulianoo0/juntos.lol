@@ -32,7 +32,8 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { HelperRequiredError, openTorrent, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { openTorrent, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
   FILE_UNREADABLE,
@@ -255,9 +256,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       } catch (error) {
         console.error('resume preparation failed', error)
         toast(t('room.resumeFailed'))
-        // A helper that is simply closed keeps the entry for the next visit;
-        // anything else (controller lost, source gone) will fail every time.
-        if (!(error instanceof HelperRequiredError)) clearResumableSource(room.id)
+        // A fleet that is missing or full right now keeps the entry for the
+        // next visit; a torrent the fleet refused, or a room that moved on,
+        // will fail every time.
+        if (!torrentErrorRetryable(error)) clearResumableSource(room.id)
       }
     })()
   }, [room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
@@ -280,7 +282,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // than incrementing a tally keeps it right when history arrives at once.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
-  const [sourceError, setSourceError] = useState<'' | 'changeFailed' | 'torrentNeedsBridge'>('')
+  const [sourceError, setSourceError] = useState<string>('')
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -317,7 +319,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       await run()
     } catch (error) {
       console.error('change source failed', error)
-      setSourceError(error instanceof HelperRequiredError ? 'torrentNeedsBridge' : 'changeFailed')
+      setSourceError(isTorrentError(error) ? torrentErrorKey(error) : 'room.changeFailed')
     }
   }
 
@@ -668,7 +670,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         accept="video/*,.mkv"
         onChange={(event) => chooseFile(event.target.files?.[0])}
       />
-      {sourceError ? <div className="error-card compact" role="alert">{t(sourceError === 'torrentNeedsBridge' ? 'home.torrentNeedsBridge' : 'room.changeFailed')}</div> : null}
+      {sourceError ? <div className="error-card compact" role="alert">{t(sourceError)}</div> : null}
       {visibleRequests.length > 0 ? (
         <div className="request-stack" aria-live="polite">
           {visibleRequests.map((request) => (

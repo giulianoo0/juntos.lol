@@ -100,6 +100,9 @@ func getTorrent(service *worker.Service) gin.HandlerFunc {
 		if job.Files != nil {
 			body["files"] = job.Files
 		}
+		if swarm := service.Swarm(job); swarm != nil {
+			body["swarm"] = swarm
+		}
 		c.JSON(http.StatusOK, body)
 	}
 }

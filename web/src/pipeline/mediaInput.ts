@@ -11,7 +11,7 @@
  * gate the seek pulls.
  */
 import { BlobSource, CustomSource, type Source } from 'mediabunny'
-import type { TorrentVideoFile } from '../torrent'
+import type { TorrentVideoFile, WorkerGrant } from '../torrent'
 import { ReadGate, rangeBytes, rangeStream } from './rangeRead'
 
 /** What a read is for; a remote origin uses it to order its swarm. */
@@ -112,6 +112,95 @@ export function rangeInput(url: string, name: string, size: number): MediaInput 
     }),
     abortReads: () => gate.abort(),
     dispose: () => gate.close(),
+  }
+}
+
+// How far the remux's read offset may drift from the last hint before the
+// worker is told again. Hints move the swarm's priority window; too many
+// would move it for nothing.
+const HINT_STRIDE_BYTES = 8 * 1024 * 1024
+// A ticket is renewed at two thirds of its life, so a read never starts
+// with one about to expire.
+const RENEW_FRACTION = 2 / 3
+
+/**
+ * A file a remote worker serves. Reads carry the ticket in the path and
+ * the priority class in the query; the ticket renews itself through the
+ * server for as long as the input lives, and playhead reads tell the
+ * worker where the remux actually is — its read offset, not the room's
+ * playhead — so the swarm fetches the pieces the reader is blocked on.
+ * Each seek bumps the generation, and the worker stops feeding responses
+ * from before it.
+ */
+export function workerInput(grant: WorkerGrant): MediaInput {
+  const gate = new ReadGate()
+  let current = grant
+  let gen = 1
+  let lastHintAt = -Infinity
+  let renewTimer: ReturnType<typeof setTimeout> | null = null
+  let disposed = false
+
+  const renew = async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/torrents/${encodeURIComponent(current.jobId)}/token`, { method: 'POST' })
+      if (!response.ok) return false
+      const next = await response.json() as Partial<WorkerGrant>
+      current = { ...current, ...next }
+      scheduleRenewal()
+      return true
+    } catch {
+      return false
+    }
+  }
+  const scheduleRenewal = () => {
+    if (renewTimer !== null) clearTimeout(renewTimer)
+    if (disposed) return
+    const life = new Date(current.expiresAt).getTime() - Date.now()
+    if (!Number.isFinite(life) || life <= 0) return
+    renewTimer = setTimeout(() => { void renew() }, life * RENEW_FRACTION)
+  }
+  scheduleRenewal()
+
+  const hint = (offset: number) => {
+    if (Math.abs(offset - lastHintAt) < HINT_STRIDE_BYTES) return
+    lastHintAt = offset
+    // text/plain keeps the POST a simple request: no preflight per hint.
+    void fetch(`${current.readBase}/v1/hint/${current.ticket}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ readOffset: offset, gen }),
+    }).catch(() => undefined)
+  }
+
+  const opts = (prio: ReadPriority) => ({
+    url: () => `${current.readBase}/v1/f/${current.ticket}?prio=${prio}&gen=${gen}`,
+    size: grant.size,
+    gate,
+    refresh: renew,
+  })
+  return {
+    name: grant.name,
+    size: grant.size,
+    read: (start, end, hint_) => rangeBytes(opts(hint_?.prio ?? 'head'), start, end),
+    source: () => new CustomSource({
+      read: (start, end) => {
+        hint(start)
+        return rangeStream(opts('playhead'), start, end)
+      },
+      getSize: async () => grant.size,
+      prefetchProfile: 'network',
+      maxCacheSize: REMOTE_CACHE_BYTES,
+    }),
+    abortReads: () => {
+      gen += 1
+      lastHintAt = -Infinity
+      gate.abort()
+    },
+    dispose: () => {
+      disposed = true
+      if (renewTimer !== null) clearTimeout(renewTimer)
+      gate.close()
+    },
   }
 }
 

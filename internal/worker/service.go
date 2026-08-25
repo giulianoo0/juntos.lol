@@ -179,6 +179,24 @@ func (s *Service) Get(ctx context.Context, sessionID, jobID string) (*JobRecord,
 	return job, nil
 }
 
+// SwarmStats is the slice of a heartbeat a viewer cares about.
+type SwarmStats struct {
+	Peers         int64  `json:"peers"`
+	DownSpeed     int64  `json:"downSpeed"`
+	HaveBytes     int64  `json:"haveBytes"`
+	SelectedBytes int64  `json:"selectedBytes"`
+	Phase         string `json:"phase,omitempty"`
+}
+
+// Swarm answers the job's torrent as its worker last reported it.
+func (s *Service) Swarm(job *JobRecord) *SwarmStats {
+	d, ok := s.Registry.Digest(job.WorkerID, job.Infohash)
+	if !ok {
+		return nil
+	}
+	return &SwarmStats{Peers: d.Peers, DownSpeed: d.DownSpeed, HaveBytes: d.HaveBytes, SelectedBytes: d.SelectedBytes, Phase: d.Phase}
+}
+
 // Grant is what a selected file can be read with.
 type Grant struct {
 	ReadBase  string    `json:"readBase"`

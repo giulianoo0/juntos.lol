@@ -10,7 +10,7 @@ import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
 import { torrentInput } from './pipeline/mediaInput'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
-import type { RemuxJob, RemuxSideFile, RemuxSource } from './pipeline/remuxJob'
+import { sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxJob'
 import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
 
 export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
@@ -276,10 +276,10 @@ export function startTorrentUpload(
   if (session.magnet) {
     saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
   }
-  // With a stream url the job is plain data and runs in the worker; a
-  // session without one (mocks, tests) pins the job to this thread.
-  const source: RemuxSource = file.streamUrl
-    ? { kind: 'stream', url: file.streamUrl, name: file.name, size: file.size }
+  // With a worker grant the job is plain data and runs in the remux worker;
+  // a session without one (mocks, tests) pins the job to this thread.
+  const source: RemuxSource = file.worker
+    ? { kind: 'worker', grant: file.worker }
     : { kind: 'input', input: torrentInput(file) }
   const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
     name: side.name,
@@ -334,9 +334,7 @@ export function startRoomUpload(
   // on mount, and deferring the entry behind the worker spawn would show no
   // progress at all.
   const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
-  const size = source.kind === 'file' ? source.file.size
-    : source.kind === 'input' ? source.input.size
-    : source.size
+  const size = sourceSize(source)
   const entry = createEntry(size)
   uploads.set(roomID, entry)
   if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))

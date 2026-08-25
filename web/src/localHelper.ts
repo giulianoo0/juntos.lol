@@ -232,7 +232,6 @@ export async function openHelperTorrent(
       index: file.index,
       size: file.size,
       type: 'application/octet-stream',
-      streamUrl: `${HELPER_ORIGIN}/stream/${encodeURIComponent(added.id)}/${file.index}`,
       // Progress is read off the session poll, not per file; the room only ever
       // plays the one selected file.
       get progress() { return 0 },

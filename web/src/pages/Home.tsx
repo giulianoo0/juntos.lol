@@ -15,7 +15,8 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { BridgeStatus } from '../components/BridgeStatus'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
-import { HelperRequiredError, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import { isTorrentError, torrentErrorKey } from '../torrentErrors'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
@@ -275,7 +276,7 @@ export function Home() {
       // saying "try again" would send someone straight back into it.
       const message = t(
         isUnreadableFile(error) ? 'error.fileChanged'
-          : error instanceof HelperRequiredError ? 'home.torrentNeedsBridge'
+          : isTorrentError(error) ? torrentErrorKey(error)
             : 'home.failed',
       )
       // On the catalogue side the error card sits below a full page of
