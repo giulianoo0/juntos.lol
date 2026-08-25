@@ -54,9 +54,14 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
   const [capacity, setCapacity] = useState<string>('available')
   useEffect(() => {
     let cancelled = false
-    void torrentCapacity().then((value) => { if (!cancelled) setCapacity(value) })
+    void torrentCapacity().then((value) => {
+      if (cancelled) return
+      setCapacity(value)
+      if (value === 'disabled' || value === 'no_workers') setError(t('home.torrentNoWorkers'))
+      else if (value === 'busy') setError(t('home.torrentBusy'))
+    })
     return () => { cancelled = true }
-  }, [])
+  }, [t])
   const [error, setError] = useState('')
   const [session, setSession] = useState<TorrentSession | null>(initialSession ?? null)
   const [stats, setStats] = useState<TorrentStats>(EMPTY_TORRENT_STATS)

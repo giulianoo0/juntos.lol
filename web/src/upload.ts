@@ -285,8 +285,9 @@ export function startTorrentUpload(
     name: side.name,
     path: side.path,
     size: side.size,
-    url: side.streamUrl,
-    ...(side.streamUrl ? {} : { read: () => side.read() }),
+    ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
+      : side.streamUrl ? { url: side.streamUrl }
+        : { read: () => side.read() }),
   }))
   startRoomUpload(roomID, mediaGeneration, source, sideFiles, {
     onProgress,

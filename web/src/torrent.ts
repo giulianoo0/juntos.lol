@@ -40,6 +40,8 @@ export interface TorrentSideFile {
   name: string
   path: string
   size: number
+  // Position in the torrent's file list, for a worker to serve it by.
+  index?: number
   streamUrl?: string
   read(): Promise<ArrayBuffer>
 }

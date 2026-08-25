@@ -189,16 +189,17 @@ export async function openRemoteTorrent(
   }
 
   let grant: WorkerGrant | null = null
+  // The url is read at request time, so a ticket renewed by `refresh`
+  // applies to the very next request of the same read.
   const readOpts = () => {
     if (!grant) throw new Error('torrent file not selected')
-    const g = grant
     return {
-      url: () => `${g.readBase}/v1/f/${g.ticket}?prio=head`,
-      size: g.size,
+      url: () => `${grant!.readBase}/v1/f/${grant!.ticket}?prio=head`,
+      size: grant.size,
       gate,
       refresh: async () => {
         const next = await api<WorkerGrant>(`/${encodeURIComponent(jobId)}/token`, { method: 'POST' })
-        grant = { ...g, ...next }
+        grant = { ...grant!, ...next }
         return true
       },
     }
@@ -229,6 +230,7 @@ export async function openRemoteTorrent(
       name: file.name,
       path: file.path,
       size: file.size,
+      index: file.index,
       get streamUrl() { return grant ? `${grant.readBase}/v1/file/${grant.ticket}/${file.index}` : undefined },
       read: async () => {
         if (!grant) throw new Error('torrent file not selected')

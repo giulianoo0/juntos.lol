@@ -43,6 +43,9 @@ export interface RemuxSideFile {
   path: string
   size: number
   url?: string
+  // A sibling of a worker-served video: read through the video's own input,
+  // so the ticket in the url is whichever is current, not the one at start.
+  workerIndex?: number
   read?: () => Promise<ArrayBuffer>
 }
 
@@ -89,7 +92,7 @@ export function sourceSize(source: RemuxSource): number {
 
 /** Whether the job is plain data end to end and may cross into a worker. */
 export function jobIsCloneable(job: RemuxJob): boolean {
-  return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined)
+  return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined || file.workerIndex !== undefined)
 }
 
 // 'worker' is a torrent file on the fleet, 'stream' any plain Range origin
@@ -160,7 +163,7 @@ async function publishSubtitles(
   if (embedded) collector.register('embedded')
   if (external.length === 0 && !embedded) return
   await Promise.all([
-    external.length > 0 ? loadExternalSubtitles(external, collector) : Promise.resolve(),
+    external.length > 0 ? loadExternalSubtitles(external, collector, input) : Promise.resolve(),
     embedded ? extractEmbeddedSubtitles(input, collector) : Promise.resolve(),
   ])
 }
@@ -198,18 +201,19 @@ async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCo
   await collector.flush()
 }
 
-async function readSideFile(file: RemuxSideFile): Promise<ArrayBuffer> {
+async function readSideFile(file: RemuxSideFile, input: MediaInput): Promise<ArrayBuffer> {
   if (file.read) return await file.read()
-  const response = await fetch(file.url ?? '')
+  const url = file.workerIndex !== undefined && input.sidecarUrl ? input.sidecarUrl(file.workerIndex) : file.url ?? ''
+  const response = await fetch(url)
   if (!response.ok && response.status !== 206) throw new Error(`side file read failed (${response.status})`)
   return await response.arrayBuffer()
 }
 
-async function loadExternalSubtitles(files: RemuxSideFile[], collector: SubtitleCollector): Promise<void> {
+async function loadExternalSubtitles(files: RemuxSideFile[], collector: SubtitleCollector, input: MediaInput): Promise<void> {
   const tracks: VttTrack[] = []
   for (const file of files) {
     try {
-      const track = convertSubtitleFile(file.path, await readSideFile(file))
+      const track = convertSubtitleFile(file.path, await readSideFile(file, input))
       if (!track) continue
       tracks.push(track)
       collector.publish('external', [...tracks], false)

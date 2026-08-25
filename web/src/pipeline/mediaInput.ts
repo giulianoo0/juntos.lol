@@ -32,6 +32,8 @@ export interface MediaInput {
   abortReads(): void
   /** Aborts and refuses every read from now on. */
   dispose(): void
+  /** Where a sibling file of this input is read from right now, if anywhere. */
+  sidecarUrl?(index: number): string
 }
 
 /** The cache a remote source keeps: larger than the prefetch extent, or the
@@ -143,6 +145,9 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   // Every renewal names the room this job feeds; the first one, sent right
   // away, is what attaches the job to it — after the room exists, so the
   // source swap that made the room cannot cancel the job it is for.
+  // A renewal that fails is tried again soon rather than never: the room
+  // attachment rides on the first one, and the ticket's life on the rest.
+  const RETRY_MS = 15_000
   const renew = async (): Promise<boolean> => {
     try {
       const response = await fetch(`/api/torrents/${encodeURIComponent(current.jobId)}/token`, {
@@ -150,21 +155,25 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ roomId: roomID }),
       })
-      if (!response.ok) return false
+      if (!response.ok) {
+        scheduleRenewal(RETRY_MS)
+        return false
+      }
       const next = await response.json() as Partial<WorkerGrant>
       current = { ...current, ...next }
       scheduleRenewal()
       return true
     } catch {
+      scheduleRenewal(RETRY_MS)
       return false
     }
   }
-  const scheduleRenewal = () => {
+  const scheduleRenewal = (inMs?: number) => {
     if (renewTimer !== null) clearTimeout(renewTimer)
     if (disposed) return
     const life = new Date(current.expiresAt).getTime() - Date.now()
     if (!Number.isFinite(life) || life <= 0) return
-    renewTimer = setTimeout(() => { void renew() }, life * RENEW_FRACTION)
+    renewTimer = setTimeout(() => { void renew() }, Math.min(inMs ?? life * RENEW_FRACTION, Math.max(life - 1_000, 1_000)))
   }
   if (roomID) void renew()
   else scheduleRenewal()
@@ -209,6 +218,7 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
       if (renewTimer !== null) clearTimeout(renewTimer)
       gate.close()
     },
+    sidecarUrl: (index) => `${current.readBase}/v1/file/${current.ticket}/${index}`,
   }
 }
 

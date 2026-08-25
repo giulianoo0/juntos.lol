@@ -341,7 +341,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
     void swapSource(async () => {
-      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      let next
+      try {
+        next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      } catch (error) {
+        // The worker is holding a lease for a room that will not take it.
+        session.destroy()
+        throw error
+      }
       startTorrentUpload(room.id, next.mediaGeneration, { file, session })
     })
   }

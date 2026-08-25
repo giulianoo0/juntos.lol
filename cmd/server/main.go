@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -87,7 +88,18 @@ func main() {
 		TicketTTL: time.Duration(cfg.WorkerTicketMinutes) * time.Minute,
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
 	}
+	// Every heartbeat would otherwise make every member refetch the room;
+	// only numbers that moved are worth telling.
+	var swarmMu sync.Mutex
+	lastSwarm := map[string]worker.SwarmStats{}
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
+		swarmMu.Lock()
+		same := lastSwarm[roomID] == stats
+		lastSwarm[roomID] = stats
+		swarmMu.Unlock()
+		if same {
+			return
+		}
 		swarmCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		if err := store.SetSwarm(swarmCtx, roomID, room.SwarmStats{
