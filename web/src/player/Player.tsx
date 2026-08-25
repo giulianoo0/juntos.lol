@@ -3,6 +3,7 @@ import {
   FastForward, Lock, Maximize, Minimize, Pause, Play, Rewind,
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
 } from 'lucide-react'
+import { NumberFlowGroup } from '@number-flow/react'
 import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 import type { MediaRegion, PlayState, RoomInfo } from '../types'
@@ -11,6 +12,7 @@ import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { Settings, type SettingGroup } from './Settings'
 import { SubtitleLayer } from './SubtitleLayer'
+import { Timecode } from './Timecode'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { TorrentReadout } from '../components/TorrentReadout'
 import type { TorrentStats } from '../torrent'
@@ -127,6 +129,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // something nobody had tried yet.
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement>(null)
+  const controlsRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   // The live sync state, readable from effects without re-running them.
   const syncRef = useRef<PlayState | undefined>(syncState)
@@ -930,6 +933,19 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const expectedMs = !isController && syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : null
   const atLiveEdge = expectedMs === null || Math.abs(currentTime * 1000 - expectedMs) <= LIVE_SYNC_THRESHOLD_MS
 
+  // A click low in the frame is a hand going for the bar, not a request to
+  // pause. The whole strip the control row occupies is off limits, not only
+  // the buttons inside it — missing the scrubber by a few pixels used to
+  // pause the room for everyone. While the controls are hidden the strip is
+  // not there, and the frame is one big play/pause target again.
+  const controlsShown = !playing || controlsVisible
+  const inControlStrip = (event: { target: EventTarget | null; clientY: number }): boolean => {
+    if ((event.target as HTMLElement | null)?.closest('.player-controls')) return true
+    if (!controlsShown) return false
+    const strip = controlsRef.current?.getBoundingClientRect()
+    return strip !== undefined && strip.height > 0 && event.clientY >= strip.top
+  }
+
   return (
     <div
       ref={playerRef}
@@ -939,8 +955,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       onFocusCapture={() => revealControls(false)}
       onBlurCapture={() => revealControls(playing)}
       onClick={(event) => {
-        // The control bar has its own buttons; a click there is theirs.
-        if ((event.target as HTMLElement).closest('.player-controls')) return
+        if (inControlStrip(event)) return
         cancelPendingTap()
         tapTimerRef.current = setTimeout(() => {
           tapTimerRef.current = null
@@ -950,9 +965,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         }, TAP_TOGGLE_DELAY_MS)
       }}
       onDoubleClick={(event) => {
-        // Ignore double clicks aimed at the control bar, where they would
-        // otherwise fullscreen the player while someone is dragging a slider.
-        if ((event.target as HTMLElement).closest('.player-controls')) return
+        if (inControlStrip(event)) return
         cancelPendingTap()
         toggleFullscreen()
       }}
@@ -1039,7 +1052,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       />
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       {unplayable ? <div className="player-unplayable" role="alert">{t('room.unplayable')}</div> : null}
-      <div className="player-controls">
+      <div className="player-controls" ref={controlsRef}>
         {/* The scrubber owns the full width of the bar; everything that acts on
             what it points at sits underneath it. */}
         <div
@@ -1144,7 +1157,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             onPointerUp={(event) => event.currentTarget.blur()}
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
           <span className="timecode">
-            {formatTime(scrubSec ?? pendingSeekSec ?? currentTime)} / {formatTime(timelineEnd)}
+            <NumberFlowGroup>
+              <Timecode seconds={scrubSec ?? pendingSeekSec ?? currentTime} />
+              <span className="timecode-slash">/</span>
+              <Timecode seconds={timelineEnd} />
+            </NumberFlowGroup>
             {currentChapterIndex >= 0 && onChapters ? (
               <button
                 type="button"

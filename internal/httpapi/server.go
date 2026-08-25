@@ -3,6 +3,7 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -136,8 +137,17 @@ func registerFrontend(r *gin.Engine, webDir string) {
 	}
 	r.Static("/assets", filepath.Join(webDir, "assets"))
 	r.Static("/docs", filepath.Join(webDir, "docs"))
-	for _, name := range []string{"favicon.svg", "icons.svg", "social-card.png", "oembed.json"} {
-		r.StaticFile("/"+name, filepath.Join(webDir, name))
+	// Everything the build leaves at the root of the bundle is served from
+	// there. This used to be a hand-written list, and the file it did not
+	// name — the Matroska subtitle parser, served from public/ — fell through
+	// to the SPA fallback below: every .mkv came back with no subtitles
+	// because the worker was handed index.html to run as a script.
+	entries, _ := os.ReadDir(webDir)
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "index.html" {
+			continue
+		}
+		r.StaticFile("/"+entry.Name(), filepath.Join(webDir, entry.Name()))
 	}
 	r.NoRoute(func(c *gin.Context) {
 		// A documentation address that is wrong should say it is wrong, not

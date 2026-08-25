@@ -150,7 +150,10 @@ h1, h2, p { margin-top: 0; }
 .control-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: 0 0 auto; padding: 0; border: 0; border-radius: 50%; color: var(--text); background: transparent; }
 .control-button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
 .control-button.is-play { width: 38px; height: 38px; }
-.timecode { margin: 0 6px 0 4px; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; color: var(--text-dim); }
+.timecode { display: inline-flex; align-items: center; margin: 0 6px 0 4px; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; color: var(--text-dim); }
+.timecode-clock { display: inline-flex; align-items: baseline; }
+.timecode-colon { padding: 0 .5px; }
+.timecode-slash { padding: 0 5px; color: var(--text-faint); }
 .viewer-note { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 12px; white-space: nowrap; }
 .viewer-note button { padding: 6px 9px; border: 0; border-radius: 999px; color: #c7caff; font-size: 11px; }
 
@@ -218,7 +221,11 @@ h1, h2, p { margin-top: 0; }
    The real range input sits transparent on top so keyboard and pointer
    interaction — and the disabled state for viewers — stay native. */
 .seek-control { position: relative; display: flex; align-items: center; height: 18px; }
-.seek-track { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 5px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; pointer-events: none; }
+.seek-track { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 5px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; pointer-events: none; transition: height 160ms var(--ease); }
+/* The bar thickens under the pointer and stays thick through a drag: the
+   thing being aimed at grows toward the hand. `:has` reaches the input
+   because the visible track is a sibling the range element covers. */
+.seek-control:hover .seek-track, .seek-control:has(input:active) .seek-track { height: 9px; }
 .seek-played { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(120,127,250,.38); }
 .seek-behind { position: absolute; top: 0; bottom: 0; background: rgba(120,127,250,.85); }
 .seek-ahead { position: absolute; top: 0; bottom: 0; background: rgba(255,255,255,.42); }
@@ -245,10 +252,12 @@ button.timecode-chapter:hover { color: var(--text); }
 .seek-control input[type=range] { position: relative; z-index: 1; width: 100%; height: 18px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
 .seek-control input[type=range]:disabled { cursor: default; }
 .seek-control input[type=range]::-webkit-slider-runnable-track { height: 18px; background: transparent; }
-.seek-control input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px; margin-top: 2.5px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.seek-control input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px; margin-top: 2.5px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); transition: width 160ms var(--ease), height 160ms var(--ease), margin-top 160ms var(--ease); }
+.seek-control:hover input[type=range]::-webkit-slider-thumb, .seek-control input[type=range]:active::-webkit-slider-thumb { width: 15px; height: 15px; margin-top: 1.5px; }
 .seek-control input[type=range]:disabled::-webkit-slider-thumb { opacity: 0; }
 .seek-control input[type=range]::-moz-range-track { height: 18px; background: transparent; }
-.seek-control input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.seek-control input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); transition: width 160ms var(--ease), height 160ms var(--ease); }
+.seek-control:hover input[type=range]::-moz-range-thumb, .seek-control input[type=range]:active::-moz-range-thumb { width: 15px; height: 15px; }
 .seek-control input[type=range]:disabled::-moz-range-thumb { opacity: 0; }
 .live-button { flex: 0 0 auto; padding: 5px 10px; border: 0; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: #f6cf65; background: rgba(246,207,101,.13); }
 .live-button.is-live { color: #7ee2a8; background: rgba(126,226,168,.13); cursor: default; }

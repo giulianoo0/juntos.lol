@@ -414,7 +414,7 @@ describe('Player', () => {
 
   it('uses the current seekable end when an event playlist has infinite duration', () => {
     const videoRef = createRef<HTMLVideoElement>()
-    render(<Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />)
+    const { container } = render(<Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} />)
     const video = videoRef.current!
     Object.defineProperty(video, 'duration', { configurable: true, value: Number.POSITIVE_INFINITY })
     Object.defineProperty(video, 'seekable', {
@@ -424,7 +424,9 @@ describe('Player', () => {
 
     fireEvent.durationChange(video)
 
-    expect(screen.getByText('0:00 / 0:42')).toBeInTheDocument()
+    // The clock is a row of animated digits, so it is read off the element
+    // rather than matched as one string.
+    expect(container.querySelector('.timecode')?.textContent).toContain('0:00/0:42')
   })
 
   it('pauses when the video is tapped', () => {
@@ -440,6 +442,32 @@ describe('Player', () => {
 
     expect(pause).toHaveBeenCalledOnce()
     expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 0 }))
+    vi.useRealTimers()
+  })
+
+  it('ignores a click in the strip the control bar sits in', () => {
+    // Reaching for the scrub bar and landing a few pixels off it used to
+    // pause the room for everyone.
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(<Player room={room} isController videoRef={videoRef} send={send} t={t} />)
+    playing(videoRef.current!)
+    const controls = container.querySelector('.player-controls') as HTMLElement
+    // jsdom lays nothing out, so the bar is given a place in the frame.
+    controls.getBoundingClientRect = () => ({ top: 400, bottom: 460, height: 60, left: 0, right: 800, width: 800, x: 0, y: 400, toJSON: () => ({}) })
+
+    fireEvent.click(videoRef.current!, { clientY: 430 })
+    act(() => void vi.advanceTimersByTime(250))
+
+    expect(pause).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+
+    // The picture above it still is a play/pause target.
+    fireEvent.click(videoRef.current!, { clientY: 120 })
+    act(() => void vi.advanceTimersByTime(250))
+    expect(pause).toHaveBeenCalledOnce()
     vi.useRealTimers()
   })
 
@@ -778,7 +806,7 @@ describe('region offset', () => {
     )
     fireEvent.timeUpdate(videoRef.current!)
     // currentTime 0 in the element is 18 minutes into the room.
-    expect(container.textContent).toContain('18:00 / 24:00')
+    expect(container.querySelector('.timecode')?.textContent).toContain('18:00/24:00')
   })
 })
 

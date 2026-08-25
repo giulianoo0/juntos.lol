@@ -80,8 +80,8 @@ impl Entry {
             .map(|l| {
                 (
                     l.snapshot.peer_stats.live as u64,
-                    (l.download_speed.mbps * 1_048_576.0 / 8.0) as u64,
-                    (l.upload_speed.mbps * 1_048_576.0 / 8.0) as u64,
+                    l.download_speed.as_bytes(),
+                    l.upload_speed.as_bytes(),
                 )
             })
             .unwrap_or((0, 0, 0));

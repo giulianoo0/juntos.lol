@@ -97,6 +97,7 @@ export const en: Record<string, string> = {
   'room.switchScreen': 'Share screen',
   'room.changeFailed': 'Could not change what is playing. Try again.',
   'room.resuming': 'Resuming the video preparation…',
+  'room.uploadSpeed': 'Uploading the parts already built',
   'room.bufferAhead': 'Buffer ahead of playback',
   'room.bufferAheadShort': 'buffer',
   'room.preparingPart': 'Preparing this part of the video…',

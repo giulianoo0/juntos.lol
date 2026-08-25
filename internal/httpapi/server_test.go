@@ -16,6 +16,8 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<main>ss</main>"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "assets", "app.js"), []byte("ready"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "oembed.json"), []byte(`{"type":"link"}`), 0o644))
+	// A root file nothing hard-codes: the SPA fallback must not swallow it.
+	require.NoError(t, os.WriteFile(filepath.Join(webDir, "matroska-subtitles.min.js"), []byte("parser"), 0o644))
 
 	cfg := testCfg(t)
 	cfg.WebDir = webDir
@@ -29,6 +31,7 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 		{path: "/room/abc", statusCode: http.StatusOK, body: "<main>ss</main>"},
 		{path: "/assets/app.js", statusCode: http.StatusOK, body: "ready"},
 		{path: "/oembed.json", statusCode: http.StatusOK, body: `{"type":"link"}`},
+		{path: "/matroska-subtitles.min.js", statusCode: http.StatusOK, body: "parser"},
 		{path: "/api/missing", statusCode: http.StatusNotFound},
 		{path: "/media/missing", statusCode: http.StatusNotFound},
 		{path: "/ws/missing", statusCode: http.StatusNotFound},
