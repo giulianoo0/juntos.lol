@@ -196,13 +196,16 @@ async function probeOne(target: { id: string; readBase: string; holds: boolean; 
   }
 }
 
-// Reachable beats unreachable; a worker already holding the pieces beats a
-// bare one (warm disk over a cold swarm); then raw speed decides.
+// Reachable beats unreachable, and then the measured speed decides. A
+// worker already holding the pieces gets a bonus — warm disk skips the
+// swarm — but a bonus is all it is: a path six times faster wins even
+// against a warm one.
+const HOLDS_BONUS = 1.5
 function rankProbes(probes: WorkerProbe[]): WorkerProbe[] {
+  const score = (p: WorkerProbe) => (p.mbit ?? 0) * (p.holds ? HOLDS_BONUS : 1)
   const ranked = [...probes].sort((a, b) => {
     if ((a.state === 'ok') !== (b.state === 'ok')) return a.state === 'ok' ? -1 : 1
-    if (a.holds !== b.holds) return a.holds ? -1 : 1
-    return (b.mbit ?? 0) - (a.mbit ?? 0)
+    return score(b) - score(a)
   })
   return ranked.map((p, i) => ({ ...p, chosen: i === 0 && p.state === 'ok' }))
 }
