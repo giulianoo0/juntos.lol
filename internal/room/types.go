@@ -81,6 +81,11 @@ type Room struct {
 	// pipeline rebases each region to zero, so absolute room time is media
 	// time plus this. Moves only together with MediaVersion.
 	MediaOffsetMs int64 `json:"mediaOffsetMs,omitempty"`
+	// MediaRegions is every stretch of the timeline the pipeline has produced
+	// for this generation, each with its own playlists (rN_master.m3u8). A
+	// player picks the region for the time it wants and switches at the
+	// edges; the offset above is only the one still growing.
+	MediaRegions []MediaRegion `json:"mediaRegions,omitempty"`
 	ErrorMessage      string      `json:"errorMessage,omitempty"`
 	ControllerID      string      `json:"controllerId"`
 	AudioTracks       []TrackInfo `json:"audioTracks"`
@@ -96,6 +101,14 @@ type Room struct {
 	Preparation Preparation `json:"preparation"`
 	CreatedAt   time.Time   `json:"createdAt"`
 	ExpiresAt   time.Time   `json:"expiresAt"`
+}
+
+// MediaRegion is one contiguous stretch of produced media, in room time.
+type MediaRegion struct {
+	N          int   `json:"n"`
+	StartMs    int64 `json:"startMs"`
+	ProducedMs int64 `json:"producedMs"`
+	Growing    bool  `json:"growing"`
 }
 
 // Preview phases a room passes through before it can play. They are ordered:

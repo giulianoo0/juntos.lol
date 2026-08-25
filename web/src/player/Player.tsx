@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
-import type { PlayState, RoomInfo } from '../types'
+import type { MediaRegion, PlayState, RoomInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
@@ -32,6 +32,35 @@ interface PlayerProps {
   overlay?: ReactNode
   // Opens the room's chapter list, when the room has one to show.
   onChapters?: () => void
+  // Where the sync layer reads this player's current offset: the region the
+  // element holds is the player's choice, and the clock has to follow it.
+  mediaOffsetMsRef?: MutableRefObject<number>
+}
+
+// How far past a growing region's produced edge a position still counts as
+// its: the pipeline is on its way there. Mirrors the pipeline's own margin.
+const REGION_AHEAD_MS = 30_000
+const REGION_BEHIND_MS = 1_000
+
+function regionHolds(region: MediaRegion, ms: number): boolean {
+  const end = region.startMs + region.producedMs + (region.growing ? REGION_AHEAD_MS : 0)
+  return ms >= region.startMs - REGION_BEHIND_MS && ms <= end
+}
+
+/**
+ * The region to load for a position: the one already loaded if it still
+ * holds it, else the newest region that does, else the growing one when the
+ * position is ahead of it (it will get there), else whatever is loaded.
+ */
+export function regionFor(regions: MediaRegion[], ms: number, current: number | null): number | null {
+  if (regions.length === 0) return null
+  const loaded = regions.find((r) => r.n === current)
+  if (loaded && regionHolds(loaded, ms)) return loaded.n
+  const holding = regions.filter((r) => regionHolds(r, ms))
+  if (holding.length > 0) return holding.reduce((a, b) => (b.startMs > a.startMs ? b : a)).n
+  const growing = regions.find((r) => r.growing)
+  if (growing && ms >= growing.startMs - REGION_BEHIND_MS) return growing.n
+  return loaded ? loaded.n : (growing ?? regions[regions.length - 1]).n
 }
 
 // TAP_TOGGLE_DELAY_MS is how long a tap waits to see whether it is really the
@@ -81,7 +110,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -120,10 +149,27 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const [pendingSeekSec, setPendingSeekSec] = useState<number | null>(null)
   const scrubbingRef = useRef(false)
   // Every position the room speaks is absolute; the media element only ever
-  // holds the current region, rebased to zero. These two lines are the whole
-  // mapping: element time + offset = room time.
-  const mediaOffsetMs = room.mediaOffsetMs ?? 0
+  // holds one region, rebased to zero. With a region map the player picks
+  // the region for the time the room is at; a room without one (older, or
+  // before the first publish) has only the offset the room names. Either
+  // way: element time + offset = room time.
+  const regions = room.mediaRegions && room.mediaRegions.length > 0 ? room.mediaRegions : null
+  const [activeRegionN, setActiveRegionN] = useState<number | null>(null)
+  const activeRegion = regions?.find((r) => r.n === activeRegionN) ?? null
+  const mediaOffsetMs = activeRegion ? activeRegion.startMs : (room.mediaOffsetMs ?? 0)
   const mediaOffsetSec = mediaOffsetMs / 1000
+  if (mediaOffsetMsRef) mediaOffsetMsRef.current = mediaOffsetMs
+  const masterName = activeRegion ? `r${activeRegion.n}_master.m3u8` : 'master.m3u8'
+  // Re-decided whenever the map or the room's clock moves. A change here is
+  // what reloads the player onto another region's playlists.
+  useEffect(() => {
+    if (!regions) { setActiveRegionN(null); return }
+    const video = videoRef.current
+    const wantedMs = syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs)
+      : video ? video.currentTime * 1000 + mediaOffsetMs : 0
+    const next = regionFor(regions, wantedMs, activeRegionN)
+    if (next !== null && next !== activeRegionN) setActiveRegionN(next)
+  }, [regions, syncState, serverOffsetMs, activeRegionN, mediaOffsetMs, videoRef])
   // The timeline is the room's, not the element's: the scrubber promises the
   // whole episode from the first publish, while the element grows region by
   // region behind it.
@@ -200,7 +246,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // version moves when the same media is republished behind the URL — the
     // final remux replacing the progressive preview — and reloading then is
     // what hands a preview viewer the finished playlists.
-    const source = `/media/${encodeURIComponent(room.id)}/hls/master.m3u8?g=${generation}&v=${room.mediaVersion ?? 0}`
+    const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${room.mediaVersion ?? 0}`
     let disposed = false
     setUnplayable(false)
     recoveriesRef.current = 0
@@ -390,7 +436,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, room.mediaVersion, mediaOffsetSec, videoRef])
+  }, [room.id, room.mediaGeneration, room.mediaVersion, mediaOffsetSec, masterName, videoRef])
 
   // Subtitle modes are driven from state instead of the <select> handler so
   // the choice survives everything that reloads cues: a subsVersion bump
@@ -506,13 +552,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // prepared and the video comes back minutes past where the viewer
     // pointed. The room resumes on its own when the new region publishes.
     const coveredEnd = mediaOffsetSec + (Number.isFinite(duration) ? duration : 0)
-    const cold = duration > 0 && (seconds < mediaOffsetSec - 1 || seconds > coveredEnd + 5)
+    const cold = regions
+      ? !regions.some((r) => regionHolds(r, seconds * 1000))
+      : duration > 0 && (seconds < mediaOffsetSec - 1 || seconds > coveredEnd + 5)
     resumeAtMsRef.current = null
     if (cold && syncState?.playing) {
       resumeAtMsRef.current = Math.round(seconds * 1000)
       send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
     }
-  }, [duration, isController, mediaOffsetSec, send, serverOffsetMs, syncState, videoRef])
+  }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, videoRef])
 
   // The parked room wakes up when the region it waited on arrives. A play or
   // pause anyone sends in the meantime takes the room over instead.
@@ -845,9 +893,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           attemptPlay()
         }}
         onTimeUpdate={(event) => {
-          setCurrentTime(event.currentTarget.currentTime + mediaOffsetSec)
+          const absoluteSec = event.currentTarget.currentTime + mediaOffsetSec
+          setCurrentTime(absoluteSec)
           setDuration(playableDuration(event.currentTarget))
           setBufferedRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec))
+          // Playback walking off the end of a finished region continues in
+          // the region that picks up there, if one does.
+          if (regions) {
+            const next = regionFor(regions, absoluteSec * 1000, activeRegionN)
+            if (next !== null && next !== activeRegionN) setActiveRegionN(next)
+          }
         }}
         onDurationChange={(event) => setDuration(playableDuration(event.currentTarget))}
         onLoadedMetadata={(event) => setDuration(playableDuration(event.currentTarget))}

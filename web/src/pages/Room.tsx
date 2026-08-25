@@ -629,6 +629,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               syncState={sync.state}
               serverOffsetMs={sync.serverOffsetMs}
               swarm={swarmStats}
+              mediaOffsetMsRef={mediaOffsetMsRef}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={

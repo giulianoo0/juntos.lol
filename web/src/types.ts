@@ -101,6 +101,13 @@ export interface RoomChapter {
   title?: string
 }
 
+export interface MediaRegion {
+  n: number
+  startMs: number
+  producedMs: number
+  growing: boolean
+}
+
 export interface RoomInfo {
   id: string
   fileName: string
@@ -124,6 +131,10 @@ export interface RoomInfo {
   // each region to zero, so absolute room time = media time + this offset.
   // Moves only together with mediaVersion.
   mediaOffsetMs?: number
+  // Every stretch of the timeline produced for this generation, each with
+  // its own playlists (rN_master.m3u8). The player picks the region for the
+  // time it wants and switches at the edges.
+  mediaRegions?: MediaRegion[]
   // Whether play and seek wait for every member to buffer the target.
   // Controller-owned; the live value travels over the sync protocol.
   gatingEnabled?: boolean
