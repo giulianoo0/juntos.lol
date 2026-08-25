@@ -87,6 +87,16 @@ func main() {
 		TicketTTL: time.Duration(cfg.WorkerTicketMinutes) * time.Minute,
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
 	}
+	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
+		swarmCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if err := store.SetSwarm(swarmCtx, roomID, room.SwarmStats{
+			Peers: stats.Peers, DownSpeed: stats.DownSpeed, HaveBytes: stats.HaveBytes, SelectedBytes: stats.SelectedBytes,
+		}); err != nil {
+			return
+		}
+		hub.NotifyRoomUpdated(roomID)
+	}
 	workerHub.OnHeartbeat(torrents.Charge)
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)

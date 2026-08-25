@@ -89,6 +89,9 @@ export interface RoomPreparation {
   // How many bytes the preview is expected to need before the first segment
   // can be published. Absent while the bitrate is still unknown.
   previewTargetBytes?: number
+  // The torrent behind the source, as its worker last reported it. Present
+  // for every viewer, not only the host.
+  swarm?: { peers: number; downSpeed: number; haveBytes: number; selectedBytes: number }
 }
 
 // RoomChapter is one authored span of the media, in milliseconds.

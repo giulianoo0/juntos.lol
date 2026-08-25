@@ -22,6 +22,9 @@ type Service struct {
 	TicketTTL time.Duration
 	// JobTTL bounds a job record that nobody touches.
 	JobTTL time.Duration
+	// OnSwarm is told, on every heartbeat, what a room's torrent looks like
+	// now; nil-safe.
+	OnSwarm func(roomID string, stats SwarmStats)
 }
 
 // QuotaCharger is the slice of the quota the service needs.
@@ -389,7 +392,7 @@ func (s *Service) Sweep(ctx context.Context, idle time.Duration) {
 // once per torrent per worker, never past the selected file's size, and a
 // reset restarts the count instead of charging the re-download.
 func (s *Service) Charge(workerID string, hb Heartbeat) {
-	if s.Quota == nil {
+	if s.Quota == nil && s.OnSwarm == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -405,6 +408,16 @@ func (s *Service) Charge(workerID string, hb Heartbeat) {
 			continue
 		}
 		jobs = append(jobs, job)
+	}
+	if s.OnSwarm != nil {
+		for _, job := range jobs {
+			if job.RoomID == "" || job.State != JobServing {
+				continue
+			}
+			if t, ok := findDigest(hb.Torrents, job.Infohash); ok {
+				s.OnSwarm(job.RoomID, SwarmStats{Peers: t.Peers, DownSpeed: t.DownSpeed, HaveBytes: t.HaveBytes, SelectedBytes: t.SelectedBytes})
+			}
+		}
 	}
 	for _, t := range hb.Torrents {
 		delta := s.Registry.ChargeMark(ctx, workerID, t.Infohash, t.HaveBytes)
@@ -423,8 +436,19 @@ func (s *Service) Charge(workerID string, hb Heartbeat) {
 		if size := selectedSize(owner); size > 0 && delta > size {
 			delta = size
 		}
-		_ = s.Quota.AddBytes(ctx, owner.SessionID, delta)
+		if s.Quota != nil {
+			_ = s.Quota.AddBytes(ctx, owner.SessionID, delta)
+		}
 	}
+}
+
+func findDigest(torrents []TorrentDigest, infohash string) (TorrentDigest, bool) {
+	for _, t := range torrents {
+		if t.Infohash == infohash {
+			return t, true
+		}
+	}
+	return TorrentDigest{}, false
 }
 
 func selectedSize(job *JobRecord) int64 {

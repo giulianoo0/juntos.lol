@@ -128,4 +128,15 @@ type Preparation struct {
 	// bitrate. 0 while unknown, and meaningless once the phase is
 	// PreviewUnavailable, where the answer is the whole file.
 	PreviewTargetBytes int64 `json:"previewTargetBytes,omitempty"`
+	// Swarm is the torrent behind the source as its worker last reported
+	// it, so every viewer sees the peers and the speed, not only the host.
+	Swarm *SwarmStats `json:"swarm,omitempty"`
+}
+
+// SwarmStats is what a worker reports about a torrent it is fetching.
+type SwarmStats struct {
+	Peers         int64 `json:"peers"`
+	DownSpeed     int64 `json:"downSpeed"`
+	HaveBytes     int64 `json:"haveBytes"`
+	SelectedBytes int64 `json:"selectedBytes"`
 }

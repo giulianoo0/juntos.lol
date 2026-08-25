@@ -207,16 +207,23 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
   mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
-  // The swarm behind this room's upload, when this tab is the one fetching
-  // it. Polled while mounted: the session keeps its own snapshot fresh, this
-  // just reads it onto the preparing screen.
-  const [swarmStats, setSwarmStats] = useState<TorrentStats | null>(null)
+  // The swarm behind this room's torrent. The host's own session refreshes
+  // it every second; everyone else reads what the worker reported through
+  // the room, a heartbeat behind. Either way the preparing screen shows it.
+  const [localSwarm, setLocalSwarm] = useState<TorrentStats | null>(null)
   useEffect(() => {
-    const read = () => setSwarmStats(torrentStatsFor(room.id))
+    const read = () => setLocalSwarm(torrentStatsFor(room.id))
     read()
     const timer = window.setInterval(read, 1_000)
     return () => window.clearInterval(timer)
   }, [room.id])
+  const reported = liveRoom.preparation?.swarm
+  const swarmStats: TorrentStats | null = localSwarm ?? (reported ? {
+    peers: reported.peers,
+    downloadSpeed: reported.downSpeed,
+    downloaded: reported.haveBytes,
+    progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
+  } : null)
   // Retomar o preparo: the pipeline died with this tab's last life (a reload,
   // a crash), but the source survives in localStorage. Reopen it and point
   // the room at a fresh generation; the playhead-following pipeline then
