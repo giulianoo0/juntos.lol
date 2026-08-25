@@ -35,6 +35,12 @@ jobs:
           fetch-depth: 0
 
       - uses: millionco/react-doctor@v2
+        with:
+          # The React app lives in web/, not at the root. Without this the
+          # action resolves the project's own files against the repo root and
+          # hands oxlint paths like web/web/index.html, which then finds
+          # nothing to lint and reports an empty run.
+          directory: web
         # Advisory by default: React Doctor reports findings on every PR — a
         # sticky summary comment, inline review comments, and a commit status
         # with the health score — but never fails the check, so it won't red-X
