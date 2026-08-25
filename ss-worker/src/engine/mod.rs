@@ -498,6 +498,20 @@ impl Engine {
         Ok(())
     }
 
+    /// A parked stream keeps a 64MB priority window at its cursor for as
+    /// long as it exists, and the swarm shares itself fairly between every
+    /// window. A slot nobody has read through recently is a stale window
+    /// stealing focus from the live one — after a seek, the abandoned
+    /// region's — so it is dropped; the next read simply parks a new one.
+    pub fn drop_stale_slots(&self, idle: Duration) {
+        let mut map = self.torrents.lock().unwrap();
+        for entry in map.values_mut() {
+            entry.slots.retain(|_, slot| {
+                slot.stream.try_lock().is_err() || slot.idle_for() < idle
+            });
+        }
+    }
+
     /// The raw piece bitfield, for the buffered-ranges bar.
     pub fn haves(&self, infohash: &str) -> anyhow::Result<(Vec<u8>, u32, u64)> {
         let handle = self.handle(infohash).context("unknown torrent")?;

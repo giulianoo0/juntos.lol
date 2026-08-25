@@ -5,6 +5,9 @@ use super::entry::Phase;
 use super::Engine;
 
 const SWEEP: Duration = Duration::from_secs(5);
+// How long a parked stream may sit unread before its priority window is
+// considered stale and released back to whoever is still reading.
+const SLOT_IDLE: Duration = Duration::from_secs(20);
 // A lease the server never released outlives its usefulness by this much;
 // the server's own sweeper releases sooner, this is the worker's backstop.
 const LEASE_TTL: Duration = Duration::from_secs(6 * 3600);
@@ -18,6 +21,7 @@ pub fn spawn(engine: Weak<Engine>) {
             tokio::time::sleep(SWEEP).await;
             let Some(engine) = engine.upgrade() else { break };
             engine.expire_stale_leases(LEASE_TTL);
+            engine.drop_stale_slots(SLOT_IDLE);
             engine.retry_failed().await;
             let grace = engine.cfg.idle_grace;
             let ttl = engine.cfg.reap_ttl;

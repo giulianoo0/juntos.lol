@@ -92,7 +92,6 @@ export const en: Record<string, string> = {
   'player.chapter': 'Chapter',
   'chapters.title': 'Chapters',
   'chapters.close': 'Close chapters',
-  'chapters.locked': 'Not yet available: that part of the video has not been prepared yet.',
   'room.switchTorrent': 'Torrent',
   'room.switchFile': 'File',
   'room.switchScreen': 'Share screen',

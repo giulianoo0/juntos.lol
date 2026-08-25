@@ -48,4 +48,7 @@ impl StreamSlot {
     pub fn position(&self) -> u64 {
         self.meta.lock().unwrap().0
     }
+    pub fn idle_for(&self) -> std::time::Duration {
+        self.meta.lock().unwrap().1.elapsed()
+    }
 }

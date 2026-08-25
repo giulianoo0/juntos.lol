@@ -35,6 +35,9 @@ interface PlayerProps {
   // Where the sync layer reads this player's current offset: the region the
   // element holds is the player's choice, and the clock has to follow it.
   mediaOffsetMsRef?: MutableRefObject<number>
+  // Hands the room-aware seek out, so a jump from outside the bar (the
+  // chapter list) parks and resumes the room exactly like the scrubber.
+  seekRef?: MutableRefObject<((seconds: number) => void) | null>
 }
 
 // How far past a growing region's produced edge a position still counts as
@@ -110,7 +113,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -174,7 +177,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const activeRegion = regions?.find((r) => r.n === activeRegionN) ?? null
   const mediaOffsetMs = activeRegion ? activeRegion.startMs : (room.mediaOffsetMs ?? 0)
   const mediaOffsetSec = mediaOffsetMs / 1000
-  if (mediaOffsetMsRef) mediaOffsetMsRef.current = mediaOffsetMs
   const masterName = activeRegion ? `r${activeRegion.n}_master.m3u8` : 'master.m3u8'
   // Re-decided whenever the map or the room's clock moves. A change here is
   // what reloads the player onto another region's playlists.
@@ -277,6 +279,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const wantedAbs = sync ? expectedPositionMs(sync, Date.now() + serverOffsetRef.current) / 1000 : resumeAbs
     const startPosition = Math.max(wantedAbs - mediaOffsetSec, 0)
     loadedOffsetSecRef.current = mediaOffsetSec
+    // The shared ref pairs with the element's clock everywhere it is read,
+    // so it moves when the element does, not a render earlier.
+    if (mediaOffsetMsRef) mediaOffsetMsRef.current = mediaOffsetMs
 
     const failPlayback = (reason: string) => {
       if (disposed) return
@@ -454,7 +459,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     return () => {
       disposed = true
       window.clearInterval(watchdog)
-      resumeRef.current = { generation, time: video.currentTime + mediaOffsetSec }
+      resumeRef.current = { generation, time: video.currentTime + loadedOffsetSecRef.current }
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
@@ -487,6 +492,18 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     }
   }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
 
+  // The position a play or pause speaks for the room. The element's clock
+  // only counts while it holds the room's position: after a cold seek it
+  // still sits in the old region while the new one is prepared, and a play
+  // sent with that clock would drag the whole room back to it.
+  const commandPositionMs = useCallback((video: HTMLVideoElement): number => {
+    const elementMs = Math.round((video.currentTime + loadedOffsetSecRef.current) * 1000)
+    const sync = syncRef.current
+    if (!sync) return elementMs
+    const expected = expectedPositionMs(sync, Date.now() + serverOffsetRef.current)
+    return Math.abs(elementMs - expected) > 5_000 ? Math.round(expected) : elementMs
+  }, [])
+
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
     if (!video || !playRequestedRef.current || playAttemptRef.current) return
@@ -496,17 +513,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       if (!playRequestedRef.current) return
       playRequestedRef.current = false
       if (isController) {
-        send('play', {
-          positionMs: Math.round(video.currentTime * 1000) + mediaOffsetMs,
-          rate: video.playbackRate,
-        })
+        send('play', { positionMs: commandPositionMs(video), rate: video.playbackRate })
       }
     }).catch(() => {
       // A click can land while hls.js is still attaching the MediaSource.
       // Keep the intent and retry from the next canplay event.
       playAttemptRef.current = false
     })
-  }, [isController, send, videoRef])
+  }, [commandPositionMs, isController, send, videoRef])
 
   // A double click fullscreens the player, and its first click is
   // indistinguishable from a single one until the second arrives. Acting
@@ -555,12 +569,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     }
     playRequestedRef.current = false
     video.pause()
-    send('pause', {
-      positionMs: Math.round(video.currentTime * 1000) + mediaOffsetMs,
-      rate: video.playbackRate,
-    })
+    send('pause', { positionMs: commandPositionMs(video), rate: video.playbackRate })
     return true
-  }, [attemptPlay, isController, refuseControl, send, syncState, videoRef])
+  }, [attemptPlay, commandPositionMs, isController, refuseControl, send, syncState, videoRef])
 
   const pendingSentServerMs = useRef(0)
   const seek = useCallback((seconds: number) => {
@@ -583,6 +594,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
     }
   }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, videoRef])
+  if (seekRef) seekRef.current = seek
 
   // The parked room wakes up when the region it waited on arrives. A play or
   // pause anyone sends in the meantime takes the room over instead.
@@ -1057,7 +1069,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             onPointerUp={(event) => event.currentTarget.blur()}
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
           <span className="timecode">
-            {formatTime(currentTime)} / {formatTime(timelineEnd)}
+            {formatTime(scrubSec ?? pendingSeekSec ?? currentTime)} / {formatTime(timelineEnd)}
             {currentChapterIndex >= 0 && onChapters ? (
               <button
                 type="button"

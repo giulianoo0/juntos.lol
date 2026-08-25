@@ -853,6 +853,25 @@ describe('scrubbing', () => {
     expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
   })
 
+  it('a play behind a cold seek resumes at the room\'s position, not the element\'s', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    // The room was sought to 1220s and paused there; the element still holds
+    // the old region at 120s because the new one has not published yet.
+    const parked = { playing: false, positionMs: 1_220_000, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={parked} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    video.currentTime = 120
+    video.play = vi.fn(() => Promise.resolve())
+    const playButton = container.querySelector('button.is-play')! as HTMLButtonElement
+    fireEvent.click(playButton)
+    return Promise.resolve().then(() => {
+      expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
+    })
+  })
+
   it('does not park when the target is already covered', () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()

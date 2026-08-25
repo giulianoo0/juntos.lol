@@ -92,7 +92,6 @@ export const ptBR: Record<string, string> = {
   'player.chapter': 'Capítulo',
   'chapters.title': 'Capítulos',
   'chapters.close': 'Fechar capítulos',
-  'chapters.locked': 'Ainda não disponível: essa parte do vídeo ainda não foi preparada.',
   'room.switchTorrent': 'Torrent',
   'room.switchFile': 'Arquivo',
   'room.switchScreen': 'Compartilhar tela',

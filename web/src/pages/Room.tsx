@@ -204,6 +204,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // The region clock, read by the sync socket handlers through a ref so a
   // region switch never re-opens the socket.
   const mediaOffsetMsRef = useRef(0)
+  // The Player's own seek, for jumps that start outside it (chapter list):
+  // it parks a playing room on a cold target and resumes it on publish.
+  const playerSeekRef = useRef<((seconds: number) => void) | null>(null)
   const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
@@ -638,6 +641,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               serverOffsetMs={sync.serverOffsetMs}
               swarm={swarmStats}
               mediaOffsetMsRef={mediaOffsetMsRef}
+              seekRef={playerSeekRef}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={
@@ -678,7 +682,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             chapters={liveRoom.chapters ?? []}
             open
             onClose={() => setSidePanel('chat')}
-            onSeek={sync.isController ? (seconds) => sync.send('seek', { positionMs: Math.round(seconds * 1000) }) : undefined}
+            onSeek={sync.isController ? (seconds) => {
+              const throughPlayer = playerSeekRef.current
+              if (throughPlayer) throughPlayer(seconds)
+              else sync.send('seek', { positionMs: Math.round(seconds * 1000) })
+            } : undefined}
             videoRef={videoRef}
             t={t}
           />
