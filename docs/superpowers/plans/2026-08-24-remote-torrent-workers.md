@@ -671,7 +671,14 @@ joga o viewer pro fim? Se não tolera, o design de N-playlists muda
    worker, não no browser. Para workers do dono, "a frota é confiável" é
    provavelmente ok — escrever com o raio de dano (vídeo arbitrário em qualquer
    sala pelos PUTs presignados do host).
-6. **A medição-portão (0A)** — o remux real passa de ~1,5× tempo real a 100 ms
-   de RTT com a janela h2 ajustada? Se não, as opções são tuning de prefetch,
-   levantar a janela, ou repensar as leituras diretas — melhor aprender no
-   fixture da fase 0 que numa VPS alugada.
+6. **A medição-portão (0A)** — **FECHADA em 2026-08-25, aprovada.** Remux
+   real (mediabunny, cópia de vídeo, `maxCacheSize` 96 MiB, prefetch
+   `network`) contra `cmd/rangefixture` em h2/TLS com cap de 16 MiB por
+   resposta, num Chrome real via `web/dev/measure.mjs`, MKV de 1,7 GB:
+   **83,7 Mbit/s sustentados a 100 ms de RTT (18× tempo real)** e 44 Mbit/s a
+   200 ms (8,6×); primeiro segmento em 385 ms / 639 ms. Com 30% de 206
+   truncados + 10% de 503 + 10% de stalls de 3 s, ainda 8,6× tempo real sem
+   erro. Nota: em download a janela de flow-control que limita é a do
+   **receptor** (Chrome anuncia ~6 MiB por stream), não a do hyper — o teto
+   de 64 KiB do hyper só vale para uploads ao worker. `readBase` direto é
+   viável; não há tuning de janela a fazer no worker para o data plane.
