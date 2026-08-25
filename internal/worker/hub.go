@@ -157,6 +157,12 @@ func (h *Hub) serve(conn *websocket.Conn) {
 			if h.onBeat != nil {
 				h.onBeat(workerID, hb)
 			}
+			// The worker treats a silent server as a dead link; every
+			// heartbeat is answered so silence means what it says.
+			select {
+			case l.send <- []byte(`{"type":"ack"}`):
+			default:
+			}
 		case "result":
 			var result Result
 			if json.Unmarshal(raw, &result) != nil {

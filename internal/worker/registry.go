@@ -29,11 +29,11 @@ type Heartbeat struct {
 		Used  int64 `json:"used"`
 		Quota int64 `json:"quota"`
 	} `json:"disk"`
-	Leases        int             `json:"leases"`
-	MaxLeases     int             `json:"maxLeases"`
-	MaxTorrents   int             `json:"maxTorrents"`
-	PermitsInUse  int64           `json:"permitsInUse"`
-	Torrents      []TorrentDigest `json:"torrents"`
+	Leases       int             `json:"leases"`
+	MaxLeases    int             `json:"maxLeases"`
+	MaxTorrents  int             `json:"maxTorrents"`
+	PermitsInUse int64           `json:"permitsInUse"`
+	Torrents     []TorrentDigest `json:"torrents"`
 }
 
 // TorrentDigest is one torrent as the worker sees it.
