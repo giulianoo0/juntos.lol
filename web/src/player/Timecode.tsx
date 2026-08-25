@@ -1,4 +1,4 @@
-import NumberFlow from '@number-flow/react'
+import NumberFlow, { type Format } from '@number-flow/react'
 
 /**
  * The clock under the scrub bar, digit by digit.
@@ -10,8 +10,8 @@ import NumberFlow from '@number-flow/react'
 
 // Minutes run past sixty rather than growing an hours field, which is what
 // the bar has always shown; the seconds keep their leading zero.
-const PLAIN: Intl.NumberFormatOptions = { useGrouping: false }
-const PADDED: Intl.NumberFormatOptions = { minimumIntegerDigits: 2, useGrouping: false }
+const PLAIN: Format = { useGrouping: false }
+const PADDED: Format = { minimumIntegerDigits: 2, useGrouping: false }
 
 export function Timecode({ seconds }: { seconds: number }) {
   const total = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
