@@ -45,6 +45,12 @@ pub struct WorkerConfig {
     pub idle_grace: Duration,
     pub reap_ttl: Duration,
     pub runtime_worker_threads: usize,
+    /// This worker asks to be reached through the fleet's relay instead of
+    /// directly: its address is private and stays that way.
+    pub relayed: bool,
+    /// Where this worker forwards /relay/* to (the site's app), making it
+    /// the fleet's front door for relayed siblings. Empty disables.
+    pub relay_upstream: Option<String>,
     pub response_cap: u64,
     pub first_byte_deadline: Duration,
     pub stall_deadline: Duration,
@@ -130,6 +136,8 @@ impl WorkerConfig {
             idle_grace: env_secs("SS_WORKER_IDLE_GRACE_SECS", 120)?,
             reap_ttl: env_secs("SS_WORKER_REAP_TTL_SECS", 180)?,
             runtime_worker_threads: env_parse("SS_WORKER_RUNTIME_THREADS", 0)?,
+            relayed: env("SS_WORKER_RELAYED").as_deref() == Some("1"),
+            relay_upstream: env("SS_WORKER_RELAY_UPSTREAM"),
             response_cap: env_parse::<u64>("SS_WORKER_RESPONSE_CAP_MIB", 16)? * 1024 * 1024,
             first_byte_deadline: env_secs("SS_WORKER_FIRST_BYTE_SECS", 30)?,
             stall_deadline: env_secs("SS_WORKER_STALL_SECS", 20)?,

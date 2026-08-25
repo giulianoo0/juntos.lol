@@ -66,12 +66,13 @@ export async function openCatalogStream(
   stream: CatalogStream,
   target?: StreamTarget,
   onStats?: Parameters<typeof openTorrent>[1],
+  options?: Parameters<typeof openTorrent>[2],
 ): Promise<{ file: TorrentVideoFile; session: TorrentSession }> {
   const { location } = stream
   // A url stream never reaches here: it has no swarm to open, and the callers
   // branch on the location before choosing this path.
   if (location.kind !== 'torrent') throw new Error('openCatalogStream expects a torrent stream')
-  const session = await openTorrent(buildMagnet(location, stream.label), onStats)
+  const session = await openTorrent(buildMagnet(location, stream.label), onStats, options)
   const file = pickStreamFile(session.files, location, target)
   if (!file) {
     session.destroy()

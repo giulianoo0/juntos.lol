@@ -52,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Arc::new(http::AppState {
         engine: engine.clone(),
         throttle: Arc::new(http::throttle::Throttle::new(cfg.transfer_bps)),
+        relay: cfg.relay_upstream.clone().map(http::relay::Relay::new),
         server_key: RwLock::new(None),
         worker_id: RwLock::new(String::new()),
         revoked: Mutex::new(Default::default()),

@@ -97,6 +97,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if options.workerLink != nil {
 		r.GET("/ws/worker-link", options.workerLink)
 	}
+	RegisterRelayRoute(r, options.torrentAccess.Service)
 	registerFrontend(r, cfg.WebDir)
 	return r
 }

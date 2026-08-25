@@ -86,6 +86,7 @@ func main() {
 		Blocklist: blocklist,
 		Quota:     quota,
 		TicketTTL: time.Duration(cfg.WorkerTicketMinutes) * time.Minute,
+		RelayBase: cfg.WorkerRelayBase,
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
 	}
 	// Every heartbeat would otherwise make every member refetch the room;

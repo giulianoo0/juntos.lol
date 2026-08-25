@@ -89,6 +89,7 @@ impl Control {
             "pubkey": pubkey,
             "version": env!("CARGO_PKG_VERSION"),
             "publicBase": public_base,
+            "relayed": self.cfg.relayed,
             "ts": ts,
             "sig": id.sign(message.as_bytes())?,
         });
@@ -126,6 +127,7 @@ impl Control {
             "publicBase": self.cfg.public_base(),
             "ready": ready,
             "draining": snap.draining,
+            "relayed": self.cfg.relayed,
             "cert": cert,
             "disk": { "used": snap.disk_used, "quota": snap.disk_quota },
             "transfer": { "capBps": self.cfg.transfer_bps, "usedBps": used_bps },

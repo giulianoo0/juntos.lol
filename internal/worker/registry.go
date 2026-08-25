@@ -29,6 +29,7 @@ type Heartbeat struct {
 		Used  int64 `json:"used"`
 		Quota int64 `json:"quota"`
 	} `json:"disk"`
+	Relayed      bool            `json:"relayed"`
 	Transfer     *TransferStats  `json:"transfer"`
 	Leases       int             `json:"leases"`
 	MaxLeases    int             `json:"maxLeases"`
@@ -67,6 +68,15 @@ type Worker struct {
 	LastSeen   time.Time
 	Heartbeat  Heartbeat
 	link       *link
+}
+
+// EffectiveBase is where browsers reach this worker: its own address, or
+// the fleet's relay when the worker asked to stay private.
+func (w *Worker) EffectiveBase(relayBase string) string {
+	if w.Heartbeat.Relayed && relayBase != "" {
+		return relayBase + "/relay/" + w.ID
+	}
+	return w.PublicBase
 }
 
 // Healthy is whether a job may be placed here right now.

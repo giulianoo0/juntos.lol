@@ -1,5 +1,6 @@
 pub mod acme;
 mod cors;
+pub mod relay;
 pub mod throttle;
 mod file;
 mod haves;
@@ -28,6 +29,7 @@ use crate::ticket::{self, Ticket};
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub throttle: Arc<throttle::Throttle>,
+    pub relay: Option<relay::Relay>,
     pub server_key: RwLock<Option<VerifyingKey>>,
     pub worker_id: RwLock<String>,
     pub revoked: Mutex<HashMap<String, u64>>,
@@ -159,6 +161,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/file/:ticket/:index", get(file::get).options(preflight_sub))
         .route("/v1/t/:ticket/haves", get(haves::get).options(preflight_sub))
         .route("/v1/probe/:ticket", get(probe).options(preflight))
+        .route("/relay/*path", axum::routing::any(relay::any))
         .layer(axum::middleware::from_fn_with_state(state.clone(), in_flight))
         .with_state(state)
 }

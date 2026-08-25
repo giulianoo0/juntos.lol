@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
+import { WorkerProbes } from './WorkerProbes'
 import { torrentCapacity } from '../remoteTorrent'
 import { torrentErrorKey } from '../torrentErrors'
 import { useMorphingSize } from '../ui/useMorphingSize'
@@ -220,23 +221,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
           ) : <p className="empty-copy torrent-empty">{t('home.torrentNoMatch')}</p>}
         </>
       ) : null}
-      {probes.length > 0 ? (
-        <div className="worker-probes" aria-live="polite">
-          <span className="worker-probes-title">
-            {probes.some((p) => p.state === 'testing') ? t('home.workersTesting') : t('home.workersTested')}
-          </span>
-          {probes.map((probe) => (
-            <span key={probe.id} className={`worker-probe ${probe.chosen ? 'is-chosen' : ''} ${probe.state === 'down' ? 'is-down' : ''}`}>
-              <code>{probe.id.replace(/^w_/, '').slice(0, 6)}</code>
-              {probe.state === 'testing' ? t('home.workerTesting')
-                : probe.state === 'down' ? t('home.workerOffline')
-                  : `${probe.mbit} Mbit/s${probe.ttfbMs !== undefined ? ` · ${probe.ttfbMs}ms` : ''}`}
-              {probe.holds ? <em>{t('home.workerHolds')}</em> : null}
-              {probe.chosen ? <strong>{t('home.workerChosen')}</strong> : null}
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <WorkerProbes probes={probes} t={t} />
       {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
       {!listing ? (
         <div className="torrent-actions">

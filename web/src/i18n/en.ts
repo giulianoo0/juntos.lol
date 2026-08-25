@@ -21,6 +21,7 @@ export const en: Record<string, string> = {
   'home.workersTested': 'Download workers, as seen from your connection:',
   'home.workerTesting': 'testing…',
   'home.workerOffline': 'no answer',
+  'home.workerLocalBlocked': 'no answer: local network blocked? Allow it in the address bar',
   'home.workerHolds': 'already has this torrent',
   'home.workerChosen': 'chosen',
   'home.torrentNoWorkers': 'Torrents are off on this server right now: no download worker is connected. Try again later, or use a file.',

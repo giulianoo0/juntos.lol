@@ -14,7 +14,7 @@ import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
-import type { TorrentSession, TorrentVideoFile } from '../torrent'
+import type { TorrentSession, TorrentVideoFile, WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey } from '../torrentErrors'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
@@ -23,6 +23,7 @@ import { CatalogBrowser } from '../catalog/CatalogBrowser'
 import { ProgressiveBlur } from '../catalog/ProgressiveBlur'
 import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
 import { openCatalogStream } from '../catalog/openStream'
+import { WorkerProbes } from '../components/WorkerProbes'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
@@ -138,6 +139,9 @@ export function Home() {
   // the swarm back to the picker instead of dropping it.
   const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const [startingLabel, setStartingLabel] = useState('')
+  // The fleet as measured while a catalog pick's torrent opens: the machine
+  // choice is a stage of starting, and it happens in front of the user.
+  const [streamProbes, setStreamProbes] = useState<WorkerProbe[]>([])
 
   // The details panel is URL-driven: /title/:type/:id renders it over the
   // board, so every title is deep-linkable. A click also stashes the poster's
@@ -240,7 +244,8 @@ export function Home() {
         // Opening the torrent is part of the start: peers and metadata first,
         // then the room, so a dead stream never leaves an empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
-        const opened = await openCatalogStream(media.pick.stream, media.pick.target)
+        setStreamProbes([])
+        const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
         setProgress(null)
         try {
           room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
@@ -456,6 +461,7 @@ export function Home() {
               <span className="player-spinner" aria-hidden="true" />
               <h2>{t('home.preparing')}</h2>
               <p className="starting-file">{startingLabel}</p>
+              <WorkerProbes probes={streamProbes} t={t} />
               <p className="starting-phase">
                 {progress?.phase === 'converting' && progress.pct > 0
                   ? `${progress.pct}%`

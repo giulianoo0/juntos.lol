@@ -72,6 +72,10 @@ type Config struct {
 	// BehindCloudflare says CF-Connecting-IP is the client's address. Only
 	// set when the origin is unreachable except through Cloudflare.
 	BehindCloudflare bool
+	// WorkerRelayBase is the public, CDN-free address browsers reach
+	// relayed (private) workers through — the fleet's front door, typically
+	// the instance's own worker. Empty disables relaying.
+	WorkerRelayBase string
 }
 
 func Load() (Config, error) {
@@ -172,6 +176,7 @@ func Load() (Config, error) {
 	}
 	cfg.PublicOrigin = strings.TrimSuffix(os.Getenv("PUBLIC_ORIGIN"), "/")
 	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
+	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
 
 	return cfg, nil
 }

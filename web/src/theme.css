@@ -863,6 +863,8 @@ button.timecode-chapter:hover { color: var(--text); }
 .worker-probe strong { color: #56d364; font-weight: 650; }
 .worker-probe.is-chosen { border-color: rgba(86,211,100,.45); }
 .worker-probe.is-down { opacity: .55; }
+.starting-card .worker-probes { justify-content: center; }
+.swap-probes { margin: 10px 0 0; }
 
 /* --- plugins ------------------------------------------------------------ */
 /* The header button carries the same weight as the language toggle, not the

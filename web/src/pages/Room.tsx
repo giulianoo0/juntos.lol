@@ -28,11 +28,12 @@ import { playJoinChime } from '../ui/chime'
 import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import { CatalogOverlay, type OverlayFocus } from '../catalog/CatalogOverlay'
 import { openCatalogStream } from '../catalog/openStream'
+import { WorkerProbes } from '../components/WorkerProbes'
 import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { openTorrent, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
@@ -294,6 +295,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
+  // The fleet as measured while a source swap opens its torrent.
+  const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -326,6 +329,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const swapSource = async (run: () => Promise<void>) => {
     setSourceError('')
     setSourcePanel(null)
+    setSwapProbes([])
     try {
       await run()
     } catch (error) {
@@ -375,7 +379,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         startUrlUpload(room.id, next.mediaGeneration, url, `${pick.displayName}.mkv`, 0)
         return
       }
-      const opened = await openCatalogStream(pick.stream, pick.target)
+      const opened = await openCatalogStream(pick.stream, pick.target, undefined, { onProbe: setSwapProbes })
       try {
         const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
         startTorrentUpload(room.id, next.mediaGeneration, opened)
@@ -689,6 +693,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         accept="video/*,.mkv"
         onChange={(event) => chooseFile(event.target.files?.[0])}
       />
+      {swapProbes.length > 0 && shownGate === 'preparing' ? <div className="swap-probes"><WorkerProbes probes={swapProbes} t={t} /></div> : null}
       {sourceError ? <div className="error-card compact" role="alert">{t(sourceError)}</div> : null}
       {visibleRequests.length > 0 ? (
         <div className="request-stack" aria-live="polite">

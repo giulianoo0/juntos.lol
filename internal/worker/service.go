@@ -26,6 +26,9 @@ type Service struct {
 	// OnSwarm is told, on every heartbeat, what a room's torrent looks like
 	// now; nil-safe.
 	OnSwarm func(roomID string, stats SwarmStats)
+	// RelayBase is the public address browsers reach relayed workers
+	// through (the fleet's front door). Empty means no relaying.
+	RelayBase string
 }
 
 // QuotaCharger is the slice of the quota the service needs.
@@ -108,7 +111,8 @@ func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
 			continue
 		}
 		_, holds := w.Holds(infohash)
-		out = append(out, ProbeTarget{ID: w.ID, ReadBase: w.PublicBase, Probe: w.PublicBase + "/v1/probe/" + ticket, Holds: holds})
+		base := w.EffectiveBase(s.RelayBase)
+		out = append(out, ProbeTarget{ID: w.ID, ReadBase: base, Probe: base + "/v1/probe/" + ticket, Holds: holds})
 	}
 	return out
 }
@@ -328,7 +332,7 @@ func (s *Service) grant(job *JobRecord, file *FileEntry) (*Grant, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Grant{ReadBase: worker.PublicBase, Ticket: ticket, ExpiresAt: exp, Name: file.Name, Size: file.Size, FileIndex: file.Index}, nil
+	return &Grant{ReadBase: worker.EffectiveBase(s.RelayBase), Ticket: ticket, ExpiresAt: exp, Name: file.Name, Size: file.Size, FileIndex: file.Index}, nil
 }
 
 // Token renews the ticket of a serving job and tells the worker the lease
@@ -520,4 +524,15 @@ func (s *Service) StartSweeper(ctx context.Context, interval, idle time.Duration
 			s.Sweep(ctx, idle)
 		}
 	}
+}
+
+// RelayTarget resolves a relayed worker's real address for the relay
+// handler. Only workers that asked to be relayed are reachable this way:
+// the relay must not become an open proxy to arbitrary fleet addresses.
+func (s *Service) RelayTarget(workerID string) (string, bool) {
+	w, ok := s.Registry.Get(workerID)
+	if !ok || !w.Heartbeat.Relayed || w.PublicBase == "" {
+		return "", false
+	}
+	return w.PublicBase, true
 }

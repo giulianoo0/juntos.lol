@@ -21,6 +21,7 @@ export const ptBR: Record<string, string> = {
   'home.workersTested': 'Workers de download, vistos da sua conexão:',
   'home.workerTesting': 'testando…',
   'home.workerOffline': 'sem resposta',
+  'home.workerLocalBlocked': 'sem resposta: rede local bloqueada? Permita no cadeado da barra de endereço',
   'home.workerHolds': 'já tem esse torrent',
   'home.workerChosen': 'escolhido',
   'home.torrentNoWorkers': 'Torrents estão desligados neste servidor agora: nenhum worker de download está conectado. Tente mais tarde, ou use um arquivo.',
