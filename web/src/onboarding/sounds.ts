@@ -93,14 +93,6 @@ export function playError(): void {
   window.setTimeout(() => play({ from: 300, to: 200, duration: 0.18, gain: 0.045, type: 'sine' }), 95)
 }
 
-/** The helper came online: two bright notes rising, so it reads as "ready". */
-export function playConnect(): void {
-  play({ from: 560, to: 720, duration: 0.09, gain: 0.05, type: 'sine' })
-  const ctx = audio()
-  if (!ctx) return
-  window.setTimeout(() => play({ from: 780, to: 940, duration: 0.14, gain: 0.045, type: 'sine' }), 85)
-}
-
 /** The last step. Two notes, a third apart, so the end sounds like an end. */
 export function playFinish(): void {
   play({ from: 620, to: 660, duration: 0.11, gain: 0.05, type: 'sine' })

@@ -859,58 +859,6 @@ button.timecode-chapter:hover { color: var(--text); }
 .header-plugins { color: var(--text-dim); }
 .home-header .header-plugins:hover { color: var(--text); background: rgba(255,255,255,.06); }
 
-.bridge-status { font-size: 13px; color: var(--text-faint); }
-.home-header .bridge-status:hover { color: var(--text-dim); background: rgba(255,255,255,.06); }
-.bridge-status .bridge-dot { width: 7px; height: 7px; border-radius: 999px; background: #6b7080; flex: 0 0 auto; transition: background .3s var(--ease), box-shadow .3s var(--ease); }
-.bridge-status.is-on { color: #56d364; }
-.bridge-status.is-on .bridge-dot { background: #2ecc71; box-shadow: 0 0 0 3px rgba(46,204,113,.18); }
-.bridge-steps { margin: 6px 0 18px; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: bridge-step; }
-.bridge-steps li { position: relative; padding-left: 32px; color: var(--text-dim); font-size: 14px; line-height: 1.45; counter-increment: bridge-step; }
-.bridge-steps li::before { content: counter(bridge-step); position: absolute; left: 0; top: -1px; width: 21px; height: 21px; display: grid; place-items: center; border-radius: 999px; background: rgba(120,127,250,.16); color: #b8bcff; font-size: 12px; font-weight: 700; }
-.bridge-download { display: inline-flex; width: 100%; justify-content: center; text-decoration: none; }
-.bridge-other-os { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; color: var(--text-faint); }
-.bridge-other-os a { color: var(--text-dim); text-decoration: underline; text-underline-offset: 3px; }
-.bridge-other-os a:hover { color: var(--text); }
-.bridge-connected { margin: 6px 0 0; color: #56d364; font-size: 14px; }
-.bridge-loopback { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12.5px; line-height: 1.5; }
-
-/* The dialog is one surface that reforms between install → asking → outcome,
-   so the panel owns the width and lets the height travel with the step. */
-.bridge-morph { width: 100%; }
-.bridge-morph .morph-pane { width: 100%; }
-
-/* Quieter than the download button beside it: this is the path for someone who
-   already has the app, not the one being offered. */
-.bridge-already { display: block; width: 100%; margin-top: 10px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 14px; background: transparent; color: var(--text-dim); font-size: 14px; cursor: pointer; transition: color .2s var(--ease), border-color .2s var(--ease), background .2s var(--ease); }
-.bridge-already:hover { color: var(--text); border-color: rgba(255,255,255,.22); background: rgba(255,255,255,.04); }
-
-.bridge-asking { display: grid; justify-items: start; gap: 10px; padding: 4px 0 2px; }
-.bridge-asking h3 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.02em; }
-.bridge-asking p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
-
-/* The heading does the waiting: a bright band travels across the letters, so
-   the step reads as busy without a spinner parked next to it. The gradient is
-   painted through the text, which is why the colour has to be transparent. */
-.bridge-shimmer { background: linear-gradient(100deg, var(--text-dim) 30%, #fff 46%, #d6d8ff 52%, var(--text-dim) 68%); background-size: 280% 100%; background-clip: text; -webkit-background-clip: text; color: transparent; -webkit-text-fill-color: transparent; animation: bridge-shimmer 2.1s linear infinite; }
-@keyframes bridge-shimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
-
-.bridge-outcome { display: grid; gap: 12px; padding: 4px 0 2px; }
-.bridge-outcome h3 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
-.bridge-outcome p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
-.bridge-outcome .primary-button { width: 100%; }
-.bridge-outcome .bridge-already { margin-top: 0; }
-.bridge-os-note { color: var(--text-faint) !important; font-size: 12.5px !important; }
-
-/* The arrow at the permission bubble. Pinned to the viewport's top-left, which
-   is where Chromium and Firefox anchor it under the address bar on every
-   desktop OS; it sits above the dialog overlay so the dimmed page behind does
-   not swallow it. Hidden on narrow screens, where the step says it in words. */
-.bridge-pointer { position: fixed; top: 12px; left: 16px; z-index: 60; display: flex; align-items: flex-end; gap: 6px; pointer-events: none; animation: bridge-point-in .32s var(--ease) both; }
-.bridge-pointer svg { width: 78px; height: 62px; flex: 0 0 auto; stroke: #b8bcff; stroke-width: 2.4; filter: drop-shadow(0 2px 8px rgba(0,0,0,.6)); }
-.bridge-pointer span { margin-bottom: 4px; padding: 7px 12px; border-radius: 999px; background: #b8bcff; color: #14161f; font-size: 13px; font-weight: 650; white-space: nowrap; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
-@keyframes bridge-point-in { from { opacity: 0; transform: translate(10px, 10px); } to { opacity: 1; transform: none; } }
-@media (max-width: 640px) { .bridge-pointer { display: none; } }
-@media (prefers-reduced-motion: reduce) { .bridge-pointer { animation: none; } .bridge-shimmer { animation: none; color: var(--text); -webkit-text-fill-color: var(--text); } }
 /* The overlay header lays its children out with space-between, so the button
    sits next to the title instead of being pushed to the far edge. */
 .catalog-overlay-head .header-plugins { margin-right: auto; margin-left: 16px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; background: transparent; font-size: 13px; }

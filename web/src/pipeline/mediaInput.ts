@@ -50,9 +50,9 @@ export function fileInput(file: File): MediaInput {
 }
 
 /**
- * A torrent file served by the ss-bridge on loopback. The helper's reads
- * take no signal, so an abort here rejects the caller and lets the helper
- * finish on its own; the whole path goes away with the helper.
+ * A torrent file behind a session's own `read` (mocks, tests): the read
+ * takes no signal, so an abort here rejects the caller and lets the
+ * underlying read finish on its own.
  */
 export function torrentInput(file: TorrentVideoFile): MediaInput {
   const gate = new ReadGate()

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
+import { torrentCapacity } from '../remoteTorrent'
 import { torrentErrorKey } from '../torrentErrors'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
@@ -47,6 +48,15 @@ function formatBytes(bytes: number): string {
 export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
+  // Whether the fleet can take a magnet at all right now. Asked once when the
+  // picker opens: metadata needs a worker, so the answer belongs at the paste,
+  // not at play.
+  const [capacity, setCapacity] = useState<string>('available')
+  useEffect(() => {
+    let cancelled = false
+    void torrentCapacity().then((value) => { if (!cancelled) setCapacity(value) })
+    return () => { cancelled = true }
+  }, [])
   const [error, setError] = useState('')
   const [session, setSession] = useState<TorrentSession | null>(initialSession ?? null)
   const [stats, setStats] = useState<TorrentStats>(EMPTY_TORRENT_STATS)
@@ -93,6 +103,10 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
 
   const load = async () => {
     if (!magnet.trim() || loading) return
+    if (capacity === 'disabled' || capacity === 'no_workers') {
+      setError(t('home.torrentNoWorkers'))
+      return
+    }
     session?.destroy()
     owned.current = null
     setSession(null)

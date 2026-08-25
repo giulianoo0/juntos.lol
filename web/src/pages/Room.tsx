@@ -221,7 +221,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // a crash), but the source survives in localStorage. Reopen it and point
   // the room at a fresh generation; the playhead-following pipeline then
   // jumps to wherever the room is. One attempt per mount — a failure means
-  // the bridge is gone or someone else controls the room now, and retrying
+  // the fleet is gone or someone else controls the room now, and retrying
   // would just swap generations in a loop.
   const resumeTried = useRef(false)
   useEffect(() => {

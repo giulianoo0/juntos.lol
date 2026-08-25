@@ -134,6 +134,18 @@ function classify(status: number, code: string, reason: string): Error {
   return new Error(`torrent api ${code || status}`)
 }
 
+/** What the fleet can take right now: available, busy, no_workers, disabled. */
+export async function torrentCapacity(): Promise<string> {
+  try {
+    const response = await fetch('/api/torrents/capacity')
+    if (!response.ok) return 'disabled'
+    const body = await response.json() as { capacity?: string }
+    return body.capacity ?? 'disabled'
+  } catch {
+    return 'available'
+  }
+}
+
 /**
  * Registers a magnet with the server and waits for the worker's listing.
  * The session it returns reads bytes from the worker directly.
