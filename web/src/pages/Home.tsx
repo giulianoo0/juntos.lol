@@ -12,10 +12,10 @@ import { playError } from '../onboarding/sounds'
 import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { BridgeStatus } from '../components/BridgeStatus'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
-import { HelperRequiredError, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import type { TorrentSession, TorrentVideoFile, WorkerProbe } from '../torrent'
+import { isTorrentError, torrentErrorKey } from '../torrentErrors'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
@@ -23,6 +23,7 @@ import { CatalogBrowser } from '../catalog/CatalogBrowser'
 import { ProgressiveBlur } from '../catalog/ProgressiveBlur'
 import { MetaDetails, type TitlePick } from '../catalog/MetaDetails'
 import { openCatalogStream } from '../catalog/openStream'
+import { WorkerProbes } from '../components/WorkerProbes'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
@@ -138,6 +139,9 @@ export function Home() {
   // the swarm back to the picker instead of dropping it.
   const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const [startingLabel, setStartingLabel] = useState('')
+  // The fleet as measured while a catalog pick's torrent opens: the machine
+  // choice is a stage of starting, and it happens in front of the user.
+  const [streamProbes, setStreamProbes] = useState<WorkerProbe[]>([])
 
   // The details panel is URL-driven: /title/:type/:id renders it over the
   // board, so every title is deep-linkable. A click also stashes the poster's
@@ -240,7 +244,8 @@ export function Home() {
         // Opening the torrent is part of the start: peers and metadata first,
         // then the room, so a dead stream never leaves an empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
-        const opened = await openCatalogStream(media.pick.stream, media.pick.target)
+        setStreamProbes([])
+        const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
         setProgress(null)
         try {
           room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
@@ -275,7 +280,7 @@ export function Home() {
       // saying "try again" would send someone straight back into it.
       const message = t(
         isUnreadableFile(error) ? 'error.fileChanged'
-          : error instanceof HelperRequiredError ? 'home.torrentNeedsBridge'
+          : isTorrentError(error) ? torrentErrorKey(error)
             : 'home.failed',
       )
       // On the catalogue side the error card sits below a full page of
@@ -411,7 +416,6 @@ export function Home() {
           ))}
         </div>
         <div className="header-end">
-          <BridgeStatus t={t} />
           <BuildInfo label={t('home.source')} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
@@ -457,6 +461,7 @@ export function Home() {
               <span className="player-spinner" aria-hidden="true" />
               <h2>{t('home.preparing')}</h2>
               <p className="starting-file">{startingLabel}</p>
+              <WorkerProbes probes={streamProbes} t={t} />
               <p className="starting-phase">
                 {progress?.phase === 'converting' && progress.pct > 0
                   ? `${progress.pct}%`

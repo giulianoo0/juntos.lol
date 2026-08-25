@@ -8,6 +8,8 @@ export const FILE_UNREADABLE = 'file-unreadable'
 export const UNSUPPORTED_MEDIA = 'unsupported-media'
 // A url this browser cannot even read (CORS, no Range, gone).
 export const SOURCE_UNREACHABLE = 'source-unreachable'
+// The torrent origin stopped answering, or refused this file for good.
+export const WORKER_UNREACHABLE = 'worker-unreachable'
 
 // A read that failed because the underlying file moved under the reader —
 // browsers surface it under a handful of names depending on the API used.

@@ -388,3 +388,22 @@ func TestSwapSourceClearsThePublishedMediaOfTheOldSource(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, published)
 }
+
+func TestSwarmStatsRoundTripAndClearOnSwap(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{ID: "abc", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+	got, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Nil(t, got.Preparation.Swarm)
+	require.NoError(t, s.SetSwarm(t.Context(), "abc", SwarmStats{Peers: 12, DownSpeed: 3_000_000, HaveBytes: 500, SelectedBytes: 1000}))
+	got, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, &SwarmStats{Peers: 12, DownSpeed: 3_000_000, HaveBytes: 500, SelectedBytes: 1000}, got.Preparation.Swarm)
+	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
+	require.NoError(t, err)
+	got, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Nil(t, got.Preparation.Swarm, "the swarm described the old source")
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState, type MutableRefObject } from 'react'
-import { Lock, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { RoomChapter } from '../types'
 import type { Translator } from '../i18n/useT'
 
@@ -25,24 +25,19 @@ function formatTime(totalSeconds: number): string {
 
 /**
  * The room's chapter list, docked where the chat sits — the two swap, never
- * stack. A chapter that starts past what has been prepared so far is shown
- * but locked: while the source is still arriving, jumping there would strand
- * the whole room on a position with no media under it.
+ * stack. Every chapter is jumpable: the pipeline restarts wherever the room
+ * points, so nothing here waits on what has been prepared.
  */
 export function ChaptersPanel({ chapters, open, onClose, onSeek, videoRef, t }: ChaptersPanelProps) {
-  // What is seekable and where playback is, sampled while the panel is open.
-  // Polled rather than subscribed: both move constantly during a preview, and
-  // once a second is exactly as alive as the lock icons need to be.
-  const [now, setNow] = useState({ end: 0, at: 0 })
+  // Where playback is, sampled while the panel is open. Polled rather than
+  // subscribed: it moves constantly, and once a second is exactly as alive
+  // as the highlight needs to be.
+  const [nowAt, setNowAt] = useState(0)
   useEffect(() => {
     if (!open) return
     const read = () => {
       const video = videoRef.current
-      if (!video) return
-      const seekable = video.seekable
-      const end = seekable.length > 0 ? seekable.end(seekable.length - 1)
-        : Number.isFinite(video.duration) ? video.duration : 0
-      setNow({ end, at: video.currentTime })
+      if (video) setNowAt(video.currentTime)
     }
     read()
     const timer = window.setInterval(read, 1_000)
@@ -61,20 +56,17 @@ export function ChaptersPanel({ chapters, open, onClose, onSeek, videoRef, t }: 
         {chapters.map((chapter, index) => {
           const start = chapter.startMs / 1000
           const label = chapter.title || `${t('player.chapter')} ${index + 1}`
-          const current = now.at * 1000 >= chapter.startMs && now.at * 1000 < chapter.endMs
-          const locked = start > Math.max(now.end - 1, 0)
+          const current = nowAt * 1000 >= chapter.startMs && nowAt * 1000 < chapter.endMs
           return (
             <li key={`${chapter.startMs}-${index}`}>
               <button
                 type="button"
                 className={`chapter-row ${current ? 'is-current' : ''}`}
-                disabled={locked || !onSeek}
-                title={locked ? t('chapters.locked') : undefined}
+                disabled={!onSeek}
                 onClick={() => onSeek?.(start)}
               >
                 <span className="chapter-time">{formatTime(start)}</span>
                 <span className="chapter-title">{label}</span>
-                {locked ? <Lock size={13} aria-hidden="true" /> : null}
               </button>
             </li>
           )

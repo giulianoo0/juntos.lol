@@ -75,12 +75,14 @@ func TestClientNameGrammarsAcceptRegions(t *testing.T) {
 			t.Errorf("object %q accepted", name)
 		}
 	}
-	for _, name := range []string{"master.m3u8", "client_stream_0.m3u8", "r3_client_stream_0.m3u8"} {
+	for _, name := range []string{"master.m3u8", "r1_master.m3u8", "client_stream_0.m3u8", "r3_client_stream_0.m3u8"} {
 		if !ValidClientPlaylistName(name) {
 			t.Errorf("playlist %q refused", name)
 		}
 	}
-	if ValidClientPlaylistName("r1_master.m3u8") {
-		t.Error("region-prefixed master accepted")
+	for _, name := range []string{"master.m3u8.bak", "x1_master.m3u8", "r_master.m3u8"} {
+		if ValidClientPlaylistName(name) {
+			t.Errorf("playlist %q accepted", name)
+		}
 	}
 }

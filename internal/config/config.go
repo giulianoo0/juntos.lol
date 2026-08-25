@@ -45,6 +45,37 @@ type Config struct {
 	// MediaPublicURL is the origin the bucket is served from. Playlists point
 	// segments at it, so it is what a viewer actually fetches media from.
 	MediaPublicURL string
+
+	// Torrent access. Opening a magnet spends a worker's disk and uplink, so
+	// the anonymous browser asking for it gets a session and a budget; the
+	// rooms themselves stay as open as they are.
+	SessionTTLDays         int
+	SessionsPerIPPerHour   int
+	TorrentDispatchPerHour int
+	TorrentConcurrentJobs  int
+	TorrentBytesPerDayGB   int64
+	// TorrentBlocklistFile lists infohashes and name keywords never dispatched.
+	// Empty means no list.
+	TorrentBlocklistFile string
+
+	// The worker fleet. Without an enrollment secret no worker can join and
+	// the torrent path reports itself disabled; the instance still boots.
+	WorkerEnrollmentSecret string
+	// WorkerSigningKeyFile persists the Ed25519 key jobs and tickets are
+	// signed with. Empty means a fresh key per boot (tickets die with it).
+	WorkerSigningKeyFile string
+	// WorkerTicketMinutes is how long a data-plane ticket stays valid.
+	WorkerTicketMinutes int
+	// PublicOrigin is the origin browsers load the app from, which tickets
+	// are scoped to. Empty falls back to the request's own Origin header.
+	PublicOrigin string
+	// BehindCloudflare says CF-Connecting-IP is the client's address. Only
+	// set when the origin is unreachable except through Cloudflare.
+	BehindCloudflare bool
+	// WorkerRelayBase is the public, CDN-free address browsers reach
+	// relayed (private) workers through — the fleet's front door, typically
+	// the instance's own worker. Empty disables relaying.
+	WorkerRelayBase string
 }
 
 func Load() (Config, error) {
@@ -62,6 +93,12 @@ func Load() (Config, error) {
 		LivekitURL:        "",
 		LivekitAPIKey:     "",
 		LivekitAPISecret:  "",
+
+		SessionTTLDays:         7,
+		SessionsPerIPPerHour:   20,
+		TorrentDispatchPerHour: 10,
+		TorrentConcurrentJobs:  2,
+		TorrentBytesPerDayGB:   60,
 	}
 
 	var err error
@@ -115,6 +152,31 @@ func Load() (Config, error) {
 	if err := cfg.validateMedia(); err != nil {
 		return Config{}, err
 	}
+
+	if cfg.SessionTTLDays, err = envInt("SESSION_TTL_DAYS", cfg.SessionTTLDays); err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionsPerIPPerHour, err = envInt("SESSIONS_PER_IP_PER_HOUR", cfg.SessionsPerIPPerHour); err != nil {
+		return Config{}, err
+	}
+	if cfg.TorrentDispatchPerHour, err = envInt("TORRENT_DISPATCH_PER_HOUR", cfg.TorrentDispatchPerHour); err != nil {
+		return Config{}, err
+	}
+	if cfg.TorrentConcurrentJobs, err = envInt("TORRENT_CONCURRENT_JOBS", cfg.TorrentConcurrentJobs); err != nil {
+		return Config{}, err
+	}
+	if cfg.TorrentBytesPerDayGB, err = envInt64("TORRENT_BYTES_PER_DAY_GB", cfg.TorrentBytesPerDayGB); err != nil {
+		return Config{}, err
+	}
+	cfg.TorrentBlocklistFile = os.Getenv("TORRENT_BLOCKLIST_FILE")
+	cfg.WorkerEnrollmentSecret = os.Getenv("WORKER_ENROLLMENT_SECRET")
+	cfg.WorkerSigningKeyFile = os.Getenv("WORKER_SIGNING_KEY_FILE")
+	if cfg.WorkerTicketMinutes, err = envInt("WORKER_TICKET_MINUTES", 15); err != nil {
+		return Config{}, err
+	}
+	cfg.PublicOrigin = strings.TrimSuffix(os.Getenv("PUBLIC_ORIGIN"), "/")
+	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
+	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
 
 	return cfg, nil
 }

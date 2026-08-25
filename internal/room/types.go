@@ -72,7 +72,7 @@ type Room struct {
 	// GatingEnabled is the controller-owned setting that makes play and seek
 	// wait until every member has buffered the target. Stored inverted
 	// (gating_disabled) so rooms created before it existed read back as on.
-	GatingEnabled     bool        `json:"gatingEnabled"`
+	GatingEnabled bool `json:"gatingEnabled"`
 	// DurationMs is the source's full duration as the host pipeline measured
 	// it, published before the first segment lands. The player draws the whole
 	// timeline from it instead of from how much media exists yet.
@@ -81,21 +81,34 @@ type Room struct {
 	// pipeline rebases each region to zero, so absolute room time is media
 	// time plus this. Moves only together with MediaVersion.
 	MediaOffsetMs int64 `json:"mediaOffsetMs,omitempty"`
-	ErrorMessage      string      `json:"errorMessage,omitempty"`
-	ControllerID      string      `json:"controllerId"`
-	AudioTracks       []TrackInfo `json:"audioTracks"`
-	SubtitleTracks    []TrackInfo `json:"subtitleTracks"`
+	// MediaRegions is every stretch of the timeline the pipeline has produced
+	// for this generation, each with its own playlists (rN_master.m3u8). A
+	// player picks the region for the time it wants and switches at the
+	// edges; the offset above is only the one still growing.
+	MediaRegions   []MediaRegion `json:"mediaRegions,omitempty"`
+	ErrorMessage   string        `json:"errorMessage,omitempty"`
+	ControllerID   string        `json:"controllerId"`
+	AudioTracks    []TrackInfo   `json:"audioTracks"`
+	SubtitleTracks []TrackInfo   `json:"subtitleTracks"`
 	// Chapters are the source's authored spans, when it carries any: the
 	// player draws them on the timeline so "the opening" is a place.
 	Chapters          []Chapter `json:"chapters,omitempty"`
 	BitmapSubsSkipped int       `json:"bitmapSubsSkipped"`
-	ClientSubs        bool        `json:"clientSubs,omitempty"`
+	ClientSubs        bool      `json:"clientSubs,omitempty"`
 	// Preparation is how far the room is from being playable. It exists so a
 	// viewer waiting on a source is told what is happening and roughly how
 	// long, instead of watching a bar that fills to 100% and then sits there.
 	Preparation Preparation `json:"preparation"`
 	CreatedAt   time.Time   `json:"createdAt"`
 	ExpiresAt   time.Time   `json:"expiresAt"`
+}
+
+// MediaRegion is one contiguous stretch of produced media, in room time.
+type MediaRegion struct {
+	N          int   `json:"n"`
+	StartMs    int64 `json:"startMs"`
+	ProducedMs int64 `json:"producedMs"`
+	Growing    bool  `json:"growing"`
 }
 
 // Preview phases a room passes through before it can play. They are ordered:
@@ -128,4 +141,15 @@ type Preparation struct {
 	// bitrate. 0 while unknown, and meaningless once the phase is
 	// PreviewUnavailable, where the answer is the whole file.
 	PreviewTargetBytes int64 `json:"previewTargetBytes,omitempty"`
+	// Swarm is the torrent behind the source as its worker last reported
+	// it, so every viewer sees the peers and the speed, not only the host.
+	Swarm *SwarmStats `json:"swarm,omitempty"`
+}
+
+// SwarmStats is what a worker reports about a torrent it is fetching.
+type SwarmStats struct {
+	Peers         int64 `json:"peers"`
+	DownSpeed     int64 `json:"downSpeed"`
+	HaveBytes     int64 `json:"haveBytes"`
+	SelectedBytes int64 `json:"selectedBytes"`
 }

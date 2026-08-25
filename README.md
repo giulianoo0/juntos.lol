@@ -13,7 +13,7 @@
 - chat e lista de participantes por sala;
 - seleção de faixas de áudio e legendas de texto;
 - extração de legendas MKV no navegador, publicadas enquanto o remux continua;
-- torrent baixado pelo ss-bridge, um app nativo na máquina de quem abre a sala, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
+- torrent baixado por workers remotos (ss-worker) que o servidor despacha, sem nada para instalar, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
 - tela de espera com a fase da preparação e uma estimativa de quando dá para começar a assistir;
 - torrents com seleção de arquivo, sem nenhum download no servidor;
 - entrada por link pedindo apenas o apelido, com aviso de quem entra e quem sai da sala;
@@ -32,7 +32,7 @@ flowchart LR
     B <-->|"estado, chat e relógio"| W["WebSocket Hub"]
     A --> R["Redis"]
     A -->|"legendas WebVTT"| O
-    B <-->|"magnet, arquivos e bytes por Range"| T["ss-bridge (127.0.0.1)"]
+    B <-->|"bytes por Range, HTTPS direto"| T["ss-worker (VPS)"]
     T <-->|"DHT + trackers + peers"| P["Swarm BitTorrent"]
     B <-->|"WebRTC"| L["LiveKit"]
 ```
@@ -42,7 +42,7 @@ flowchart LR
 O servidor não processa vídeo. Tudo que custa CPU acontece na máquina de quem abre a sala:
 
 1. O navegador cria a sala com `POST /api/rooms` e reivindica o direito de produzir a mídia dela (`/client-media/claim`).
-2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local, torrent via ss-bridge ou url de um plugin — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
+2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local, torrent via ss-worker ou url de um plugin — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
 3. Cada segmento é enviado por `PUT` direto ao bucket, com uma URL assinada pelo servidor (`/client-media/presign`).
 4. A cada poucos segundos o navegador entrega as playlists (`/client-media/publish`). O servidor confirma no bucket que cada objeto nomeado existe antes de publicar, então um viewer nunca recebe uma URL que dá 404.
 5. A sala passa para `ready` no primeiro segmento confirmado; o remux continua por trás.
@@ -53,17 +53,15 @@ Uma fonte que o navegador não consegue preparar — codec que ele não decodifi
 
 ### Torrents
 
-O servidor não baixa torrent nenhum. Quem abre um magnet precisa do [ss-bridge](https://github.com/giulianoo0/ss-bridge), um app nativo pequeno (Rust) que roda na máquina de quem criou a sala, embute um cliente BitTorrent e serve os bytes por HTTP em `127.0.0.1:32227`, com CORS para o site.
+O servidor não baixa torrent nenhum, e quem abre a sala não instala nada. Um magnet é despachado pelo servidor a um **ss-worker**: um binário Rust (`ss-worker/`) que roda numa VPS própria, entra no swarm e serve os bytes ao navegador do host por HTTPS `Range`, direto, sem passar pelo servidor. O remux continua no navegador; os viewers tocam do bucket e nunca tocam o worker.
 
-1. O site pergunta ao ss-bridge pela saúde e, a partir daí, o pill no cabeçalho mostra se ele está ligado.
-2. O magnet é aberto no ss-bridge, que descobre metadados e peers por DHT e trackers e devolve a lista de arquivos para o seletor.
-3. O arquivo escolhido é priorizado em ordem, e o navegador lê os bytes por requisições `Range`, que o ss-bridge responde assim que as peças chegam.
-4. O upload segue exatamente o caminho de um arquivo local: o navegador remuxa e envia, e a sala começa antes do download inteiro.
-5. Os arquivos de legenda que acompanham o vídeo são lidos do mesmo torrent e publicados junto.
+1. O navegador registra o infohash em `POST /api/torrents` (com uma sessão anônima e uma cota por sessão). O servidor escolhe um worker — de preferência um que já tenha o torrent — e assina o job com Ed25519.
+2. O worker resolve os metadados no swarm e devolve a lista de arquivos; o navegador faz poll em `GET /api/torrents/{jobId}` até ela chegar.
+3. `POST /api/torrents/{jobId}/select` escolhe o arquivo; o worker reserva o disco e prioriza as peças, e o servidor devolve um `readBase` e um ticket assinado, com validade curta e renovado por `POST /api/torrents/{jobId}/token` enquanto o remux durar.
+4. O navegador lê `GET {readBase}/v1/f/{ticket}` com `Range`; o worker responde 206 à medida que as peças chegam, com cap por resposta e `Content-Range` honesto, e o leitor retoma de onde parou. O offset de leitura do remux vai ao worker como hint para o swarm buscar à frente dele.
+5. As legendas que acompanham o vídeo são lidas do mesmo worker (`/v1/file/{ticket}/{índice}`) e publicadas junto.
 
-Navegadores com Local Network Access (Chrome 142+, Firefox) pedem permissão antes da primeira requisição a `127.0.0.1`. O site só dispara esse pedido quando a pessoa clica em "Já baixei e abri" no diálogo do ss-bridge, com a explicação e uma seta apontando para onde a permissão aparece; nenhuma sondagem em segundo plano levanta o pedido sozinha.
-
-Sem o ss-bridge, abrir um torrent falha com uma mensagem que aponta para o pill. Não há fallback no servidor nem no navegador.
+Os workers discam o servidor por WSS (`/ws/worker-link`), se registram uma vez com `WORKER_ENROLLMENT_SECRET` e depois provam a própria chave; reportam disco, leases e peers a cada dez segundos. Um worker sem cert válido, cheio ou drenando não recebe job. Certificados vêm do Let's Encrypt por ACME, para o IP da VPS ou um nome, sem DNS obrigatório. Sem worker conectado, o caminho de magnet se declara indisponível (`GET /api/torrents/capacity`) e a página diz isso; não há fallback no servidor nem no navegador.
 
 ### Sincronização e controle
 
@@ -77,7 +75,7 @@ O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacida
 
 - Texto: ASS/SSA, SubRip, WebVTT e `mov_text` são convertidos para WebVTT.
 - MKV: o navegador extrai as legendas de texto numa passagem sequencial sobre a fonte, em paralelo ao remux.
-- Torrent: os arquivos `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo são lidos do ss-bridge, convertidos para WebVTT no navegador e publicados quase imediatamente, sem esperar o vídeo. O idioma vem do nome do arquivo.
+- Torrent: os arquivos `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo são lidos do worker, convertidos para WebVTT no navegador e publicados quase imediatamente, sem esperar o vídeo. O idioma vem do nome do arquivo.
 - O servidor só recebe WebVTT pronto (`POST /api/rooms/:id/subtitles`) e o repassa ao bucket.
 - Imagem: PGS e VobSub são detectadas, mas não são exibidas; a interface informa quantas foram ignoradas.
 
@@ -272,7 +270,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 
 ## Limitações conhecidas
 
-- Torrents exigem o ss-bridge aberto na máquina de quem cria a sala, e a disponibilidade depende do swarm. Metadados disponíveis não garantem que todas as peças do vídeo tenham seed.
+- Torrents exigem ao menos um ss-worker conectado ao servidor, e a disponibilidade depende do swarm. Metadados disponíveis não garantem que todas as peças do vídeo tenham seed.
 - PGS e VobSub são legendas bitmap e não são renderizadas pelo player atual.
 - O link da sala concede acesso a quem o possui.
 - Só navegadores capazes de remuxar (WebCodecs para decodificar o áudio, AAC para codificar) abrem sala com vídeo. Quem assiste não precisa de nada disso.

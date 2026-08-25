@@ -268,6 +268,29 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 	}
 	r.Preparation.PreviewPhase = fields["preview_phase"]
+	if v := fields["media_regions"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.MediaRegions); err != nil {
+			return nil, fmt.Errorf("parse media_regions: %w", err)
+		}
+	}
+	if fields["swarm_peers"] != "" || fields["swarm_have_bytes"] != "" {
+		swarm := &SwarmStats{}
+		for field, target := range map[string]*int64{
+			"swarm_peers":          &swarm.Peers,
+			"swarm_down_speed":     &swarm.DownSpeed,
+			"swarm_have_bytes":     &swarm.HaveBytes,
+			"swarm_selected_bytes": &swarm.SelectedBytes,
+		} {
+			if v := fields[field]; v != "" {
+				n, err := strconv.ParseInt(v, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("parse %s: %w", field, err)
+				}
+				*target = n
+			}
+		}
+		r.Preparation.Swarm = swarm
+	}
 	if v := fields["created_at"]; v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
@@ -304,6 +327,27 @@ func (s *Store) SetPreviewPhase(ctx context.Context, id, phase string, targetByt
 		fields = append(fields, "preview_target_bytes", strconv.FormatInt(targetBytes, 10))
 	}
 	return s.mutateRoom(ctx, id, false, fields...)
+}
+
+// SetMediaRegions records the regions the pipeline has produced. It does
+// not move the media version: a player only reloads when the region it is
+// on changes, and it decides that itself from this list.
+func (s *Store) SetMediaRegions(ctx context.Context, id string, regions []MediaRegion) error {
+	raw, err := json.Marshal(regions)
+	if err != nil {
+		return fmt.Errorf("marshal media regions: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "media_regions", string(raw))
+}
+
+// SetSwarm records what the worker fetching this room's torrent reports.
+func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error {
+	return s.mutateRoom(ctx, id, false,
+		"swarm_peers", strconv.FormatInt(swarm.Peers, 10),
+		"swarm_down_speed", strconv.FormatInt(swarm.DownSpeed, 10),
+		"swarm_have_bytes", strconv.FormatInt(swarm.HaveBytes, 10),
+		"swarm_selected_bytes", strconv.FormatInt(swarm.SelectedBytes, 10),
+	)
 }
 
 // SetStatus updates the room status.
@@ -548,6 +592,7 @@ redis.call('HSET', KEYS[1],
   'bitmap_subs_skipped', 0)
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
+		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])

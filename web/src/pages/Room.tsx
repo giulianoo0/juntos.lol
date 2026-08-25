@@ -28,16 +28,20 @@ import { playJoinChime } from '../ui/chime'
 import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import { CatalogOverlay, type OverlayFocus } from '../catalog/CatalogOverlay'
 import { openCatalogStream } from '../catalog/openStream'
+import { WorkerProbes } from '../components/WorkerProbes'
 import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
-import { HelperRequiredError, openTorrent, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { PipelineChip } from '../components/PipelineChip'
+import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
+import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
 import { MAX_UPLOAD_BYTES } from './Home'
 import {
   FILE_UNREADABLE,
   SOURCE_UNREACHABLE,
   UNSUPPORTED_MEDIA,
+  WORKER_UNREACHABLE,
   assertReadable,
   changeRoomSource,
   subscribeUploadDone,
@@ -170,6 +174,7 @@ function RoomGate({ step, onJoin, progress, preparation, swarm, failure, errorMe
             {failure === FILE_UNREADABLE ? <p>{t('error.fileChanged')}</p> : null}
             {failure === UNSUPPORTED_MEDIA ? <p>{t('error.unsupportedMedia')}</p> : null}
             {failure === SOURCE_UNREACHABLE ? <p>{t('error.sourceUnreachable')}</p> : null}
+            {failure === WORKER_UNREACHABLE ? <p>{t('error.workerUnreachable')}</p> : null}
             <Link className="primary-button" to="/">{t('room.new')}</Link>
           </div>
         ) : null}
@@ -200,25 +205,42 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // The region clock, read by the sync socket handlers through a ref so a
   // region switch never re-opens the socket.
   const mediaOffsetMsRef = useRef(0)
-  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef)
+  // The Player's own seek, for jumps that start outside it (chapter list):
+  // it parks a playing room on a cold target and resumes it on publish.
+  const playerSeekRef = useRef<((seconds: number) => void) | null>(null)
+  // Raised by the player while the room points at media still being built;
+  // the sync layer stops steering the element until the region lands.
+  const coldWaitRef = useRef(false)
+  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
-  mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
-  // The swarm behind this room's upload, when this tab is the one fetching
-  // it. Polled while mounted: the session keeps its own snapshot fresh, this
-  // just reads it onto the preparing screen.
-  const [swarmStats, setSwarmStats] = useState<TorrentStats | null>(null)
+  // With a region map the Player owns this ref (the offset is its region
+  // choice); the room's scalar only seeds it while there is no map.
+  if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
+    mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
+  }
+  // The swarm behind this room's torrent. The host's own session refreshes
+  // it every second; everyone else reads what the worker reported through
+  // the room, a heartbeat behind. Either way the preparing screen shows it.
+  const [localSwarm, setLocalSwarm] = useState<TorrentStats | null>(null)
   useEffect(() => {
-    const read = () => setSwarmStats(torrentStatsFor(room.id))
+    const read = () => setLocalSwarm(torrentStatsFor(room.id))
     read()
     const timer = window.setInterval(read, 1_000)
     return () => window.clearInterval(timer)
   }, [room.id])
+  const reported = liveRoom.preparation?.swarm
+  const swarmStats: TorrentStats | null = localSwarm ?? (reported ? {
+    peers: reported.peers,
+    downloadSpeed: reported.downSpeed,
+    downloaded: reported.haveBytes,
+    progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
+  } : null)
   // Retomar o preparo: the pipeline died with this tab's last life (a reload,
   // a crash), but the source survives in localStorage. Reopen it and point
   // the room at a fresh generation; the playhead-following pipeline then
   // jumps to wherever the room is. One attempt per mount — a failure means
-  // the bridge is gone or someone else controls the room now, and retrying
+  // the fleet is gone or someone else controls the room now, and retrying
   // would just swap generations in a loop.
   const resumeTried = useRef(false)
   useEffect(() => {
@@ -253,9 +275,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       } catch (error) {
         console.error('resume preparation failed', error)
         toast(t('room.resumeFailed'))
-        // A helper that is simply closed keeps the entry for the next visit;
-        // anything else (controller lost, source gone) will fail every time.
-        if (!(error instanceof HelperRequiredError)) clearResumableSource(room.id)
+        // A fleet that is missing or full right now keeps the entry for the
+        // next visit; a torrent the fleet refused, or a room that moved on,
+        // will fail every time.
+        if (!torrentErrorRetryable(error)) clearResumableSource(room.id)
       }
     })()
   }, [room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
@@ -278,7 +301,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // than incrementing a tally keeps it right when history arrives at once.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
-  const [sourceError, setSourceError] = useState<'' | 'changeFailed' | 'torrentNeedsBridge'>('')
+  const [sourceError, setSourceError] = useState<string>('')
+  // The fleet as measured while a source swap opens its torrent.
+  const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -311,11 +336,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const swapSource = async (run: () => Promise<void>) => {
     setSourceError('')
     setSourcePanel(null)
+    setSwapProbes([])
     try {
       await run()
     } catch (error) {
       console.error('change source failed', error)
-      setSourceError(error instanceof HelperRequiredError ? 'torrentNeedsBridge' : 'changeFailed')
+      setSourceError(isTorrentError(error) ? torrentErrorKey(error) : 'room.changeFailed')
     }
   }
 
@@ -330,7 +356,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
     void swapSource(async () => {
-      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      let next
+      try {
+        next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      } catch (error) {
+        // The worker is holding a lease for a room that will not take it.
+        session.destroy()
+        throw error
+      }
       startTorrentUpload(room.id, next.mediaGeneration, { file, session })
     })
   }
@@ -353,7 +386,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         startUrlUpload(room.id, next.mediaGeneration, url, `${pick.displayName}.mkv`, 0)
         return
       }
-      const opened = await openCatalogStream(pick.stream, pick.target)
+      const opened = await openCatalogStream(pick.stream, pick.target, undefined, { onProbe: setSwapProbes })
       try {
         const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
         startTorrentUpload(room.id, next.mediaGeneration, opened)
@@ -535,7 +568,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
-          {uploadProgress !== null ? <span className="upload-chip">{t('home.uploading')} {uploadProgress.pct}%</span> : null}
+          {uploadProgress !== null ? <PipelineChip swarm={swarmStats} progress={uploadProgress} videoRef={videoRef} t={t} /> : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController && !isScreenRoom ? (
@@ -611,6 +644,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               syncState={sync.state}
               serverOffsetMs={sync.serverOffsetMs}
               swarm={swarmStats}
+              mediaOffsetMsRef={mediaOffsetMsRef}
+              seekRef={playerSeekRef}
+              coldWaitRef={coldWaitRef}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={
@@ -651,7 +687,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             chapters={liveRoom.chapters ?? []}
             open
             onClose={() => setSidePanel('chat')}
-            onSeek={sync.isController ? (seconds) => sync.send('seek', { positionMs: Math.round(seconds * 1000) }) : undefined}
+            onSeek={sync.isController ? (seconds) => {
+              const throughPlayer = playerSeekRef.current
+              if (throughPlayer) throughPlayer(seconds)
+              else sync.send('seek', { positionMs: Math.round(seconds * 1000) })
+            } : undefined}
             videoRef={videoRef}
             t={t}
           />
@@ -666,7 +706,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         accept="video/*,.mkv"
         onChange={(event) => chooseFile(event.target.files?.[0])}
       />
-      {sourceError ? <div className="error-card compact" role="alert">{t(sourceError === 'torrentNeedsBridge' ? 'home.torrentNeedsBridge' : 'room.changeFailed')}</div> : null}
+      {swapProbes.length > 0 && shownGate === 'preparing' ? <div className="swap-probes"><WorkerProbes probes={swapProbes} t={t} /></div> : null}
+      {sourceError ? <div className="error-card compact" role="alert">{t(sourceError)}</div> : null}
       {visibleRequests.length > 0 ? (
         <div className="request-stack" aria-live="polite">
           {visibleRequests.map((request) => (

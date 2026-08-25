@@ -89,6 +89,9 @@ export interface RoomPreparation {
   // How many bytes the preview is expected to need before the first segment
   // can be published. Absent while the bitrate is still unknown.
   previewTargetBytes?: number
+  // The torrent behind the source, as its worker last reported it. Present
+  // for every viewer, not only the host.
+  swarm?: { peers: number; downSpeed: number; haveBytes: number; selectedBytes: number }
 }
 
 // RoomChapter is one authored span of the media, in milliseconds.
@@ -96,6 +99,13 @@ export interface RoomChapter {
   startMs: number
   endMs: number
   title?: string
+}
+
+export interface MediaRegion {
+  n: number
+  startMs: number
+  producedMs: number
+  growing: boolean
 }
 
 export interface RoomInfo {
@@ -121,6 +131,10 @@ export interface RoomInfo {
   // each region to zero, so absolute room time = media time + this offset.
   // Moves only together with mediaVersion.
   mediaOffsetMs?: number
+  // Every stretch of the timeline produced for this generation, each with
+  // its own playlists (rN_master.m3u8). The player picks the region for the
+  // time it wants and switches at the edges.
+  mediaRegions?: MediaRegion[]
   // Whether play and seek wait for every member to buffer the target.
   // Controller-owned; the live value travels over the sync protocol.
   gatingEnabled?: boolean

@@ -28,3 +28,9 @@ web-docs/*
 
 # Compose override local (o de produção vive só na VPS)
 docker-compose.override.yml
+
+# Worktrees do agente
+/.worktrees/
+
+# ss-worker build output
+/ss-worker/target/

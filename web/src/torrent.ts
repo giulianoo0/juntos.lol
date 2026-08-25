@@ -1,5 +1,23 @@
 import { mockOpenTorrent, mocksEnabled } from './mocks'
-import { helperAvailable, openHelperTorrent } from './localHelper'
+import { openRemoteTorrent, type OpenTorrentOptions } from './remoteTorrent'
+
+export { NoWorkersError, TorrentQuotaError, TorrentRejectedError, WorkersBusyError, parseMagnet, probeWorkers } from './remoteTorrent'
+export type { OpenTorrentOptions, WorkerProbe } from './remoteTorrent'
+
+/**
+ * Where a worker serves a selected file from. Everything a remux job needs
+ * to read the bytes and keep reading them for hours: the base, the ticket
+ * that rotates, and the job the next ticket is asked for.
+ */
+export interface WorkerGrant {
+  jobId: string
+  readBase: string
+  ticket: string
+  expiresAt: string
+  name: string
+  size: number
+  fileIndex: number
+}
 
 export interface TorrentVideoFile {
   name: string
@@ -11,9 +29,9 @@ export interface TorrentVideoFile {
   type: string
   progress: number
   downloaded: number
-  // Where the helper serves this file's bytes over HTTP Range, when it does.
+  // Where the bytes are served from once this file is selected on a worker.
   // What lets the remux worker read the swarm without the page in between.
-  streamUrl?: string
+  worker?: WorkerGrant
   read(start: number, endInclusive: number): Promise<ArrayBuffer>
 }
 
@@ -23,6 +41,8 @@ export interface TorrentSideFile {
   name: string
   path: string
   size: number
+  // Position in the torrent's file list, for a worker to serve it by.
+  index?: number
   streamUrl?: string
   read(): Promise<ArrayBuffer>
 }
@@ -39,33 +59,29 @@ export interface TorrentSession {
   // The magnet this session was opened from — what a reloaded host needs to
   // reopen the same swarm and resume preparing the room.
   magnet?: string
+  // The server-side job behind this session, when there is one.
+  jobId?: string
   files: TorrentVideoFile[]
   subtitleFiles: TorrentSideFile[]
   stats(): TorrentStats
   select(path: string): Promise<void>
+  /** Rejects every read in flight; the seek moved on. */
+  abortReads?(): void
   destroy(): void
 }
 
 /**
- * Thrown when a torrent is asked for and the ss helper is not there to open
- * it. It is the only way a torrent gets opened — nothing on the server and
- * nothing in the browser downloads a swarm — so the caller's job on seeing
- * this is to point at the helper, not to retry.
+ * Opens a magnet on the worker fleet. Nothing on this machine downloads a
+ * swarm: the server places the torrent on a worker, and the bytes come from
+ * there. The errors say which of three things went wrong — no fleet, a full
+ * fleet, or a torrent the fleet will not carry — so the caller can tell a
+ * moment to retry from a thing to give up on.
  */
-export class HelperRequiredError extends Error {
-  constructor() {
-    super('ss-bridge is not running')
-    this.name = 'HelperRequiredError'
-  }
-}
-
 export async function openTorrent(
-  torrentID: string,
+  magnet: string,
   onStats?: (stats: TorrentStats) => void,
+  options?: OpenTorrentOptions,
 ): Promise<TorrentSession> {
   if (mocksEnabled) return mockOpenTorrent(onStats)
-  // The helper is the whole torrent path: it downloads on the host's own
-  // machine and streams the bytes here, and the room uploads from there.
-  if (!await helperAvailable()) throw new HelperRequiredError()
-  return await openHelperTorrent(torrentID, onStats)
+  return await openRemoteTorrent(magnet, onStats, options)
 }

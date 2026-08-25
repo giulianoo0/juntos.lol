@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -224,11 +225,15 @@ type publishRequest struct {
 	// start. The offset is applied only on the publish whose master actually
 	// rendered, and its change is what bumps the media version.
 	Timeline *struct {
-		DurationMs int64 `json:"durationMs"`
-		OffsetMs   int64 `json:"offsetMs"`
+		DurationMs int64              `json:"durationMs"`
+		OffsetMs   int64              `json:"offsetMs"`
+		Regions    []room.MediaRegion `json:"regions"`
 	} `json:"timeline"`
 	Complete bool `json:"complete"`
 }
+
+// maxClientRegions bounds the region list one run may report.
+const maxClientRegions = 64
 
 func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMediaBucket,
 	hooks ClientMediaHooks) gin.HandlerFunc {
@@ -309,9 +314,20 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			return
 		}
 		if req.Timeline != nil {
-			if req.Timeline.DurationMs < 0 || req.Timeline.OffsetMs < 0 {
+			if req.Timeline.DurationMs < 0 || req.Timeline.OffsetMs < 0 || !validRegions(req.Timeline.Regions) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 				return
+			}
+			// The region map only names regions whose master has rendered:
+			// a player sent to rN_master.m3u8 must find it.
+			if regions := renderedRegions(ctx, store, roomID, req.Timeline.Regions, rendered, storedRoom.MediaRegions); regions != nil && !sameRegions(regions, storedRoom.MediaRegions) {
+				if err := store.SetMediaRegions(ctx, roomID, regions); err != nil {
+					c.Status(http.StatusInternalServerError)
+					return
+				}
+				if hooks.NotifyRoomUpdated != nil {
+					hooks.NotifyRoomUpdated(roomID)
+				}
 			}
 			if req.Timeline.DurationMs > 0 && req.Timeline.DurationMs != storedRoom.DurationMs {
 				if err := store.SetMediaDuration(ctx, roomID, req.Timeline.DurationMs); err != nil {
@@ -412,7 +428,7 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist", "name": name})
 			return nil, false, false
 		}
-		if name == "master.m3u8" {
+		if strings.HasSuffix(name, "master.m3u8") {
 			continue // validated after every media playlist is known
 		}
 		if media.IsMasterPlaylist([]byte(body)) || !media.SanitizeClientMediaPlaylist([]byte(body)) {
@@ -429,20 +445,25 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 			playable = true
 		}
 	}
-	if master, submitted := playlists["master.m3u8"]; submitted {
-		available := func(name string) bool {
-			if _, ok := rendered[name]; ok {
-				return true
-			}
-			has, err := store.HasPlaylist(ctx, roomID, name)
-			return err == nil && has
+	available := func(name string) bool {
+		if _, ok := rendered[name]; ok {
+			return true
+		}
+		has, err := store.HasPlaylist(ctx, roomID, name)
+		return err == nil && has
+	}
+	// master.m3u8 is the region still growing; rN_master.m3u8 is each region's
+	// own, which is what a player on that region loads.
+	for name, master := range playlists {
+		if !strings.HasSuffix(name, "master.m3u8") {
+			continue
 		}
 		switch media.JudgeClientMaster([]byte(master), available) {
 		case media.ClientMasterInvalid:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist", "name": "master.m3u8"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist", "name": name})
 			return nil, false, false
 		case media.ClientMasterReady:
-			rendered["master.m3u8"] = master
+			rendered[name] = master
 		case media.ClientMasterEarly:
 			// Sound, but a variant it names has no confirmed segments yet.
 			// Every run starts here; publish the master once the variant
@@ -450,6 +471,69 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		}
 	}
 	return rendered, playable, true
+}
+
+func validRegions(regions []room.MediaRegion) bool {
+	if len(regions) > maxClientRegions {
+		return false
+	}
+	seen := map[int]struct{}{}
+	for _, r := range regions {
+		if r.N < 0 || r.N > 999_999 || r.StartMs < 0 || r.ProducedMs < 0 {
+			return false
+		}
+		if _, dup := seen[r.N]; dup {
+			return false
+		}
+		seen[r.N] = struct{}{}
+	}
+	return true
+}
+
+// renderedRegions keeps the regions whose master the server holds, so the
+// map never points a player at a playlist that is not there. Nil means the
+// request carried no regions at all. A failed lookup must not shrink the
+// map: a region already published stays in it, because dropping it would
+// yank every player off a playlist that is in fact still there.
+func renderedRegions(ctx context.Context, store *room.Store, roomID string, regions []room.MediaRegion, rendered map[string]string, current []room.MediaRegion) []room.MediaRegion {
+	if regions == nil {
+		return nil
+	}
+	known := make(map[int]struct{}, len(current))
+	for _, r := range current {
+		known[r.N] = struct{}{}
+	}
+	out := make([]room.MediaRegion, 0, len(regions))
+	for _, r := range regions {
+		name := "r" + strconv.Itoa(r.N) + "_master.m3u8"
+		if _, ok := rendered[name]; ok {
+			out = append(out, r)
+			continue
+		}
+		has, err := store.HasPlaylist(ctx, roomID, name)
+		if err != nil {
+			if _, ok := known[r.N]; ok {
+				out = append(out, r)
+			}
+			continue
+		}
+		if has {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func sameRegions(a, b []room.MediaRegion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // storeClientMetadata persists the track and chapter annotations the client

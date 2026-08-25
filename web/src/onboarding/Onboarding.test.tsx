@@ -49,11 +49,11 @@ describe('Onboarding', () => {
     expect(await screen.findByRole('heading', { name: /assistir junto|watch together/i })).toBeInTheDocument()
   })
 
-  it('explains the room tab, and says the torrent is downloaded by ss-bridge', async () => {
+  it('explains the room tab, and says nothing needs installing', async () => {
     render(<Onboarding />)
     await userEvent.click(next())
     expect(await screen.findByRole('heading', { name: /sala|room/i })).toBeInTheDocument()
-    expect(screen.getByText(/baixado pelo ss-bridge|downloaded by ss-bridge/i)).toBeInTheDocument()
+    expect(screen.getByText(/nada para instalar|nothing to install/i)).toBeInTheDocument()
   })
 
   it('explains that the catalogue finds nothing without a plugin', async () => {

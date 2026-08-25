@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
-import { HelperRequiredError, openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from '../torrent'
+import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
+import { WorkerProbes } from './WorkerProbes'
+import { torrentCapacity } from '../remoteTorrent'
+import { torrentErrorKey } from '../torrentErrors'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
@@ -46,6 +49,23 @@ function formatBytes(bytes: number): string {
 export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
+  // The fleet as this browser measured it, shown while it happens: which
+  // workers answered, how fast each one is from here, and which one won.
+  const [probes, setProbes] = useState<WorkerProbe[]>([])
+  // Whether the fleet can take a magnet at all right now. Asked once when the
+  // picker opens: metadata needs a worker, so the answer belongs at the paste,
+  // not at play.
+  const [capacity, setCapacity] = useState<string>('available')
+  useEffect(() => {
+    let cancelled = false
+    void torrentCapacity().then((value) => {
+      if (cancelled) return
+      setCapacity(value)
+      if (value === 'disabled' || value === 'no_workers') setError(t('home.torrentNoWorkers'))
+      else if (value === 'busy') setError(t('home.torrentBusy'))
+    })
+    return () => { cancelled = true }
+  }, [t])
   const [error, setError] = useState('')
   const [session, setSession] = useState<TorrentSession | null>(initialSession ?? null)
   const [stats, setStats] = useState<TorrentStats>(EMPTY_TORRENT_STATS)
@@ -92,21 +112,26 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
 
   const load = async () => {
     if (!magnet.trim() || loading) return
+    if (capacity === 'disabled' || capacity === 'no_workers') {
+      setError(t('home.torrentNoWorkers'))
+      return
+    }
     session?.destroy()
     owned.current = null
     setSession(null)
     setError('')
     setStats(EMPTY_TORRENT_STATS)
+    setProbes([])
     setLoading(true)
     try {
-      const opened = await openTorrent(magnet, setStats)
+      const opened = await openTorrent(magnet, setStats, { onProbe: setProbes })
       owned.current = opened
       setSession(opened)
       if (opened.files.length === 0) setError(t('home.torrentNoVideos'))
     } catch (error) {
-      // Without the helper there is no torrent at all, and "check the magnet"
-      // would send someone to fix the wrong thing.
-      setError(t(error instanceof HelperRequiredError ? 'home.torrentNeedsBridge' : 'home.torrentFailed'))
+      // A fleet that is missing or full is not a bad magnet, and "check the
+      // magnet" would send someone to fix the wrong thing.
+      setError(t(torrentErrorKey(error)))
     } finally {
       setLoading(false)
     }
@@ -196,6 +221,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
           ) : <p className="empty-copy torrent-empty">{t('home.torrentNoMatch')}</p>}
         </>
       ) : null}
+      <WorkerProbes probes={probes} t={t} />
       {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
       {!listing ? (
         <div className="torrent-actions">

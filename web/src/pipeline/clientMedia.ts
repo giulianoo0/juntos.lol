@@ -31,6 +31,8 @@ import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
 import { readMkvChapters } from './mkvChapters'
 import type { MediaInput } from './mediaInput'
+import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
+import { isUnreadableFile } from '../uploadErrors'
 
 // The WASM decoders register lazily: nothing loads until a file actually
 // carries one of these codecs.
@@ -64,6 +66,9 @@ const PUBLISH_INTERVAL_MS = 2_000
 const PUT_RETRIES = 2
 /** How many extra drain rounds a stuck object gets before the complete pass. */
 const DRAIN_ROUNDS = 10
+/** How long a seek waits for its keyframe before starting unsnapped: the
+ * probe reads from the swarm and may sit on pieces nobody has yet. */
+const KEYFRAME_SNAP_MS = 60_000
 
 export interface ClientRemuxPlan {
   input: Input
@@ -99,7 +104,10 @@ export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan
       audioTracks: audioTracks.map((track) => ({ language: track.languageCode })),
       durationSeconds,
     }
-  } catch {
+  } catch (error) {
+    // Bytes that could not be read are not a verdict on the media; the
+    // caller names that failure for what it is.
+    if (error instanceof ReadUnreachableError || error instanceof ReadFailedError || isUnreadableFile(error)) throw error
     return null
   }
 }
@@ -348,7 +356,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // The offset is read at send time: after a seek it names the new
       // region, and the server holds it back until that region's master
       // actually renders.
-      timeline: { durationMs: Math.round(plan.durationSeconds * 1000), offsetMs: regionStartMs },
+      timeline: { durationMs: Math.round(plan.durationSeconds * 1000), offsetMs: regionStartMs, regions: regionMap() },
     }
     const chapters = metadataSent ? [] : await chaptersOnce
     if (!metadataSent) {
@@ -373,10 +381,43 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // One region at a time: a contiguous stretch of the source, converted in
   // order from wherever the room last landed. The upload machinery above is
   // shared across regions — segments of an abandoned region finish uploading
-  // harmlessly, since a region's names are never reused.
+  // harmlessly, since a region's names are never reused. Every region ever
+  // produced stays published under its own names; the map of them travels
+  // with each publish so a player can move between them.
   let conversion: Conversion | null = null
   let region = -1
   let regionStartMs = 0
+  interface RegionRecord { n: number; startMs: number; producedMs: number; growing: boolean }
+  const regions: RegionRecord[] = []
+  const regionMap = () => regions.map((r) => ({
+    ...r,
+    producedMs: r.growing ? segmentsProduced() * SEGMENT_SECONDS * 1000 : r.producedMs,
+  }))
+  // Whether the regions together cover the whole timeline, so the run is
+  // done regardless of the order they were produced in.
+  const timelineCovered = (): boolean => {
+    const durationMs = Math.round(plan.durationSeconds * 1000)
+    const spans = regionMap().map((r) => ({ start: r.startMs, end: r.startMs + r.producedMs })).sort((a, b) => a.start - b.start)
+    let reach = 0
+    for (const span of spans) {
+      if (span.start > reach + COLD_BEHIND_MS) return false
+      reach = Math.max(reach, span.end)
+    }
+    return reach >= durationMs - SEGMENT_SECONDS * 1000
+  }
+  // A region that stops growing keeps what it produced, minus what the
+  // caller is about to throw away: a seek abandons queued and in-flight
+  // uploads, and segments that never reach the bucket must not be claimed —
+  // the map would cover a tail the playlists cut off. The discard estimate
+  // errs high on purpose; re-producing a breath of tail is cheap, a hole
+  // that reads as covered is not.
+  const closeRegion = (discardedSegments = 0) => {
+    const current = regions.find((r) => r.growing)
+    if (!current) return
+    const kept = Math.max(segmentsProduced() - discardedSegments, 0)
+    current.producedMs = kept * SEGMENT_SECONDS * 1000
+    current.growing = false
+  }
   // Segments per playlist: video and its audio rendition advance together,
   // so the produced time is the largest playlist's count, not their sum.
   const segmentCounts = new Map<number, number>()
@@ -390,7 +431,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const packetSink = videoTrack ? new EncodedPacketSink(videoTrack) : null
   const snapToKeyframe = async (seconds: number): Promise<number> => {
     try {
-      const key = await packetSink?.getKeyPacket(seconds, { verifyKeyPackets: true })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), KEYFRAME_SNAP_MS) })
+      const key = await Promise.race([
+        packetSink?.getKeyPacket(seconds, { verifyKeyPackets: true }),
+        deadline,
+      ]).finally(() => clearTimeout(timer))
       return key ? Math.max(key.timestamp, 0) : Math.max(seconds, 0)
     } catch {
       return seconds
@@ -415,21 +461,30 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // a long GOP makes the fresh region look like it does not cover the very
   // seek that created it, and the pipeline restarts in place forever.
   let regionAimMs = 0
+  // Covered means some region already holds the position: the growing one,
+  // with its aim and the room ahead of it, or a finished one the player can
+  // switch to on its own. Only an uncovered position restarts the pipeline.
   const uncovered = (absoluteMs: number): boolean => {
-    const producedEndMs = regionStartMs + segmentsProduced() * SEGMENT_SECONDS * 1000
-    const forwardEdge = Math.max(producedEndMs, regionAimMs)
-    return absoluteMs < regionStartMs - COLD_BEHIND_MS
-      || absoluteMs > forwardEdge + COLD_AHEAD_MS
+    for (const r of regionMap()) {
+      const end = r.startMs + r.producedMs
+      const forwardEdge = r.growing ? Math.max(end, regionAimMs) + COLD_AHEAD_MS : end
+      if (absoluteMs >= r.startMs - COLD_BEHIND_MS && absoluteMs <= forwardEdge) return false
+    }
+    return true
   }
   const restartAt = (absoluteMs: number) => {
     restartPending = true
     console.log(`[remux-worker] restart at ${absoluteMs}`)
+    closeRegion(pending.length + inflightAborts.size * PRESIGN_BATCH)
     pendingRestart = (async () => {
       // The dying region goes first: its queued and in-flight segments would
       // otherwise hold the uplink, and its conversion would compete with the
       // keyframe snap for the worker. Aborted names simply never confirm.
       pending.length = 0
       for (const abort of inflightAborts) abort.abort()
+      // The reads go before the conversion: a cancel waits on the demuxer,
+      // and the demuxer may be parked on a range the swarm has not fetched.
+      file.abortReads()
       await conversion?.cancel().catch(() => {})
       console.log('[remux-worker] old region canceled')
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
@@ -454,8 +509,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     const startSeconds = nextStartSeconds
     regionStartMs = Math.round(startSeconds * 1000)
     regionAimMs = Math.max(regionAimMs, regionStartMs)
+    closeRegion()
     segmentCounts.clear()
     seekTargetSeconds = null
+    regions.push({ n: region, startMs: regionStartMs, producedMs: 0, growing: true })
     // The old region's playlists stay published on the server; only the
     // local map restarts, so the next publish carries the new region's
     // master rather than a mix.
@@ -471,7 +528,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
         getPlaylistPath: ({ n }) => `${prefix}client_stream_${n}.m3u8`,
         getSegmentPath: ({ playlist, n }) => `${prefix}cs_${playlist.n}_${n}.m4s`,
         getInitPath: ({ n }) => `${prefix}cinit_${n}.mp4`,
-        onMaster: (content) => { playlists.set('master.m3u8', content) },
+        // The bare name is the growing region's, for players that only know
+        // an offset; the prefixed one is this region's for good.
+        onMaster: (content) => { playlists.set('master.m3u8', content); playlists.set(`r${region}_master.m3u8`, content) },
         onPlaylist: (content, info) => { playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content) },
         onInit: (target, info) => { enqueue(`${prefix}cinit_${info.n}.mp4`, target) },
         onSegment: (target, info) => {
@@ -510,8 +569,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       await current.execute()
     } catch (error) {
       // A cancel is either a seek (restart there) or fail() (throw below);
-      // anything else is the conversion's own failure.
-      if (!(error instanceof ConversionCanceledError)) fail(error)
+      // anything else is the conversion's own failure. A seek may also
+      // surface as the aborted read the demuxer was waiting on.
+      const seekAbort = error instanceof ReadAbortedError && restartPending
+      if (!(error instanceof ConversionCanceledError || seekAbort)) fail(error)
     }
     if (failure) throw failure
     // A restart may still be snapping its keyframe when the conversion ends
@@ -524,11 +585,16 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       nextStartSeconds = seekTargetSeconds
       continue
     }
-    // The whole timeline is done. Within a breath of zero counts: the
-    // snap may have placed the region's start on the first keyframe rather
-    // than at exactly nothing.
-    if (startSeconds <= COLD_BEHIND_MS / 1000) break
-    // This region ran to the end of the file, but everything before its
+    // This region ran to the end of the file on its own. A region that ran
+    // to the end is as long as the file says minus where it started; the
+    // segment count undercounts the last partial segment.
+    closeRegion()
+    const finished = regions.find((r) => r.n === region)
+    if (finished) finished.producedMs = Math.max(finished.producedMs, Math.round(plan.durationSeconds * 1000) - finished.startMs)
+    // The whole timeline is done once the regions together cover it —
+    // this one from a breath of zero, or several stitched by seeks.
+    if (startSeconds <= COLD_BEHIND_MS / 1000 || timelineCovered()) break
+    // This region ran to the end of the file, but something before its
     // start is still unproduced. Park here: the next cold seek wakes the
     // loop and re-prepares wherever the room went.
     await new Promise<void>((resolve) => { wakeFollow = resolve })

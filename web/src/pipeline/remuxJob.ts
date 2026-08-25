@@ -5,7 +5,6 @@
  * demux, the mux and every upload stop sharing a thread with the page that
  * is drawing the player.
  */
-import { CustomSource } from 'mediabunny'
 import {
   createMatroskaSubtitleStream,
   createSubtitleCollector,
@@ -13,7 +12,9 @@ import {
   type SubtitleCollector,
 } from '../subtitles'
 import { convertSubtitleFile, type VttTrack } from '../subtitleFormats'
-import { fileInput, urlInput, type MediaInput } from './mediaInput'
+import { fileInput, rangeInput, workerInput, type MediaInput } from './mediaInput'
+import type { WorkerGrant } from '../torrent'
+import { ReadAbortedError } from './rangeRead'
 import { planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
 // Headroom under the server's per-room track cap for the tracks muxed into
@@ -32,6 +33,7 @@ export type RemuxSource =
   | { kind: 'file'; file: File }
   | { kind: 'stream'; url: string; name: string; size: number }
   | { kind: 'url'; url: string; name: string; size: number }
+  | { kind: 'worker'; grant: WorkerGrant }
   | { kind: 'input'; input: MediaInput }
 
 // A subtitle file shipped next to the video. With a url it clones into the
@@ -41,6 +43,9 @@ export interface RemuxSideFile {
   path: string
   size: number
   url?: string
+  // A sibling of a worker-served video: read through the video's own input,
+  // so the ticket in the url is whichever is current, not the one at start.
+  workerIndex?: number
   read?: () => Promise<ArrayBuffer>
 }
 
@@ -81,48 +86,25 @@ export class PlanFailedError extends Error {
 export function sourceSize(source: RemuxSource): number {
   return source.kind === 'file' ? source.file.size
     : source.kind === 'input' ? source.input.size
+    : source.kind === 'worker' ? source.grant.size
     : source.size
 }
 
 /** Whether the job is plain data end to end and may cross into a worker. */
 export function jobIsCloneable(job: RemuxJob): boolean {
-  return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined)
+  return job.source.kind !== 'input' && job.sideFiles.every((file) => file.url !== undefined || file.workerIndex !== undefined)
 }
 
-// A source the ss-bridge streams: every read is a ranged fetch the helper
-// answers once those pieces have downloaded, raising their priority for the
-// wait — reading the tail costs a seek in the swarm, not a full download.
-function streamInput(url: string, name: string, size: number): MediaInput {
-  const read = async (start: number, end: number): Promise<Uint8Array> => {
-    const clamped = Math.min(end, size)
-    if (clamped <= start) return new Uint8Array(0)
-    const response = await fetch(url, { headers: { Range: `bytes=${start}-${clamped - 1}` } })
-    if (!response.ok && response.status !== 206) throw new Error(`helper stream failed (${response.status})`)
-    const data = await response.arrayBuffer()
-    const expected = clamped - start
-    if (data.byteLength !== expected) throw new Error(`helper short read (${data.byteLength}/${expected})`)
-    return new Uint8Array(data)
-  }
-  return {
-    name,
-    size,
-    read,
-    source: () => new CustomSource({
-      read,
-      getSize: async () => size,
-      // The helper sits on loopback, but every read still waits on the swarm;
-      // the network profile batches reads and prefetches ahead on sequential
-      // access, which is what the remux mostly does.
-      prefetchProfile: 'network',
-    }),
-  }
-}
-
-function buildInput(source: RemuxSource): MediaInput {
+// 'worker' is a torrent file on the fleet, 'stream' any plain Range origin
+// (the dev fixture), 'url' a plugin's own server. All are bytes behind
+// Range requests, read the same resilient way; only the error they turn
+// into differs.
+function buildInput(source: RemuxSource, roomID: string): MediaInput {
   switch (source.kind) {
     case 'file': return fileInput(source.file)
-    case 'stream': return streamInput(source.url, source.name, source.size)
-    case 'url': return urlInput(source.url, source.name, source.size)
+    case 'stream': return rangeInput(source.url, source.name, source.size)
+    case 'url': return rangeInput(source.url, source.name, source.size)
+    case 'worker': return workerInput(source.grant, roomID)
     case 'input': return source.input
   }
 }
@@ -133,7 +115,7 @@ function buildInput(source: RemuxSource): MediaInput {
  * report them through different seams.
  */
 export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: RemuxJobCallbacks): Promise<void> {
-  const input = buildInput(job.source)
+  const input = buildInput(job.source, job.roomID)
   let plan: Awaited<ReturnType<typeof planClientRemux>>
   try {
     plan = await planClientRemux(input)
@@ -144,15 +126,24 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: Remux
 
   // Subtitles run beside the remux, off the same bytes, and publish as they
   // go; the room has them before the video finishes.
-  void publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
-  await runClientRemux({
-    roomID: job.roomID,
-    mediaGeneration: job.mediaGeneration,
-    file: input,
-    plan,
-    onProgress,
-    onHandle,
-  })
+  const subtitles = publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
+  try {
+    await runClientRemux({
+      roomID: job.roomID,
+      mediaGeneration: job.mediaGeneration,
+      file: input,
+      plan,
+      onProgress,
+      onHandle,
+    })
+  } catch (error) {
+    // A failed run takes the subtitle scan down with it: the room is not
+    // getting this source, so nothing should keep asking the origin for it.
+    input.dispose()
+    throw error
+  }
+  // The job owns the input; it goes away once the scan is through too.
+  void subtitles.finally(() => input.dispose())
 }
 
 // Subtitles arrive from two places: muxed into the video, found by a
@@ -172,17 +163,31 @@ async function publishSubtitles(
   if (embedded) collector.register('embedded')
   if (external.length === 0 && !embedded) return
   await Promise.all([
-    external.length > 0 ? loadExternalSubtitles(external, collector) : Promise.resolve(),
+    external.length > 0 ? loadExternalSubtitles(external, collector, input) : Promise.resolve(),
     embedded ? extractEmbeddedSubtitles(input, collector) : Promise.resolve(),
   ])
 }
 
+// The scan reads the whole file, at scan priority so it trails the remux
+// in the swarm. A seek aborts whatever read it was on; the scan simply asks
+// for the same slice again, however many seeks it takes — its position has
+// nothing to do with the seek. Only the input closing for good ends it.
 async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
   try {
     const stream = await createMatroskaSubtitleStream()
     let lastSnapshotAt = Date.now()
     for (let offset = 0; offset < input.size; offset += SUBTITLE_SLICE_BYTES) {
-      stream.write(await input.read(offset, Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)))
+      const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
+      let slice: Uint8Array
+      try {
+        slice = await input.read(offset, end, { prio: 'scan' })
+      } catch (error) {
+        if (!(error instanceof ReadAbortedError) || error.closed) throw error
+        offset -= SUBTITLE_SLICE_BYTES
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        continue
+      }
+      stream.write(slice)
       if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
         lastSnapshotAt = Date.now()
         collector.publish('embedded', stream.snapshot(), false)
@@ -196,18 +201,19 @@ async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCo
   await collector.flush()
 }
 
-async function readSideFile(file: RemuxSideFile): Promise<ArrayBuffer> {
+async function readSideFile(file: RemuxSideFile, input: MediaInput): Promise<ArrayBuffer> {
   if (file.read) return await file.read()
-  const response = await fetch(file.url ?? '')
+  const url = file.workerIndex !== undefined && input.sidecarUrl ? input.sidecarUrl(file.workerIndex) : file.url ?? ''
+  const response = await fetch(url)
   if (!response.ok && response.status !== 206) throw new Error(`side file read failed (${response.status})`)
   return await response.arrayBuffer()
 }
 
-async function loadExternalSubtitles(files: RemuxSideFile[], collector: SubtitleCollector): Promise<void> {
+async function loadExternalSubtitles(files: RemuxSideFile[], collector: SubtitleCollector, input: MediaInput): Promise<void> {
   const tracks: VttTrack[] = []
   for (const file of files) {
     try {
-      const track = convertSubtitleFile(file.path, await readSideFile(file))
+      const track = convertSubtitleFile(file.path, await readSideFile(file, input))
       if (!track) continue
       tracks.push(track)
       collector.publish('external', [...tracks], false)

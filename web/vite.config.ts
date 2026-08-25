@@ -20,7 +20,7 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         // The remux worker is the app's own code and must be able to fetch
-        // (the bridge, the bucket, the api); the plugin-worker CSP would
+        // (the workers, the bucket, the api); the plugin-worker CSP would
         // strangle it, so its entry lives on a path the server leaves alone.
         entryFileNames: (chunk) => chunk.name === 'remuxWorker'
           ? 'assets/media-worker/[hash].js'
