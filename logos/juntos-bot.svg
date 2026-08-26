@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="juntos.lol">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#2E1712"/><stop offset="1" stop-color="#100A0B"/>
+    </linearGradient>
+    <radialGradient id="bloom" cx="0.5" cy="0.68" r="0.66">
+      <stop offset="0" stop-color="#FF7A45" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#FF7A45" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#FF7A45" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="lift" cx="0.5" cy="0.02" r="0.7">
+      <stop offset="0" stop-color="#FFB48C" stop-opacity="0.16"/><stop offset="1" stop-color="#FFB48C" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#3A0F00" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" fill="url(#base)"/>
+  <rect x="0" y="0" width="512" height="512" fill="url(#bloom)"/>
+  <rect x="0" y="0" width="512" height="512" fill="url(#lift)"/>
+  <g transform="translate(256,256) scale(0.82) translate(-246,-251.5)"><g transform="translate(-6,6)" filter="url(#soft)"><path d="M 300 176 L 300 306 A 96 96 0 0 1 204 402" fill="none" stroke="#fff" stroke-width="78" stroke-linecap="round"/><path d="M 282 58 L 324 81 L 282 104 Z" fill="#fff" stroke="#fff" stroke-width="16" stroke-linejoin="round"/></g></g>
+</svg>
