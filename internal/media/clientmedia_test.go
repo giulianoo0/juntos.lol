@@ -1,6 +1,9 @@
 package media
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSanitizeClientMediaPlaylistRejectsSmuggledURIs(t *testing.T) {
 	good := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n" +
@@ -84,5 +87,41 @@ func TestClientNameGrammarsAcceptRegions(t *testing.T) {
 		if ValidClientPlaylistName(name) {
 			t.Errorf("playlist %q accepted", name)
 		}
+	}
+}
+
+func TestRenderClientPlaylistKeepsTheEndMarkerOfASealedRegion(t *testing.T) {
+	// A region a seek abandoned never reaches the muxer's finalize, so the
+	// pipeline seals its playlists itself. Without an end marker a player
+	// treats the playlist as live and reloads it every few seconds forever.
+	body := []byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"r1_cinit_1.mp4\"\n" +
+		"#EXTINF:4.0,\nr1_cs_1_1.m4s\n#EXT-X-ENDLIST\n")
+	published := map[string]struct{}{"r1_cinit_1.mp4": {}, "r1_cs_1_1.m4s": {}}
+
+	rendered, ok := RenderClientPlaylist("https://media.example.com", "r1", 0, body, published)
+	if !ok {
+		t.Fatal("a sealed playlist whose segments all landed was refused")
+	}
+	if !strings.HasSuffix(rendered, "#EXT-X-ENDLIST\n") {
+		t.Fatalf("end marker lost: %q", rendered)
+	}
+	if !strings.Contains(rendered, "https://media.example.com/rooms/r1/g0/hls/r1_cs_1_1.m4s") {
+		t.Fatalf("segment not rewritten onto the bucket: %q", rendered)
+	}
+}
+
+func TestRenderClientPlaylistDropsTheEndMarkerWhenItHadToCut(t *testing.T) {
+	// Cutting at an unconfirmed segment must not leave a playlist claiming to
+	// be finished: a viewer would stop asking with half the region missing.
+	body := []byte("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI=\"r1_cinit_1.mp4\"\n" +
+		"#EXTINF:4.0,\nr1_cs_1_1.m4s\n#EXTINF:4.0,\nr1_cs_1_2.m4s\n#EXT-X-ENDLIST\n")
+	published := map[string]struct{}{"r1_cinit_1.mp4": {}, "r1_cs_1_1.m4s": {}}
+
+	rendered, ok := RenderClientPlaylist("https://media.example.com", "r1", 0, body, published)
+	if !ok {
+		t.Fatal("the confirmed prefix should still render")
+	}
+	if strings.Contains(rendered, "#EXT-X-ENDLIST") {
+		t.Fatalf("a cut playlist claimed to be finished: %q", rendered)
 	}
 }

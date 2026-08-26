@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -122,4 +126,53 @@ func addMediaTestRoom(t *testing.T, store *room.Store, id string) {
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: id, FileName: "movie.mkv", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
+}
+
+func TestServePlaylistCompressesWhenTheClientCan(t *testing.T) {
+	// The one media response this machine still pays for, asked for again
+	// every few seconds per rendition while a room grows.
+	store := newTestStore(t)
+	addMediaTestRoom(t, store, "r1")
+	long := "#EXTM3U\n"
+	for i := 0; i < 500; i++ {
+		long += fmt.Sprintf("#EXTINF:2.002,\nhttps://media.example.com/rooms/r1/g0/hls/cs_1_%d.m4s\n", i)
+	}
+	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": long}))
+
+	request := httptest.NewRequest(http.MethodGet, "/media/r1/hls/master.m3u8", nil)
+	request.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	w := httptest.NewRecorder()
+	mediaEngine(store).ServeHTTP(w, request)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
+	require.Equal(t, "Accept-Encoding", w.Header().Get("Vary"))
+	require.Less(t, w.Body.Len(), len(long)/5, "a column of near-identical urls should compress hard")
+
+	reader, err := gzip.NewReader(bytes.NewReader(w.Body.Bytes()))
+	require.NoError(t, err)
+	decoded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.Equal(t, long, string(decoded))
+}
+
+// testPlaylist is a master: short enough that gzip would make it bigger, which
+// is why the last case here asks for gzip and still gets none.
+func TestServePlaylistStaysPlainForAClientThatRefusesGzip(t *testing.T) {
+	store := newTestStore(t)
+	addMediaTestRoom(t, store, "r1")
+	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": testPlaylist}))
+
+	for _, encoding := range []string{"", "identity", "gzip;q=0", "br", "gzip"} {
+		request := httptest.NewRequest(http.MethodGet, "/media/r1/hls/master.m3u8", nil)
+		if encoding != "" {
+			request.Header.Set("Accept-Encoding", encoding)
+		}
+		w := httptest.NewRecorder()
+		mediaEngine(store).ServeHTTP(w, request)
+
+		require.Equal(t, http.StatusOK, w.Code, encoding)
+		require.Empty(t, w.Header().Get("Content-Encoding"), encoding)
+		require.Equal(t, testPlaylist, w.Body.String(), encoding)
+	}
 }

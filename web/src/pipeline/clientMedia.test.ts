@@ -75,7 +75,7 @@ vi.mock('@mediabunny/dts', () => ({ registerDtsDecoder: () => undefined }))
 vi.mock('@mediabunny/aac-encoder', () => ({ registerAacEncoder: () => undefined }))
 vi.mock('./mkvChapters', () => ({ readMkvChapters: async () => [] }))
 
-import { runClientRemux, type ClientRemuxHandle } from './clientMedia'
+import { endPlaylist, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
 // Fake timers so the publish ticker can be driven on purpose: a region's
 // span is what the server confirmed, and confirmation only happens on a
@@ -309,3 +309,44 @@ describe('client remux regions', () => {
     await flush()
     expect(completes()).toHaveLength(0)
   })
+
+describe('endPlaylist', () => {
+  const body = [
+    '#EXTM3U',
+    '#EXT-X-TARGETDURATION:4',
+    '#EXT-X-MAP:URI="r1_cinit_0.mp4"',
+    '#EXTINF:2.0,',
+    'r1_cs_0_1.m4s',
+    '#EXTINF:2.0,',
+    'r1_cs_0_2.m4s',
+    '#EXTINF:2.0,',
+    'r1_cs_0_3.m4s',
+    '',
+  ].join('\n')
+
+  it('ends the playlist at what the bucket vouches for', () => {
+    // A region a seek abandoned names segments whose upload was dropped
+    // mid-queue. Sent whole, the server cuts at the first it cannot reach and
+    // throws the end marker away with the tail.
+    const out = endPlaylist(body, 2)
+    expect(out).not.toBeNull()
+    expect(out).toContain('r1_cs_0_2.m4s')
+    expect(out).not.toContain('r1_cs_0_3.m4s')
+    expect(out?.endsWith('#EXT-X-ENDLIST\n')).toBe(true)
+    // The header survives, and the tags of the segment that was cut do not.
+    expect(out).toContain('#EXT-X-MAP:URI="r1_cinit_0.mp4"')
+    expect((out?.match(/#EXTINF/g) ?? []).length).toBe(2)
+  })
+
+  it('keeps the whole playlist when everything landed', () => {
+    const out = endPlaylist(body, 3)
+    expect((out?.match(/#EXTINF/g) ?? []).length).toBe(3)
+    expect(out).toContain('r1_cs_0_3.m4s')
+  })
+
+  it('is nothing at all when no segment landed', () => {
+    // Not a finished region — an empty one, and an empty playlist ending is
+    // a viewer told the region is over before it began.
+    expect(endPlaylist(body, 0)).toBeNull()
+  })
+})

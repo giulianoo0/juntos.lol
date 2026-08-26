@@ -79,3 +79,29 @@ describe('segment ledger', () => {
     expect(ledger.settled(0)).toBe(false)
   })
 })
+
+describe('contiguousIn', () => {
+  it('answers how long the server can cut each rendition', () => {
+    const ledger = createSegmentLedger()
+    ledger.noteEmitted('r1_cs_0_1.m4s')
+    ledger.noteEmitted('r1_cs_1_1.m4s')
+    ledger.noteConfirmed(['r1_cs_0_1.m4s', 'r1_cs_0_2.m4s'])
+    expect(ledger.contiguousIn(1, 0)).toBe(2)
+    expect(ledger.contiguousIn(1, 1)).toBe(0)
+    expect(ledger.contiguousIn(9, 0)).toBe(0)
+  })
+
+  it('stops at the first hole, however much landed after it', () => {
+    // A seek drops uploads out of the middle of the queue, and the names that
+    // confirm afterwards leave a gap the server cannot serve across.
+    const ledger = createSegmentLedger()
+    ledger.noteConfirmed(['r2_cs_0_1.m4s', 'r2_cs_0_2.m4s', 'r2_cs_0_4.m4s', 'r2_cs_0_5.m4s'])
+    expect(ledger.contiguousIn(2, 0)).toBe(2)
+  })
+
+  it('is nothing when the first segment never landed', () => {
+    const ledger = createSegmentLedger()
+    ledger.noteConfirmed(['r3_cs_0_2.m4s', 'r3_cs_0_3.m4s'])
+    expect(ledger.contiguousIn(3, 0)).toBe(0)
+  })
+})

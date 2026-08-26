@@ -8,6 +8,11 @@ interface Region {
    * nothing confirmed yet still counts, as a zero. */
   emitted: Map<number, number>
   confirmed: Map<number, number>
+  /** Which segment numbers landed, per playlist. A count is not a length: a
+   * region a seek abandoned drops uploads out of the middle of its queue, so
+   * the names that confirm afterwards leave holes. Anything that cuts a
+   * playlist has to know where the first hole is, not how many landed. */
+  landed: Map<number, Set<number>>
 }
 
 export interface SegmentLedger {
@@ -23,6 +28,10 @@ export interface SegmentLedger {
    * region that ran to the end of the file may still claim the tail the
    * segment count rounds off, but only once nothing is in flight. */
   settled(region: number): boolean
+  /** How long one rendition's playlist can be: the run of segments from the
+   * first, unbroken. The server cuts at its own first unconfirmed name, so
+   * anything past a hole is unreachable however much landed after it. */
+  contiguousIn(region: number, playlist: number): number
 }
 
 export function createSegmentLedger(): SegmentLedger {
@@ -34,7 +43,7 @@ export function createSegmentLedger(): SegmentLedger {
   const at = (region: number): Region => {
     let found = regions.get(region)
     if (!found) {
-      found = { emitted: new Map(), confirmed: new Map() }
+      found = { emitted: new Map(), confirmed: new Map(), landed: new Map() }
       regions.set(region, found)
     }
     return found
@@ -44,10 +53,10 @@ export function createSegmentLedger(): SegmentLedger {
     counts.set(playlist, (counts.get(playlist) ?? 0) + 1)
   }
 
-  const parse = (name: string): { region: number; playlist: number } | null => {
+  const parse = (name: string): { region: number; playlist: number; n: number } | null => {
     const match = SEGMENT_NAME.exec(name)
     if (!match) return null
-    return { region: Number(match[1] ?? 0), playlist: Number(match[2]) }
+    return { region: Number(match[1] ?? 0), playlist: Number(match[2]), n: Number(match[3]) }
   }
 
   return {
@@ -62,7 +71,14 @@ export function createSegmentLedger(): SegmentLedger {
         const parsed = parse(name)
         if (!parsed) continue
         counted.add(name)
-        bump(at(parsed.region).confirmed, parsed.playlist)
+        const region = at(parsed.region)
+        bump(region.confirmed, parsed.playlist)
+        let landed = region.landed.get(parsed.playlist)
+        if (!landed) {
+          landed = new Set()
+          region.landed.set(parsed.playlist, landed)
+        }
+        landed.add(parsed.n)
       }
     },
     covered(region) {
@@ -76,6 +92,14 @@ export function createSegmentLedger(): SegmentLedger {
         shortest = Math.min(shortest, found.confirmed.get(playlist) ?? 0)
       }
       return shortest === Infinity ? 0 : shortest
+    },
+    contiguousIn(region, playlist) {
+      const landed = regions.get(region)?.landed.get(playlist)
+      if (!landed) return 0
+      // The muxer numbers a playlist's segments from one.
+      let run = 0
+      while (landed.has(run + 1)) run += 1
+      return run
     },
     settled(region) {
       const found = regions.get(region)

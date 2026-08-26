@@ -253,6 +253,41 @@ async function releaseClaimReliably(roomID: string, claim: string): Promise<void
   }
 }
 
+/** The rendition number in a muxer playlist name, or null if it is not one. */
+function renditionOf(name: string): number | null {
+  const match = /^(?:r\d+_)?client_stream_(\d+)\.m3u8$/.exec(name)
+  return match ? Number(match[1]) : null
+}
+
+/**
+ * The first `keep` segments of a media playlist, ended. Tags read since the
+ * last segment describe the one that follows, so they are dropped with it —
+ * the same cut the server makes, made here so the end marker survives it.
+ *
+ * Null when there is nothing to end: a playlist with no confirmed segment is
+ * not a finished region, it is an empty one.
+ */
+export function endPlaylist(body: string, keep: number): string | null {
+  if (keep <= 0) return null
+  const out: string[] = []
+  let pending: string[] = []
+  let segments = 0
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      pending.push(line)
+      continue
+    }
+    if (segments === keep) break
+    out.push(...pending, line)
+    pending = []
+    segments += 1
+  }
+  if (segments === 0) return null
+  // Whatever was still pending belongs to a segment that is not here.
+  return `${out.join('\n')}\n#EXT-X-ENDLIST\n`
+}
+
 async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle }: RunClientRemuxOptions & { claim: string }): Promise<void> {
   // Object flow: the muxer hands finished files to `pending`; `pump` drains
   // them through presign + PUT into `uploaded`; each publish confirms
@@ -265,6 +300,13 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const pending: PendingObject[] = []
   const uploaded: string[] = []
   const playlists = new Map<string, string>()
+  // Playlists of regions that closed, waiting for the publish that hands them
+  // over. Each remembers the region it belongs to: the seal may only go once
+  // that region has nothing left waiting to be confirmed, or the server cuts
+  // the playlist at what it has and the end marker is dropped with the tail.
+  // They are not kept after being accepted — the map travels whole in every
+  // publish, and a finished region would ride along in all of them.
+  const sealed = new Map<string, { prefix: string; region: number; playlist: number; body: string }>()
   let uploadedBytes = 0
   let failure: unknown = null
   let metadataSent = false
@@ -345,13 +387,32 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // segments the master is waiting on, at 128 names a round.
     const prefix = `r${region}_`
     const current = (name: string) => (region <= 0 ? !/^r\d+_/.test(name) : name.startsWith(prefix))
+    // A seal only travels once its region has nothing left to confirm. Sent
+    // early, the server renders the playlist against what it holds, cuts at
+    // the first name it cannot vouch for, and drops the end marker with the
+    // tail — and the seal would be gone with no way to know. Read before the
+    // splice below, which is the only other place a name can be waiting.
+    const outstanding = (regionPrefix: string) => uploaded.some(
+      (name) => (regionPrefix === '' ? !/^r\d+_/.test(name) : name.startsWith(regionPrefix)),
+    )
+    // Cut to what the bucket vouches for, and only then ended. A region a
+    // seek abandoned names segments whose upload was dropped mid-queue; sent
+    // whole, the server stops at the first it cannot reach and throws the end
+    // marker away with the tail — which is every time, for exactly the regions
+    // this is for.
+    const sealing = [...sealed]
+      .filter(([, entry]) => complete || !outstanding(entry.prefix))
+      .map(([name, entry]) => [name, endPlaylist(entry.body, ledger.contiguousIn(entry.region, entry.playlist))] as const)
+      .filter(([, body]) => body !== null) as [string, string][]
     uploaded.sort((a, b) => Number(current(b)) - Number(current(a)))
     const confirm = uploaded.splice(0, 128)
     const body: Record<string, unknown> = {
       claim,
       mediaGeneration,
       confirm,
-      playlists: Object.fromEntries(playlists),
+      // The growing region wins any name it shares with a sealed one:
+      // master.m3u8 always names whichever region is live.
+      playlists: Object.fromEntries([...sealing, ...playlists]),
       complete,
       progress: { receivedBytes: uploadedBytes, sourceBytes: totalBytes },
       // The offset is read at send time: after a seek it names the new
@@ -370,8 +431,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       body: JSON.stringify(body),
     })
     if (!response.ok) throw await serverError(response)
-    // The metadata stuck only now that the request succeeded.
+    // The metadata stuck only now that the request succeeded, and so did the
+    // seals this round actually carried. The rest wait for their region's
+    // last names to land.
     metadataSent = true
+    for (const [name] of sealing) sealed.delete(name)
     const { confirmed, ready } = await response.json() as { confirmed: string[]; ready: boolean }
     // Confirmed means the server HEADed the object and the playlists can
     // now reach it: this, and nothing earlier, is what a region may claim.
@@ -427,10 +491,28 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // A seek abandons queued and in-flight uploads, but abandoning them
   // cannot un-store what already landed, so there is nothing to estimate
   // away here: the ledger only ever counted names the server vouched for.
+  //
+  // Closing it also ends its playlists. A region abandoned by a seek never
+  // reaches the muxer's own finalize, so without this its playlists carry no
+  // EXT-X-ENDLIST — and to a player a playlist with no end is still live: it
+  // reloads it every few seconds, forever, from every viewer, for a region
+  // nothing will ever be added to. Sealed here while the map still holds the
+  // dying region, and sent once, because the server keeps what it is given.
   const closeRegion = () => {
     const current = regions.find((r) => r.growing)
     if (!current) return
     current.growing = false
+    const prefix = region <= 0 ? '' : `r${region}_`
+    for (const [name, content] of playlists) {
+      // Masters carry no segments and are never reloaded on a timer.
+      if (!content.includes('#EXTINF') || content.includes('#EXT-X-ENDLIST')) continue
+      const rendition = renditionOf(name)
+      if (rendition === null) continue
+      sealed.set(name, { prefix, region: current.n, playlist: rendition, body: content })
+      // Out of the live map as well, or the unsealed twin under the same name
+      // rides the next publish and overwrites the seal on the server.
+      playlists.delete(name)
+    }
   }
   let seekTargetSeconds: number | null = null
   let nextStartSeconds = 0
