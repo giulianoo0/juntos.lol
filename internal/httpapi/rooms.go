@@ -191,11 +191,15 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"subtitleTracks":    r.SubtitleTracks,
 			"chapters":          r.Chapters,
 			"bitmapSubsSkipped": r.BitmapSubsSkipped,
-			"preparation":       r.Preparation,
-			"memberCount":       len(members),
-			"createdAt":         r.CreatedAt,
-			"expiresAt":         r.ExpiresAt,
-			"mediaBaseUrl":      strings.TrimSuffix(mediaBaseURL+"/"+media.MediaPrefix(r.ID, r.MediaGeneration), "/"),
+			// What tells a cold seek apart from a room whose pipeline died.
+			// Omitted from the struct's own JSON when zero, and this map is
+			// what the browser actually reads, so it is named here.
+			"producerHeartbeatMs": r.ProducerHeartbeatMs,
+			"preparation":         r.Preparation,
+			"memberCount":         len(members),
+			"createdAt":           r.CreatedAt,
+			"expiresAt":           r.ExpiresAt,
+			"mediaBaseUrl":        strings.TrimSuffix(mediaBaseURL+"/"+media.MediaPrefix(r.ID, r.MediaGeneration), "/"),
 		})
 	}
 }

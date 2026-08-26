@@ -152,6 +152,31 @@ func TestGetRoom(t *testing.T) {
 	require.Equal(t, 1, resp.MemberCount)
 }
 
+// The room response is a hand-listed map, so a field can exist on the struct,
+// be stored, be read back — and still never reach the browser. That is exactly
+// how the cold-seek guard shipped inert: the client saw no heartbeat, decided
+// nothing was producing, and went back to treating a seek as a dead room.
+func TestGetRoomCarriesTheProducerHeartbeat(t *testing.T) {
+	s := newTestStore(t)
+	e := gin.New()
+	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
+
+	r := &room.Room{ID: "abc12345", FileName: "movie.mkv", Status: "ready",
+		ControllerID: "m1", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(5 * time.Hour)}
+	require.NoError(t, s.Create(context.Background(), r))
+	require.NoError(t, s.TouchClientClaim(context.Background(), r.ID))
+
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, httptest.NewRequest("GET", "/api/rooms/abc12345", nil))
+	require.Equal(t, 200, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	beat, ok := resp["producerHeartbeatMs"].(float64)
+	require.True(t, ok, "producerHeartbeatMs missing from the room response: %s", w.Body.String())
+	require.Greater(t, beat, float64(0))
+}
+
 func TestGetRoomNotFound(t *testing.T) {
 	s := newTestStore(t)
 	e := gin.New()

@@ -116,6 +116,7 @@ export const ptBR: Record<string, string> = {
   'room.screenStop': 'Parar de compartilhar',
   'room.screenHostHint': 'Todo mundo na sala vê o que você escolher.',
   'home.closeDialog': 'Fechar',
+  'room.playbackFailed': 'A reprodução parou aqui. Pode ser a conexão, ou um trecho que ainda não ficou pronto. Recarregue a página para tentar de novo.',
   'room.unplayable': 'Seu navegador não consegue decodificar este vídeo. Chrome, Edge ou Safari devem conseguir.',
   'room.gating': 'Forçar sincronizar',
   'room.waitingStart': 'Esperando todo mundo carregar',

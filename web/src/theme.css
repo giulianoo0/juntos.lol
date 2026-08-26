@@ -178,6 +178,10 @@ h1, h2, p { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .volume-panel { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .player-feedback { animation: none; } .volume-range { transition: none; } }
 .player-unplayable { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 6; width: min(420px, calc(100% - 48px)); padding: 18px 20px; border: 1px solid rgba(239,107,115,.35); border-radius: 18px; background: rgba(9,8,10,.9); backdrop-filter: blur(16px); color: #FFC9CC; font-size: 14px; text-align: center; }
+/* It says what happened and offers the report in one place, so a person who
+   hits this has something to hand over rather than a sentence to retype. */
+.player-unplayable p { margin: 0 0 12px; }
+.player-unplayable .copy-report { justify-content: center; }
 .notice-chip { position: absolute; top: 14px; left: 14px; padding: 7px 10px; border-radius: 99px; background: rgba(9,8,10,.78); backdrop-filter: blur(14px); color: #f6cf65; font-size: 12px; }.presence-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }.member-chip { padding: 7px 11px; border-radius: 999px; color: var(--text-dim); background: rgba(255,255,255,.025); }.member-chip.is-controller { color: #FFC4A3; border-color: rgba(255,122,69,.45); background: rgba(255,122,69,.09); }
 .chat-message.is-system { background: transparent; padding: 4px 12px; }.chat-message.is-system p { margin: 0; color: var(--text-faint); font-size: 12px; }
 .screen-tile:empty { display: none; }.screen-tile { position: fixed; right: 340px; bottom: 24px; width: min(420px, 38vw); z-index: 15; border: 1px solid var(--border); border-radius: var(--r-surface); overflow: hidden; background: #000; box-shadow: 0 22px 80px #000; }.screen-tile video { width: 100%; display: block; }

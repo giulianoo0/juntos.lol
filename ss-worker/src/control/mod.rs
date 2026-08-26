@@ -129,7 +129,7 @@ impl Control {
             "draining": snap.draining,
             "relayed": self.cfg.relayed,
             "cert": cert,
-            "disk": { "used": snap.disk_used, "quota": snap.disk_quota },
+            "disk": { "used": snap.disk_used, "real": snap.disk_real, "quota": snap.disk_quota },
             "transfer": { "capBps": self.cfg.transfer_bps, "usedBps": used_bps },
             "leases": snap.leases,
             "maxLeases": self.cfg.max_leases,

@@ -116,6 +116,7 @@ export const en: Record<string, string> = {
   'room.screenStop': 'Stop sharing',
   'room.screenHostHint': 'Everyone in the room sees what you pick.',
   'home.closeDialog': 'Close',
+  'room.playbackFailed': 'Playback stopped here. It may be the connection, or a stretch that is not ready yet. Reload the page to try again.',
   'room.unplayable': 'Your browser cannot decode this video. Chrome, Edge or Safari should play it.',
   'room.gating': 'Force sync',
   'room.waitingStart': 'Waiting for everyone to buffer',

@@ -106,6 +106,9 @@ const room: RoomInfo = {
 }
 
 const unplayableMessage = translate('en', 'room.unplayable')
+// What a stopped playback says when nothing has actually proved the browser
+// cannot decode: a starved decoder and a dead one look alike from here.
+const playbackFailedMessage = translate('en', 'room.playbackFailed')
 
 async function renderPlayer(override: Partial<RoomInfo> = {}) {
   const videoRef = createRef<HTMLVideoElement>()
@@ -244,7 +247,11 @@ describe('Player HLS lifecycle', () => {
         }
       })
 
-      expect(view.getByRole('alert')).toHaveTextContent(unplayableMessage)
+      // Frames stopping is not evidence about the codec. The room says so and
+      // offers the report, rather than sending someone to install Chrome over
+      // a stretch of media that simply had not arrived.
+      expect(view.getByRole('alert')).toHaveTextContent(playbackFailedMessage)
+      expect(view.getByRole('alert')).not.toHaveTextContent(unplayableMessage)
       expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('no new video frames'))
     } finally {
       vi.useRealTimers()

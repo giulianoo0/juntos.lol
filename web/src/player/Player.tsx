@@ -15,6 +15,8 @@ import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { TorrentReadout } from '../components/TorrentReadout'
+import { CopyErrorReport } from '../components/CopyErrorReport'
+import { lastUploadFailureDetail } from '../upload'
 import type { TorrentStats } from '../torrent'
 import { useToast } from '../ui/toastContext'
 
@@ -283,7 +285,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
   const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
-  const [unplayable, setUnplayable] = useState(false)
+  // Why playback stopped, not merely that it did. Only a real codec refusal
+  // may tell someone their browser is the problem: a cold seek that starves
+  // the decoder looks identical from here, and sending them off to install
+  // Chrome over a region that had not arrived yet is a wrong answer told
+  // confidently.
+  const [unplayable, setUnplayable] = useState<{ cause: 'codec' | 'playback'; reason: string } | null>(null)
   const recoveriesRef = useRef(0)
   const resumeRef = useRef({ generation: -1, time: 0 })
 
@@ -364,7 +371,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // what hands a preview viewer the finished playlists.
     const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${room.mediaVersion ?? 0}`
     let disposed = false
-    setUnplayable(false)
+    setUnplayable(null)
     recoveriesRef.current = 0
     // A republish of the same recording resumes where this player was; only
     // a different recording starts over from its beginning. When the room's
@@ -381,14 +388,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // so it moves when the element does, not a render earlier.
     if (mediaOffsetMsRef) mediaOffsetMsRef.current = mediaOffsetMs
 
-    const failPlayback = (reason: string) => {
+    const failPlayback = (reason: string, cause: 'codec' | 'playback' = 'playback') => {
       if (disposed) return
       plog('error', `giving up: ${reason}`)
       hlsRef.current?.destroy()
       hlsRef.current = null
       setLevels([])
       setLevel(-1)
-      setUnplayable(true)
+      setUnplayable({ cause, reason })
     }
 
     // The one observation that needs no error event: the clock moving while
@@ -440,7 +447,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           if (startPosition > 0) video.currentTime = startPosition
           return
         }
-        failPlayback('this browser supports neither MediaSource HLS nor native HLS')
+        failPlayback('this browser supports neither MediaSource HLS nor native HLS', 'codec')
         return
       }
 
@@ -504,7 +511,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             if (data.details === ErrorDetails.BUFFER_ADD_CODEC_ERROR && data.sourceBufferName !== 'audio') {
               const failed = data.mimeType ?? ''
               const alternate = hls.levels.some((level) => level.videoCodec && !failed.includes(level.videoCodec))
-              if (!alternate) failPlayback(`no decodable video rendition (${failed})`)
+              if (!alternate) failPlayback(`no decodable video rendition (${failed})`, 'codec')
             }
             return
           }
@@ -520,11 +527,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
               if (!disposed) buildPlayer(true)
               return
             }
-            failPlayback('no compatible codecs in manifest')
+            failPlayback('no compatible codecs in manifest', 'codec')
             return
           }
           if (undecodable.has(data.details)) {
-            failPlayback(`undecodable media (${data.details})`)
+            failPlayback(`undecodable media (${data.details})`, 'codec')
             return
           }
           if (data.type === ErrorTypes.NETWORK_ERROR) {
@@ -1246,7 +1253,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         revision={`${room.mediaGeneration}-${room.mediaVersion ?? 0}-${room.subsVersion ?? 0}-${subtitleCount}`}
       />
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
-      {unplayable ? <div className="player-unplayable" role="alert">{t('room.unplayable')}</div> : null}
+      {unplayable ? (
+        <div className="player-unplayable" role="alert">
+          <p>{t(unplayable.cause === 'codec' ? 'room.unplayable' : 'room.playbackFailed')}</p>
+          <CopyErrorReport room={room} failure={`playback: ${unplayable.reason}`} detail={lastUploadFailureDetail()} t={t} />
+        </div>
+      ) : null}
       <div className="player-controls" ref={controlsRef}>
         {/* The scrubber owns the full width of the bar; everything that acts on
             what it points at sits underneath it. */}
