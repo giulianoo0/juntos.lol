@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fleetStatus, type Fleet, type FleetMember } from '../remoteTorrent'
+import { fleetStatus, probeWorkers, type Fleet, type FleetMember, type WorkerProbe } from '../remoteTorrent'
 import { useT } from '../i18n/useT'
 
 // The fleet moves on ten-second heartbeats, so anything faster would redraw
@@ -33,6 +33,11 @@ export function FleetStatus() {
   const t = useT()
   const [fleet, setFleet] = useState<Fleet | null>(null)
   const [failed, setFailed] = useState(false)
+  const [probes, setProbes] = useState<WorkerProbe[]>([])
+  // Measuring can also simply fail — no session, no workers listed — and a
+  // card that says "measuring…" forever is worse than one that admits it
+  // never found out.
+  const [probing, setProbing] = useState(true)
 
   useEffect(() => {
     let disposed = false
@@ -53,6 +58,18 @@ export function FleetStatus() {
     return () => { disposed = true; window.clearInterval(timer) }
   }, [])
 
+  // Measured once, not on the poll: this downloads a few megabytes from every
+  // worker, and a page that did that every ten seconds would be the heaviest
+  // user of the fleet it is reporting on. Speed is not what changes minute to
+  // minute anyway — load is, and load comes from the poll.
+  useEffect(() => {
+    let disposed = false
+    void probeWorkers('', (next) => { if (!disposed) setProbes(next) })
+      .then((final) => { if (disposed) return; setProbes(final); setProbing(false) })
+      .catch(() => { if (!disposed) setProbing(false) })
+    return () => { disposed = true }
+  }, [])
+
   if (fleet === null) {
     return (
       <div className="fleet-status" role="status" aria-live="polite">
@@ -69,6 +86,12 @@ export function FleetStatus() {
   }
 
   const available = fleet.workers.filter((w) => w.availability === 'available').length
+  const speeds = new Map(probes.map((probe) => [probe.id, probe]))
+  // Held back until every worker has answered: reordering on each result
+  // makes the cards hop under the reader's eyes, and a "best" declared from
+  // half the measurements is a guess wearing a badge.
+  const measured = !probing && probes.some((probe) => probe.state === 'ok')
+  const workers = measured ? rankBySpeed(fleet.workers, speeds) : fleet.workers
 
   return (
     <div className="fleet-status">
@@ -84,21 +107,27 @@ export function FleetStatus() {
         {failed ? <p className="fleet-stale">{t('fleet.stale')}</p> : null}
       </header>
 
-      {fleet.workers.length > 0 ? (
+      {workers.length > 0 ? (
         <ol className="fleet-list">
-          {fleet.workers.map((member, index) => (
+          {workers.map((member, index) => (
             <li key={member.id} className={`fleet-card is-${member.availability}`}>
               <div className="fleet-card-head">
                 <code>{member.id.replace(/^w_/, '').slice(0, 8)}</code>
                 <span className={`fleet-badge is-${member.availability}`}>{t(`fleet.state.${member.availability}`)}</span>
                 {/* Only worth pointing out where it changes a decision: the
                     head of a list of one is not news. */}
-                {index === 0 && member.availability === 'available' && fleet.workers.length > 1
+                {/* Only once it has been measured, and only where it changes
+                    a decision: the head of a list of one is not news. */}
+                {measured && index === 0 && member.availability === 'available' && workers.length > 1
                   ? <span className="fleet-best">{t('fleet.best')}</span>
                   : null}
               </div>
               <Meter label={t('fleet.busy')} value={busyness(member)} detail={busyDetail(member, t)} />
               <dl className="fleet-facts">
+                <div>
+                  <dt>{t('fleet.speed')}</dt>
+                  <dd>{speedLabel(speeds.get(member.id), probing, t)}</dd>
+                </div>
                 {member.diskQuota ? (
                   <div>
                     <dt>{t('fleet.disk')}</dt>
@@ -139,6 +168,32 @@ export function FleetStatus() {
       ) : null}
     </div>
   )
+}
+
+// Fastest from THIS browser first, because that is what the system itself
+// goes by: a dispatch carries the page's own measured ranking, and the server
+// takes the first of them that has room. A worker in another continent can be
+// the least loaded in the fleet and still the worst place for this viewer.
+//
+// Availability comes first all the same: speed on a worker that cannot take
+// the job is a number with nothing behind it.
+function rankBySpeed(workers: FleetMember[], speeds: Map<string, WorkerProbe>): FleetMember[] {
+  const mbit = (member: FleetMember) => {
+    const probe = speeds.get(member.id)
+    return probe?.state === 'ok' ? probe.mbit ?? 0 : -1
+  }
+  return [...workers].sort((a, b) => {
+    const canWork = (member: FleetMember) => (member.availability === 'available' ? 0 : 1)
+    if (canWork(a) !== canWork(b)) return canWork(a) - canWork(b)
+    return mbit(b) - mbit(a)
+  })
+}
+
+function speedLabel(probe: WorkerProbe | undefined, probing: boolean, t: (key: string) => string): string {
+  if (!probe) return probing ? t('fleet.measuring') : '—'
+  if (probe.state === 'testing') return t('fleet.measuring')
+  if (probe.state === 'down') return t('fleet.noPath')
+  return `${probe.mbit ?? 0} Mbit/s`
 }
 
 // The shape of the answer, drawn before the answer arrives: same header, same

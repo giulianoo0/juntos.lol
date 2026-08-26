@@ -1,6 +1,19 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FleetStatus } from './FleetStatus'
+import { probeWorkers } from '../remoteTorrent'
+
+vi.mock('../remoteTorrent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../remoteTorrent')>()),
+  probeWorkers: vi.fn(),
+}))
+
+/** Measuring is the page's other source; most tests do not exercise it. */
+function measures(results: Array<{ id: string; mbit?: number; state?: 'ok' | 'down' }> = []) {
+  vi.mocked(probeWorkers).mockImplementation(async () => results.map((r) => ({
+    id: r.id, readBase: '', holds: false, state: r.state ?? 'ok', mbit: r.mbit,
+  })))
+}
 
 function member(overrides: Record<string, unknown> = {}) {
   return {
@@ -27,6 +40,7 @@ function answer(body: unknown) {
 describe('FleetStatus', () => {
   beforeEach(() => {
     localStorage.setItem('ss.language', 'en')
+    measures()
     vi.useFakeTimers({ shouldAdvanceTime: true })
   })
   afterEach(() => {
@@ -60,22 +74,50 @@ describe('FleetStatus', () => {
     expect(container.querySelector('.fleet-card.is-skeleton')).toBeNull()
   })
 
-  it('keeps the order the server sent, because it is the order rooms are placed in', async () => {
+  it('ranks by the speed it measured from this browser, not by how idle a worker is', async () => {
+    // The least loaded worker in the fleet can be the worst place for this
+    // viewer: a dispatch carries the page's own ranking, and the server takes
+    // the first of those that has room.
     answer({
       capacity: 'available',
       workers: [
-        member({ id: 'w_first0000', leases: 0 }),
-        member({ id: 'w_second000', leases: 6 }),
-        member({ id: 'w_third0000', availability: 'busy', leases: 8 }),
+        member({ id: 'w_idle00000', leases: 0 }),
+        member({ id: 'w_loaded000', leases: 6 }),
       ],
     })
+    measures([{ id: 'w_idle00000', mbit: 4 }, { id: 'w_loaded000', mbit: 90 }])
     render(<FleetStatus />)
 
-    await waitFor(() => expect(screen.getByText('first000')).toBeInTheDocument())
-    const rendered = screen.getAllByRole('listitem').map((item) => item.querySelector('code')?.textContent)
-    expect(rendered).toEqual(['first000', 'second00', 'third000'])
-    // Only the head of the list, and only when there is a choice to make.
-    expect(screen.getAllByText('Best')).toHaveLength(1)
+    await waitFor(() => expect(screen.getByText('90 Mbit/s')).toBeInTheDocument())
+    await waitFor(() => {
+      const order = screen.getAllByRole('listitem').map((item) => item.querySelector('code')?.textContent)
+      expect(order).toEqual(['loaded00', 'idle0000'])
+    })
+    const best = screen.getByText('Best').closest('li')
+    expect(best?.querySelector('code')?.textContent).toBe('loaded00')
+  })
+
+  it('keeps a worker that cannot take work below one that can, however fast it is', async () => {
+    answer({
+      capacity: 'available',
+      workers: [member({ id: 'w_full00000', availability: 'busy' }), member({ id: 'w_free00000' })],
+    })
+    measures([{ id: 'w_full00000', mbit: 900 }, { id: 'w_free00000', mbit: 10 }])
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText('10 Mbit/s')).toBeInTheDocument())
+    const order = screen.getAllByRole('listitem').map((item) => item.querySelector('code')?.textContent)
+    expect(order).toEqual(['free0000', 'full0000'])
+  })
+
+  it('claims no best until it has measured one', async () => {
+    answer({ capacity: 'available', workers: [member({ id: 'w_one000000' }), member({ id: 'w_two000000' })] })
+    // Nothing measurable: a badge here would be a guess wearing a label.
+    measures([{ id: 'w_one000000', state: 'down' }, { id: 'w_two000000', state: 'down' }])
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getAllByText('no route from here')).toHaveLength(2))
+    expect(screen.queryByText('Best')).not.toBeInTheDocument()
   })
 
   it('measures busyness by whichever budget is closest to refusing the next room', async () => {
