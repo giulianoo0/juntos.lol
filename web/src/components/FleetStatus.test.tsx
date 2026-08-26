@@ -34,6 +34,32 @@ describe('FleetStatus', () => {
     vi.restoreAllMocks()
   })
 
+  it('draws the shape of the answer while it is still being fetched', async () => {
+    let release: (value: unknown) => void = () => {}
+    const pending = new Promise((resolve) => { release = resolve })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending))
+    const { container } = render(<FleetStatus />)
+
+    // Same header, same bar, same row of facts, so nothing jumps when the
+    // numbers land.
+    expect(container.querySelectorAll('.fleet-card.is-skeleton')).toHaveLength(2)
+    expect(container.querySelector('.fleet-meter-track')).not.toBeNull()
+    // The bones are decoration; the announcement is the sentence behind them.
+    expect(screen.getByText('Reading the fleet…')).toHaveClass('sr-only')
+
+    release({ ok: true, json: async () => ({ capacity: 'available', workers: [member()] }) })
+    await waitFor(() => expect(screen.getByText('aaaaaaaa')).toBeInTheDocument())
+    expect(container.querySelector('.fleet-card.is-skeleton')).toBeNull()
+  })
+
+  it('replaces the skeleton with the failure rather than waiting forever', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    const { container } = render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText('The fleet did not answer')).toBeInTheDocument())
+    expect(container.querySelector('.fleet-card.is-skeleton')).toBeNull()
+  })
+
   it('keeps the order the server sent, because it is the order rooms are placed in', async () => {
     answer({
       capacity: 'available',

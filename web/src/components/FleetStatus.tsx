@@ -56,7 +56,14 @@ export function FleetStatus() {
   if (fleet === null) {
     return (
       <div className="fleet-status" role="status" aria-live="polite">
-        <p className="fleet-empty">{failed ? t('fleet.unreachable') : t('fleet.loading')}</p>
+        {failed ? (
+          <p className="fleet-empty">{t('fleet.unreachable')}</p>
+        ) : (
+          <>
+            <span className="sr-only">{t('fleet.loading')}</span>
+            <FleetSkeleton />
+          </>
+        )}
       </div>
     )
   }
@@ -131,6 +138,43 @@ export function FleetStatus() {
         </ol>
       ) : null}
     </div>
+  )
+}
+
+// The shape of the answer, drawn before the answer arrives: same header, same
+// bar, same row of facts, so nothing jumps when the numbers land. Two cards,
+// because promising a number of workers the fleet may not have would be the
+// skeleton telling a small lie.
+function FleetSkeleton() {
+  return (
+    <>
+      <header className="fleet-summary">
+        <span className="fleet-bone is-title" />
+        <span className="fleet-bone is-line" />
+      </header>
+      <ol className="fleet-list" aria-hidden="true">
+        {[0, 1].map((index) => (
+          <li key={index} className="fleet-card is-skeleton">
+            <div className="fleet-card-head">
+              <span className="fleet-bone is-id" />
+              <span className="fleet-bone is-badge" />
+            </div>
+            <div className="fleet-meter">
+              <div className="fleet-meter-row">
+                <span className="fleet-bone is-label" />
+                <span className="fleet-bone is-label" />
+              </div>
+              <div className="fleet-meter-track" />
+            </div>
+            <div className="fleet-facts">
+              {[0, 1, 2].map((fact) => (
+                <span key={fact} className="fleet-bone is-fact" />
+              ))}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </>
   )
 }
 
