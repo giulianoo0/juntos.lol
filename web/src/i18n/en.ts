@@ -41,6 +41,7 @@ export const en: Record<string, string> = {
   'home.swarmPeers': 'Peers',
   'home.swarmSpeed': 'Speed',
   'home.swarmDownloaded': 'Downloaded',
+  'home.swarmOnDisk': 'On disk',
   'home.tooLarge': 'This file is larger than 50 GB.',
   'home.failed': 'Could not create the room. Try again.',
   'room.copy': 'Copy link',

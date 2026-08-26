@@ -98,7 +98,7 @@ impl DiskAccountant {
 
 /// Blocks allocated, not apparent size: librqbit creates every file of a
 /// torrent at full length and the holes cost nothing until they are filled.
-fn allocated_under(dir: &Path) -> u64 {
+pub(super) fn allocated_under(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };

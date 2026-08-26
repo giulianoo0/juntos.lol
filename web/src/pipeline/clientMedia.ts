@@ -597,6 +597,15 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // The reads go before the conversion: a cancel waits on the demuxer,
       // and the demuxer may be parked on a range the swarm has not fetched.
       file.abortReads()
+      // Then say where we are going, before anything here reads there. The
+      // cancel below and the keyframe probe after it are the slow part of a
+      // seek, and a remote origin would otherwise spend all of it fetching
+      // around the position we just left. The timeline gives the offset to
+      // within a few percent, which a window this wide swallows whole; the
+      // reads that follow correct it.
+      if (plan.durationSeconds > 0) {
+        file.prefetchAt?.(Math.round((absoluteMs / (plan.durationSeconds * 1000)) * file.size))
+      }
       await conversion?.cancel().catch(() => {})
       console.log('[remux-worker] old region canceled')
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)

@@ -25,10 +25,7 @@ type Heartbeat struct {
 		NotAfter   *int64  `json:"notAfter"`
 		LastResult *string `json:"lastResult"`
 	} `json:"cert"`
-	Disk struct {
-		Used  int64 `json:"used"`
-		Quota int64 `json:"quota"`
-	} `json:"disk"`
+	Disk         DiskReport      `json:"disk"`
 	Relayed      bool            `json:"relayed"`
 	Transfer     *TransferStats  `json:"transfer"`
 	Leases       int             `json:"leases"`
@@ -46,12 +43,27 @@ type TransferStats struct {
 }
 
 // TorrentDigest is one torrent as the worker sees it.
+// DiskReport is a worker's storage as it last reported it. Used is what its
+// admission counts on — a window's worth reserved per torrent, downloaded or
+// not — and Real is what the volume is actually carrying. They diverge by
+// design: everything behind a reader's window is punched back out to the
+// filesystem, so a promise and a measurement are different numbers.
+type DiskReport struct {
+	Used  int64 `json:"used"`
+	Real  int64 `json:"real"`
+	Quota int64 `json:"quota"`
+}
+
 type TorrentDigest struct {
-	Infohash      string   `json:"infohash"`
-	Name          string   `json:"name"`
-	Phase         string   `json:"phase"`
-	HaveBytes     int64    `json:"haveBytes"`
-	SelectedBytes int64    `json:"selectedBytes"`
+	Infohash      string `json:"infohash"`
+	Name          string `json:"name"`
+	Phase         string `json:"phase"`
+	HaveBytes     int64  `json:"haveBytes"`
+	SelectedBytes int64  `json:"selectedBytes"`
+	// DiskBytes is what this torrent's files actually hold on the worker right
+	// now. The window punches everything behind it back out, so neither the
+	// selected size nor what it has downloaded says how much storage is in use.
+	DiskBytes     int64    `json:"diskBytes"`
 	Peers         int64    `json:"peers"`
 	DownSpeed     int64    `json:"downSpeed"`
 	UpSpeed       int64    `json:"upSpeed"`

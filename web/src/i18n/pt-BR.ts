@@ -41,6 +41,7 @@ export const ptBR: Record<string, string> = {
   'home.swarmPeers': 'Peers',
   'home.swarmSpeed': 'Velocidade',
   'home.swarmDownloaded': 'Baixado',
+  'home.swarmOnDisk': 'Em disco',
   'home.tooLarge': 'Este arquivo tem mais de 50 GB.',
   'home.failed': 'Não foi possível criar a sala. Tente novamente.',
   'room.copy': 'Copiar link',

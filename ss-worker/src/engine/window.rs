@@ -14,6 +14,25 @@ pub const BEHIND: u64 = 32 * 1024 * 1024;
 /// and the demuxer cannot seek at all.
 pub const PIN: u64 = 32 * 1024 * 1024;
 
+/// How many cursors one file can have windows for at once: the playhead and
+/// the subtitle scan each park a stream, and head probes never get one.
+const CURSORS: u64 = 2;
+
+/// The most this file can occupy while the window is doing its job: the
+/// pinned head and tail, plus a full span around every cursor that can exist.
+///
+/// This is what a torrent should be admitted against. Reserving the whole
+/// file was right before the window existed and is now wildly pessimistic —
+/// it would turn away a second room over disk that the first one never takes,
+/// since everything behind the window is punched back out to the filesystem.
+/// Generous on purpose: pieces are only released on the sweep, so what is
+/// held overshoots the ideal between rounds.
+pub fn footprint(file_len: u64, ahead: u64, behind: u64, pin: u64) -> u64 {
+    let spans = (ahead + behind).saturating_mul(CURSORS);
+    let pins = pin.saturating_mul(2);
+    spans.saturating_add(pins).min(file_len)
+}
+
 /// File-relative byte ranges worth holding for these read cursors, as
 /// half-open `[start, end)` pairs, merged and in order.
 pub fn needed_ranges(file_len: u64, cursors: &[u64], ahead: u64, behind: u64, pin: u64) -> Vec<(u64, u64)> {
@@ -142,5 +161,19 @@ mod tests {
     #[test]
     fn an_empty_file_needs_nothing() {
         assert!(needed_ranges(0, &[0], AHEAD, BEHIND, PIN).is_empty());
+    }
+
+    #[test]
+    fn a_huge_file_is_admitted_against_its_window_not_its_length() {
+        // The whole point: a 23 GB release never sits on the disk in full, so
+        // reserving 23 GB for it turns away rooms that would have fitted.
+        let held = footprint(23 * 1024 * MB, AHEAD, BEHIND, PIN);
+
+        assert!(held < 1024 * MB, "expected well under a gigabyte, got {held}");
+    }
+
+    #[test]
+    fn a_file_smaller_than_the_window_reserves_only_itself() {
+        assert_eq!(footprint(50 * MB, AHEAD, BEHIND, PIN), 50 * MB);
     }
 }

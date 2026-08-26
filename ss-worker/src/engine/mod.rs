@@ -79,6 +79,11 @@ pub struct TorrentDigest {
     pub have_bytes: u64,
     #[serde(rename = "selectedBytes")]
     pub selected_bytes: u64,
+    /// Blocks this torrent's files hold on the worker's disk right now, after
+    /// everything behind the window has been punched back out. What the site
+    /// shows when it says how much storage a room is using.
+    #[serde(rename = "diskBytes")]
+    pub disk_bytes: u64,
     pub peers: u64,
     #[serde(rename = "downSpeed")]
     pub down_speed: u64,
@@ -95,6 +100,8 @@ pub struct TorrentDigest {
 pub struct EngineSnapshot {
     #[serde(rename = "diskUsed")]
     pub disk_used: u64,
+    #[serde(rename = "diskReal")]
+    pub disk_real: u64,
     #[serde(rename = "diskQuota")]
     pub disk_quota: u64,
     pub torrents: Vec<TorrentDigest>,
@@ -362,10 +369,15 @@ impl Engine {
         let torrents = map.iter().map(|(id, e)| e.digest(id)).collect::<Vec<_>>();
         let leases = map.values().map(|e| e.leases.len()).sum();
         EngineSnapshot {
-            // The reservation is what admission counts on; the blocks on disk
-            // are what fills the volume. Whichever is larger is the honest
-            // answer for placement and for the alert that follows it.
+            // What admission counts on: each torrent's window footprint,
+            // whether or not those blocks have landed yet. Placement needs the
+            // promise, or a worker takes three rooms in the second before any
+            // of them has downloaded anything.
             disk_used: self.disk.used().max(self.disk.real_used()),
+            // What the volume is actually carrying. This is the one the site
+            // shows: a reservation is a promise about the future, and someone
+            // asking how much disk a room is using means the blocks.
+            disk_real: self.disk.real_used(),
             disk_quota: self.cfg.disk_quota_bytes,
             torrents,
             leases,
@@ -504,7 +516,7 @@ impl Engine {
             let reserve: u64 = ever
                 .iter()
                 .filter_map(|i| meta.file_infos.get(*i))
-                .map(|f| f.len)
+                .map(|f| window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN))
                 .sum();
             (only, total, reserve, ever)
         };
@@ -700,6 +712,11 @@ impl Engine {
                 entry.gen_floor.fetch_max(gen, Ordering::Relaxed);
             }
         }
+        // The hint itself is the sign of life, whether or not the stream can
+        // be moved right now: a reader waiting on the swarm makes no reads to
+        // touch the slot with, and letting it look idle is what retires the
+        // window out from under the very seek it is describing.
+        slot.keep_alive();
         // A busy slot is a response in flight for the old region; it notices
         // the floor on its next chunk and ends, freeing the slot to move.
         if let Ok(mut stream) = slot.stream.clone().try_lock_owned() {

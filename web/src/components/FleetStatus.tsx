@@ -139,7 +139,10 @@ export function FleetStatus() {
                   value={speedLabel(speeds.get(member.id), probing, t)}
                   pending={isMeasuring(speeds.get(member.id), probing)}
                 />
-                <Fact label={t('fleet.disk')} value={member.diskQuota ? `${gib(member.diskUsed)} / ${gib(member.diskQuota)}` : gib(member.diskUsed)} />
+                {/* The blocks on the volume, not the reservation behind them:
+                    a worker holding four windows has a few hundred megabytes,
+                    however many gigabytes of releases it is serving. */}
+                <Fact label={t('fleet.disk')} value={diskLabel(member)} />
                 <Fact
                   label={t('fleet.transfer')}
                   value={member.transferCapBps
@@ -250,6 +253,13 @@ function FleetSkeleton() {
 // running out, because that is the one that will refuse the next room. The
 // composite load the server sorts by would read as half-empty while the pipe
 // was already spoken for.
+// Reservations are still what decides whether a worker is full, so busyness
+// keeps reading diskUsed; only what a person sees changes.
+function diskLabel(member: FleetMember): string {
+  const held = member.diskReal ?? member.diskUsed
+  return member.diskQuota ? `${gib(held)} / ${gib(member.diskQuota)}` : gib(held)
+}
+
 function busyness(member: FleetMember): number {
   const parts = [
     member.maxLeases ? member.leases / member.maxLeases : 0,

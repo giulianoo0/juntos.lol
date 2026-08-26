@@ -54,10 +54,7 @@ func TestFleetReportsTheBudgetsBehindTheVerdict(t *testing.T) {
 		Version: "0.1.0", UptimeSecs: 3600, Leases: 2, MaxLeases: 8, MaxTorrents: 10,
 		Transfer: &TransferStats{CapBps: 1_000_000, UsedBps: 250_000},
 		Torrents: []TorrentDigest{{Infohash: strings.Repeat("b", 40)}},
-		Disk: struct {
-			Used  int64 `json:"used"`
-			Quota int64 `json:"quota"`
-		}{Used: 20 << 30, Quota: 100 << 30},
+		Disk:     DiskReport{Used: 20 << 30, Real: 320 << 20, Quota: 100 << 30},
 	})
 
 	member := r.Fleet(time.Now())[0]

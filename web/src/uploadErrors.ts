@@ -23,3 +23,23 @@ export function isUnreadableFile(error: unknown): boolean {
   if (error.name === 'NotReadableError' || error.name === 'NotFoundError') return true
   return error.message === FILE_UNREADABLE
 }
+
+// The read failures rangeRead raises when the bytes stop coming. Matched by
+// name for the same reason as above, and because the planner wraps whatever
+// it caught rather than re-raising it.
+export function isUnreachableRead(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.name === 'ReadUnreachableError' || error.name === 'ReadFailedError'
+}
+
+/**
+ * The code for a failure that is about reading the source rather than about
+ * the media, or null when it is neither. Both preparo paths — the worker and
+ * the page thread it falls back to — name a failure through here, so a source
+ * that stopped answering says the same thing whichever one was running.
+ */
+export function readFailureCode(failure: unknown, kind: string): string | null {
+  if (isUnreadableFile(failure)) return FILE_UNREADABLE
+  if (isUnreachableRead(failure)) return kind === 'url' ? SOURCE_UNREACHABLE : WORKER_UNREACHABLE
+  return null
+}

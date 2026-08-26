@@ -36,6 +36,16 @@ export interface MediaInput {
   /** Where a sibling file of this input is read from right now, if anywhere. */
   sidecarUrl?(index: number): string
   /**
+   * Says where reading is about to resume, before anything reads there. A
+   * seek otherwise reaches the origin only once the old region has finished
+   * tearing down and the keyframe probe issues its first read — and for a
+   * torrent that is the whole latency, because the swarm spends that time
+   * still fetching around the position we just left. The offset is a guess
+   * from the timeline, which is all a prefetch needs; the exact one follows
+   * from the reads themselves. Only remote inputs have anywhere to say it to.
+   */
+  prefetchAt?(offset: number): void
+  /**
    * Mirrors the remux's reads so a sequential pass can ride along instead of
    * asking the origin for the same bytes again. Only remote inputs carry
    * one: reading a local file twice costs nothing worth avoiding.
@@ -231,6 +241,9 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
       gate.close()
     },
     sidecarUrl: (index) => `${current.readBase}/v1/file/${current.ticket}/${index}`,
+    // Sent with the generation the abort just minted, so the worker treats it
+    // as the seek's own cursor and lets the responses behind it go.
+    prefetchAt: (offset) => hint(Math.min(Math.max(offset, 0), Math.max(grant.size - 1, 0))),
   }
 }
 

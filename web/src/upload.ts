@@ -13,7 +13,7 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // pulls mediabunny and its WASM decoders into the chunk the browser parses
 // before the first paint, and defeats the dynamic import further down.
 import { sourceIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
-import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile } from './uploadErrors'
+import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 
 export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -437,12 +437,15 @@ export function startRoomUpload(
       if (error instanceof PlanFailedError) {
         const cause = error.failure
         const why = cause instanceof Error ? `plan failed: ${cause.name}: ${cause.message}` : `plan failed: ${String(cause)}`
-        if (isUnreadableFile(error.failure)) { finish(FILE_UNREADABLE, why); return }
-        finish(source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA, why)
+        // Planning reads the source, so name a read failure for what it is:
+        // a swarm that stopped answering is not a file this browser cannot
+        // play, and this path is the one a live torrent session takes.
+        finish(readFailureCode(cause, source.kind)
+          ?? (source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA), why)
         return
       }
       console.error('client media pipeline failed', error)
-      finish(isUnreadableFile(error) ? FILE_UNREADABLE : error instanceof Error ? error.message : 'upload failed', detail)
+      finish(readFailureCode(error, source.kind) ?? (error instanceof Error ? error.message : 'upload failed'), detail)
     }
   })()
 }

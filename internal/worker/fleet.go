@@ -24,7 +24,10 @@ type FleetMember struct {
 	Torrents    int     `json:"torrents"`
 	MaxTorrents int     `json:"maxTorrents,omitempty"`
 	DiskUsed    int64   `json:"diskUsed"`
-	DiskQuota   int64   `json:"diskQuota,omitempty"`
+	// DiskReal is what the volume actually carries, which is what the fleet
+	// page shows: DiskUsed is a promise about windows not yet downloaded.
+	DiskReal  int64 `json:"diskReal"`
+	DiskQuota int64 `json:"diskQuota,omitempty"`
 	// TransferUsedBps and TransferCapBps are the serving pipe: a worker close
 	// to its ceiling is full even with disk and leases to spare.
 	TransferUsedBps int64 `json:"transferUsedBps"`
@@ -67,6 +70,7 @@ func (r *Registry) Fleet(now time.Time) []FleetMember {
 			Torrents:     len(hb.Torrents),
 			MaxTorrents:  hb.MaxTorrents,
 			DiskUsed:     hb.Disk.Used,
+			DiskReal:     hb.Disk.Real,
 			DiskQuota:    hb.Disk.Quota,
 			UptimeSecs:   hb.UptimeSecs,
 			LastSeenSecs: int64(now.Sub(w.LastSeen).Seconds()),

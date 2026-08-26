@@ -31,6 +31,20 @@ export function TorrentReadout({ stats }: { stats: TorrentStats }) {
         <dt>{t('home.swarmDownloaded')}</dt>
         <dd><NumberFlow value={round(stats.downloaded / 1_073_741_824, 2)} suffix=" GB" /></dd>
       </div>
+      {/*
+        What the helper is actually storing, which is not what it has
+        downloaded: the window gives the blocks behind the reader back to the
+        filesystem as it passes them, so a two-hour film is a few hundred
+        megabytes on disk however much of it has been through here. Without
+        this the only storage figure on screen is the downloaded one, and it
+        reads as if the whole release were piling up on the worker.
+      */}
+      {stats.diskBytes !== undefined ? (
+        <div>
+          <dt>{t('home.swarmOnDisk')}</dt>
+          <dd><NumberFlow value={round(stats.diskBytes / 1_048_576, 0)} suffix=" MB" /></dd>
+        </div>
+      ) : null}
     </dl>
   )
 }

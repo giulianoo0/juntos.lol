@@ -67,6 +67,12 @@ const COPIED_MS = 1_800
 // How often a room still being prepared re-reads its own progress, as a
 // fallback for the live updates rather than a replacement for them.
 const PREPARING_POLL_MS = 3_000
+// How long a pipeline may go quiet before the room counts as unproduced.
+// Every publish is a heartbeat and those run every couple of seconds, but a
+// cold seek spends its time snapping to a keyframe rather than publishing —
+// so this has to outlast the longest of those waits. Well short of the
+// server's own claim sweep, which is what finally hands the room over.
+const PRODUCER_ALIVE_MS = 90_000
 
 export function RoomPage() {
   const { id = '' } = useParams()
@@ -252,6 +258,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     peers: reported.peers,
     downloadSpeed: reported.downSpeed,
     downloaded: reported.haveBytes,
+    diskBytes: reported.diskBytes,
     progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
   } : null), [localSwarm, reported])
   // Retomar o preparo: the pipeline died with this tab's last life (a reload,
@@ -268,10 +275,19 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // holds, which is the one thing a dead pipeline cannot fix by itself.
   const resumeWanted = sync.state ? expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs) : null
   const liveRegions = liveRoom.mediaRegions ?? []
-  const needsPreparo = liveRoom.status !== 'ready'
-    || (resumeWanted !== null && liveRegions.length > 0
-      && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
-      && !liveRegions.some((region) => regionHolds(region, resumeWanted)))
+  // A running pipeline is already on its way to wherever the room points, so
+  // a position no region holds is a cold seek, not a dead room. The claim's
+  // heartbeat is the only signal that sees past this tab: the guards below
+  // know about a pipeline living here, and a seek is exactly the moment a
+  // second tab — or a viewer who once hosted this room — would otherwise
+  // decide the room was broken and swap it for a fresh, empty generation.
+  const producing = liveRoom.producerHeartbeatMs !== undefined
+    && (Date.now() + sync.serverOffsetMs) - liveRoom.producerHeartbeatMs < PRODUCER_ALIVE_MS
+  const needsPreparo = !producing
+    && (liveRoom.status !== 'ready'
+      || (resumeWanted !== null && liveRegions.length > 0
+        && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
+        && !liveRegions.some((region) => regionHolds(region, resumeWanted))))
   const resumeTried = useRef(false)
   useEffect(() => {
     if (resumeTried.current || !sync.memberId || !sync.capability) return

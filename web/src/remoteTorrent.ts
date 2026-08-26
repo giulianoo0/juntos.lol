@@ -102,7 +102,7 @@ interface JobStatus {
   error?: string
   name?: string
   files?: JobFile[]
-  swarm?: { peers: number; downSpeed: number; haveBytes: number; selectedBytes: number }
+  swarm?: { peers: number; downSpeed: number; haveBytes: number; selectedBytes: number; diskBytes?: number }
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -159,6 +159,10 @@ export interface FleetMember {
   torrents: number
   maxTorrents?: number
   diskUsed: number
+  // What the volume actually carries. diskUsed is what admission counts on —
+  // a window's worth reserved per torrent whether or not it has downloaded —
+  // so it is the right number for placement and the wrong one to show.
+  diskReal?: number
   diskQuota?: number
   transferUsedBps: number
   transferCapBps?: number
@@ -424,6 +428,7 @@ export async function openRemoteTorrent(
         peers: next.swarm.peers,
         downloadSpeed: next.swarm.downSpeed,
         downloaded: next.swarm.haveBytes,
+        diskBytes: next.swarm.diskBytes,
         progress: Math.min(next.swarm.haveBytes / total, 1),
       }
       onStats?.(currentStats)

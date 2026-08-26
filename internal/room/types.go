@@ -112,8 +112,15 @@ type Room struct {
 	// viewer waiting on a source is told what is happening and roughly how
 	// long, instead of watching a bar that fills to 100% and then sits there.
 	Preparation Preparation `json:"preparation"`
-	CreatedAt   time.Time   `json:"createdAt"`
-	ExpiresAt   time.Time   `json:"expiresAt"`
+	// ProducerHeartbeatMs is when the client pipeline holding this room's
+	// claim last showed a sign of life, in Unix milliseconds; 0 when no claim
+	// is held. It is what tells a cold seek apart from a dead room: a playhead
+	// outside every produced region is normal while a pipeline is running —
+	// it is on its way there — and only means the room needs picking up again
+	// once nothing is producing. Cleared with the claim it belongs to.
+	ProducerHeartbeatMs int64     `json:"producerHeartbeatMs,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"`
+	ExpiresAt           time.Time `json:"expiresAt"`
 }
 
 // MediaRegion is one contiguous stretch of produced media, in room time.
@@ -165,4 +172,9 @@ type SwarmStats struct {
 	DownSpeed     int64 `json:"downSpeed"`
 	HaveBytes     int64 `json:"haveBytes"`
 	SelectedBytes int64 `json:"selectedBytes"`
+	// DiskBytes is what the worker's disk is really holding for this torrent.
+	// HaveBytes only ever grows — it counts what came off the swarm over the
+	// torrent's life — while the window hands blocks back as the reader passes
+	// them, so the two answer different questions and only this one is storage.
+	DiskBytes int64 `json:"diskBytes"`
 }

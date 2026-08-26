@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::slots::{Prio, StreamSlot};
 use super::{Handle, TorrentDigest};
@@ -38,7 +38,14 @@ pub struct Entry {
     pub gen_floor: Arc<AtomicU64>,
     /// Whether the one in-place restart after a failure was spent.
     pub retried: bool,
+    /// Blocks this torrent's files actually hold, and when that was last
+    /// counted. Walking the folder is cheap but the digest is asked for far
+    /// more often than the number moves.
+    disk: Mutex<(u64, Option<Instant>)>,
 }
+
+/// How long a walk of one torrent's folder stands in for the next.
+const DISK_TTL: Duration = Duration::from_secs(5);
 
 impl Entry {
     pub fn new(handle: Handle, phase: Phase, selected_bytes: u64) -> Self {
@@ -53,7 +60,24 @@ impl Entry {
             slots: HashMap::new(),
             gen_floor: Arc::new(AtomicU64::new(0)),
             retried: false,
+            disk: Mutex::new((0, None)),
         }
+    }
+
+    /// What this torrent is really costing the disk right now. Not the
+    /// selected size and not what it has downloaded over its life: the window
+    /// punches everything behind it back out, so those two say nothing about
+    /// how full the volume is.
+    fn disk_bytes(&self) -> u64 {
+        {
+            let cached = self.disk.lock().unwrap();
+            if cached.1.is_some_and(|at| at.elapsed() < DISK_TTL) {
+                return cached.0;
+            }
+        }
+        let total = super::disk::allocated_under(&self.handle.output_folder());
+        *self.disk.lock().unwrap() = (total, Some(Instant::now()));
+        total
     }
 
     pub fn touch(&mut self) {
@@ -94,6 +118,7 @@ impl Entry {
             // the torrent actually holds, so the room's readout only grows.
             have_bytes: stats.have_bytes.max(stats.progress_bytes),
             selected_bytes: self.selected_bytes,
+            disk_bytes: self.disk_bytes(),
             peers,
             down_speed: down,
             up_speed: up,

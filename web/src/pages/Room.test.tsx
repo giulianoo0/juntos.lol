@@ -254,15 +254,15 @@ describe('RoomPage retomar o preparo', () => {
   // Resuming reopens the source on a fresh generation, and nothing already
   // produced survives that. It has to wait until the room is actually
   // pointing at media no region holds.
-  const roomWith = (mediaRegions: unknown) => ({
+  const roomWith = (mediaRegions: unknown, producerHeartbeatMs?: number) => ({
     id: 'abc123', fileName: 'movie.mkv', status: 'ready',
     sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
     audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-    durationMs: 600_000, mediaRegions,
+    durationMs: 600_000, mediaRegions, producerHeartbeatMs,
     memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
   })
 
-  const setup = (mediaRegions: unknown) => {
+  const setup = (mediaRegions: unknown, producerHeartbeatMs?: number) => {
     localStorage.clear()
     localStorage.setItem('ss.nickname', 'Giuli')
     localStorage.setItem('ss.resume.abc123', JSON.stringify({
@@ -271,7 +271,7 @@ describe('RoomPage retomar o preparo', () => {
     vi.clearAllMocks()
     FakeWebSocket.instances = []
     vi.stubGlobal('WebSocket', FakeWebSocket)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => roomWith(mediaRegions) }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => roomWith(mediaRegions, producerHeartbeatMs) }))
   }
 
   afterEach(() => {
@@ -302,6 +302,32 @@ describe('RoomPage retomar o preparo', () => {
 
   it('reopens the source when nothing holds the position the room is at', async () => {
     setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }])
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome()
+
+    await waitFor(() => expect(changeRoomSource).toHaveBeenCalled())
+  })
+
+  // The bug this guards: a cold seek puts the room somewhere no region holds
+  // yet, which is exactly the shape of a dead room. Any tab holding a
+  // resumable source — a second window, a viewer who once hosted this room —
+  // would answer it by swapping the source for a fresh, empty generation and
+  // throwing away everything the running pipeline had produced. A live
+  // heartbeat says the pipeline is already on its way there.
+  it('leaves a cold seek alone while a pipeline is still producing', async () => {
+    setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }], Date.now())
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome()
+
+    await screen.findByRole('button', { name: /copy link|copiar link/i })
+    expect(changeRoomSource).not.toHaveBeenCalled()
+    expect(startUrlUpload).not.toHaveBeenCalled()
+  })
+
+  it('picks the room up once the pipeline behind it has gone quiet', async () => {
+    setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }], Date.now() - 10 * 60_000)
     renderRoom()
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
     welcome()

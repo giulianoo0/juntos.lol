@@ -99,7 +99,7 @@ export interface RoomPreparation {
   previewTargetBytes?: number
   // The torrent behind the source, as its worker last reported it. Present
   // for every viewer, not only the host.
-  swarm?: { peers: number; downSpeed: number; haveBytes: number; selectedBytes: number }
+  swarm?: { peers: number; downSpeed: number; haveBytes: number; selectedBytes: number; diskBytes?: number }
 }
 
 // RoomChapter is one authored span of the media, in milliseconds.
@@ -154,6 +154,11 @@ export interface RoomInfo {
   // carries any: the player draws them on the timeline.
   chapters?: RoomChapter[] | null
   bitmapSubsSkipped: number
+  // When the pipeline holding this room's claim last showed a sign of life,
+  // in Unix milliseconds on the server's clock; absent when nobody is
+  // producing. A playhead outside every region means a cold seek while this
+  // is fresh, and a room that needs picking up again only once it is stale.
+  producerHeartbeatMs?: number
   preparation?: RoomPreparation
   memberCount: number
   expiresAt: string

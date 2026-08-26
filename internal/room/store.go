@@ -261,6 +261,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		"source_bytes":         &r.Preparation.SourceBytes,
 		"received_bytes":       &r.Preparation.ReceivedBytes,
 		"preview_target_bytes": &r.Preparation.PreviewTargetBytes,
+		"client_media_touched": &r.ProducerHeartbeatMs,
 	} {
 		if v := fields[field]; v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
@@ -283,6 +284,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 			"swarm_down_speed":     &swarm.DownSpeed,
 			"swarm_have_bytes":     &swarm.HaveBytes,
 			"swarm_selected_bytes": &swarm.SelectedBytes,
+			"swarm_disk_bytes":     &swarm.DiskBytes,
 		} {
 			if v := fields[field]; v != "" {
 				n, err := strconv.ParseInt(v, 10, 64)
@@ -350,6 +352,7 @@ func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error
 		"swarm_down_speed", strconv.FormatInt(swarm.DownSpeed, 10),
 		"swarm_have_bytes", strconv.FormatInt(swarm.HaveBytes, 10),
 		"swarm_selected_bytes", strconv.FormatInt(swarm.SelectedBytes, 10),
+		"swarm_disk_bytes", strconv.FormatInt(swarm.DiskBytes, 10),
 	)
 }
 
@@ -595,7 +598,7 @@ redis.call('HSET', KEYS[1],
   'bitmap_subs_skipped', 0)
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
-		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'media_regions',
+		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])

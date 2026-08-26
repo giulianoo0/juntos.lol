@@ -52,6 +52,11 @@ export interface TorrentStats {
   downloadSpeed: number
   downloaded: number
   progress: number
+  // What the worker's disk is really holding for this torrent. `downloaded`
+  // only grows — it is everything that ever came off the swarm — while the
+  // window hands blocks back as the reader passes them, so this is the one
+  // that answers "how much storage is this room using".
+  diskBytes?: number
 }
 
 export interface TorrentSession {

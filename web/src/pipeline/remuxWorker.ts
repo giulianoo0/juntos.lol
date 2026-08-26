@@ -6,8 +6,8 @@
  */
 import { PlanFailedError, runRemuxJob, UnsupportedMediaError, type RemuxJob } from './remuxJob'
 import { RoomMovedOnError, type ClientRemuxHandle } from './clientMedia'
-import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from '../uploadErrors'
-import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
+import { SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, readFailureCode } from '../uploadErrors'
+import { ReadAbortedError } from './rangeRead'
 
 export type WorkerToPage =
   | { type: 'progress'; pct: number }
@@ -82,13 +82,16 @@ function describe(error: unknown): string {
 
 function classify(error: unknown, kind: RemuxJob['source']['kind']): string {
   if (error instanceof UnsupportedMediaError) return UNSUPPORTED_MEDIA
-  if (error instanceof PlanFailedError) {
-    if (isUnreadableFile(error.failure)) return FILE_UNREADABLE
-    return kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
-  }
-  if (isUnreadableFile(error)) return FILE_UNREADABLE
-  if (error instanceof ReadUnreachableError || error instanceof ReadFailedError) {
-    return kind === 'url' ? SOURCE_UNREACHABLE : WORKER_UNREACHABLE
-  }
+  // Planning reads the source, so it fails for the source's reasons as often
+  // as for the media's. Unwrap it and judge the failure itself: a swarm that
+  // stopped answering during the plan is the same unreachable origin it would
+  // be a second later during the remux, and telling someone their browser
+  // cannot play the file sends them off to fix the wrong thing.
+  const failure = error instanceof PlanFailedError ? error.failure : error
+  const read = readFailureCode(failure, kind)
+  if (read) return read
+  // Anything else the planner choked on is the media itself: it read bytes
+  // and could not make a container out of them.
+  if (error instanceof PlanFailedError) return kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
   return error instanceof Error ? error.message : 'upload failed'
 }

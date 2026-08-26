@@ -44,6 +44,15 @@ impl StreamSlot {
     pub fn touch(&self, position: u64) {
         *self.meta.lock().unwrap() = (position, Instant::now());
     }
+    /// Says the reader is still there without claiming it moved. A hint
+    /// arrives precisely when the reader is not reading — it is telling us
+    /// where it is about to go — and a busy stream cannot be seeked under
+    /// the response holding it. Without this the slot looks abandoned, the
+    /// sweeper retires it, and the window drops the pieces the hint just
+    /// asked for.
+    pub fn keep_alive(&self) {
+        self.meta.lock().unwrap().1 = Instant::now();
+    }
     #[allow(dead_code)]
     pub fn position(&self) -> u64 {
         self.meta.lock().unwrap().0

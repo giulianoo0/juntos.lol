@@ -51,10 +51,7 @@ func TestPlacementRefusals(t *testing.T) {
 	require.ErrorIs(t, err, ErrWorkersBusy)
 
 	// Disk: a 10 GB file does not fit a worker with 1 GB left of a 100 GB quota.
-	live(r, "tight", Heartbeat{Leases: 0, MaxLeases: 8, Disk: struct {
-		Used  int64 `json:"used"`
-		Quota int64 `json:"quota"`
-	}{Used: 89 << 30, Quota: 100 << 30}})
+	live(r, "tight", Heartbeat{Leases: 0, MaxLeases: 8, Disk: DiskReport{Used: 89 << 30, Quota: 100 << 30}})
 	_, err = r.Place(strings.Repeat("e", 40), 10<<30, time.Now())
 	require.ErrorIs(t, err, ErrWorkersBusy)
 	w, err := r.Place(strings.Repeat("e", 40), 0, time.Now())
