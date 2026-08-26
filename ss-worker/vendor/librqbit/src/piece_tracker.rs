@@ -346,6 +346,17 @@ impl PieceTracker {
         self.chunks.update_selected_pieces(selected)
     }
 
+    /// ss patch: give up pieces the window has left behind, so their storage
+    /// can be released. Only pieces that are HAVE and not selected are
+    /// touched, which by the invariant above is never one in flight.
+    pub fn forget_pieces(
+        &mut self,
+        forget: &crate::type_aliases::BS,
+        file_infos: &FileInfos,
+    ) -> Vec<u32> {
+        self.chunks.forget_pieces(forget, file_infos)
+    }
+
     /// Update per-file have bytes when a piece completes. Returns remaining bytes for the file.
     pub fn update_file_have_on_piece_completed(
         &mut self,

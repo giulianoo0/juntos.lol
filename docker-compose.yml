@@ -100,6 +100,13 @@ services:
     build:
       context: ./ss-worker
     restart: unless-stopped
+    # Torrent logs are chatty and the default json-file driver never rotates:
+    # left alone it fills the host's disk from outside the worker's own quota.
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "3"
     environment:
       SS_WORKER_SERVER_URL: ws://app:8080/ws/worker-link
       SS_WORKER_ENROLLMENT_TOKEN: ${WORKER_ENROLLMENT_SECRET:-}

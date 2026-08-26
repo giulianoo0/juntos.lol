@@ -458,6 +458,20 @@ impl TorrentStateLive {
                     }
                 }
             }
+            // ss patch: asked again after the wait. A streaming window can give
+            // a piece up while its chunk sits behind the rate limiter, and the
+            // file it would be read from now has a hole where those bytes were.
+            // The peer would get a well-formed message full of zeroes, fail the
+            // hash, and rightly hold it against us.
+            if !self
+                .lock_read("upload_still_held")
+                .get_chunks()
+                .map(|c| c.is_chunk_ready_to_upload(&ci))
+                .unwrap_or(false)
+            {
+                trace!(?ci, "dropping an upload of a chunk we no longer hold");
+                continue;
+            }
             let _ = tx.send(WriterRequest::ReadChunkRequest(ci));
         }
         Ok(())
@@ -822,6 +836,14 @@ impl TorrentStateLive {
             self.reconnect_all_not_needed_peers();
         }
         Ok(())
+    }
+
+    /// ss patch: see ChunkTracker::forget_pieces. Returns the pieces the
+    /// tracker gave up, which are exactly the ones whose storage may go.
+    pub(crate) fn forget_pieces(&self, forget: &BF) -> anyhow::Result<Vec<u32>> {
+        let mut g = self.lock_write("forget_pieces");
+        let pt = g.get_pieces_mut()?;
+        Ok(pt.forget_pieces(forget, &self.metadata.file_infos))
     }
 
     // If we have all selected pieces but not necessarily all pieces.
@@ -1525,10 +1547,13 @@ impl PeerHandler {
             .get_chunks()?
             .is_chunk_ready_to_upload(&chunk_info)
         {
-            anyhow::bail!(
-                "got request for a chunk that is not ready to upload. chunk {:?}",
-                chunk_info
-            );
+            // ss patch: not an error any more. A streaming window gives up
+            // pieces behind it (see forget_pieces), so a peer acting on a HAVE
+            // we broadcast minutes ago is asking in good faith. Dropping the
+            // connection over it would churn the swarm we depend on; the peer
+            // times the request out and moves on.
+            trace!(?chunk_info, "ignoring a request for a chunk we no longer hold");
+            return Ok(());
         }
 
         self.state

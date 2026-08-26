@@ -641,6 +641,34 @@ impl ManagedTorrent {
         }
     }
 
+    /// ss patch: gives up pieces this torrent holds but no longer wants, so
+    /// the caller may release the storage behind them. Pieces still selected,
+    /// or still in flight, are ignored — passing the whole set of candidates
+    /// is safe. Returns the pieces actually given up.
+    ///
+    /// Call this before releasing any storage, never after: while a piece
+    /// reads as HAVE, a FileStream will serve it, and a hole under a HAVE
+    /// piece reads back as zeroes with nothing to catch it.
+    pub fn forget_pieces(&self, pieces: &[u32]) -> anyhow::Result<Vec<u32>> {
+        let metadata = self.metadata.load();
+        let metadata = metadata.as_ref().context("torrent is not resolved")?;
+        let lengths = metadata.lengths();
+        let mut forget = BF::from_boxed_slice(
+            vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice(),
+        );
+        let total = lengths.total_pieces();
+        for &piece in pieces {
+            if piece < total {
+                forget.set(piece as usize, true);
+            }
+        }
+        let g = self.locked.read();
+        match &g.state {
+            ManagedTorrentState::Live(l) => l.forget_pieces(&forget),
+            _ => Ok(Vec::new()),
+        }
+    }
+
     // Returns true if needed to unpause torrent.
     // This is just implementation detail - it's easier to pause/unpause than to tinker with internals.
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {

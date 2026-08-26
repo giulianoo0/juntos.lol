@@ -39,7 +39,10 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("loaded {loaded} settings from {env_file}");
     }
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,librqbit=warn")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,librqbit=warn")),
+        )
         .with_target(false)
         .compact()
         .init();
@@ -56,6 +59,7 @@ async fn main() -> anyhow::Result<()> {
         server_key: RwLock::new(None),
         worker_id: RwLock::new(String::new()),
         revoked: Mutex::new(Default::default()),
+        probe_spent: Mutex::new(Default::default()),
         metrics: Arc::new(http::Metrics::default()),
     });
 
@@ -69,7 +73,10 @@ async fn main() -> anyhow::Result<()> {
         }
         TlsMode::File => {
             let slot = Arc::new(http::tls::CertSlot::default());
-            let (cert, key) = (cfg.tls_cert_file.clone().unwrap(), cfg.tls_key_file.clone().unwrap());
+            let (cert, key) = (
+                cfg.tls_cert_file.clone().unwrap(),
+                cfg.tls_key_file.clone().unwrap(),
+            );
             http::tls::install_from_files(&slot, &cert, &key)?;
             tracing::info!(not_after = ?slot.not_after(), cert = %cert.display(), "certificate loaded from files");
             // Whoever renews the files does it on their own clock; an hourly
@@ -122,7 +129,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let drain = Arc::new(tokio::sync::Notify::new());
-    let control = Arc::new(control::Control::new(cfg.clone(), engine.clone(), app.clone(), slot, acme, drain.clone())?);
+    let control = Arc::new(control::Control::new(
+        cfg.clone(),
+        engine.clone(),
+        app.clone(),
+        slot,
+        acme,
+        drain.clone(),
+    )?);
     tokio::spawn(control.run());
 
     // Shutdown — a signal, or a drain job from the server: stop taking
@@ -134,11 +148,23 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("draining");
     engine.drain();
     let deadline = tokio::time::Instant::now() + cfg.drain_deadline;
-    while app.metrics.in_flight.load(Ordering::Relaxed) > 0 && tokio::time::Instant::now() < deadline {
+    while app.metrics.in_flight.load(Ordering::Relaxed) > 0
+        && tokio::time::Instant::now() < deadline
+    {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     handle.graceful_shutdown(Some(Duration::from_secs(5)));
     tokio::time::sleep(Duration::from_millis(500)).await;
+    // The next process cannot resume any of this — the session keeps no
+    // persistence — so leaving the pieces behind only costs disk. Bounded by
+    // what is left of the drain deadline: a slow unlink must not hold the
+    // container open past it.
+    let left = deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .max(Duration::from_secs(5));
+    if tokio::time::timeout(left, engine.reap_all()).await.is_err() {
+        tracing::warn!("gave up clearing torrent data; the next boot sweeps it");
+    }
     Ok(())
 }
 
@@ -146,7 +172,8 @@ async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("sigterm");
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("sigterm");
         tokio::select! {
             _ = ctrl_c => {}
             _ = term.recv() => {}

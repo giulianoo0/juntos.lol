@@ -75,6 +75,59 @@ fn env_secs(name: &str, default: u64) -> anyhow::Result<Duration> {
     Ok(Duration::from_secs(env_parse(name, default)?))
 }
 
+const GB: u64 = 1024 * 1024 * 1024;
+/// Used only when the filesystem will not say how big it is.
+const QUOTA_FALLBACK_GB: u64 = 120;
+/// Share of the filesystem the torrents may claim when nobody said. The rest
+/// is for the certificates, the logs and whatever else lives on the volume.
+const QUOTA_SHARE_PCT: u64 = 80;
+
+/// Bytes on the filesystem holding `dir`, as the kernel reports it.
+#[cfg(unix)]
+fn filesystem_bytes(dir: &std::path::Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let path = CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    let total = stat.f_blocks as u64 * stat.f_frsize as u64;
+    (total > 0).then_some(total)
+}
+
+#[cfg(not(unix))]
+fn filesystem_bytes(_dir: &std::path::Path) -> Option<u64> {
+    None
+}
+
+/// A quota larger than the disk is not a quota: the accountant keeps admitting
+/// torrents until the filesystem answers ENOSPC, which librqbit turns into a
+/// torrent in Error and a rescan of everything it had. So the default follows
+/// the filesystem, and a configured one is held to it.
+fn disk_quota_bytes(data_dir: &std::path::Path) -> anyhow::Result<u64> {
+    let _ = std::fs::create_dir_all(data_dir);
+    let ceiling = filesystem_bytes(data_dir).map(|total| total / 100 * QUOTA_SHARE_PCT);
+    let asked = match env("SS_WORKER_DISK_QUOTA_GB") {
+        Some(_) => Some(env_parse::<u64>("SS_WORKER_DISK_QUOTA_GB", QUOTA_FALLBACK_GB)? * GB),
+        None => None,
+    };
+    Ok(match (asked, ceiling) {
+        (Some(asked), Some(ceiling)) if asked > ceiling => {
+            tracing::warn!(
+                asked_gb = asked / GB,
+                using_gb = ceiling / GB,
+                dir = %data_dir.display(),
+                "SS_WORKER_DISK_QUOTA_GB does not fit the filesystem; holding it to what is there",
+            );
+            ceiling
+        }
+        (Some(asked), _) => asked,
+        (None, Some(ceiling)) => ceiling,
+        (None, None) => QUOTA_FALLBACK_GB * GB,
+    })
+}
+
 /// Loads KEY=VALUE lines into the environment, real env winning. The setup
 /// wizard writes this file so a bare `ss-worker` starts configured.
 pub fn load_env_file(path: &std::path::Path) -> anyhow::Result<usize> {
@@ -85,7 +138,9 @@ pub fn load_env_file(path: &std::path::Path) -> anyhow::Result<usize> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let (key, value) = (key.trim(), value.trim().trim_matches('"'));
         if std::env::var(key).map(|v| v.is_empty()).unwrap_or(true) {
             std::env::set_var(key, value);
@@ -108,10 +163,12 @@ impl WorkerConfig {
             Some(v) => Some(v.parse().context("SS_WORKER_PUBLIC_IP")?),
             None => None,
         };
+        let data_dir = PathBuf::from(env("SS_WORKER_DATA_DIR").unwrap_or_else(|| "./data".into()));
         let cfg = Self {
             server_url: env("SS_WORKER_SERVER_URL").context("SS_WORKER_SERVER_URL is required")?,
             enrollment_token: env("SS_WORKER_ENROLLMENT_TOKEN"),
-            data_dir: PathBuf::from(env("SS_WORKER_DATA_DIR").unwrap_or_else(|| "./data".into())),
+            disk_quota_bytes: disk_quota_bytes(&data_dir)?,
+            data_dir,
             public_ip,
             public_hostname: env("SS_WORKER_PUBLIC_HOSTNAME"),
             bt_listen_port: env_parse("SS_WORKER_BT_PORT", 4240)?,
@@ -125,11 +182,15 @@ impl WorkerConfig {
             acme_profile: env("SS_WORKER_ACME_PROFILE").unwrap_or_else(|| "shortlived".into()),
             tls_cert_file: env("SS_WORKER_TLS_CERT").map(Into::into),
             tls_key_file: env("SS_WORKER_TLS_KEY").map(Into::into),
-            disk_quota_bytes: env_parse::<u64>("SS_WORKER_DISK_QUOTA_GB", 120)? * 1024 * 1024 * 1024,
             disk_high_water_pct: env_parse("SS_WORKER_DISK_HIGH_WATER_PCT", 90)?,
             max_torrents: env_parse("SS_WORKER_MAX_TORRENTS", 12)?,
             max_leases: env_parse("SS_WORKER_MAX_LEASES", 8)?,
-            per_torrent_peer_limit: env_parse("SS_WORKER_PEER_LIMIT", 80)?,
+            // Held down on purpose. When the window moves, librqbit does not
+            // send Cancel for requests already out — cancel_inflight_requests_for_piece
+            // only fires when a piece is stolen — so every peer keeps
+            // delivering blocks of the window we just left. Fewer peers is a
+            // smaller overshoot to store before it can be released.
+            per_torrent_peer_limit: env_parse("SS_WORKER_PEER_LIMIT", 40)?,
             upload_bps: env_parse::<u32>("SS_WORKER_UPLOAD_MBIT", 3)? * 125_000,
             download_bps: env_parse::<u32>("SS_WORKER_DOWNLOAD_MBIT", 0)? * 125_000,
             transfer_bps: env_parse::<u64>("SS_WORKER_TRANSFER_MBIT", 0)? * 125_000,
@@ -171,14 +232,22 @@ impl WorkerConfig {
 
     // What browsers are told to fetch from: the address the certificate names.
     pub fn public_base(&self) -> String {
-        let scheme = if self.tls == TlsMode::Off { "http" } else { "https" };
+        let scheme = if self.tls == TlsMode::Off {
+            "http"
+        } else {
+            "https"
+        };
         let host = match (&self.public_hostname, self.public_ip) {
             (Some(h), _) => h.clone(),
             (None, Some(IpAddr::V6(ip))) => format!("[{ip}]"),
             (None, Some(IpAddr::V4(ip))) => ip.to_string(),
             (None, None) => "127.0.0.1".into(),
         };
-        let (port, default) = if self.tls == TlsMode::Off { (self.http_addr.port(), 80) } else { (self.https_addr.port(), 443) };
+        let (port, default) = if self.tls == TlsMode::Off {
+            (self.http_addr.port(), 80)
+        } else {
+            (self.https_addr.port(), 443)
+        };
         if port == default {
             format!("{scheme}://{host}")
         } else {

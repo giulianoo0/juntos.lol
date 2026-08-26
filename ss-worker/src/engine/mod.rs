@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context};
 use librqbit::{
-    AddTorrent, AddTorrentOptions, ConnectionOptions, ListenerMode, ListenerOptions, ManagedTorrent,
-    ManagedTorrentState, PeerConnectionOptions, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, ConnectionOptions, ListenerMode, ListenerOptions,
+    ManagedTorrent, ManagedTorrentState, PeerConnectionOptions, Session, SessionOptions,
 };
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -47,6 +47,10 @@ pub const TRACKERS: &[&str] = &[
 pub const MAX_SIDECAR: u64 = 8 * 1024 * 1024;
 const INIT_TIMEOUT: Duration = Duration::from_secs(90);
 const READ_CHUNK: usize = 256 * 1024;
+/// A tracker suggests its own re-announce interval and a hostile one would
+/// suggest a second, turning this worker into a beacon against whatever
+/// host the URL names. Announces re-run on this leash, never faster.
+const TRACKER_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct Engine {
     session: Arc<Session>,
@@ -55,6 +59,11 @@ pub struct Engine {
     pub cfg: WorkerConfig,
     draining: AtomicBool,
     permits_in_use: Arc<AtomicU64>,
+    /// Whether the blocks behind a piece can actually be handed back here.
+    /// Answered once at boot against the data directory itself, because the
+    /// answer is the filesystem's, not the platform's: a container on overlayfs
+    /// and a Mac both say no, for different reasons.
+    releasing: bool,
     // Throwaway streams each hold one of librqbit's blocking permits for
     // their whole life; unbounded they would exhaust the pool and wedge
     // every request, including the inits. Bounded here, refused beyond.
@@ -137,13 +146,170 @@ impl Drop for Reader {
     }
 }
 
+/// Gives the filesystem back the blocks behind pieces the torrent gave up.
+///
+/// The file keeps its length — librqbit created it whole and a FileStream
+/// still seeks by absolute offset — so this is a hole, not a truncation. The
+/// pieces named here are ones the tracker has already stopped reporting as
+/// HAVE, so nothing will read them before they are fetched again.
+///
+/// Only pieces wholly inside `[file_offset, file_offset + file_len)` are
+/// punched; the caller filters for that, and the arithmetic here refuses
+/// anything else rather than trusting it.
+///
+/// Linux only. On anything else this is a no-op and the worker behaves as it
+/// did before — the local e2e runs on a Mac, and running it should not need a
+/// second storage story.
+#[cfg(target_os = "linux")]
+fn punch_holes(
+    path: &std::path::Path,
+    file_offset: u64,
+    file_len: u64,
+    pieces: &[u32],
+    piece_len: u64,
+) -> u64 {
+    use std::os::unix::io::AsRawFd;
+
+    let file = match std::fs::OpenOptions::new().write(true).open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::debug!(path = %path.display(), error = %e, "could not open to release blocks");
+            return 0;
+        }
+    };
+    let mut freed = 0u64;
+    for (start, end) in merge_piece_ranges(pieces, piece_len) {
+        // Back into file coordinates, and never outside this file.
+        let start = start.max(file_offset) - file_offset;
+        let end = (end.min(file_offset + file_len)).saturating_sub(file_offset);
+        if end <= start {
+            continue;
+        }
+        let mode = libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE;
+        // SAFETY: a live descriptor, and an offset and length that fit i64 for
+        // any file size a torrent can carry.
+        let rc = unsafe {
+            libc::fallocate(
+                file.as_raw_fd(),
+                mode,
+                start as libc::off_t,
+                (end - start) as libc::off_t,
+            )
+        };
+        if rc != 0 {
+            // A filesystem without hole punching (or a container without the
+            // capability) answers here. Nothing is wrong except that the space
+            // stays taken, so say it once per attempt at debug and move on.
+            tracing::debug!(path = %path.display(), error = %std::io::Error::last_os_error(), "could not punch a hole");
+            return freed;
+        }
+        freed += end - start;
+    }
+    freed
+}
+
+#[cfg(not(target_os = "linux"))]
+fn punch_holes(
+    _path: &std::path::Path,
+    _file_offset: u64,
+    _file_len: u64,
+    _pieces: &[u32],
+    _piece_len: u64,
+) -> u64 {
+    0
+}
+
+/// Torrent-absolute byte ranges for a set of pieces, sorted and merged, so a
+/// window that gave up a thousand pieces costs a handful of syscalls.
+// Only the Linux punch calls it; the tests keep it honest everywhere.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn merge_piece_ranges(pieces: &[u32], piece_len: u64) -> Vec<(u64, u64)> {
+    if pieces.is_empty() || piece_len == 0 {
+        return Vec::new();
+    }
+    let mut sorted: Vec<u32> = pieces.to_vec();
+    sorted.sort_unstable();
+    let mut merged: Vec<(u64, u64)> = Vec::new();
+    for piece in sorted {
+        let start = piece as u64 * piece_len;
+        let end = start + piece_len;
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::merge_piece_ranges;
+
+    #[test]
+    fn merges_runs_and_leaves_gaps_alone() {
+        assert_eq!(merge_piece_ranges(&[3, 1, 2], 100), vec![(100, 400)]);
+        assert_eq!(merge_piece_ranges(&[0, 5], 100), vec![(0, 100), (500, 600)]);
+        assert_eq!(merge_piece_ranges(&[7], 1 << 20), vec![(7 << 20, 8 << 20)]);
+        assert!(merge_piece_ranges(&[], 100).is_empty());
+        assert!(merge_piece_ranges(&[1], 0).is_empty());
+    }
+}
+
+/// Whether this filesystem gives blocks back. Asked by doing it, in the one
+/// directory it will be done in, because nothing else answers honestly: the
+/// syscall exists on every Linux and still refuses on some filesystems.
+fn punch_works(dir: &std::path::Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        use std::os::unix::io::AsRawFd;
+        let path = dir.join(".punch-probe");
+        let ok = (|| -> std::io::Result<bool> {
+            let mut file = std::fs::File::create(&path)?;
+            file.write_all(&[0u8; 65536])?;
+            let mode = libc::FALLOC_FL_PUNCH_HOLE | libc::FALLOC_FL_KEEP_SIZE;
+            // SAFETY: a live descriptor and a range inside the file just written.
+            Ok(unsafe { libc::fallocate(file.as_raw_fd(), mode, 0, 65536) } == 0)
+        })()
+        .unwrap_or(false);
+        let _ = std::fs::remove_file(&path);
+        if !ok {
+            tracing::warn!(dir = %dir.display(), "this filesystem will not hand blocks back; torrents keep every piece they fetch");
+        }
+        ok
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dir;
+        false
+    }
+}
+
 impl Engine {
     pub async fn new(cfg: WorkerConfig) -> anyhow::Result<Arc<Self>> {
         let dir = cfg.data_dir.join("torrents");
+        // Nothing under here survives a restart in any usable form: the
+        // session keeps no persistence, so the last process's pieces are
+        // bytes nobody can reach and nobody is accounting for. The volume
+        // outlives the container, so sweeping at boot is what keeps a deploy
+        // loop from filling the disk one restart at a time.
+        if dir.exists() {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => {
+                    tracing::info!(dir = %dir.display(), "cleared torrent data left by the previous run")
+                }
+                Err(e) => {
+                    tracing::warn!(dir = %dir.display(), error = %e, "could not clear leftover torrent data")
+                }
+            }
+        }
         std::fs::create_dir_all(&dir)?;
         let mut opts = SessionOptions {
             fastresume: true,
-            trackers: TRACKERS.iter().filter_map(|t| url::Url::parse(t).ok()).collect(),
+            trackers: TRACKERS
+                .iter()
+                .filter_map(|t| url::Url::parse(t).ok())
+                .collect(),
             runtime_worker_threads: Some(cfg.blocking_threads()),
             peer_limit: Some(cfg.per_torrent_peer_limit),
             ..Default::default()
@@ -169,28 +335,15 @@ impl Engine {
         let engine = Arc::new(Self {
             session,
             torrents: Mutex::new(HashMap::new()),
-            disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), dir),
+            disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), dir.clone()),
             transients: Arc::new(tokio::sync::Semaphore::new(cfg.max_leases * 2)),
             cfg,
             draining: AtomicBool::new(false),
             permits_in_use: Arc::new(AtomicU64::new(0)),
+            releasing: punch_works(&dir),
         });
-        engine.adopt_persisted();
         reaper::spawn(Arc::downgrade(&engine));
         Ok(engine)
-    }
-
-    // Torrents librqbit restored from its own persistence are bytes on disk
-    // the accountant has to know about; they start idle and reap normally.
-    fn adopt_persisted(&self) {
-        let handles: Vec<Handle> = self.session.with_torrents(|it| it.map(|(_, h)| h.clone()).collect());
-        let mut map = self.torrents.lock().unwrap();
-        for handle in handles {
-            let id = handle.info_hash().as_string();
-            let selected = handle.stats().total_bytes;
-            self.disk.reserve_unchecked(&id, selected);
-            map.insert(id, Entry::new(handle, Phase::Idle, selected));
-        }
     }
 
     pub fn drain(&self) {
@@ -200,12 +353,19 @@ impl Engine {
         self.draining.load(Ordering::Relaxed)
     }
 
+    fn can_release(&self) -> bool {
+        self.releasing
+    }
+
     pub fn snapshot(&self) -> EngineSnapshot {
         let map = self.torrents.lock().unwrap();
         let torrents = map.iter().map(|(id, e)| e.digest(id)).collect::<Vec<_>>();
         let leases = map.values().map(|e| e.leases.len()).sum();
         EngineSnapshot {
-            disk_used: self.disk.used(),
+            // The reservation is what admission counts on; the blocks on disk
+            // are what fills the volume. Whichever is larger is the honest
+            // answer for placement and for the alert that follows it.
+            disk_used: self.disk.used().max(self.disk.real_used()),
             disk_quota: self.cfg.disk_quota_bytes,
             torrents,
             leases,
@@ -216,7 +376,12 @@ impl Engine {
 
     /// Takes a lease on a torrent for a job: admits it, resolves its
     /// metadata, and lists its files. Nothing is downloaded until select.
-    pub async fn lease(&self, infohash: &str, lease_id: &str, trackers: &[String]) -> Result<LeaseInfo, Rejection> {
+    pub async fn lease(
+        &self,
+        infohash: &str,
+        lease_id: &str,
+        trackers: &[String],
+    ) -> Result<LeaseInfo, Rejection> {
         let infohash = infohash.to_ascii_lowercase();
         if self.draining() {
             return Err(Rejection::Draining);
@@ -231,7 +396,11 @@ impl Engine {
             INIT_TIMEOUT,
             self.session.add_torrent(
                 AddTorrent::from_url(&magnet),
-                Some(AddTorrentOptions { list_only: true, ..Default::default() }),
+                Some(AddTorrentOptions {
+                    list_only: true,
+                    force_tracker_interval: Some(TRACKER_INTERVAL),
+                    ..Default::default()
+                }),
             ),
         )
         .await
@@ -261,16 +430,25 @@ impl Engine {
             overwrite: true,
             paused: true,
             initial_peers: Some(listed.seen_peers.clone()),
+            force_tracker_interval: Some(TRACKER_INTERVAL),
             ..Default::default()
         };
         options.ratelimits.upload_bps = std::num::NonZeroU32::new(self.cfg.upload_bps);
         let response = self
             .session
-            .add_torrent(AddTorrent::from_bytes(listed.torrent_bytes.clone()), Some(options))
+            .add_torrent(
+                AddTorrent::from_bytes(listed.torrent_bytes.clone()),
+                Some(options),
+            )
             .await
             .map_err(|e| Rejection::Internal(anyhow!(e)))?;
-        let handle = response.into_handle().ok_or_else(|| Rejection::Internal(anyhow!("no handle")))?;
-        if tokio::time::timeout(INIT_TIMEOUT, handle.wait_until_initialized()).await.is_err() {
+        let handle = response
+            .into_handle()
+            .ok_or_else(|| Rejection::Internal(anyhow!("no handle")))?;
+        if tokio::time::timeout(INIT_TIMEOUT, handle.wait_until_initialized())
+            .await
+            .is_err()
+        {
             let _ = self.session.delete(handle.id().into(), true).await;
             return Err(Rejection::NoMetadata);
         }
@@ -304,7 +482,9 @@ impl Engine {
             .unwrap_or_default();
         let (only, selected_bytes, reserve_bytes, ever) = {
             let guard = handle.metadata.load();
-            let meta = guard.as_ref().ok_or_else(|| Rejection::Internal(anyhow!("no metadata")))?;
+            let meta = guard
+                .as_ref()
+                .ok_or_else(|| Rejection::Internal(anyhow!("no metadata")))?;
             let mut only = HashSet::new();
             let mut total = 0u64;
             for (index, info) in meta.file_infos.iter().enumerate() {
@@ -321,7 +501,11 @@ impl Engine {
             // so the reservation covers every file ever selected here.
             let mut ever = previously;
             ever.extend(only.iter().copied());
-            let reserve: u64 = ever.iter().filter_map(|i| meta.file_infos.get(*i)).map(|f| f.len).sum();
+            let reserve: u64 = ever
+                .iter()
+                .filter_map(|i| meta.file_infos.get(*i))
+                .map(|f| f.len)
+                .sum();
             (only, total, reserve, ever)
         };
         let before = self.disk.reserved(&infohash);
@@ -365,7 +549,10 @@ impl Engine {
         let handle = self.handle(infohash).context("unknown torrent")?;
         let guard = handle.metadata.load();
         let meta = guard.as_ref().context("no metadata")?;
-        meta.file_infos.get(index).map(|f| f.len).context("no such file")
+        meta.file_infos
+            .get(index)
+            .map(|f| f.len)
+            .context("no such file")
     }
 
     pub fn file_name(&self, infohash: &str, index: usize) -> anyhow::Result<String> {
@@ -385,7 +572,13 @@ impl Engine {
     /// A torrent still paused or checking its files cannot open a stream
     /// yet; that window follows every select and is seconds long, so the
     /// open waits it out instead of bouncing the client through a 503.
-    pub async fn open(&self, infohash: &str, index: usize, start: u64, prio: Prio) -> anyhow::Result<Reader> {
+    pub async fn open(
+        &self,
+        infohash: &str,
+        index: usize,
+        start: u64,
+        prio: Prio,
+    ) -> anyhow::Result<Reader> {
         let handle = self.touch(infohash).context("unknown torrent")?;
         let live_deadline = tokio::time::Instant::now() + Duration::from_secs(25);
         let mut unpaused = false;
@@ -436,11 +629,16 @@ impl Engine {
                 });
             }
         }
-        let permit = self.transients.clone().try_acquire_owned().map_err(|_| anyhow!("too many readers"))?;
-        let mut stream = tokio::time::timeout(Duration::from_secs(10), handle.clone().stream(index))
-            .await
-            .context("stream open timed out")?
-            .context("stream")?;
+        let permit = self
+            .transients
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| anyhow!("too many readers"))?;
+        let mut stream =
+            tokio::time::timeout(Duration::from_secs(10), handle.clone().stream(index))
+                .await
+                .context("stream open timed out")?
+                .context("stream")?;
         stream.seek(SeekFrom::Start(start)).await?;
         self.permits_in_use.fetch_add(1, Ordering::Relaxed);
         Ok(Reader {
@@ -483,11 +681,19 @@ impl Engine {
 
     /// The remux reader moved: point the playhead slot there so the swarm
     /// fetches ahead of it, and stop feeding responses from before `gen`.
-    pub async fn hint(&self, infohash: &str, index: usize, read_offset: u64, gen: u64) -> anyhow::Result<()> {
+    pub async fn hint(
+        &self,
+        infohash: &str,
+        index: usize,
+        read_offset: u64,
+        gen: u64,
+    ) -> anyhow::Result<()> {
         let handle = self.touch(infohash).context("unknown torrent")?;
         let size = self.file_size(infohash, index)?;
         let offset = read_offset.min(size.saturating_sub(1));
-        let slot = self.slot(infohash, &handle, index, Prio::Playhead, offset).await?;
+        let slot = self
+            .slot(infohash, &handle, index, Prio::Playhead, offset)
+            .await?;
         {
             let map = self.torrents.lock().unwrap();
             if let Some(entry) = map.get(infohash) {
@@ -516,11 +722,17 @@ impl Engine {
     /// Best effort: a torrent still resolving, or paused, simply keeps what
     /// it had, and the next read reapplies the window.
     pub fn apply_window(&self, infohash: &str) {
-        let Some(handle) = self.handle(infohash) else { return };
+        let Some(handle) = self.handle(infohash) else {
+            return;
+        };
         let (index, cursors) = {
             let map = self.torrents.lock().unwrap();
-            let Some(entry) = map.get(infohash) else { return };
-            let Some(index) = entry.selected_file else { return };
+            let Some(entry) = map.get(infohash) else {
+                return;
+            };
+            let Some(index) = entry.selected_file else {
+                return;
+            };
             let cursors: Vec<u64> = entry
                 .slots
                 .iter()
@@ -533,7 +745,9 @@ impl Engine {
         // header and the index without pulling the body down.
         let guard = handle.metadata.load();
         let Some(meta) = guard.as_ref() else { return };
-        let Some(info) = meta.file_infos.get(index) else { return };
+        let Some(info) = meta.file_infos.get(index) else {
+            return;
+        };
         let lengths = meta.lengths();
         let piece_len = lengths.default_piece_length() as u64;
         let ranges = window::needed_ranges(
@@ -554,6 +768,81 @@ impl Engine {
         }
         if let Err(e) = handle.update_selected_pieces(&pieces) {
             tracing::debug!(infohash, error = %e, "could not narrow the piece window");
+            return;
+        }
+        // With no reader there is no window — only the two pins — and giving
+        // up everything else would throw away the whole read-ahead the moment
+        // a remux went quiet for twenty seconds, which is what filling a
+        // player's buffer looks like, and what a backgrounded tab does the
+        // whole time. Narrowing the selection while nobody reads is free;
+        // releasing is not.
+        if cursors.is_empty() {
+            return;
+        }
+        self.release_behind_window(infohash, &handle, info, &pieces, piece_len);
+    }
+
+    /// Gives back the storage of everything the window left behind. Narrowing
+    /// the selection only stops librqbit *asking* for those pieces; without
+    /// this the file still lands on disk in full, one window at a time, and a
+    /// two-hour release costs its whole size on a worker that never needed
+    /// more than a few hundred megabytes of it.
+    ///
+    /// Order matters: the tracker gives the pieces up first, and only what it
+    /// actually gave up is punched. A hole under a piece that still reads as
+    /// HAVE would be served to the host's remux as zeroes, with nothing
+    /// anywhere to notice.
+    fn release_behind_window(
+        &self,
+        infohash: &str,
+        handle: &Handle,
+        info: &librqbit::file_info::FileInfo,
+        keep: &[u32],
+        piece_len: u64,
+    ) {
+        if piece_len == 0 {
+            return;
+        }
+        // Forgetting is only worth it if the blocks actually go back. Where
+        // holes cannot be punched — any non-Linux build, a filesystem that
+        // refuses it — dropping HAVE would buy nothing and cost the swarm a
+        // re-download of everything behind the cursor.
+        if !self.can_release() {
+            return;
+        }
+        let keeping: HashSet<u32> = keep.iter().copied().collect();
+        // Only pieces wholly inside this file. One straddling either end also
+        // carries a sibling file's bytes — a sidecar subtitle the host may be
+        // reading right now — and this holds no claim on those.
+        let first = info.offset_in_torrent.div_ceil(piece_len);
+        let last = (info.offset_in_torrent + info.len) / piece_len;
+        let candidates: Vec<u32> = (first..last)
+            .filter_map(|p| u32::try_from(p).ok())
+            .filter(|p| !keeping.contains(p))
+            .collect();
+        if candidates.is_empty() {
+            return;
+        }
+        // Only the pieces the tracker actually gave up: it skips anything it
+        // may not touch, and a hole punched under a piece that still reads as
+        // HAVE would be served to the host's remux as zeroes.
+        let dropped = match handle.forget_pieces(&candidates) {
+            Ok(d) if d.is_empty() => return,
+            Ok(d) => d,
+            Err(e) => {
+                tracing::debug!(infohash, error = %e, "could not give up pieces behind the window");
+                return;
+            }
+        };
+        let path = handle.output_folder().join(&info.relative_filename);
+        let freed = punch_holes(&path, info.offset_in_torrent, info.len, &dropped, piece_len);
+        if freed > 0 {
+            tracing::debug!(
+                infohash,
+                pieces = dropped.len(),
+                freed_mib = freed / (1024 * 1024),
+                "released pieces behind the window",
+            );
         }
     }
 
@@ -565,23 +854,10 @@ impl Engine {
     pub fn drop_stale_slots(&self, idle: Duration) {
         let mut map = self.torrents.lock().unwrap();
         for entry in map.values_mut() {
-            entry.slots.retain(|_, slot| {
-                slot.stream.try_lock().is_err() || slot.idle_for() < idle
-            });
+            entry
+                .slots
+                .retain(|_, slot| slot.stream.try_lock().is_err() || slot.idle_for() < idle);
         }
-    }
-
-    /// The raw piece bitfield, for the buffered-ranges bar.
-    pub fn haves(&self, infohash: &str) -> anyhow::Result<(Vec<u8>, u32, u64)> {
-        let handle = self.handle(infohash).context("unknown torrent")?;
-        let piece_len = handle.with_metadata(|m| m.lengths().default_piece_length() as u64)?;
-        let (bits, total) = handle
-            .with_chunk_tracker(|chunks| {
-                let bf = chunks.get_have_pieces();
-                (bf.as_bytes().to_vec(), chunks.get_lengths().total_pieces())
-            })
-            .context("torrent not live")?;
-        Ok((bits, total, piece_len))
     }
 
     async fn evict_idle_until_room(&self, need: u64) {
@@ -619,6 +895,26 @@ impl Engine {
         self.disk.release(infohash);
     }
 
+    /// Deletes every torrent and the bytes behind it, leases and all. Called
+    /// on the way out: nothing here survives into the next process in a form
+    /// it could use, so anything left is a disk that only grows.
+    pub async fn reap_all(&self) {
+        let all: Vec<(String, Handle)> = {
+            let mut map = self.torrents.lock().unwrap();
+            map.drain()
+                .map(|(id, entry)| (id, entry.handle.clone()))
+                .collect()
+        };
+        if all.is_empty() {
+            return;
+        }
+        tracing::info!(count = all.len(), "reaping every torrent on the way out");
+        for (id, handle) in all {
+            let _ = self.session.delete(handle.id().into(), true).await;
+            self.disk.release(&id);
+        }
+    }
+
     /// Pauses an idle torrent, unless a lease arrived meanwhile — the pause
     /// runs outside the lock, so the decision is re-taken after it.
     pub(crate) async fn pause_if_idle(&self, infohash: &str, handle: &Handle) {
@@ -646,7 +942,10 @@ impl Engine {
         let failed: Vec<(String, Handle, bool)> = {
             let map = self.torrents.lock().unwrap();
             map.iter()
-                .filter(|(_, e)| e.handle.with_state(|s| matches!(s, ManagedTorrentState::Error(_))))
+                .filter(|(_, e)| {
+                    e.handle
+                        .with_state(|s| matches!(s, ManagedTorrentState::Error(_)))
+                })
                 .map(|(id, e)| (id.clone(), e.handle.clone(), e.retried))
                 .collect()
         };
@@ -670,7 +969,14 @@ impl Engine {
         let map = self.torrents.lock().unwrap();
         map.iter()
             .filter(|(_, e)| e.leases.is_empty())
-            .map(|(id, e)| (id.clone(), e.handle.clone(), e.phase, e.last_active.elapsed()))
+            .map(|(id, e)| {
+                (
+                    id.clone(),
+                    e.handle.clone(),
+                    e.phase,
+                    e.last_active.elapsed(),
+                )
+            })
             .collect()
     }
 
@@ -691,7 +997,12 @@ impl Engine {
     }
 
     pub(crate) fn lease_count(&self) -> usize {
-        self.torrents.lock().unwrap().values().map(|e| e.leases.len()).sum()
+        self.torrents
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.leases.len())
+            .sum()
     }
     pub(crate) fn torrent_count(&self) -> usize {
         self.torrents.lock().unwrap().len()
@@ -734,7 +1045,11 @@ impl Engine {
     }
 
     fn handle(&self, infohash: &str) -> Option<Handle> {
-        self.torrents.lock().unwrap().get(infohash).map(|e| e.handle.clone())
+        self.torrents
+            .lock()
+            .unwrap()
+            .get(infohash)
+            .map(|e| e.handle.clone())
     }
 
     pub fn read_chunk_size(&self) -> usize {

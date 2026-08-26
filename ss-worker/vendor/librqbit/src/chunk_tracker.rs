@@ -37,6 +37,16 @@ pub struct ChunkTracker {
     // How many bytes do we have per each file.
     per_file_bytes: Vec<u64>,
 
+    // ss patch: pieces given up by forget_pieces, and what they weighed.
+    // `hns.have_bytes` is recomputed from `have` on every window change, so
+    // without this it would fall as the window slides — and the server reads
+    // any fall as a reset and bills the whole torrent again
+    // (internal/worker/registry.go ChargeMark), while the room's swarm bar
+    // walks backwards. Added back so the figure only ever grows, which is
+    // what both of them were written against.
+    forgotten: BF,
+    forgotten_bytes: u64,
+
     lengths: Lengths,
 
     // Quick to retrieve stats, that MUST be in sync with the BFs
@@ -178,6 +188,10 @@ impl ChunkTracker {
             have: have_pieces,
             hns: HaveNeededSelected::default(),
             per_file_bytes: vec![0; file_infos.len()],
+            forgotten: BF::from_boxed_slice(
+                vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice(),
+            ),
+            forgotten_bytes: 0,
         };
         ct.recalculate_per_file_bytes(file_infos);
         ct.hns = ct.calc_hns();
@@ -230,6 +244,8 @@ impl ChunkTracker {
             hns.selected_bytes += len * (is_selected as u64);
             hns.needed_bytes += len * (is_needed as u64);
         }
+        // What this torrent ever downloaded, not what it still holds.
+        hns.have_bytes += self.forgotten_bytes;
         hns
     }
 
@@ -274,7 +290,15 @@ impl ChunkTracker {
         if !self.have.as_slice()[id] {
             self.have.as_slice_mut().set(id, true);
             let len = self.lengths.piece_length(idx) as u64;
-            self.hns.have_bytes += len;
+            // ss patch: a piece we gave up and have now fetched again is held
+            // once more, so it stops being counted as forgotten — otherwise it
+            // would be counted from both sides.
+            if self.forgotten[id] {
+                self.forgotten.set(id, false);
+                self.forgotten_bytes -= len;
+            } else {
+                self.hns.have_bytes += len;
+            }
             if self.selected[id] {
                 self.hns.needed_bytes -= len;
             }
@@ -395,6 +419,58 @@ impl ChunkTracker {
         Ok(self.hns)
     }
 
+    /// ss patch: drops pieces we hold but no longer want, so the storage
+    /// behind a streaming window can actually be released. `update_selected_pieces`
+    /// only stops *asking* for what left the window; without this, a two-hour
+    /// film still ends up on disk in full, one window at a time.
+    ///
+    /// Only `have && !selected` pieces are touched. A piece still in flight is
+    /// never `have`, and a selected one is still wanted, so neither can be
+    /// caught here.
+    ///
+    /// What is given up is remembered in `forgotten_bytes`, which `calc_hns`
+    /// adds back. `hns.have_bytes` is recomputed from `have` on every window
+    /// change, and it is what the server bills growth against and what the
+    /// room draws its swarm progress from — a fall reads to the server as a
+    /// reset and bills the whole torrent again. `needed_bytes` needs no such
+    /// care: a forgotten piece was not selected, so it counted zero towards it
+    /// before and counts zero after.
+    ///
+    /// Returns the pieces it actually gave up — the caller releases storage
+    /// for those and no others.
+    pub fn forget_pieces(&mut self, forget: &BS, file_infos: &FileInfos) -> Vec<u32> {
+        let mut forgotten = Vec::new();
+        for id in forget.iter_ones() {
+            if id >= self.selected.len() || self.selected[id] || !self.have.as_slice()[id] {
+                continue;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let Some(idx) = self.lengths.validate_piece_index(id as u32) else {
+                continue;
+            };
+            self.have.as_slice_mut().set(id, false);
+            if !self.forgotten[id] {
+                self.forgotten.set(id, true);
+                self.forgotten_bytes += self.lengths.piece_length(idx) as u64;
+            }
+            if let Some(status) = self.chunk_status.get_mut(self.lengths.chunk_range(idx)) {
+                status.fill(false);
+            }
+            // Forgetting is not a request to fetch it again: the window moved
+            // on, and queueing it would undo the whole point.
+            self.queue_pieces.set(id, false);
+            forgotten.push(idx.get());
+        }
+        if !forgotten.is_empty() {
+            // Derived from `have`, and iter_queued_pieces skips a file whose
+            // bytes already add up to its length. Left stale, a piece the
+            // window re-selects after a seek back would never be requested.
+            self.recalculate_per_file_bytes(file_infos);
+            self.hns = self.calc_hns();
+        }
+        forgotten
+    }
+
     pub(crate) fn get_selected_pieces(&self) -> &BF {
         &self.selected
     }
@@ -429,6 +505,89 @@ impl ChunkTracker {
         );
         self.per_file_bytes[file_id] += diff_have;
         file_info.len.saturating_sub(self.per_file_bytes[file_id])
+    }
+}
+
+#[cfg(test)]
+mod ss_forget_tests {
+    use librqbit_core::lengths::Lengths;
+
+    use crate::{
+        chunk_tracker::ChunkTracker,
+        file_info::FileInfo,
+        type_aliases::{BF, FileInfos},
+    };
+
+    // One file, ten pieces of one chunk each.
+    fn tracker() -> (ChunkTracker, FileInfos) {
+        let lengths = Lengths::new(10 * 16384, 16384).unwrap();
+        let file_infos: FileInfos = vec![FileInfo {
+            relative_filename: "f.mkv".into(),
+            offset_in_torrent: 0,
+            piece_range: 0..10,
+            attrs: Default::default(),
+            len: 10 * 16384,
+        }];
+        let mut have = BF::from_boxed_slice(vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice());
+        let mut selected = BF::from_boxed_slice(vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice());
+        for id in 0..10 {
+            have.set(id, true);
+            selected.set(id, true);
+        }
+        let ct = ChunkTracker::new(Box::new(have), selected, lengths, &file_infos).unwrap();
+        (ct, file_infos)
+    }
+
+    fn bits(indices: &[usize], len: usize) -> BF {
+        let mut b = BF::from_boxed_slice(vec![0u8; len.div_ceil(8)].into_boxed_slice());
+        for &i in indices {
+            b.set(i, true);
+        }
+        b
+    }
+
+    #[test]
+    fn gives_up_only_what_is_held_and_no_longer_wanted() {
+        let (mut ct, file_infos) = tracker();
+        // Narrow to pieces 5..10; the rest is held but not wanted any more.
+        let selected = bits(&[5, 6, 7, 8, 9], 10);
+        ct.update_selected_pieces(selected).unwrap();
+
+        // Everything is offered, including pieces still selected.
+        let forgotten = ct.forget_pieces(&bits(&[0, 1, 2, 3, 4, 5, 6], 10), &file_infos);
+        assert_eq!(forgotten, vec![0, 1, 2, 3, 4], "a selected piece is still wanted");
+        for id in 0..5 {
+            assert!(!ct.get_have_pieces().as_slice()[id]);
+        }
+        assert!(ct.get_have_pieces().as_slice()[5], "piece 5 is selected and stays");
+    }
+
+    #[test]
+    fn have_bytes_never_falls_when_the_window_slides() {
+        let (mut ct, file_infos) = tracker();
+        let before = ct.get_hns().have_bytes;
+        ct.update_selected_pieces(bits(&[5, 6, 7, 8, 9], 10)).unwrap();
+        ct.forget_pieces(&bits(&[0, 1, 2, 3, 4], 10), &file_infos);
+        assert_eq!(ct.get_hns().have_bytes, before, "right after the forget");
+
+        // The next window change recomputes hns from `have`; that is where the
+        // figure used to fall, and where the server would read a reset and bill
+        // the whole torrent again.
+        ct.update_selected_pieces(bits(&[6, 7, 8, 9], 10)).unwrap();
+        assert_eq!(ct.get_hns().have_bytes, before, "after the next narrow");
+    }
+
+    #[test]
+    fn a_piece_fetched_again_is_not_counted_twice() {
+        let (mut ct, file_infos) = tracker();
+        let before = ct.get_hns().have_bytes;
+        ct.update_selected_pieces(bits(&[5, 6, 7, 8, 9], 10)).unwrap();
+        ct.forget_pieces(&bits(&[0, 1], 10), &file_infos);
+        // A seek back re-selects piece 0, and the swarm delivers it.
+        ct.update_selected_pieces(bits(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 10)).unwrap();
+        let idx = ct.get_lengths().validate_piece_index(0).unwrap();
+        ct.mark_piece_downloaded(idx);
+        assert_eq!(ct.get_hns().have_bytes, before);
     }
 }
 
