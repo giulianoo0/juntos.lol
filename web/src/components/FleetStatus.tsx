@@ -67,7 +67,9 @@ export function FleetStatus() {
   // minute anyway — load is, and load comes from the poll.
   useEffect(() => {
     let disposed = false
-    void probeWorkers('', (next) => { if (!disposed) setProbes(next) })
+    // This page exists to show what the fleet measures like right now, so it
+    // never reads the ranking a room open left behind.
+    void probeWorkers('', (next) => { if (!disposed) setProbes(next) }, { fresh: true })
       .then((final) => { if (disposed) return; setProbes(final); setProbing(false) })
       .catch(() => { if (!disposed) setProbing(false) })
     return () => { disposed = true }

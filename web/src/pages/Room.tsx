@@ -456,9 +456,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // only signal that they moved is a WebSocket frame. A connection that drops
   // during a long download would otherwise leave the waiting screen frozen on
   // whatever it last heard, which reads exactly like a transfer that died.
+  // Only while the socket is down, though: connected, every one of those
+  // numbers already arrives as a frame, and polling on top of it refetches
+  // the whole room — chapters, tracks, members — several times a minute for
+  // every viewer watching a preparo.
   const preparing = mediaStatus === 'uploading' || mediaStatus === 'processing'
   useEffect(() => {
-    if (!preparing) return
+    if (!preparing || sync.connected) return
     const controller = new AbortController()
     const timer = window.setInterval(() => {
       void fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
@@ -466,7 +470,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         .catch(() => undefined)
     }, PREPARING_POLL_MS)
     return () => { window.clearInterval(timer); controller.abort() }
-  }, [preparing, room.id])
+  }, [preparing, sync.connected, room.id])
 
   // Media and subtitle updates carry the current media status; each signal
   // means fresh room metadata is available. The refetch in flight is never

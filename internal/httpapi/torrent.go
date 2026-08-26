@@ -2,8 +2,11 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -58,7 +61,7 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	if access.Sessions != nil {
 		group.Use(access.Sessions.Middleware())
 	}
-	group.GET("/workers", listWorkers(access.Service, cfg))
+	group.GET("/workers", listWorkers(access.Service, cfg, access.Quota))
 	start := []gin.HandlerFunc{}
 	if access.Quota != nil {
 		start = append(start, access.Quota.Dispatch())
@@ -79,10 +82,55 @@ type startRequest struct {
 	Preferred []string `json:"preferred"`
 }
 
+// cleanTrackers keeps only trackers a worker may announce to: udp, http or
+// https — anything else librqbit drops anyway — and never an IP literal in
+// a non-public range. The worker trusts the signed job and would announce
+// to cloud metadata, internal services or a victim's host on the word of
+// whoever pasted the magnet. Hostnames pass as written: DNS is resolved on
+// the worker, where a rebind check cannot follow from here.
+func cleanTrackers(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			continue
+		}
+		switch u.Scheme {
+		case "udp", "http", "https":
+		default:
+			continue
+		}
+		host := u.Hostname()
+		if host == "" {
+			continue
+		}
+		if ip, err := netip.ParseAddr(host); err == nil {
+			ip = ip.Unmap()
+			if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() {
+				return nil, fmt.Errorf("tracker %q does not point at a public address", raw)
+			}
+		}
+		out = append(out, u.String())
+	}
+	return out, nil
+}
+
 // listWorkers hands the page what it needs to measure the fleet before a
 // dispatch: every healthy worker, its read base, and a probe ticket.
-func listWorkers(service *worker.Service, cfg config.Config) gin.HandlerFunc {
+func listWorkers(service *worker.Service, cfg config.Config, quota *Quota) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if quota != nil {
+			ok, err := quota.CheckProbes(c.Request.Context(), SessionID(c))
+			if err != nil {
+				slog.Error("probe quota check", "error", err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			if !ok {
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota_exceeded", "reason": "probe_limit"})
+				return
+			}
+		}
 		infoHash := strings.ToLower(c.Query("infoHash"))
 		if infoHash != "" && !infohashRe.MatchString(infoHash) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_infohash"})
@@ -102,10 +150,15 @@ func startTorrent(service *worker.Service) gin.HandlerFunc {
 		if len(req.Trackers) > 20 {
 			req.Trackers = req.Trackers[:20]
 		}
+		trackers, err := cleanTrackers(req.Trackers)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_tracker"})
+			return
+		}
 		if len(req.Preferred) > 8 {
 			req.Preferred = req.Preferred[:8]
 		}
-		job, err := service.Start(c.Request.Context(), SessionID(c), strings.ToLower(req.InfoHash), req.DN, req.Trackers, req.Preferred)
+		job, err := service.Start(c.Request.Context(), SessionID(c), strings.ToLower(req.InfoHash), req.DN, trackers, req.Preferred)
 		if err != nil {
 			status, code := torrentErrorStatus(err)
 			c.JSON(status, gin.H{"error": code})
@@ -127,11 +180,16 @@ func getTorrent(service *worker.Service) gin.HandlerFunc {
 		if job.Error != "" {
 			body["error"] = job.Error
 		}
-		if job.Name != "" {
-			body["name"] = job.Name
-		}
-		if job.Files != nil {
-			body["files"] = job.Files
+		// The stats poll runs every couple of seconds for as long as the
+		// download does and only ever reads the swarm; the listing is the
+		// same few kilobytes of paths every time it asks.
+		if c.Query("only") != "swarm" {
+			if job.Name != "" {
+				body["name"] = job.Name
+			}
+			if job.Files != nil {
+				body["files"] = job.Files
+			}
 		}
 		if swarm := service.Swarm(job); swarm != nil {
 			body["swarm"] = swarm

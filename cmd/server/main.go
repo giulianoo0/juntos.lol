@@ -117,8 +117,9 @@ func main() {
 	r := httpapi.NewServer(cfg, store, hub,
 		httpapi.WithSubtitlePublisher(publisher),
 		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{
-			NotifyStatus:      hub.NotifyStatus,
-			NotifyRoomUpdated: hub.NotifyRoomUpdated,
+			NotifyStatus:       hub.NotifyStatus,
+			NotifyRoomUpdated:  hub.NotifyRoomUpdated,
+			NotifyRoomProgress: hub.NotifyRoomProgress,
 		}),
 		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, CancelMedia: torrents.CancelRoom}),
 		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents}, workerHub.HandleLink),

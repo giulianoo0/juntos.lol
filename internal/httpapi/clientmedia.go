@@ -63,6 +63,10 @@ type ClientMediaBucket interface {
 type ClientMediaHooks struct {
 	NotifyStatus      func(roomID, status string)
 	NotifyRoomUpdated func(roomID string)
+	// NotifyRoomProgress carries the same meaning as NotifyRoomUpdated for the
+	// one signal worth coalescing: the preparo's byte counters moving. Falls
+	// back to NotifyRoomUpdated when unset.
+	NotifyRoomProgress func(roomID string)
 }
 
 // RegisterClientMediaRoutes mounts the claim, presign and publish endpoints.
@@ -356,9 +360,18 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			if req.Complete {
 				received = req.Progress.SourceBytes
 			}
+			// Progress alone: the publish loop reports it every couple of
+			// seconds for the whole preparo, and every wake costs each viewer
+			// a full room refetch. Dropping one is free — the next carries
+			// the same story — so this goes down the throttled path when the
+			// caller offers one.
+			notifyProgress := hooks.NotifyRoomProgress
+			if notifyProgress == nil {
+				notifyProgress = hooks.NotifyRoomUpdated
+			}
 			if err := store.SetIngestProgress(ctx, roomID, received, req.Progress.SourceBytes); err == nil &&
-				hooks.NotifyRoomUpdated != nil {
-				hooks.NotifyRoomUpdated(roomID)
+				notifyProgress != nil {
+				notifyProgress(roomID)
 			}
 		}
 

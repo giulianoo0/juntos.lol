@@ -194,6 +194,16 @@ export interface WorkerProbe {
 
 const PROBE_BYTES = 3 * 1024 * 1024
 const PROBE_BUDGET_MS = 6_000
+// Enough of a transfer to rank by. The first megabyte past the first few
+// hundred milliseconds already separates a fast path from a slow one, and the
+// rest is two more megabytes per worker that the person opening the room waits
+// through before anything starts.
+const PROBE_ENOUGH_BYTES = 1024 * 1024
+const PROBE_ENOUGH_MS = 400
+// A ranking is about the path between this browser and each worker, which does
+// not change minute to minute. Reopening a room, or resuming one, reuses it
+// rather than paying the whole measurement again.
+const RANKING_TTL_MS = 3 * 60_000
 
 // Measures one worker from this browser: reachability, first byte, and
 // throughput over up to three megabytes or six seconds, whichever ends
@@ -205,15 +215,26 @@ async function probeOne(target: { id: string; readBase: string; holds: boolean; 
   try {
     const response = await fetch(`${target.probe}?bytes=${PROBE_BYTES}`, { signal: abort.signal })
     if (!response.ok || !response.body) throw new Error(String(response.status))
-    const ttfbMs = Math.round(performance.now() - t0)
+    const firstByteAt = performance.now()
+    const ttfbMs = Math.round(firstByteAt - t0)
     const reader = response.body.getReader()
     let received = 0
     while (true) {
       const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }))
       if (done) break
       received += value?.byteLength ?? 0
+      // Enough to rank by; the rest of the response is the room's opening
+      // seconds spent on bytes nobody reads.
+      if (received >= PROBE_ENOUGH_BYTES && performance.now() - firstByteAt >= PROBE_ENOUGH_MS) {
+        abort.abort()
+        break
+      }
     }
-    const seconds = (performance.now() - t0) / 1000
+    // From the first byte, not from the request. Round trip is already the
+    // ttfb this returns; charging it to throughput as well would rank a fast
+    // distant path below a slow near one — and the shorter the probe, the
+    // heavier that double count weighs.
+    const seconds = (performance.now() - firstByteAt) / 1000
     if (received === 0 || seconds <= 0) throw new Error('empty probe')
     return {
       id: target.id,
@@ -244,14 +265,28 @@ function rankProbes(probes: WorkerProbe[]): WorkerProbe[] {
   return ranked.map((p, i) => ({ ...p, chosen: i === 0 && p.state === 'ok' }))
 }
 
+// What the last measurement said, by infohash. The fleet page asks for a
+// fresh one; opening a room does not, because a ranking already paid for is
+// still the right answer and measuring again is six seconds of nothing
+// happening on screen.
+const rankings = new Map<string, { at: number; probes: WorkerProbe[] }>()
+
 /**
  * Measures every healthy worker from this browser, reporting progressively
- * through `onProbe`. Resolves with the final ranking, best first.
+ * through `onProbe`. Resolves with the final ranking, best first. A recent
+ * ranking is reused unless the caller asks for a fresh measurement.
  */
 export async function probeWorkers(
   infoHash: string,
   onProbe?: (probes: WorkerProbe[]) => void,
+  options?: { fresh?: boolean },
 ): Promise<WorkerProbe[]> {
+  const remembered = rankings.get(infoHash)
+  if (!options?.fresh && remembered && Date.now() - remembered.at < RANKING_TTL_MS
+    && remembered.probes.some((p) => p.state === 'ok')) {
+    onProbe?.(remembered.probes)
+    return remembered.probes
+  }
   let targets: { id: string; readBase: string; holds: boolean; probe: string }[]
   try {
     const body = await api<{ workers: { id: string; readBase: string; holds: boolean; probe: string }[] | null }>(
@@ -269,6 +304,7 @@ export async function probeWorkers(
     onProbe?.(current.some((p) => p.state === 'testing') ? current : rankProbes(current))
   }))
   const ranked = rankProbes(current)
+  rankings.set(infoHash, { at: Date.now(), probes: ranked })
   onProbe?.(ranked)
   return ranked
 }
@@ -381,7 +417,7 @@ export async function openRemoteTorrent(
   let currentStats: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
   const refreshStats = async () => {
     try {
-      const next = await api<JobStatus>(`/${encodeURIComponent(jobId)}`)
+      const next = await api<JobStatus>(`/${encodeURIComponent(jobId)}?only=swarm`)
       if (!next.swarm) return
       const total = Math.max(next.swarm.selectedBytes, 1)
       currentStats = {

@@ -104,3 +104,39 @@ func TestPlacementRefusesAWorkerNearItsBandwidthCeiling(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cool", w.ID)
 }
+
+func TestPlacementLeavesRelayedWorkersForLast(t *testing.T) {
+	// Every byte a relayed worker serves crosses this machine three times on
+	// its way to the browser, so it loses to a direct one however lightly
+	// loaded it is. A page that measured the paths sends its own ranking and
+	// overrides this.
+	r := newRegistry(t)
+	ih := strings.Repeat("d", 40)
+	live(r, "relayed", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10, Relayed: true})
+	live(r, "direct", Heartbeat{Leases: 6, MaxLeases: 8, MaxTorrents: 10})
+
+	w, err := r.Place(ih, 0, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "direct", w.ID)
+}
+
+func TestPlacementTakesARelayedWorkerWhenItIsTheOnlyOne(t *testing.T) {
+	r := newRegistry(t)
+	live(r, "relayed", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10, Relayed: true})
+
+	w, err := r.Place(strings.Repeat("e", 40), 0, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "relayed", w.ID)
+}
+
+func TestPlacementPrefersADirectHolderOverARelayedOne(t *testing.T) {
+	r := newRegistry(t)
+	ih := strings.Repeat("f", 40)
+	held := []TorrentDigest{{Infohash: ih, HaveBytes: 100}}
+	live(r, "relayed-warm", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10, Relayed: true, Torrents: held})
+	live(r, "direct-warm", Heartbeat{Leases: 6, MaxLeases: 8, MaxTorrents: 10, Torrents: held})
+
+	w, err := r.Place(ih, 0, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "direct-warm", w.ID)
+}

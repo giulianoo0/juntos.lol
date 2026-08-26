@@ -85,12 +85,17 @@ type roomConn struct {
 	// stallGateReadyAt is when the room may next stop for a stall, so one bad
 	// connection cannot pause everyone in a loop.
 	stallGateReadyAt time.Time
-	nextMember       int
-	clients          map[string]*client
-	register         chan joinRequest
-	unregister       chan *client
-	inbound          chan clientInbound
-	updates          chan Outbound
+	// When this room last woke its viewers for progress alone. Taken from
+	// whichever request goroutine is publishing, so it carries its own lock.
+	progressMu     stdsync.Mutex
+	lastProgressAt time.Time
+
+	nextMember int
+	clients    map[string]*client
+	register   chan joinRequest
+	unregister chan *client
+	inbound    chan clientInbound
+	updates    chan Outbound
 }
 
 type joinRequest struct {
@@ -239,6 +244,32 @@ func (h *Hub) NotifyStatus(roomID, status string) {
 // media readiness. Subtitle extraction uses this path.
 func (h *Hub) NotifyRoomUpdated(roomID string) {
 	h.notify(roomID, Outbound{Type: "roomUpdated"})
+}
+
+// How often a room's progress alone may wake every viewer. Each wake costs
+// them a full room refetch, and a preparo publishes progress every couple of
+// seconds for as long as it runs.
+const progressNotifyEvery = 5 * time.Second
+
+// NotifyRoomProgress says the preparo moved, and nothing else did. Unlike an
+// update, it is worth dropping: the next one carries the same story.
+func (h *Hub) NotifyRoomProgress(roomID string) {
+	h.mu.Lock()
+	connection := h.rooms[roomID]
+	h.mu.Unlock()
+	if connection == nil {
+		return
+	}
+	now := time.Now()
+	connection.progressMu.Lock()
+	due := now.Sub(connection.lastProgressAt) >= progressNotifyEvery
+	if due {
+		connection.lastProgressAt = now
+	}
+	connection.progressMu.Unlock()
+	if due {
+		h.notify(roomID, Outbound{Type: "roomUpdated"})
+	}
 }
 
 func (h *Hub) notify(roomID string, event Outbound) {

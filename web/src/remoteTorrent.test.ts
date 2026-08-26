@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { parseMagnet } from './remoteTorrent'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseMagnet, probeWorkers } from './remoteTorrent'
 
 describe('parseMagnet', () => {
   it('reads a hex hash, trackers and the name', () => {
@@ -23,5 +23,45 @@ describe('parseMagnet', () => {
     expect(parseMagnet('https://example.com/file.torrent')).toBeNull()
     expect(parseMagnet('magnet:?xt=urn:btih:short')).toBeNull()
     expect(parseMagnet('magnet:?dn=only-a-name')).toBeNull()
+  })
+})
+
+describe('probeWorkers, on the way into a room', () => {
+  const workers = [
+    { id: 'a', readBase: 'https://a.example', holds: false, probe: 'https://a.example/probe' },
+    { id: 'b', readBase: 'https://b.example', holds: false, probe: 'https://b.example/probe' },
+  ]
+
+  const probeBody = (bytes: number) => new ReadableStream<Uint8Array>({
+    start(c) {
+      for (let sent = 0; sent < bytes; sent += 64 * 1024) c.enqueue(new Uint8Array(64 * 1024))
+      c.close()
+    },
+  })
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/workers')) return new Response(JSON.stringify({ workers }))
+      return new Response(probeBody(3 * 1024 * 1024), { status: 200 })
+    }))
+  })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('reuses a ranking it already paid for', async () => {
+    const first = await probeWorkers('deadbeef01')
+    expect(first.filter((p) => p.state === 'ok')).not.toHaveLength(0)
+    const callsAfterFirst = vi.mocked(fetch).mock.calls.length
+
+    const second = await probeWorkers('deadbeef01')
+    expect(second).toEqual(first)
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsAfterFirst)
+  })
+
+  it('measures again when the caller asks for it', async () => {
+    await probeWorkers('deadbeef02')
+    const callsAfterFirst = vi.mocked(fetch).mock.calls.length
+    await probeWorkers('deadbeef02', undefined, { fresh: true })
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsAfterFirst)
   })
 })

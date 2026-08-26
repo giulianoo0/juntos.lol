@@ -18,9 +18,14 @@ var ErrWorkersBusy = errors.New("workers_busy")
 // nothing alike.
 func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker, error) {
 	if holders := r.Holders(infohash, now); len(holders) > 0 {
-		for _, w := range holders {
-			if hasRoom(w, 0) {
-				return w, nil
+		// Two passes: a relayed holder is still warm, but every byte it
+		// serves crosses this machine three times, so it only wins when no
+		// direct one can take the job.
+		for _, relayed := range []bool{false, true} {
+			for _, w := range holders {
+				if w.Heartbeat.Relayed == relayed && hasRoom(w, 0) {
+					return w, nil
+				}
 			}
 		}
 	}
@@ -38,7 +43,11 @@ func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker
 			continue
 		}
 		load := loadOf(*w)
-		if best == nil || load < bestLoad {
+		// A relayed worker's bytes are proxied through this machine on the
+		// way to the browser, so it loses to any direct one that can take the
+		// job however lightly loaded it is. This is the server's own guess;
+		// a page that measured the paths sends its ranking and overrides it.
+		if best == nil || better(*w, load, *best, bestLoad) {
 			best, bestLoad = w, load
 		}
 	}
@@ -49,6 +58,15 @@ func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker
 		return Worker{}, ErrWorkersBusy
 	}
 	return *best, nil
+}
+
+// better ranks a candidate against the standing best: direct before relayed,
+// then least loaded.
+func better(candidate Worker, candidateLoad float64, best Worker, bestLoad float64) bool {
+	if candidate.Heartbeat.Relayed != best.Heartbeat.Relayed {
+		return !candidate.Heartbeat.Relayed
+	}
+	return candidateLoad < bestLoad
 }
 
 // hasRoom checks the worker's own reported budgets. A size hint of zero
