@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,10 +28,15 @@ const (
 	maxSubtitleTitleBytes = 255
 )
 
+// VTT is a pointer because omitting it means something: this track has not
+// changed since the last post, so the file already on disk and in the bucket
+// stands. The extraction republishes every few seconds and most tracks are
+// finished long before the pass is, so most of a post is bytes the server
+// already has — on the same uplink the remux is fighting for.
 type clientSubtitleTrack struct {
-	Language string `json:"language"`
-	Title    string `json:"title"`
-	VTT      string `json:"vtt"`
+	Language string  `json:"language"`
+	Title    string  `json:"title"`
+	VTT      *string `json:"vtt"`
 }
 
 // Complete distinguishes a finished extraction from a progressive one. A
@@ -117,22 +124,55 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 		}
 
 		subsDir := filepath.Join(cfg.DataDir, "rooms", roomID, "subs")
+		held := make(map[int]room.TrackInfo, len(storedRoom.SubtitleTracks))
+		for _, track := range storedRoom.SubtitleTracks {
+			held[track.Index] = track
+		}
 		tracks := make([]room.TrackInfo, 0, len(req.Tracks))
-		files := make([]string, 0, len(req.Tracks))
+		type pendingWrite struct {
+			path string
+			vtt  string
+		}
+		writes := make([]pendingWrite, 0, len(req.Tracks))
 		for i, track := range req.Tracks {
-			if !validSubtitleTitle(track.Title) || !validSubtitleVTT(track.VTT) {
+			previous, seen := held[i]
+			if track.VTT == nil {
+				// Nothing new for this one, so the file on disk stands and the
+				// metadata is carried over whole — the name it carries is part
+				// of its path. The names must still match: a track list that
+				// shifted under the client would otherwise hand this index the
+				// previous occupant's file, silently and for good.
+				if !seen || previous.Digest == "" ||
+					previous.Language != sanitizeSubtitleLanguage(track.Language) || previous.Title != track.Title {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+					return
+				}
+				tracks = append(tracks, previous)
+				continue
+			}
+			if !validSubtitleTitle(track.Title) || !validSubtitleVTT(*track.VTT) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 				return
 			}
 			language := sanitizeSubtitleLanguage(track.Language)
+			digest := subtitleDigest(*track.VTT)
 			tracks = append(tracks, room.TrackInfo{
 				Index:    i,
 				Language: language,
 				Title:    track.Title,
 				Codec:    "webvtt",
+				Digest:   digest,
 			})
+			// An older client posts every track every time; the digest is what
+			// keeps that from rewriting files nobody changed.
+			if seen && previous.Digest == digest && previous.Language == language {
+				continue
+			}
 			// i and the sanitized language keep the file name path-safe.
-			files = append(files, filepath.Join(subsDir, fmt.Sprintf("sub_%d_%s.vtt", i, language)))
+			writes = append(writes, pendingWrite{
+				path: filepath.Join(subsDir, fmt.Sprintf("sub_%d_%s.vtt", i, language)),
+				vtt:  *track.VTT,
+			})
 		}
 
 		if err := os.MkdirAll(subsDir, 0o755); err != nil {
@@ -140,8 +180,8 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			c.Status(http.StatusInternalServerError)
 			return
 		}
-		for i, path := range files {
-			if err := os.WriteFile(path, []byte(req.Tracks[i].VTT), 0o644); err != nil {
+		for _, write := range writes {
+			if err := os.WriteFile(write.path, []byte(write.vtt), 0o644); err != nil {
 				slog.ErrorContext(c.Request.Context(), "write subtitle file failed", "room_id", roomID, "error", err)
 				c.Status(http.StatusInternalServerError)
 				return
@@ -172,6 +212,14 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 		invokeSubsStoredCallback(onSubsStored, roomID)
 		c.JSON(http.StatusCreated, gin.H{"subtitleTracks": tracks, "complete": req.complete()})
 	}
+}
+
+// Names the bytes of one track. Half a sha256 is far more than enough to tell
+// two versions of the same file apart, and it rides in the room payload and in
+// every viewer's <track> url, both of which are worth keeping short.
+func subtitleDigest(vtt string) string {
+	sum := sha256.Sum256([]byte(vtt))
+	return hex.EncodeToString(sum[:8])
 }
 
 // sanitizeSubtitleLanguage mirrors the player's safeLanguage: BCP-47-like

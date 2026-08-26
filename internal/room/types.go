@@ -3,11 +3,19 @@ package room
 import "time"
 
 // TrackInfo describes one audio or subtitle track of the uploaded file.
+//
+// Digest names the bytes behind a subtitle track. A browser extraction
+// republishes the whole set every few seconds as it finds more cues, but the
+// tracks it already finished do not change — and a viewer that keys its
+// <track> elements by a room-wide version refetches and reparses every one of
+// them on each publish. Keyed by digest, only the track that actually grew
+// moves. Empty for audio, and for subtitles a server extraction produced.
 type TrackInfo struct {
 	Index    int    `json:"index"`
 	Language string `json:"language"`
 	Title    string `json:"title"`
 	Codec    string `json:"codec"`
+	Digest   string `json:"digest,omitempty"`
 }
 
 // Chapter is one authored span of the media — an opening, a recap, the

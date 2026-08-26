@@ -99,7 +99,7 @@ describe('createSubtitleCollector', () => {
   })
 
   const body = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
-    tracks: Array<{ title: string }>
+    tracks: Array<{ title: string; language?: string; vtt?: string }>
     complete: boolean
     mediaGeneration: number
   }
@@ -163,5 +163,56 @@ describe('createSubtitleCollector', () => {
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await expect(collector.flush()).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()
+  })
+})
+
+describe('createSubtitleCollector, once the server has the bytes', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const posted = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
+    tracks: Array<{ title: string; language: string; vtt?: string }>
+  }
+
+  it('sends only the tracks whose cues moved', async () => {
+    // A pass over a long file republishes every few seconds and most of what
+    // it would resend is tracks that finished long ago — on the same uplink
+    // the remux is pushing segments up.
+    const collector = createSubtitleCollector('r1', 1)
+    collector.publish('embedded', [
+      { language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\none' },
+      { language: 'por', title: '', vtt: 'WEBVTT\n\num' },
+    ], false)
+    await collector.flush()
+
+    collector.publish('embedded', [
+      { language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\none' },
+      { language: 'por', title: '', vtt: 'WEBVTT\n\num\n\ndois' },
+    ], true)
+    await collector.flush()
+
+    expect(posted(0).tracks.map((t) => t.vtt !== undefined)).toEqual([true, true])
+    expect(posted(1).tracks.map((t) => t.vtt !== undefined)).toEqual([false, true])
+    // The name always travels: it is what the server matches a carried-over
+    // track by.
+    expect(posted(1).tracks[0].language).toBe('eng')
+    expect(posted(1).tracks[1].vtt).toBe('WEBVTT\n\num\n\ndois')
+  })
+
+  it('sends everything again after a post the server refused', async () => {
+    const collector = createSubtitleCollector('r1', 1)
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+    collector.publish('embedded', [{ language: 'eng', title: '', vtt: 'WEBVTT\n\none' }], false)
+    await collector.flush()
+    collector.publish('embedded', [{ language: 'eng', title: '', vtt: 'WEBVTT\n\none' }], true)
+    await collector.flush()
+
+    expect(posted(1).tracks[0].vtt).toBe('WEBVTT\n\none')
   })
 })

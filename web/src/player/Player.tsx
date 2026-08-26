@@ -6,7 +6,7 @@ import {
 import { NumberFlowGroup } from '@number-flow/react'
 import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
-import type { MediaRegion, PlayState, RoomInfo } from '../types'
+import type { MediaRegion, PlayState, RoomInfo, TrackInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
@@ -130,9 +130,13 @@ interface BufferedRange {
 // so the list arrives with gaps — a forced track has nothing in it until the
 // first foreign sign appears — while each published file keeps the name of the
 // track it came from.
-function subtitleSource(room: RoomInfo, index: number, language: string): string {
-  const version = `?g=${room.mediaGeneration}&s=${room.subsVersion ?? 0}`
-  return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
+function subtitleSource(room: RoomInfo, track: TrackInfo): string {
+  // The track's own digest when the server named one: a republished set is
+  // mostly tracks that did not change, and a room-wide version would send
+  // every viewer back for all of them. Falls back to the room version for a
+  // server extraction, which has no digests and does not republish.
+  const version = `?g=${room.mediaGeneration}&s=${track.digest ?? room.subsVersion ?? 0}`
+  return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
 export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, onBuffering }: PlayerProps) {
@@ -587,6 +591,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   useEffect(() => {
     const textTracks = videoRef.current?.textTracks
     if (!textTracks) return
+    // Only the chosen one: "hidden" is what makes a browser fetch and parse a
+    // track's file, and a release with two dozen of them would pull every one
+    // down to draw a single line of text.
+    const chosen = subtitleTracks.findIndex((track) => track.index === subtitle)
     for (let position = 0; position < Math.min(textTracks.length, subtitleCount); position += 1) {
       // "hidden", never "showing": a hidden track still parses its file and
       // still reports which cues are active, but the browser does not draw it.
@@ -594,7 +602,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       // track in the operating system's caption style and ignores the page's
       // ::cue rules — the black slab and the clipped descenders come from there
       // and cannot be styled away.
-      textTracks[position].mode = subtitle === -1 ? 'disabled' : 'hidden'
+      textTracks[position].mode = position === chosen ? 'hidden' : 'disabled'
     }
   }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
 
@@ -1223,10 +1231,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             // mediaVersion rides along so a region switch remounts the
             // element: cues are shifted onto the region's rebased clock at
             // load, and a fresh load is the only moment that shift is safe.
-            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.mediaVersion ?? 0}-${room.subsVersion ?? 0}`}
+            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.mediaVersion ?? 0}-${track.digest ?? room.subsVersion ?? 0}`}
             kind="subtitles"
             onLoad={(event) => shiftTrackCues(event.currentTarget.track, mediaOffsetSec)}
-            src={subtitleSource(room, track.index, track.language)}
+            src={subtitleSource(room, track)}
             srcLang={track.language || 'und'}
             label={track.title || track.language || `Subtitle ${track.index + 1}`}
           />

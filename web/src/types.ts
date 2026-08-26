@@ -3,6 +3,14 @@ export interface TrackInfo {
   language: string
   title: string
   codec: string
+  /**
+   * Names the bytes of a subtitle track. A browser extraction republishes the
+   * whole set as it finds cues, but a track that already finished does not
+   * change — keying a <track> by this instead of a room-wide version is what
+   * keeps the viewer from refetching and reparsing every one of them each
+   * time. Absent for audio and for server-extracted subtitles.
+   */
+  digest?: string
 }
 
 export interface PlayState {

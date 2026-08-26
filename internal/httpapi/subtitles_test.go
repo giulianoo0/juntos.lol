@@ -56,9 +56,11 @@ func TestStoreClientSubtitlesHappyPath(t *testing.T) {
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
 	require.True(t, got.ClientSubs)
+	digest := subtitleDigest(validVTT)
+	require.NotEmpty(t, digest)
 	require.Equal(t, []room.TrackInfo{
-		{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"},
-		{Index: 1, Language: "und", Codec: "webvtt"},
+		{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt", Digest: digest},
+		{Index: 1, Language: "und", Codec: "webvtt", Digest: digest},
 	}, got.SubtitleTracks)
 
 	for _, name := range []string{"sub_0_eng.vtt", "sub_1_und.vtt"} {
@@ -156,7 +158,9 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 	// The cues are published so playback can already use them...
 	got, err := store.Get(t.Context(), "r2")
 	require.NoError(t, err)
-	require.Equal(t, []room.TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}, got.SubtitleTracks)
+	require.Equal(t, []room.TrackInfo{
+		{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt", Digest: subtitleDigest(validVTT)},
+	}, got.SubtitleTracks)
 	data, err := os.ReadFile(filepath.Join(cfg.DataDir, "rooms", "r2", "subs", "sub_0_eng.vtt"))
 	require.NoError(t, err)
 	require.Equal(t, validVTT, string(data))
@@ -275,4 +279,110 @@ func TestStoreClientSubtitlesAcceptsTheCurrentGeneration(t *testing.T) {
 		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}` +
 		`]}`
 	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r1", body).Code)
+}
+
+func TestStoreClientSubtitlesCarriesOverATrackWithNoNewBytes(t *testing.T) {
+	// The extraction republishes every few seconds and most tracks are done
+	// long before the pass is; sending them again costs the host's uplink,
+	// which is the same one the remux is uploading segments on.
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r5", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	first := `{"complete":false,"tracks":[` +
+		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `},` +
+		`{"language":"por","title":"","vtt":` + strconvQuote(validVTT) + `}` +
+		`]}`
+	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r5", first).Code)
+
+	path := filepath.Join(cfg.DataDir, "rooms", "r5", "subs", "sub_0_eng.vtt")
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	grown := validVTT + "\n00:00:10.000 --> 00:00:12.000\nlater\n"
+	second := `{"complete":true,"tracks":[` +
+		`{"language":"eng","title":"Signs"},` +
+		`{"language":"por","title":"","vtt":` + strconvQuote(grown) + `}` +
+		`]}`
+	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r5", second).Code)
+
+	got, err := store.Get(t.Context(), "r5")
+	require.NoError(t, err)
+	require.Equal(t, []room.TrackInfo{
+		{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt", Digest: subtitleDigest(validVTT)},
+		{Index: 1, Language: "por", Codec: "webvtt", Digest: subtitleDigest(grown)},
+	}, got.SubtitleTracks)
+
+	// The untouched track keeps both its bytes and the name viewers cached
+	// them under, so nothing about it is refetched.
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, before.ModTime(), after.ModTime())
+	data, err := os.ReadFile(filepath.Join(cfg.DataDir, "rooms", "r5", "subs", "sub_1_por.vtt"))
+	require.NoError(t, err)
+	require.Equal(t, grown, string(data))
+}
+
+func TestStoreClientSubtitlesRefusesOmittedBytesForATrackItNeverHad(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r6", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	body := `{"tracks":[{"language":"eng","title":"Signs"}]}`
+	require.Equal(t, http.StatusBadRequest, postSubtitles(t, e, "r6", body).Code)
+}
+
+func TestStoreClientSubtitlesLeavesUnchangedBytesAlone(t *testing.T) {
+	// An older client posts every track every time; the digest is what keeps
+	// that from rewriting files nobody changed.
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r7", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	body := `{"complete":false,"tracks":[{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
+	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r7", body).Code)
+	path := filepath.Join(cfg.DataDir, "rooms", "r7", "subs", "sub_0_eng.vtt")
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r7", body).Code)
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, before.ModTime(), after.ModTime())
+}
+
+func TestStoreClientSubtitlesRefusesACarryOverUnderADifferentName(t *testing.T) {
+	// A sibling .srt finishing its read pushes every embedded track one slot
+	// along. If the client miscounts, the index it left empty must not quietly
+	// inherit the previous occupant's file.
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r8", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	first := `{"complete":false,"tracks":[{"language":"spa","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
+	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r8", first).Code)
+
+	// Same slot, different track, no bytes: nothing on disk answers to this.
+	shifted := `{"complete":false,"tracks":[{"language":"eng","title":"Forced"}]}`
+	require.Equal(t, http.StatusBadRequest, postSubtitles(t, e, "r8", shifted).Code)
 }

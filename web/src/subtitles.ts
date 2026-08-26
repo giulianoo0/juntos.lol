@@ -258,6 +258,13 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
   let pending: Promise<void> = Promise.resolve()
   let lastPostAt = 0
   let dirty = false
+  // The text of each track as the server last accepted it. Keyed by position
+  // *and* name, because position alone is not an identity: a sibling .srt
+  // finishing its read pushes every embedded track one slot along, and a
+  // track that inherits a neighbour's slot must send its bytes rather than
+  // let the server keep the previous occupant's file under that index.
+  const sent = new Map<string, string>()
+  const slot = (track: VttTrack, index: number) => `${index}\u0000${track.language}\u0000${track.title}`
 
   const register = (source: string) => {
     if (sources.has(source)) return
@@ -276,17 +283,36 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     if (tracks.length === 0) return
     const complete = allComplete()
     lastPostAt = Date.now()
+    // A pass over a big file republishes every few seconds, and most of what
+    // it sends is tracks that finished long ago — on the same uplink the
+    // remux is pushing segments up. A track whose text the server already has
+    // travels as its name alone; the position in the list is what identifies
+    // it, on both sides.
+    const body = tracks.map((track, index) => (
+      sent.get(slot(track, index)) === track.vtt
+        ? { language: track.language, title: track.title }
+        : track
+    ))
     try {
       const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/subtitles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tracks, complete, mediaGeneration }),
+        body: JSON.stringify({ tracks: body, complete, mediaGeneration }),
       })
       // 409 means the room moved on to another video while this extraction
       // was still reading the previous one. Nothing to retry: these cues
       // describe a source nobody is watching any more.
       if (response.status === 409) return
-      if (!response.ok) console.warn(`subtitle upload failed with status ${response.status}`)
+      if (!response.ok) {
+        console.warn(`subtitle upload failed with status ${response.status}`)
+        // The server and this map no longer agree on what it holds; the next
+        // post sends everything rather than guessing which half stuck.
+        sent.clear()
+        return
+      }
+      // Only what the server acknowledged may be left out of the next post.
+      sent.clear()
+      tracks.forEach((track, index) => sent.set(slot(track, index), track.vtt))
     } catch (error) {
       console.error('subtitle upload failed', error)
     }
