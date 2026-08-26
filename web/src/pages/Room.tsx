@@ -4,6 +4,7 @@ import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
+import { CopyErrorReport } from '../components/CopyErrorReport'
 import { UploadAvailability } from '../components/UploadAvailability'
 import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
@@ -45,6 +46,7 @@ import {
   WORKER_UNREACHABLE,
   assertReadable,
   changeRoomSource,
+  lastUploadFailureDetail,
   subscribeUploadDone,
   subscribeUploadProgress,
   startFileUpload,
@@ -113,8 +115,10 @@ type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'failed' | 'er
  * reporting, travelling between the sizes each state needs and dissolving
  * between them, rather than swapping whole screens.
  */
-function RoomGate({ step, onJoin, progress, preparation, swarm, failure, errorMessage }: {
+function RoomGate({ step, room, onJoin, progress, preparation, swarm, failure, errorMessage }: {
   step: GateStep
+  /** The room as last read, for the report a failure screen can hand over. */
+  room?: RoomInfo
   onJoin?: (nickname: string) => void
   progress?: RoomUploadProgress | null
   preparation?: RoomInfo['preparation']
@@ -177,6 +181,7 @@ function RoomGate({ step, onJoin, progress, preparation, swarm, failure, errorMe
             {failure === SOURCE_UNREACHABLE ? <p>{t('error.sourceUnreachable')}</p> : null}
             {failure === WORKER_UNREACHABLE ? <p>{t('error.workerUnreachable')}</p> : null}
             <Link className="primary-button" to="/">{t('room.new')}</Link>
+            {room ? <CopyErrorReport room={room} failure={failure ?? null} detail={lastUploadFailureDetail()} t={t} /> : null}
           </div>
         ) : null}
 
@@ -185,6 +190,7 @@ function RoomGate({ step, onJoin, progress, preparation, swarm, failure, errorMe
             <h1>{t('room.error')}</h1>
             {errorMessage ? <p>{errorMessage}</p> : null}
             <Link className="primary-button" to="/">{t('room.new')}</Link>
+            {room ? <CopyErrorReport room={room} failure={errorMessage ?? 'server'} detail={lastUploadFailureDetail()} t={t} /> : null}
           </div>
         ) : null}
       </MorphPanel>
@@ -578,6 +584,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return (
       <RoomGate
         step={gate}
+        room={liveRoom}
         progress={uploadProgress}
         preparation={liveRoom.preparation}
         swarm={swarmStats}

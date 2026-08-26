@@ -83,23 +83,34 @@ export interface ClientRemuxPlan {
  * remux, and the host is told so.
  */
 export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan | null> {
+  const refuse = (why: string): null => {
+    lastRefusal = why
+    return null
+  }
   try {
     await ensureCodecs()
     const input = new Input({ source: file.source(), formats: ALL_FORMATS })
-    if (!(await input.canRead())) return null
+    if (!(await input.canRead())) return refuse('the container could not be read at all')
     const video = await input.getPrimaryVideoTrack()
-    if (!video || !video.codec || !COPYABLE_VIDEO.has(video.codec)) return null
+    if (!video) return refuse('there is no video track')
+    if (!video.codec) return refuse('the video track names no codec')
+    if (!COPYABLE_VIDEO.has(video.codec)) {
+      return refuse(`video codec ${video.codec} cannot be copied; only ${[...COPYABLE_VIDEO].join(', ')} can`)
+    }
     const audioTracks = await input.getAudioTracks()
     for (const track of audioTracks) {
       // Copyable AAC skips the decoder entirely; everything else must be
       // decodable here (WebCodecs or a registered WASM decoder) and AAC must
       // be encodable, or the room would end up with silent video.
       if (track.codec === 'aac') continue
-      if (!(await track.canDecode())) return null
-      if (!(await canEncodeAudio('aac'))) return null
+      if (!(await track.canDecode())) return refuse(`audio codec ${track.codec ?? 'unknown'} cannot be decoded in this browser`)
+      if (!(await canEncodeAudio('aac'))) return refuse('this browser cannot encode aac, which every audio track is converted to')
     }
     const durationSeconds = await input.computeDuration()
-    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return null
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return refuse(`the container reports no usable duration (${durationSeconds})`)
+    }
+    lastRefusal = null
     return {
       input,
       audioTracks: audioTracks.map((track) => ({ language: track.languageCode })),
@@ -109,8 +120,17 @@ export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan
     // Bytes that could not be read are not a verdict on the media; the
     // caller names that failure for what it is.
     if (error instanceof ReadUnreachableError || error instanceof ReadFailedError || isUnreadableFile(error)) throw error
-    return null
+    return refuse(error instanceof Error ? `${error.name}: ${error.message}` : String(error))
   }
+}
+
+// Why the last plan said no. "Unsupported media" is the least actionable
+// message a person can be handed, and the reason is known right here and
+// nowhere else; it rides out with the error so a report can carry it.
+let lastRefusal: string | null = null
+
+export function lastPlanRefusal(): string | null {
+  return lastRefusal
 }
 
 interface ClaimResponse {

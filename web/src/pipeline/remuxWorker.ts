@@ -14,7 +14,7 @@ export type WorkerToPage =
   | { type: 'handle' }
   | { type: 'done' }
   | { type: 'moved-on' }
-  | { type: 'failed'; code: string }
+  | { type: 'failed'; code: string; detail?: string }
   | { type: 'trouble'; detail: string }
 
 export type PageToWorker =
@@ -65,8 +65,19 @@ self.onmessage = (event: MessageEvent<PageToWorker>) => {
   }).then(() => post({ type: 'done' })).catch((error: unknown) => {
     if (error instanceof RoomMovedOnError) { post({ type: 'moved-on' }); return }
     console.error('client media pipeline failed', error)
-    post({ type: 'failed', code: classify(error, message.job.source.kind) })
+    post({ type: 'failed', code: classify(error, message.job.source.kind), detail: describe(error) })
   })
+}
+
+// The error in words, for the report the page can hand to a person. The code
+// above is what the screen renders; this is what says why.
+function describe(error: unknown): string {
+  if (error instanceof UnsupportedMediaError && error.reason) return error.reason
+  if (error instanceof PlanFailedError) {
+    const cause = error.failure
+    return cause instanceof Error ? `plan failed: ${cause.name}: ${cause.message}` : `plan failed: ${String(cause)}`
+  }
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error)
 }
 
 function classify(error: unknown, kind: RemuxJob['source']['kind']): string {

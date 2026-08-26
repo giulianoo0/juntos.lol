@@ -18,7 +18,7 @@ import { fileInput, rangeInput, torrentInput, workerInput, type MediaInput } fro
 export * from './remuxTypes'
 import type { RemuxJob, RemuxSideFile, RemuxSource } from './remuxTypes'
 import { ReadAbortedError } from './rangeRead'
-import { planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
+import { lastPlanRefusal, planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
 // Headroom under the server's per-room track cap for the tracks muxed into
 // the video itself.
@@ -36,9 +36,12 @@ export interface RemuxJobCallbacks {
 
 /** Thrown when the planner looked at the source and declined it. */
 export class UnsupportedMediaError extends Error {
-  constructor() {
-    super('unsupported media')
+  /** What the planner objected to, in words, for a report to carry. */
+  readonly reason: string | null
+  constructor(reason: string | null = null) {
+    super(reason ? `unsupported media: ${reason}` : 'unsupported media')
     this.name = 'UnsupportedMediaError'
+    this.reason = reason
   }
 }
 
@@ -84,7 +87,7 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: Remux
   } catch (error) {
     throw new PlanFailedError(error)
   }
-  if (!plan) throw new UnsupportedMediaError()
+  if (!plan) throw new UnsupportedMediaError(lastPlanRefusal())
 
   // Subtitles run beside the remux, off the same bytes, and publish as they
   // go; the room has them before the video finishes.

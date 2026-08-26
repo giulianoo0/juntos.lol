@@ -372,8 +372,11 @@ export function startRoomUpload(
   const dropHandle = () => {
     if (ownHandle && remuxHandles.get(roomID) === ownHandle) remuxHandles.delete(roomID)
   }
-  const finish = (error: string | null) => {
+  const finish = (error: string | null, detail?: string) => {
     dropHandle()
+    // Kept for the report a person can copy off the failure screen: the code
+    // is what the screen renders, this is what says why.
+    lastFailureDetail = error === null ? null : detail ?? null
     // A finished conversion has nothing left to resume; a failed one keeps
     // its source so re-entering the room can try the preparo again.
     if (error === null) clearResumableSource(roomID)
@@ -404,7 +407,7 @@ export function startRoomUpload(
       else if (message.type === 'handle' && ownHandle) remuxHandles.set(roomID, ownHandle)
       else if (message.type === 'done') settle(() => finish(null))
       else if (message.type === 'moved-on') settle(movedOn)
-      else if (message.type === 'failed') settle(() => finish(message.code ?? 'upload failed'))
+      else if (message.type === 'failed') settle(() => finish(message.code ?? 'upload failed', message.detail))
     }
     worker.onerror = (event) => settle(() => finish(event.message || 'upload failed'))
     worker.postMessage({ type: 'start', job })
@@ -429,16 +432,28 @@ export function startRoomUpload(
       finish(null)
     } catch (error) {
       if (error instanceof pipeline.RoomMovedOnError) { movedOn(); return }
-      if (error instanceof UnsupportedMediaError) { finish(UNSUPPORTED_MEDIA); return }
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      if (error instanceof UnsupportedMediaError) { finish(UNSUPPORTED_MEDIA, error.reason ?? detail); return }
       if (error instanceof PlanFailedError) {
-        if (isUnreadableFile(error.failure)) { finish(FILE_UNREADABLE); return }
-        finish(source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA)
+        const cause = error.failure
+        const why = cause instanceof Error ? `plan failed: ${cause.name}: ${cause.message}` : `plan failed: ${String(cause)}`
+        if (isUnreadableFile(error.failure)) { finish(FILE_UNREADABLE, why); return }
+        finish(source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA, why)
         return
       }
       console.error('client media pipeline failed', error)
-      finish(isUnreadableFile(error) ? FILE_UNREADABLE : error instanceof Error ? error.message : 'upload failed')
+      finish(isUnreadableFile(error) ? FILE_UNREADABLE : error instanceof Error ? error.message : 'upload failed', detail)
     }
   })()
+}
+
+// The last preparo failure's detail, for the report the failure screen can
+// copy. One room prepares at a time in a tab, and only the screen that is
+// showing the failure ever asks.
+let lastFailureDetail: string | null = null
+
+export function lastUploadFailureDetail(): string | null {
+  return lastFailureDetail
 }
 
 export function subscribeUploadProgress(roomID: string, callback: (progress: RoomUploadProgress) => void): () => void {

@@ -10,6 +10,7 @@ import {
   subscribeUploadDone,
   subscribeUploadProgress,
   type RoomUploadProgress,
+  lastUploadFailureDetail,
 } from './upload'
 
 const subtitleFakes = vi.hoisted(() => {
@@ -45,6 +46,7 @@ vi.mock('./subtitles', () => ({
 const clientPipeline = vi.hoisted(() => ({
   planClientRemux: vi.fn(),
   runClientRemux: vi.fn(),
+  lastPlanRefusal: vi.fn(() => 'no video track'),
   RoomMovedOnError: class RoomMovedOnError extends Error {},
 }))
 vi.mock('./pipeline/clientMedia', () => clientPipeline)
@@ -106,6 +108,9 @@ describe('upload registry', () => {
     subscribeUploadDone(result.roomID, done)
     await vi.waitFor(() => expect(done).toHaveBeenCalledWith(UNSUPPORTED_MEDIA))
     expect(clientPipeline.runClientRemux).not.toHaveBeenCalled()
+    // "Unsupported" is a verdict; the reason is the only part a person can
+    // act on, and it has to survive the trip to the failure screen.
+    expect(lastUploadFailureDetail()).toBe('no video track')
   })
 
   it('reports a remux that died mid-flight', async () => {
