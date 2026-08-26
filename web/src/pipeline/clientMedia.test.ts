@@ -2,7 +2,7 @@
 // a cold seek must cancel the running conversion, restart it at the snapped
 // keyframe, publish under region-prefixed names, and carry the new offset in
 // the publish timeline.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocked = vi.hoisted(() => {
   class ConversionCanceledError extends Error {}
@@ -77,7 +77,12 @@ vi.mock('./mkvChapters', () => ({ readMkvChapters: async () => [] }))
 
 import { runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+// Fake timers so the publish ticker can be driven on purpose: a region's
+// span is what the server confirmed, and confirmation only happens on a
+// publish round.
+const flush = async () => { await vi.advanceTimersByTimeAsync(1) }
+/** One turn of the publish ticker, which confirms what has been uploaded. */
+const publishRound = async () => { await vi.advanceTimersByTimeAsync(2_000) }
 
 interface Recorded { url: string; body?: Record<string, unknown> }
 
@@ -97,7 +102,11 @@ function mockServer(): Recorded[] {
       return { ok: true, json: async () => ({ objects }) }
     }
     if (url.endsWith('/client-media/publish')) {
-      return { ok: true, json: async () => ({ confirmed: [], ready: true }) }
+      // A working bucket vouches for what it was handed. Regions span what
+      // the server confirmed, so a fixture that confirms nothing would
+      // describe a room with nothing playable in it.
+      const confirmed = (record.body!.confirm as string[] | undefined) ?? []
+      return { ok: true, json: async () => ({ confirmed, ready: true }) }
     }
     // Segment PUTs and the claim release.
     return { ok: true, json: async () => ({}), text: async () => '' }
@@ -105,7 +114,12 @@ function mockServer(): Recorded[] {
   return calls
 }
 
+beforeEach(() => {
+  vi.useFakeTimers()
+})
+
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   conversions.length = 0
 })
@@ -136,6 +150,9 @@ describe('client remux regions', () => {
     ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
     ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
     await flush()
+    // The bucket confirms region zero's segment: only now does it span
+    // anything a player could seek into.
+    await publishRound()
 
     // Eighteen minutes in is far past the produced edge: a cold seek.
     handle!.follow(1_080_000)
@@ -150,6 +167,7 @@ describe('client remux regions', () => {
     ;(second.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
     ;(second.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
+    await publishRound()
 
     // Region 1 hits the end of the file: everything between region zero's
     // four seconds and 18:00 is still unproduced, so the pipeline parks.
@@ -170,7 +188,13 @@ describe('client remux regions', () => {
     expect(conversions[2].opts.trim?.start).toBe(2)
 
     // Region 2 runs to the end; together the regions cover the timeline and
-    // the run completes.
+    // the run completes. A region that emitted nothing spans nothing, so it
+    // has to produce a segment before it can claim the tail.
+    const third = conversions[2].opts.output.opts.format.options
+    ;(third.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    ;(third.onMaster as (c: string) => void)('#EXTM3U\n')
+    await flush()
+    await publishRound()
     conversions[2].finish()
     await run
 
@@ -195,6 +219,43 @@ describe('client remux regions', () => {
     })
   })
 })
+
+  it('goes and produces a seek target the muxer emitted but the bucket never confirmed', async () => {
+    mockServer()
+    let handle: ClientRemuxHandle | null = null
+    const plan = {
+      input: { getPrimaryVideoTrack: async () => ({}) },
+      audioTracks: [],
+      durationSeconds: 1440,
+    }
+    void runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan as never,
+      onHandle: (h) => { handle = h },
+    })
+    await flush()
+
+    // The muxer runs far ahead of the uplink — stream-copying a local file
+    // outruns a home connection many times over — so twenty segments exist
+    // in the queue while the bucket still holds none of them.
+    const first = conversions[0].opts.output.opts.format.options
+    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    for (let n = 1; n <= 20; n += 1) {
+      ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n })
+    }
+    await flush()
+
+    // A minute in sits well inside the eighty seconds the muxer emitted, so
+    // counting emissions would call this covered and leave the player
+    // waiting on segments no playlist can reach. Counting what the bucket
+    // confirmed sends the pipeline to fetch it.
+    handle!.follow(60_000)
+    await flush()
+    await flush()
+    expect(conversions).toHaveLength(2)
+  })
 
   it('parks at a region end instead of completing, and wakes on the next seek', async () => {
     const calls = mockServer()

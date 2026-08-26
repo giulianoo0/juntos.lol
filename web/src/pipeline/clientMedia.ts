@@ -32,6 +32,7 @@ import { registerAacEncoder } from '@mediabunny/aac-encoder'
 import { readMkvChapters } from './mkvChapters'
 import type { MediaInput } from './mediaInput'
 import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
+import { createSegmentLedger } from './segmentLedger'
 import { isUnreadableFile } from '../uploadErrors'
 
 // The WASM decoders register lazily: nothing loads until a file actually
@@ -372,6 +373,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // The metadata stuck only now that the request succeeded.
     metadataSent = true
     const { confirmed, ready } = await response.json() as { confirmed: string[]; ready: boolean }
+    // Confirmed means the server HEADed the object and the playlists can
+    // now reach it: this, and nothing earlier, is what a region may claim.
+    ledger.noteConfirmed(confirmed)
     // Whatever the bucket did not vouch for is claimed again next round.
     const vouched = new Set(confirmed)
     for (const name of confirm) if (!vouched.has(name)) uploaded.push(name)
@@ -387,11 +391,25 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   let conversion: Conversion | null = null
   let region = -1
   let regionStartMs = 0
-  interface RegionRecord { n: number; startMs: number; producedMs: number; growing: boolean }
+  interface RegionRecord { n: number; startMs: number; growing: boolean; ranToEnd: boolean }
   const regions: RegionRecord[] = []
+  const ledger = createSegmentLedger()
+  // A region spans what the bucket confirmed, never what the muxer emitted.
+  // The muxer runs far ahead of the uplink — a local file stream-copies many
+  // times faster than a home connection uploads — so counting emissions
+  // claims media no viewer can fetch and no seek can land in.
+  const regionSpanMs = (r: RegionRecord): number => {
+    const covered = ledger.covered(r.n) * SEGMENT_SECONDS * 1000
+    // A region that ran to the end of the file is as long as the file says
+    // minus where it started; the segment count rounds off its last partial
+    // segment. That claim is only honest once nothing is still in flight.
+    if (r.ranToEnd && ledger.settled(r.n)) {
+      return Math.max(covered, Math.round(plan.durationSeconds * 1000) - r.startMs)
+    }
+    return covered
+  }
   const regionMap = () => regions.map((r) => ({
-    ...r,
-    producedMs: r.growing ? segmentsProduced() * SEGMENT_SECONDS * 1000 : r.producedMs,
+    n: r.n, startMs: r.startMs, producedMs: regionSpanMs(r), growing: r.growing,
   }))
   // Whether the regions together cover the whole timeline, so the run is
   // done regardless of the order they were produced in.
@@ -405,23 +423,15 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     }
     return reach >= durationMs - SEGMENT_SECONDS * 1000
   }
-  // A region that stops growing keeps what it produced, minus what the
-  // caller is about to throw away: a seek abandons queued and in-flight
-  // uploads, and segments that never reach the bucket must not be claimed —
-  // the map would cover a tail the playlists cut off. The discard estimate
-  // errs high on purpose; re-producing a breath of tail is cheap, a hole
-  // that reads as covered is not.
-  const closeRegion = (discardedSegments = 0) => {
+  // A region that stops growing keeps exactly what the bucket confirmed.
+  // A seek abandons queued and in-flight uploads, but abandoning them
+  // cannot un-store what already landed, so there is nothing to estimate
+  // away here: the ledger only ever counted names the server vouched for.
+  const closeRegion = () => {
     const current = regions.find((r) => r.growing)
     if (!current) return
-    const kept = Math.max(segmentsProduced() - discardedSegments, 0)
-    current.producedMs = kept * SEGMENT_SECONDS * 1000
     current.growing = false
   }
-  // Segments per playlist: video and its audio rendition advance together,
-  // so the produced time is the largest playlist's count, not their sum.
-  const segmentCounts = new Map<number, number>()
-  const segmentsProduced = () => Math.max(0, ...segmentCounts.values())
   let seekTargetSeconds: number | null = null
   let nextStartSeconds = 0
 
@@ -475,7 +485,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const restartAt = (absoluteMs: number) => {
     restartPending = true
     console.log(`[remux-worker] restart at ${absoluteMs}`)
-    closeRegion(pending.length + inflightAborts.size * PRESIGN_BATCH)
+    closeRegion()
     pendingRestart = (async () => {
       // The dying region goes first: its queued and in-flight segments would
       // otherwise hold the uplink, and its conversion would compete with the
@@ -510,9 +520,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     regionStartMs = Math.round(startSeconds * 1000)
     regionAimMs = Math.max(regionAimMs, regionStartMs)
     closeRegion()
-    segmentCounts.clear()
     seekTargetSeconds = null
-    regions.push({ n: region, startMs: regionStartMs, producedMs: 0, growing: true })
+    regions.push({ n: region, startMs: regionStartMs, growing: true, ranToEnd: false })
     // The old region's playlists stay published on the server; only the
     // local map restarts, so the next publish carries the new region's
     // master rather than a mix.
@@ -534,8 +543,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
         onPlaylist: (content, info) => { playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content) },
         onInit: (target, info) => { enqueue(`${prefix}cinit_${info.n}.mp4`, target) },
         onSegment: (target, info) => {
-          segmentCounts.set(info.playlist.n, (segmentCounts.get(info.playlist.n) ?? 0) + 1)
-          enqueue(`${prefix}cs_${info.playlist.n}_${info.n}.m4s`, target)
+          const name = `${prefix}cs_${info.playlist.n}_${info.n}.m4s`
+          // Registers the playlist so a rendition that has confirmed nothing
+          // yet still holds this region's span down to what a viewer can play.
+          ledger.noteEmitted(name)
+          enqueue(name, target)
         },
       }),
       target: new PathedTarget('master.m3u8', () => new BufferTarget()),
@@ -585,12 +597,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       nextStartSeconds = seekTargetSeconds
       continue
     }
-    // This region ran to the end of the file on its own. A region that ran
-    // to the end is as long as the file says minus where it started; the
-    // segment count undercounts the last partial segment.
+    // This region ran to the end of the file on its own, so it may claim the
+    // tail its segment count rounds off — but regionSpanMs holds that claim
+    // back until every one of its segments has actually reached the bucket.
     closeRegion()
     const finished = regions.find((r) => r.n === region)
-    if (finished) finished.producedMs = Math.max(finished.producedMs, Math.round(plan.durationSeconds * 1000) - finished.startMs)
+    if (finished) finished.ranToEnd = true
     // The whole timeline is done once the regions together cover it —
     // this one from a breath of zero, or several stitched by seeks.
     if (startSeconds <= COLD_BEHIND_MS / 1000 || timelineCovered()) break
