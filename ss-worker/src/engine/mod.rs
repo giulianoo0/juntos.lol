@@ -837,7 +837,10 @@ impl Engine {
         let path = handle.output_folder().join(&info.relative_filename);
         let freed = punch_holes(&path, info.offset_in_torrent, info.len, &dropped, piece_len);
         if freed > 0 {
-            tracing::debug!(
+            // Worth an info line: this is the whole reason a two-hour film
+            // does not end up on the disk in full, and without it there is no
+            // way to tell from the outside whether it is happening.
+            tracing::info!(
                 infohash,
                 pieces = dropped.len(),
                 freed_mib = freed / (1024 * 1024),
