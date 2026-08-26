@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   CORAL,
   MARK_PLAY,
@@ -118,17 +118,71 @@ function useWriting(ref: React.RefObject<SVGSVGElement | null>, active: boolean,
 }
 
 /**
+ * O brilho que passa por dentro do nome no hover. Ele é recortado pelos
+ * próprios traços — a máscara é o mesmo desenho, em branco — então o que anda
+ * é uma faixa que só existe onde há tinta.
+ */
+function useShimmer(ref: React.RefObject<SVGRectElement | null>) {
+  const running = useRef<Animation | null>(null)
+  return useRef(() => {
+    const node = ref.current
+    if (!node || typeof node.animate !== 'function') return
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    // Reentrar com o mouse recomeça o gesto em vez de empilhar dois brilhos.
+    running.current?.cancel()
+    running.current = node.animate(
+      [{ transform: 'translateX(0)' }, { transform: 'translateX(660px)' }],
+      { duration: 900, easing: 'cubic-bezier(0.4, 0, 0.3, 1)', fill: 'none' },
+    )
+  }).current
+}
+
+/**
  * O nome inteiro. Os traços herdam `currentColor`; o play é o único ponto de
- * cor. Com `writing`, ele se escreve — uma vez por carga, no header.
+ * cor. Com `writing`, ele se escreve — uma vez por carga, no header — e a
+ * qualquer momento um brilho atravessa a tinta quando o ponteiro passa.
  */
 export function Wordmark({ className, writing = false }: { className?: string; writing?: boolean }) {
   const ref = useRef<SVGSVGElement>(null)
+  const sheenRef = useRef<SVGRectElement>(null)
   const [hidden, setHidden] = useState(writing)
   const onWritten = useRef(() => setHidden(false)).current
   useWriting(ref, writing, onWritten)
+  const shimmer = useShimmer(sheenRef)
+
+  // Dois wordmarks na mesma página não podem disputar o mesmo `url(#...)`.
+  const uid = useId().replace(/:/g, '')
+  const maskId = `jl-ink-${uid}`
+  const sheenId = `jl-sheen-${uid}`
 
   return (
-    <svg ref={ref} className={className} viewBox={WORDMARK_VIEWBOX} role="img" aria-label="juntos.lol" focusable="false">
+    <svg
+      ref={ref}
+      className={className}
+      viewBox={WORDMARK_VIEWBOX}
+      role="img"
+      aria-label="juntos.lol"
+      focusable="false"
+      onPointerEnter={shimmer}
+    >
+      <defs>
+        <mask id={maskId} maskUnits="userSpaceOnUse" x={-20} y={-92} width={480} height={132}>
+          <g fill="none" stroke="#fff" strokeWidth={STROKE_WIDTH} strokeLinecap="round" strokeLinejoin="round">
+            {WORDMARK_STROKES.map((stroke) => <path key={stroke.id} d={stroke.d} />)}
+          </g>
+          <circle cx={WORDMARK_DOT.cx} cy={WORDMARK_DOT.cy} r={WORDMARK_DOT.r} fill="#fff" />
+          <path d={WORDMARK_PLAY} fill="#fff" stroke="#fff" strokeWidth={4} strokeLinejoin="round" />
+        </mask>
+        {/* Os traços já são claros, então o brilho não pode ser mais claro que
+            eles: o que passa é uma faixa de coral saturado que tinge a tinta
+            por um instante. */}
+        <linearGradient id={sheenId} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor={CORAL} stopOpacity="0" />
+          <stop offset="0.5" stopColor={CORAL} stopOpacity="1" />
+          <stop offset="1" stopColor={CORAL} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+
       <g fill="none" stroke="currentColor" strokeWidth={STROKE_WIDTH} strokeLinecap="round" strokeLinejoin="round">
         {WORDMARK_STROKES.map((stroke) => (
           <path key={stroke.id} data-stroke={stroke.id} d={stroke.d} pathLength={1} style={hidden ? UNDRAWN : undefined} />
@@ -136,6 +190,14 @@ export function Wordmark({ className, writing = false }: { className?: string; w
       </g>
       <circle data-dot cx={WORDMARK_DOT.cx} cy={WORDMARK_DOT.cy} r={WORDMARK_DOT.r} fill="currentColor" style={hidden ? UNPLACED : undefined} />
       <path data-play d={WORDMARK_PLAY} fill={CORAL} stroke={CORAL} strokeWidth={4} strokeLinejoin="round" style={hidden ? UNPLACED : undefined} />
+
+      {/* A faixa entra pela esquerda, inclinada, e só é visível dentro da
+          tinta. `pointer-events: none` para não roubar o clique do link. */}
+      <g mask={`url(#${maskId})`} style={{ pointerEvents: 'none' }}>
+        <g transform="rotate(14 200 -30)">
+          <rect ref={sheenRef} x={-200} y={-230} width={110} height={400} fill={`url(#${sheenId})`} />
+        </g>
+      </g>
     </svg>
   )
 }
