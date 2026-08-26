@@ -227,6 +227,7 @@ export const en: Record<string, string> = {
   'fleet.noPath': 'no route from here',
   'fleet.disk': 'Disk',
   'fleet.transfer': 'Serving',
+  'fleet.noCap': 'no ceiling',
   'fleet.torrents': 'Torrents',
   'fleet.uptime': 'Up',
   'fleet.version': 'Version',

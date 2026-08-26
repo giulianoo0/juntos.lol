@@ -132,6 +132,41 @@ describe('FleetStatus', () => {
     await waitFor(() => expect(screen.getByRole('meter')).toHaveAttribute('aria-valuenow', '80'))
   })
 
+  it('keeps every field in every card, so two workers can be read against each other', async () => {
+    // One worker reports a bandwidth ceiling and the other does not. Dropping
+    // the field shifted every later field left, and the gap looked like a
+    // fault rather than an unset setting.
+    answer({
+      capacity: 'available',
+      workers: [member({ id: 'w_capped000' }), member({ id: 'w_uncapped0', transferCapBps: undefined })],
+    })
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getAllByText('Serving')).toHaveLength(2))
+    const cards = screen.getAllByRole('listitem')
+    const labels = cards.map((card) => [...card.querySelectorAll('dt')].map((dt) => dt.textContent))
+    expect(labels[0]).toEqual(labels[1])
+    expect(screen.getByText('no ceiling')).toBeInTheDocument()
+  })
+
+  it('reads bandwidth in bytes per second, which is what the worker reports', async () => {
+    // capBps is the worker's ceiling in BYTES; a megabit is 125_000 of them.
+    // Dividing by a million printed a 600 Mbit/s pipe as 75.
+    answer({ capacity: 'available', workers: [member({ transferCapBps: 75_000_000, transferUsedBps: 1_250_000 })] })
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText('10.0 Mbit/s / 600.0 Mbit/s')).toBeInTheDocument())
+  })
+
+  it('shimmers the speed while it is still being measured', async () => {
+    answer({ capacity: 'available', workers: [member()] })
+    vi.mocked(probeWorkers).mockImplementation(() => new Promise(() => {}))
+    const { container } = render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText('measuring…')).toBeInTheDocument())
+    expect(container.querySelector('dd.is-pending')?.textContent).toBe('measuring…')
+  })
+
   it('says a deployment runs no workers rather than showing an empty list', async () => {
     answer({ capacity: 'disabled', workers: [] })
     render(<FleetStatus />)

@@ -227,6 +227,7 @@ export const ptBR: Record<string, string> = {
   'fleet.noPath': 'sem rota daqui',
   'fleet.disk': 'Disco',
   'fleet.transfer': 'Servindo',
+  'fleet.noCap': 'sem teto',
   'fleet.torrents': 'Torrents',
   'fleet.uptime': 'No ar',
   'fleet.version': 'Versão',

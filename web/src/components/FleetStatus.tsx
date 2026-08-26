@@ -11,8 +11,11 @@ function gib(bytes: number): string {
   return `${(bytes / 1_073_741_824).toFixed(1)} GB`
 }
 
-function mbit(bps: number): string {
-  return `${(bps / 1_000_000).toFixed(1)} Mbit/s`
+// The worker's "bps" fields are bytes per second — capBps is the configured
+// ceiling in bytes, usedBps a delta of bytes_served — so a megabit is 125_000
+// of them, not a million. Dividing by 1e6 printed a 600 Mbit/s pipe as 75.
+function mbit(bytesPerSecond: number): string {
+  return `${(bytesPerSecond / 125_000).toFixed(1)} Mbit/s`
 }
 
 function uptime(seconds: number): string {
@@ -124,38 +127,27 @@ export function FleetStatus() {
               </div>
               <Meter label={t('fleet.busy')} value={busyness(member)} detail={busyDetail(member, t)} />
               <dl className="fleet-facts">
-                <div>
-                  <dt>{t('fleet.speed')}</dt>
-                  <dd>{speedLabel(speeds.get(member.id), probing, t)}</dd>
-                </div>
-                {member.diskQuota ? (
-                  <div>
-                    <dt>{t('fleet.disk')}</dt>
-                    <dd>{gib(member.diskUsed)} / {gib(member.diskQuota)}</dd>
-                  </div>
-                ) : null}
-                {member.transferCapBps ? (
-                  <div>
-                    <dt>{t('fleet.transfer')}</dt>
-                    <dd>{mbit(member.transferUsedBps)} / {mbit(member.transferCapBps)}</dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt>{t('fleet.torrents')}</dt>
-                  <dd>{member.maxTorrents ? `${member.torrents} / ${member.maxTorrents}` : member.torrents}</dd>
-                </div>
-                {member.uptimeSecs ? (
-                  <div>
-                    <dt>{t('fleet.uptime')}</dt>
-                    <dd>{uptime(member.uptimeSecs)}</dd>
-                  </div>
-                ) : null}
-                {member.version ? (
-                  <div>
-                    <dt>{t('fleet.version')}</dt>
-                    <dd>{member.version}</dd>
-                  </div>
-                ) : null}
+                {/* Always the same cells in the same places, even when a
+                    worker has nothing to report for one: a field that
+                    disappears makes two cards impossible to read against each
+                    other, and its absence looks like a fault rather than an
+                    unset ceiling. */}
+                <Fact
+                  label={t('fleet.speed')}
+                  value={speedLabel(speeds.get(member.id), probing, t)}
+                  pending={isMeasuring(speeds.get(member.id), probing)}
+                />
+                <Fact label={t('fleet.disk')} value={member.diskQuota ? `${gib(member.diskUsed)} / ${gib(member.diskQuota)}` : gib(member.diskUsed)} />
+                <Fact
+                  label={t('fleet.transfer')}
+                  value={member.transferCapBps
+                    ? `${mbit(member.transferUsedBps)} / ${mbit(member.transferCapBps)}`
+                    : mbit(member.transferUsedBps)}
+                  note={member.transferCapBps ? undefined : t('fleet.noCap')}
+                />
+                <Fact label={t('fleet.torrents')} value={member.maxTorrents ? `${member.torrents} / ${member.maxTorrents}` : String(member.torrents)} />
+                <Fact label={t('fleet.uptime')} value={member.uptimeSecs ? uptime(member.uptimeSecs) : '—'} />
+                <Fact label={t('fleet.version')} value={member.version || '—'} />
               </dl>
               {member.availability === 'offline' || member.availability === 'draining' ? (
                 <p className="fleet-note">
@@ -187,6 +179,25 @@ function rankBySpeed(workers: FleetMember[], speeds: Map<string, WorkerProbe>): 
     if (canWork(a) !== canWork(b)) return canWork(a) - canWork(b)
     return mbit(b) - mbit(a)
   })
+}
+
+// One cell of the footer grid. The value carries its own shimmer while it is
+// still being worked out, so the card reads as "this number is coming" rather
+// than as a card with a word where a number belongs.
+function Fact({ label, value, note, pending }: { label: string; value: string; note?: string; pending?: boolean }) {
+  return (
+    <div className="fleet-fact">
+      <dt>{label}</dt>
+      <dd className={pending ? 'is-pending' : ''}>
+        {value}
+        {note ? <em>{note}</em> : null}
+      </dd>
+    </div>
+  )
+}
+
+function isMeasuring(probe: WorkerProbe | undefined, probing: boolean): boolean {
+  return probe ? probe.state === 'testing' : probing
 }
 
 function speedLabel(probe: WorkerProbe | undefined, probing: boolean, t: (key: string) => string): string {
