@@ -31,6 +31,7 @@ export const ptBR: Record<string, string> = {
   'home.torrentRejected': 'Esse torrent não pode ser aberto aqui.',
   'home.peers': 'peers',
   'home.nicknamePlaceholder': 'Um nome de convidado será criado automaticamente',
+  'home.discord': 'Entrar no Discord',
   'home.source': 'Ver o código no GitHub',
   'home.language': 'Idioma',
   'home.dialogTitle': 'Como devemos chamar você?',

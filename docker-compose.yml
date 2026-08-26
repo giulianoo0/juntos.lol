@@ -4,6 +4,7 @@ services:
       context: .
       args:
         GIT_SHA: ${GIT_SHA:-dev}
+        DISCORD_URL: ${DISCORD_URL:-}
     # Without a policy here the host coming back up leaves the site off the
     # air: Docker restarts and starts only the containers that carry one.
     # unless-stopped rather than always, so a deliberate stop during a deploy

@@ -31,6 +31,7 @@ export const en: Record<string, string> = {
   'home.torrentRejected': 'This torrent cannot be opened here.',
   'home.peers': 'peers',
   'home.nicknamePlaceholder': 'Guest name is created automatically',
+  'home.discord': 'Join the Discord',
   'home.source': 'View the source on GitHub',
   'home.language': 'Language',
   'home.dialogTitle': 'What should we call you?',

@@ -377,6 +377,10 @@ button.timecode-chapter:hover { color: var(--text); }
 .build-info a { display: inline-flex; align-items: center; color: var(--text-faint); transition: color var(--t-close) var(--ease); }
 .build-info a:hover { color: var(--text); }
 .build-commit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: -.02em; }
+/* Sits with the source link rather than the tabs: both are about where this
+   thing comes from and who is behind it, neither is a way into a room. */
+.header-discord { display: inline-flex; align-items: center; color: var(--text-faint); transition: color var(--t-close) var(--ease); }
+.header-discord:hover { color: #8b9bf5; }
 @media (max-width: 620px) { .build-commit { display: none; } }
 /* Someone the controller excused: still listed, so the room can see who is
    watching separately, but visibly not part of what everyone waits for. */

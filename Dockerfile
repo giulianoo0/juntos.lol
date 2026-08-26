@@ -5,6 +5,11 @@ FROM node:24-bookworm AS web-build
 ARG GIT_SHA=dev
 ENV VITE_GIT_SHA=$GIT_SHA
 
+# The community invite shown in the header, set per deployment in .env. Empty
+# by default: a fork with no server of its own shows no link at all.
+ARG DISCORD_URL=
+ENV VITE_DISCORD_URL=$DISCORD_URL
+
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 # The install hook that keeps public/matroska-subtitles.min.js in step with
