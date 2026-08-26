@@ -16,10 +16,14 @@ function placeholderGradient(src: string): string {
 // are decoded, then the picture fades over it. Swapping `src` fades out and
 // back in with the new picture, so hero and thumbnail changes stay soft.
 //
+// `onReady` avisa quando os bytes estão decodificados — para quem precisa
+// desmontar a camada que estava segurando o lugar. Passe uma referência
+// estável: ela entra nas dependências do efeito.
+//
 // `overlay` drops the colour placeholder: the frame stays transparent until
 // the picture arrives, for an image stacked over another that must crossfade
 // in rather than blot out what it is covering.
-export function FadeImg({ src, className, style, overlay = false, ...props }: ImgHTMLAttributes<HTMLImageElement> & { overlay?: boolean }) {
+export function FadeImg({ src, className, style, overlay = false, onReady, ...props }: ImgHTMLAttributes<HTMLImageElement> & { overlay?: boolean; onReady?: () => void }) {
   const [shown, setShown] = useState<string | undefined>(undefined)
   // A detached loader is not in the document, so `loading="lazy"` on the img
   // below gated nothing: the bytes were already downloaded by the time the
@@ -40,17 +44,17 @@ export function FadeImg({ src, className, style, overlay = false, ...props }: Im
     }
     let cancelled = false
     const loader = new Image()
-    loader.onload = () => { if (!cancelled) setShown(src) }
+    loader.onload = () => { if (!cancelled) { setShown(src); onReady?.() } }
     // On error the placeholder colours simply stay — a permanently empty box
     // is worse than an honest tint.
     loader.src = src
     // Cached images resolve synchronously-ish; complete avoids a blank frame.
-    if (loader.complete && loader.naturalWidth > 0) setShown(src)
+    if (loader.complete && loader.naturalWidth > 0) { setShown(src); onReady?.() }
     return () => {
       cancelled = true
       loader.onload = null
     }
-  }, [src, lazy])
+  }, [src, lazy, onReady])
 
   // The gradient lives on a wrapper: the img itself sits at opacity 0 until
   // decoded, and a background on an invisible element would be invisible too.
@@ -62,7 +66,7 @@ export function FadeImg({ src, className, style, overlay = false, ...props }: Im
           alt={props.alt ?? ''}
           src={src}
           decoding="async"
-          onLoad={() => setShown(typeof src === 'string' ? src : undefined)}
+          onLoad={() => { setShown(typeof src === 'string' ? src : undefined); onReady?.() }}
           className={`fade-img ${shown === src ? 'is-loaded' : ''}`}
         />
       ) : (

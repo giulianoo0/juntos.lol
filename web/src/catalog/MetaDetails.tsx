@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { animate } from 'motion'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { ChevronLeft, MessageSquareShare, Play, Star, X } from 'lucide-react'
+import { ChevronLeft, Filter, MessageSquareShare, Play, PlugZap, Puzzle, SearchX, Star, X } from 'lucide-react'
+import { Button } from '../ui/Button'
 import { Dropdown } from './Dropdown'
 import { languageName } from './languages'
 import { Carousel } from './Carousel'
@@ -43,10 +44,40 @@ interface MetaDetailsProps {
   onOpenPlugins?: () => void
 }
 
-// The details panel. It morphs out of the clicked poster (FLIP: mounted at
-// the poster's rect, grown into its resting layout), reveals its content only
-// once the morph lands, and shrinks back into the card on close. Without an
-// origin rect — deep links, keyboard opens, reduced motion — it fades.
+
+/**
+ * Um estado vazio das fontes. Sempre a mesma forma — ícone, o que aconteceu,
+ * por que, e a única saída que faz sentido — porque a lista de fontes tem
+ * quatro maneiras diferentes de vir vazia e cada uma pede uma ação diferente.
+ * Uma frase solta obrigava a pessoa a deduzir qual dos quatro casos era o dela.
+ */
+function SourcesEmpty({ icon, title, hint, action }: {
+  icon: React.ReactNode
+  title: string
+  hint: string
+  action?: { label: string; onClick: () => void; primary?: boolean }
+}) {
+  return (
+    <div className="sources-empty">
+      <span className="sources-empty-icon" aria-hidden="true">{icon}</span>
+      <strong className="sources-empty-title">{title}</strong>
+      <p className="sources-empty-hint">{hint}</p>
+      {action ? (
+        // O mesmo controle do resto do app, não um botão só desta tela.
+        <Button variant={action.primary ? 'primary' : 'default'} size="small" onClick={action.onClick}>
+          {action.label}
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
+// O painel de detalhes. Ele nasce do pôster clicado (FLIP: montado no rect do
+// card e crescido até o layout de repouso) e só revela o conteúdo quando o
+// morph pousa. Sem rect de origem — deep link, abertura por teclado, motion
+// reduzido — ele entra com um fade. Fechar é sempre fade: quem clicou no X já
+// decidiu sair, e refazer o caminho de volta só atrasa isso. No celular ele
+// não morpha nunca: é uma folha que sobe do rodapé e desce por ali.
 export function MetaDetails({ open, mode, focus, onClose, onPickStream, onRequestTitle, onOpenPlugins }: MetaDetailsProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
@@ -65,13 +96,23 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const [noPlugins, setNoPlugins] = useState(false)
   // Named, because "they all broke" is not "they found nothing".
   const [brokenPlugins, setBrokenPlugins] = useState<string[]>([])
+  // "Procurar de novo" refaz a consulta sem fechar o painel.
+  const [streamRetry, setStreamRetry] = useState(0)
+  // Vira true quando a arte larga terminou de decodificar; o pôster que a
+  // segurava até ali é desmontado.
+  const [artLoaded, setArtLoaded] = useState(false)
+  const markArtLoaded = useCallback(() => setArtLoaded(true), [])
   const [resolutionFilter, setResolutionFilter] = useState<'all' | StreamResolution>('all')
   // A flag emoji, or 'all'. A flag matches releases carrying the language as
   // audio or as subtitles alike — Torrentio lists it either way.
   const [languageFilter, setLanguageFilter] = useState('all')
   const [requested, setRequested] = useState(false)
   const meta = open.meta
-  const morphs = Boolean(open.rect) && !reduceMotion
+  // No celular o painel é uma folha que sobe do rodapé: um card de 118px
+  // crescendo até a tela inteira é um gesto que não lê, e o pôster de origem
+  // fica coberto pela própria folha antes de a animação acabar.
+  const sheet = useMemo(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 620px)').matches, [])
+  const morphs = Boolean(open.rect) && !reduceMotion && !sheet
 
   useEffect(() => {
     let cancelled = false
@@ -123,7 +164,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
       cancelled = true
       abort.abort()
     }
-  }, [target, mode])
+  }, [target, mode, streamRetry])
 
   const seasons = useMemo(() => {
     const numbers = new Set<number>()
@@ -171,7 +212,10 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
     if (!morphs || !open.rect) {
       const fade = reduceMotion
         ? animate(panel, { opacity: [0, 1] }, { duration: 0.2, ease: REVEAL_EASE })
-        : animate(panel, { opacity: [0, 1], transform: ['scale(0.97)', 'scale(1)'] }, { duration: 0.25, ease: REVEAL_EASE })
+        // A folha sobe do rodapé; no desktop sem rect de origem, ela só cresce.
+        : sheet
+          ? animate(panel, { transform: ['translateY(100%)', 'translateY(0%)'] }, { duration: 0.4, ease: MORPH_EASE })
+          : animate(panel, { opacity: [0, 1], transform: ['scale(0.97)', 'scale(1)'] }, { duration: 0.25, ease: REVEAL_EASE })
       setRevealed(true)
       return () => { backdropIn.stop(); fade.stop() }
     }
@@ -232,41 +276,16 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
       onClose()
       return
     }
-    const fadeOut = animate(backdrop, { opacity: 0 }, { duration: 0.25, ease: REVEAL_EASE })
-    if (!morphs || !open.rect) {
-      void animate(panel, { opacity: 0 }, { duration: 0.15, ease: REVEAL_EASE }).then(onClose)
-      return
-    }
-    const rect = panel.getBoundingClientRect()
-    const radius = window.getComputedStyle(panel).borderTopLeftRadius || '0px'
-    Object.assign(panel.style, {
-      position: 'fixed',
-      margin: '0',
-      top: `${rect.top}px`,
-      left: `${rect.left}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-      borderRadius: radius,
-      overflow: 'hidden',
-    })
-    // The copy lifts away first; only then does the bare panel shrink back
-    // into the card, fully opaque the whole way — a translucent ghost mixing
-    // with the board underneath reads as a glitch, not a morph.
-    setRevealed(false)
-    const origin = open.rect
-    void fadeOut
-    void animate(
-      panel,
-      {
-        top: `${origin.top}px`,
-        left: `${origin.left}px`,
-        width: `${origin.width}px`,
-        height: `${origin.height}px`,
-        borderRadius: CARD_RADIUS,
-      },
-      { duration: 0.32, ease: MORPH_EASE, delay: 0.1 },
+    animate(backdrop, { opacity: 0 }, { duration: 0.25, ease: REVEAL_EASE })
+    // Abre com morph, fecha com fade. Encolher de volta para o pôster obriga a
+    // olhar o caminho inteiro de novo, e ninguém está esperando por isso na
+    // saída — quem fecha já decidiu ir embora. A folha do celular é a exceção:
+    // ela desce por onde subiu, que é o gesto que ela mesma prometeu.
+    void (sheet
+      ? animate(panel, { transform: 'translateY(100%)' }, { duration: 0.3, ease: MORPH_EASE })
+      : animate(panel, { opacity: 0, transform: 'scale(0.985)' }, { duration: 0.22, ease: REVEAL_EASE })
     ).then(onClose)
-  }, [morphs, onClose, open.rect])
+  }, [sheet, onClose])
 
   // Escape closes; the page behind must not scroll while the panel is up.
   useEffect(() => {
@@ -347,14 +366,16 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
         }}
       >
         <div className="details-hero">
-          {/* Both layers stay mounted: the poster holds the hero from the
-              first frame, and the wide art fades in over it whenever it
-              arrives — never a swap, always a crossfade. */}
-          {meta.poster ? (
+          {/* O pôster é só o que segura o hero até a arte larga chegar: ele já
+              está no cache do card, então não custa nada. Assim que a arte
+              termina de decodificar ele sai — antes disso as duas ficavam
+              montadas para sempre, decodificadas e pintadas a cada frame do
+              blur do scroll, uma delas sem nunca aparecer. */}
+          {meta.poster && !artLoaded ? (
             <FadeImg className="details-hero-poster" src={meta.poster} alt="" />
           ) : null}
           {background ? (
-            <FadeImg className="details-hero-img" src={background} alt="" overlay />
+            <FadeImg className="details-hero-img" src={background} alt="" overlay onReady={markArtLoaded} />
           ) : null}
           <div className="details-hero-scrim" />
         </div>
@@ -546,30 +567,50 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   {Array.from({ length: 5 }, (_, index) => <span key={index} className="stream-skeleton" />)}
                 </motion.div>
               ) : streamsFailed || streams === null ? (
-                <p className="empty-copy">{t('details.sourcesFailed')}</p>
+                <SourcesEmpty
+                  icon={<PlugZap size={20} aria-hidden="true" />}
+                  title={t('details.sourcesFailed')}
+                  hint={t('details.pluginsBrokeHint')}
+                  action={{ label: t('details.retrySources'), onClick: () => setStreamRetry((seq) => seq + 1) }}
+                />
               ) : noPlugins ? (
-                // Three empty states, because they are three different
-                // problems: nothing installed, installed and found nothing,
-                // and found things the filters are hiding.
-                <p className="empty-copy">
-                  {t('details.noPlugins')}{' '}
-                  <button type="button" className="catalog-retry" onClick={onOpenPlugins}>
-                    {t('details.openPlugins')}
-                  </button>
-                </p>
+                // Quatro estados, porque são quatro problemas diferentes: nada
+                // instalado, instalado e não achou, instalado e quebrou, e
+                // achou mas os filtros escondem. Cada um leva a uma saída
+                // distinta, e é a saída que justifica separá-los.
+                <SourcesEmpty
+                  icon={<Puzzle size={20} aria-hidden="true" />}
+                  title={t('details.noPlugins')}
+                  hint={t('details.noPluginsHint')}
+                  action={{ label: t('details.openPlugins'), onClick: () => onOpenPlugins?.(), primary: true }}
+                />
               ) : streams.length === 0 && brokenPlugins.length > 0 ? (
-                // Everything that ran, broke. Sending someone to install more
-                // plugins here would be advice for a different problem.
-                <p className="empty-copy">{t('details.pluginsBroke')} {brokenPlugins.join(', ')}</p>
+                // Tudo que rodou, quebrou. Mandar instalar mais plugins aqui
+                // seria conselho para outro problema.
+                <SourcesEmpty
+                  icon={<PlugZap size={20} aria-hidden="true" />}
+                  title={`${t('details.pluginsBroke')} ${brokenPlugins.join(', ')}`}
+                  hint={t('details.pluginsBrokeHint')}
+                  action={{ label: t('details.retrySources'), onClick: () => setStreamRetry((seq) => seq + 1) }}
+                />
               ) : streams.length === 0 ? (
-                <p className="empty-copy">
-                  {t('details.noPluginResolved')}{' '}
-                  <button type="button" className="catalog-retry" onClick={onOpenPlugins}>
-                    {t('details.openPlugins')}
-                  </button>
-                </p>
+                <SourcesEmpty
+                  icon={<SearchX size={20} aria-hidden="true" />}
+                  title={t('details.noPluginResolved')}
+                  hint={t('details.noPluginResolvedHint')}
+                  action={{ label: t('details.openPlugins'), onClick: () => onOpenPlugins?.() }}
+                />
               ) : visibleStreams.length === 0 ? (
-                <p className="empty-copy">{t('details.noFilteredSources')}</p>
+                <SourcesEmpty
+                  icon={<Filter size={20} aria-hidden="true" />}
+                  title={t('details.noFilteredSources')}
+                  hint={t('details.noFilteredSourcesHint')}
+                  action={{
+                    label: t('details.clearFilters'),
+                    onClick: () => { setResolutionFilter('all'); setLanguageFilter('all') },
+                    primary: true,
+                  }}
+                />
               ) : (
                 <motion.div
                   key={`streams:${target.season ?? 0}:${target.episode ?? 0}`}
