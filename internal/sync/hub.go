@@ -138,6 +138,24 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 	}
 }
 
+// Live reports the rooms with someone in them and how many people that is,
+// right now. Counted from the capability table rather than each room's own
+// client map: that map belongs to the room's goroutine, and this is asked
+// from a request's. A room whose last member left is still in `rooms` until
+// its goroutine winds down, so an empty one is not a room anyone is in.
+func (h *Hub) Live() (rooms, members int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, room := range h.capabilities {
+		if len(room) == 0 {
+			continue
+		}
+		rooms++
+		members += len(room)
+	}
+	return rooms, members
+}
+
 // AuthorizeMember validates the short-lived in-memory capability issued by
 // the WebSocket welcome message. It is never accepted from a URL or nickname.
 func (h *Hub) AuthorizeMember(roomID, memberID, capability string) bool {

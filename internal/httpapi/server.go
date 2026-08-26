@@ -94,6 +94,14 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
+		// Who is actually here, for the status page. Counted from the live
+		// connections rather than from the store: a room key outlives the tab
+		// that made it by the whole room TTL, so Redis would report a crowd
+		// hours after everyone left. Public — it is a count, not a roster.
+		r.GET("/api/live", func(c *gin.Context) {
+			rooms, members := hub.Live()
+			c.JSON(http.StatusOK, gin.H{"rooms": rooms, "members": members})
+		})
 	}
 	if options.workerLink != nil {
 		r.GET("/ws/worker-link", options.workerLink)

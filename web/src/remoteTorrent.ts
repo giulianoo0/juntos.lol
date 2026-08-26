@@ -177,6 +177,21 @@ export interface Fleet {
 }
 
 /** The whole fleet and how loaded it is. */
+/** Rooms with someone in them, and how many people that is, right now. */
+export interface Live {
+  rooms: number
+  members: number
+}
+
+// Counted from the live WebSocket connections, not from stored rooms: a room
+// key outlives the tab that made it by the whole room TTL.
+export async function liveNow(): Promise<Live> {
+  const response = await fetch('/api/live')
+  if (!response.ok) throw new Error(`live ${response.status}`)
+  const body = await response.json() as Partial<Live>
+  return { rooms: body.rooms ?? 0, members: body.members ?? 0 }
+}
+
 export async function fleetStatus(): Promise<Fleet> {
   const response = await fetch('/api/fleet')
   if (!response.ok) throw new Error(`fleet ${response.status}`)

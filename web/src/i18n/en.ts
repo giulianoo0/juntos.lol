@@ -236,6 +236,8 @@ export const en: Record<string, string> = {
   'fleet.speed': 'Speed here',
   'fleet.measuring': 'measuring…',
   'fleet.noPath': 'no route from here',
+  'fleet.liveRooms': 'Rooms open',
+  'fleet.liveMembers': 'People watching',
   'fleet.disk': 'Disk',
   'fleet.transfer': 'Serving',
   'fleet.noCap': 'no ceiling',

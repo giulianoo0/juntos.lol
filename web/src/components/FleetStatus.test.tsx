@@ -167,6 +167,35 @@ describe('FleetStatus', () => {
     expect(container.querySelector('dd.is-pending')?.textContent).toBe('measuring…')
   })
 
+  // The status page's one live number: counted from the open sockets, so it
+  // has its own endpoint and its own faster clock.
+  it('shows how many rooms and people are on right now', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
+      ok: true,
+      json: async () => url === '/api/live'
+        ? { rooms: 3, members: 7 }
+        : { capacity: 'available', workers: [member()] },
+    })))
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText('Rooms open')).toBeInTheDocument())
+    expect(screen.getByText('People watching')).toBeInTheDocument()
+    // NumberFlow animates towards the value and keeps the digits it is given
+    // in the accessible text, so the count is asserted through that.
+    const counts = document.querySelectorAll('.fleet-live dd')
+    expect(counts[0].textContent).toContain('3')
+    expect(counts[1].textContent).toContain('7')
+  })
+
+  // The worker holds a window, not the file: reporting the reservation said a
+  // 100 GB quota was a tenth full when the volume held a few hundred MB.
+  it('reports the disk a worker is really holding, not what it reserved', async () => {
+    answer({ capacity: 'available', workers: [member({ diskUsed: 10_737_418_240, diskReal: 343_932_928 })] })
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText('0.3 GB / 100.0 GB')).toBeInTheDocument())
+  })
+
   it('says a deployment runs no workers rather than showing an empty list', async () => {
     answer({ capacity: 'disabled', workers: [] })
     render(<FleetStatus />)

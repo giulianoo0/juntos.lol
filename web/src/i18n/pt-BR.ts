@@ -236,6 +236,8 @@ export const ptBR: Record<string, string> = {
   'fleet.speed': 'Velocidade daqui',
   'fleet.measuring': 'medindo…',
   'fleet.noPath': 'sem rota daqui',
+  'fleet.liveRooms': 'Salas abertas',
+  'fleet.liveMembers': 'Pessoas assistindo',
   'fleet.disk': 'Disco',
   'fleet.transfer': 'Servindo',
   'fleet.noCap': 'sem teto',

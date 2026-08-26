@@ -920,6 +920,13 @@ button.timecode-chapter:hover { color: var(--text); }
 .fleet-status { --sheen-cycle: 2.1s; --sheen-ease: cubic-bezier(.37,0,.63,1); width: min(760px, 100%); margin: 0 auto; padding: 8px 0 40px; }
 .fleet-summary h2 { margin: 0 0 6px; font-size: 25px; letter-spacing: -.035em; }
 .fleet-summary p { margin: 0; color: var(--text-dim); font-size: 14px; }
+/* Who is here right now, beside how much fleet there is to hold them. Larger
+   than the worker facts and set in tabular figures: these two tick while the
+   page is open, and digits that shift width would make the row twitch. */
+.fleet-live { display: flex; gap: 26px; margin: 14px 0 0; }
+.fleet-live > div { display: grid; gap: 3px; }
+.fleet-live dt { color: var(--text-faint); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.fleet-live dd { margin: 0; color: var(--text); font-size: 23px; line-height: 1.05; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .fleet-stale { margin-top: 6px !important; color: #f6cf65 !important; font-size: 12.5px !important; }
 .fleet-empty { color: var(--text-dim); font-size: 14px; }
 .fleet-list { list-style: none; margin: 22px 0 0; padding: 0; display: grid; gap: 12px; }
