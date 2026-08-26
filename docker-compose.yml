@@ -61,7 +61,7 @@ services:
       GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER}
       GRAFANA_CLOUD_PROM_TOKEN: ${GRAFANA_CLOUD_PROM_TOKEN}
       SS_METRICS_TARGET: app:9090
-      SS_INSTANCE: ${SS_INSTANCE:-ss.giuli.dev}
+      SS_INSTANCE: ${SS_INSTANCE:-juntos.lol}
       SS_ENV: ${SS_ENV:-production}
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="juntos.lol">
+  <path d="M 256 8 C 96 8 8 96 8 256 C 8 416 96 504 256 504 C 416 504 504 416 504 256 C 504 96 416 8 256 8 Z" fill="#141416"/>
+  <g transform="translate(-6,6)">
+    <path d="M 300 176 L 300 306 A 96 96 0 0 1 204 402" fill="none" stroke="#fff" stroke-width="78" stroke-linecap="round"/>
+    <path d="M 282 58 L 324 81 L 282 104 Z" fill="#FF7A45" stroke="#FF7A45" stroke-width="16" stroke-linejoin="round"/>
+  </g>
+</svg>

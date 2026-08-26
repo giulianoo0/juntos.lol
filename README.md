@@ -1,6 +1,6 @@
-# ss.giuli.dev
+# juntos.lol
 
-[ss.giuli.dev](https://ss.giuli.dev) é uma aplicação de watch party: envie um vídeo ou abra um magnet, compartilhe a sala e assista com outras pessoas usando reprodução sincronizada, chat, múltiplos áudios, legendas e compartilhamento de tela.
+[juntos.lol](https://juntos.lol) é uma aplicação de watch party: envie um vídeo ou abra um magnet, compartilhe a sala e assista com outras pessoas usando reprodução sincronizada, chat, múltiplos áudios, legendas e compartilhamento de tela.
 
 ![Prévia do player](web/public/social-card.png)
 
@@ -20,7 +20,7 @@
 - compartilhamento de tela com LiveKit;
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
-- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [ss.giuli.dev/docs](https://ss.giuli.dev/docs);
+- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [juntos.lol/docs](https://juntos.lol/docs);
 - métricas Prometheus enviadas para o Grafana Cloud, com painéis e alertas versionados no repositório.
 
 ## Como funciona
@@ -164,7 +164,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `GRAFANA_CLOUD_PROM_URL` | vazio | Endpoint de `remote_write` da instância de métricas do Grafana Cloud. |
 | `GRAFANA_CLOUD_PROM_USER` | vazio | ID numérico dessa instância, usado como usuário do basic auth. |
 | `GRAFANA_CLOUD_PROM_TOKEN` | vazio | Token da política de acesso, com escopo `metrics:write`. |
-| `SS_INSTANCE` | `ss.giuli.dev` | Rótulo `instance` das séries enviadas. |
+| `SS_INSTANCE` | `juntos.lol` | Rótulo `instance` das séries enviadas. |
 | `SS_ENV` | `production` | Rótulo `env` das séries enviadas. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.

@@ -1173,3 +1173,16 @@ button.timecode-chapter:hover { color: var(--text); }
 .pipeline-chip { display: inline-flex; align-items: center; gap: 7px; }
 .pipeline-metric { display: inline-flex; align-items: center; gap: 3px; }
 .pipeline-dot { opacity: .45; }
+
+/* ---------------------------------------------------------------------------
+   A marca. O wordmark herda a cor do texto; o play é o único ponto de coral,
+   e ele vem de dentro do SVG. */
+.home-wordmark { display: inline-flex; align-items: center; }
+.wordmark { height: 19px; width: auto; display: block; }
+.mark { height: 22px; width: auto; display: block; }
+/* Onde o nome inteiro não cabe, fica só o j. */
+.home-wordmark .mark { display: none; }
+@media (max-width: 620px) {
+  .home-wordmark .wordmark { display: none; }
+  .home-wordmark .mark { display: block; }
+}

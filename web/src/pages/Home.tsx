@@ -31,6 +31,7 @@ import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
 import { MAX_UPLOAD_BYTES } from '../limits'
+import { Mark, Wordmark, WRITES_ON_LOAD } from '../ui/Brand'
 
 // The three things the header offers: a catalogue, your own file, and how the
 // fleet behind both is doing.
@@ -399,7 +400,11 @@ export function Home() {
         {/* The two ways into a room are the two tabs, so the header sides
             carry only what is neither: who this is, the language, plugins. */}
         <div className="header-start">
-          <a className="home-wordmark" href="/">ss.giuli.dev</a>
+          {/* O nome inteiro onde cabe; só o j no celular. */}
+          <a className="home-wordmark" href="/" aria-label="juntos.lol">
+            <Wordmark className="wordmark" writing={WRITES_ON_LOAD} />
+            <Mark className="mark" />
+          </a>
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
