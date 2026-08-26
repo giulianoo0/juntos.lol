@@ -1,11 +1,10 @@
 pub mod acme;
 mod cors;
-pub mod relay;
-pub mod throttle;
 mod file;
-mod haves;
 mod hint;
 mod range;
+pub mod relay;
+pub mod throttle;
 pub mod tls;
 
 use std::collections::HashMap;
@@ -33,12 +32,21 @@ pub struct AppState {
     pub server_key: RwLock<Option<VerifyingKey>>,
     pub worker_id: RwLock<String>,
     pub revoked: Mutex<HashMap<String, u64>>,
+    /// Bytes each probe ticket has already served, by jti, with the ticket's
+    /// exp for cleanup. A probe ticket is minted on demand and free, so a
+    /// per-request cap alone is no cap at all — this is what keeps the
+    /// endpoint from being an unmetered firehose of zeros.
+    pub probe_spent: Mutex<HashMap<String, (usize, u64)>>,
     pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
     pub fn verify(&self, raw: &str) -> anyhow::Result<Ticket> {
-        let key = self.server_key.read().unwrap().ok_or_else(|| anyhow::anyhow!("worker not enrolled"))?;
+        let key = self
+            .server_key
+            .read()
+            .unwrap()
+            .ok_or_else(|| anyhow::anyhow!("worker not enrolled"))?;
         let worker_id = self.worker_id.read().unwrap().clone();
         let ticket = ticket::verify(raw, &key, &worker_id)?;
         if self.revoked.lock().unwrap().contains_key(&ticket.jti) {
@@ -80,23 +88,34 @@ impl Metrics {
                 self.first_byte_buckets[i].fetch_add(1, Ordering::Relaxed);
             }
         }
-        self.first_byte_sum_ms.fetch_add(d.as_millis() as u64, Ordering::Relaxed);
+        self.first_byte_sum_ms
+            .fetch_add(d.as_millis() as u64, Ordering::Relaxed);
         self.first_byte_count.fetch_add(1, Ordering::Relaxed);
     }
     pub fn observe_stall(&self, d: Duration) {
-        self.stall_sum_ms.fetch_add(d.as_millis() as u64, Ordering::Relaxed);
+        self.stall_sum_ms
+            .fetch_add(d.as_millis() as u64, Ordering::Relaxed);
     }
 }
 
 pub fn fail(status: StatusCode, audience: &str, detail: &str) -> Response {
-    let mut response = (status, [(header::CONTENT_TYPE, "application/json")], serde_json::json!({ "error": detail }).to_string())
+    let mut response = (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::json!({ "error": detail }).to_string(),
+    )
         .into_response();
     cors::apply(&mut response, audience);
     response
 }
 
 pub fn ok_json(audience: &str, value: serde_json::Value) -> Response {
-    let mut response = (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], value.to_string()).into_response();
+    let mut response = (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        value.to_string(),
+    )
+        .into_response();
     cors::apply(&mut response, audience);
     response
 }
@@ -115,13 +134,38 @@ async fn preflight(State(state): State<Arc<AppState>>, Path(ticket): Path<String
     }
 }
 
-async fn preflight_sub(State(state): State<Arc<AppState>>, Path((ticket, _)): Path<(String, String)>) -> Response {
+async fn preflight_sub(
+    State(state): State<Arc<AppState>>,
+    Path((ticket, _)): Path<(String, String)>,
+) -> Response {
     preflight(State(state), Path(ticket)).await
 }
 
 // A short-lived signed ticket buys a few megabytes of zeros: what the page
-// measures each worker with before choosing one. The size is capped and the
-// ticket expires in seconds, so it is not a free bandwidth endpoint.
+// measures each worker with before choosing one. The per-request cap fits
+// what the page asks for (3 MiB), and the per-ticket budget covers one
+// retry of it — past that the ticket is done, however much life it has left.
+const PROBE_CAP: usize = 4 * 1024 * 1024;
+const PROBE_TICKET_BUDGET: usize = 8 * 1024 * 1024;
+
+/// Charges `bytes` to a probe ticket's lifetime budget; false when the
+/// charge would pass it. Expired entries are swept on the way through.
+fn spend_probe_budget(
+    spent: &mut HashMap<String, (usize, u64)>,
+    jti: &str,
+    exp: u64,
+    bytes: usize,
+) -> bool {
+    let now = ticket::now_secs();
+    spent.retain(|_, (_, exp)| *exp > now);
+    let used = spent.entry(jti.to_string()).or_insert((0, exp));
+    if used.0 + bytes > PROBE_TICKET_BUDGET {
+        return false;
+    }
+    used.0 += bytes;
+    true
+}
+
 async fn probe(
     State(state): State<Arc<AppState>>,
     Path(ticket): Path<String>,
@@ -131,12 +175,21 @@ async fn probe(
         Ok(t) => t,
         Err(e) => return fail(StatusCode::UNAUTHORIZED, "*", &e.to_string()),
     };
-    const PROBE_CAP: usize = 8 * 1024 * 1024;
     let bytes = query
         .get("bytes")
         .and_then(|b| b.parse::<usize>().ok())
         .unwrap_or(2 * 1024 * 1024)
         .min(PROBE_CAP);
+    {
+        let mut spent = state.probe_spent.lock().unwrap();
+        if !spend_probe_budget(&mut spent, &ticket.jti, ticket.exp, bytes) {
+            return fail(
+                StatusCode::TOO_MANY_REQUESTS,
+                &ticket.audience,
+                "probe budget spent",
+            );
+        }
+    }
     let mut response = (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/octet-stream")],
@@ -156,18 +209,30 @@ async fn healthz(State(state): State<Arc<AppState>>) -> Response {
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/v1/f/:ticket", get(range::get).head(range::head).options(preflight))
+        .route(
+            "/v1/f/:ticket",
+            get(range::get).head(range::head).options(preflight),
+        )
         .route("/v1/hint/:ticket", post(hint::post).options(preflight))
-        .route("/v1/file/:ticket/:index", get(file::get).options(preflight_sub))
-        .route("/v1/t/:ticket/haves", get(haves::get).options(preflight_sub))
+        .route(
+            "/v1/file/:ticket/:index",
+            get(file::get).options(preflight_sub),
+        )
         .route("/v1/probe/:ticket", get(probe).options(preflight))
         .route("/relay/*path", axum::routing::any(relay::any))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), in_flight))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            in_flight,
+        ))
         .with_state(state)
 }
 
 // Counts responses still being written, for the drain on shutdown.
-async fn in_flight(State(state): State<Arc<AppState>>, request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+async fn in_flight(
+    State(state): State<Arc<AppState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     state.metrics.in_flight.fetch_add(1, Ordering::Relaxed);
     let response = next.run(request).await;
     state.metrics.in_flight.fetch_sub(1, Ordering::Relaxed);
@@ -185,10 +250,14 @@ pub async fn serve(
     match (&cfg.tls, slot) {
         (TlsMode::Off, _) => {
             tracing::info!(addr = %cfg.http_addr, "data plane on plain http");
-            axum_server::bind(cfg.http_addr).handle(handle).serve(app.into_make_service()).await?;
+            axum_server::bind(cfg.http_addr)
+                .handle(handle)
+                .serve(app.into_make_service())
+                .await?;
         }
         (_, Some(slot)) => {
-            let rustls = axum_server::tls_rustls::RustlsConfig::from_config(tls::server_config(slot));
+            let rustls =
+                axum_server::tls_rustls::RustlsConfig::from_config(tls::server_config(slot));
             let mut server = axum_server::bind_rustls(cfg.https_addr, rustls).handle(handle);
             // Generous windows: a stream fed from disk at WAN latency must
             // not be throttled by a 64 KiB default.
@@ -207,46 +276,91 @@ pub async fn serve(
 }
 
 /// Port 80: the ACME challenge, and a hint for anything else.
-pub async fn serve_challenges(addr: std::net::SocketAddr, challenges: Arc<Mutex<HashMap<String, String>>>) -> anyhow::Result<()> {
+pub async fn serve_challenges(
+    addr: std::net::SocketAddr,
+    challenges: Arc<Mutex<HashMap<String, String>>>,
+) -> anyhow::Result<()> {
     let app = Router::new()
         .route(
             "/.well-known/acme-challenge/:token",
-            get(|Path(token): Path<String>, State(map): State<Arc<Mutex<HashMap<String, String>>>>| async move {
-                match map.lock().unwrap().get(&token) {
-                    Some(auth) => (StatusCode::OK, auth.clone()).into_response(),
-                    None => StatusCode::NOT_FOUND.into_response(),
-                }
-            }),
+            get(
+                |Path(token): Path<String>,
+                 State(map): State<Arc<Mutex<HashMap<String, String>>>>| async move {
+                    match map.lock().unwrap().get(&token) {
+                        Some(auth) => (StatusCode::OK, auth.clone()).into_response(),
+                        None => StatusCode::NOT_FOUND.into_response(),
+                    }
+                },
+            ),
         )
         .with_state(challenges);
-    axum_server::bind(addr).serve(app.into_make_service()).await?;
+    axum_server::bind(addr)
+        .serve(app.into_make_service())
+        .await?;
     Ok(())
 }
 
-pub async fn serve_metrics(addr: std::net::SocketAddr, state: Arc<AppState>, slot: Option<Arc<tls::CertSlot>>) -> anyhow::Result<()> {
+pub async fn serve_metrics(
+    addr: std::net::SocketAddr,
+    state: Arc<AppState>,
+    slot: Option<Arc<tls::CertSlot>>,
+) -> anyhow::Result<()> {
     let app = Router::new()
         .route(
             "/metrics",
             get(move |State(state): State<Arc<AppState>>| {
                 let slot = slot.clone();
-                async move { (StatusCode::OK, crate::metrics::render(&state, slot.as_deref())).into_response() }
+                async move {
+                    (
+                        StatusCode::OK,
+                        crate::metrics::render(&state, slot.as_deref()),
+                    )
+                        .into_response()
+                }
             }),
         )
         .with_state(state);
-    axum_server::bind(addr).serve(app.into_make_service()).await?;
+    axum_server::bind(addr)
+        .serve(app.into_make_service())
+        .await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::range::parse_range;
+    use super::spend_probe_budget;
     use axum::http::HeaderValue;
+
+    #[test]
+    fn probe_budget_is_per_ticket_and_lifetime() {
+        let mut spent = std::collections::HashMap::new();
+        let exp = crate::ticket::now_secs() + 90;
+        assert!(spend_probe_budget(&mut spent, "j1", exp, 4 * 1024 * 1024));
+        assert!(spend_probe_budget(&mut spent, "j1", exp, 4 * 1024 * 1024));
+        assert!(
+            !spend_probe_budget(&mut spent, "j1", exp, 1),
+            "third request passes the budget"
+        );
+        assert!(
+            spend_probe_budget(&mut spent, "j2", exp, 4 * 1024 * 1024),
+            "another ticket has its own budget"
+        );
+        // An expired ticket's entry is swept; the same jti would start over.
+        let mut stale =
+            std::collections::HashMap::from([("old".to_string(), (8 * 1024 * 1024usize, 1u64))]);
+        assert!(spend_probe_budget(&mut stale, "j3", exp, 1));
+        assert!(!stale.contains_key("old"));
+    }
 
     #[test]
     fn ranges() {
         let h = |s: &str| HeaderValue::from_str(s).unwrap();
         assert_eq!(parse_range(Some(&h("bytes=0-99")), 1000), Ok((0, 99)));
-        assert_eq!(parse_range(Some(&h("bytes=990-5000")), 1000), Ok((990, 999)));
+        assert_eq!(
+            parse_range(Some(&h("bytes=990-5000")), 1000),
+            Ok((990, 999))
+        );
         assert_eq!(parse_range(Some(&h("bytes=500-")), 1000), Ok((500, 999)));
         assert_eq!(parse_range(Some(&h("bytes=-10")), 1000), Ok((990, 999)));
         assert_eq!(parse_range(Some(&h("bytes=1000-")), 1000), Err(()));

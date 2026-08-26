@@ -57,3 +57,32 @@ func TestTorrentRoutesWithoutWorkers(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/torrents/j_missing", nil))
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestCleanTrackers(t *testing.T) {
+	kept, err := cleanTrackers([]string{
+		"udp://tracker.opentrackr.org:1337/announce",
+		"https://tracker.example/announce",
+		"wss://tracker.example/ws",   // librqbit would drop it anyway
+		"not a url",
+		"udp://",
+		"http://1.2.3.4:6969/announce",
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"udp://tracker.opentrackr.org:1337/announce",
+		"https://tracker.example/announce",
+		"http://1.2.3.4:6969/announce",
+	}, kept)
+
+	for _, bad := range []string{
+		"http://169.254.169.254/latest/meta-data",
+		"http://10.0.0.5:8080/admin",
+		"udp://127.0.0.1:53/announce",
+		"http://[::1]:9999/",
+		"http://[::ffff:10.1.2.3]:80/",
+		"udp://239.1.1.1:9999/announce",
+	} {
+		_, err := cleanTrackers([]string{bad})
+		require.Error(t, err, bad)
+	}
+}

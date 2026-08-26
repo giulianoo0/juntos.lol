@@ -85,6 +85,31 @@ func (q *Quota) CheckDispatch(ctx context.Context, sid string) (QuotaVerdict, er
 	return QuotaOK, nil
 }
 
+// probeListPerHour caps how many fleet listings (each minting a fresh probe
+// ticket per worker) one session may pull. The page lists once per room it
+// opens and caches the ranking; past this the probe endpoint is being
+// farmed for free egress, not measuring anything.
+const probeListPerHour = 60
+
+func probesKey(sid string) string {
+	return "quota:" + sid + ":probes:" + time.Now().UTC().Format("2006010215")
+}
+
+// CheckProbes spends one fleet listing from the session's hourly budget;
+// false means the budget is gone. The probe bytes themselves are capped
+// per ticket on the worker; this caps how often new tickets are minted.
+func (q *Quota) CheckProbes(ctx context.Context, sid string) (bool, error) {
+	key := probesKey(sid)
+	n, err := q.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return true, err
+	}
+	if n == 1 {
+		q.rdb.Expire(ctx, key, time.Hour)
+	}
+	return n <= probeListPerHour, nil
+}
+
 // AcquireJob records a running job against the session, refusing when the
 // concurrent budget is already full. ttl bounds a job whose release never
 // comes (a worker that vanished with the job).

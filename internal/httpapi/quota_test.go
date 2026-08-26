@@ -85,3 +85,22 @@ func TestQuotaDispatchMiddleware(t *testing.T) {
 	r2.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/t", nil))
 	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
+
+func TestQuotaProbeBudget(t *testing.T) {
+	q, mr := newQuota(t, 0, 0, 0)
+	for i := 0; i < probeListPerHour; i++ {
+		ok, err := q.CheckProbes(t.Context(), "s1")
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+	ok, err := q.CheckProbes(t.Context(), "s1")
+	require.NoError(t, err)
+	require.False(t, ok)
+	ok, err = q.CheckProbes(t.Context(), "s2")
+	require.NoError(t, err)
+	require.True(t, ok)
+	mr.FastForward(2 * time.Hour)
+	ok, err = q.CheckProbes(t.Context(), "s1")
+	require.NoError(t, err)
+	require.True(t, ok, "next hour's key starts over")
+}
