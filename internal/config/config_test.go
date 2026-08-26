@@ -75,14 +75,15 @@ func TestLoadAllowsARoomTTLMatchingTheMediaLifecycle(t *testing.T) {
 
 func TestLoadDefaultsToReclaimingAnEmptyRoomQuickly(t *testing.T) {
 	// A room nobody is in holds its Redis record, its disk directory and every
-	// segment it published. Ninety seconds is long enough to survive a
-	// reconnect and short enough that an abandoned room stops costing storage.
+	// segment it published. A minute is long enough to survive a reconnect and
+	// short enough that a room nobody is in stops costing storage, and holding
+	// a torrent on a worker, almost as soon as the last person leaves.
 	setMediaEnv(t)
 
 	cfg, err := Load()
 
 	require.NoError(t, err)
-	require.Equal(t, 90, cfg.RoomIdleSeconds)
+	require.Equal(t, 60, cfg.RoomIdleSeconds)
 }
 
 func TestLoadTrimsTheMediaOrigin(t *testing.T) {

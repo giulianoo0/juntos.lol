@@ -88,7 +88,7 @@ func Load() (Config, error) {
 		MaxUploadMB:       51200,
 		RoomTTLHours:      5,
 		MaxParticipants:   20,
-		RoomIdleSeconds:   90,
+		RoomIdleSeconds:   60,
 		UploadIdleMinutes: 10,
 		LivekitURL:        "",
 		LivekitAPIKey:     "",

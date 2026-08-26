@@ -56,6 +56,10 @@ type Hub struct {
 	// out the real interval.
 	stallCooldown time.Duration
 
+	// What to tell when a room is gone for good: its torrent job outlives it
+	// otherwise, seeded for nobody until its own idle sweep notices.
+	onReclaimed func(roomID string)
+
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
 	capabilities map[string]map[string]string
@@ -136,6 +140,13 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 			CheckOrigin: sameHostnameOrigin,
 		},
 	}
+}
+
+// OnRoomReclaimed registers what to do when a room is torn down for good, so
+// the work it started elsewhere goes with it. Set once at startup, before any
+// room exists, and read from the room goroutines afterwards.
+func (h *Hub) OnRoomReclaimed(fn func(roomID string)) {
+	h.onReclaimed = fn
 }
 
 // Live reports the rooms with someone in them and how many people that is,
@@ -750,6 +761,12 @@ func (r *roomConn) send(target *client, event Outbound) {
 	}
 }
 
+// How long a room nobody is watching may stay in the preparing stage before it
+// is reclaimed anyway. Long enough for a slow swarm to reach a first playable
+// segment, short enough that a source which never will does not hold a worker
+// and a torrent for the room's whole lifetime.
+const preparingGrace = 10 * time.Minute
+
 // unfinishedWork names what an idle room still has running, or "" when
 // reclaiming it destroys nothing.
 //
@@ -758,7 +775,18 @@ func (r *roomConn) send(target *client, event Outbound) {
 // point of it — but the source goes on arriving for minutes after that.
 // Reclaiming on status alone lands a finished remux in a room that no longer
 // exists.
-func unfinishedWork(r *room.Room) string {
+func unfinishedWork(r *room.Room, now time.Time) string {
+	// A room that failed has nothing left to protect, whatever stage it says
+	// it is in: keeping it only holds a torrent open for an error message.
+	if r.Status == "error" || r.ErrorMessage != "" {
+		return ""
+	}
+	// Preparing is protected, but not forever. A source that has not become
+	// playable in this long with nobody watching is not going to; without a
+	// ceiling the room and its torrent sit there until the room's whole TTL.
+	if now.Sub(r.CreatedAt) > preparingGrace {
+		return ""
+	}
 	switch {
 	case r.Status == "uploading" || r.Status == "processing":
 		return "upload in progress"
@@ -779,7 +807,7 @@ func (r *roomConn) cleanupIdle() {
 		slog.ErrorContext(ctx, "load idle room before cleanup failed", "room_id", r.id, "error", err)
 		return
 	}
-	if reason := unfinishedWork(storedRoom); reason != "" {
+	if reason := unfinishedWork(storedRoom, time.Now()); reason != "" {
 		// Work that outlives the websocket idle window keeps its persisted
 		// room and files: the host's browser can go on publishing segments. A
 		// later connection gets fresh ownership.
@@ -810,6 +838,11 @@ func (r *roomConn) cleanupIdle() {
 	// anywhere saying why, which reads like data loss rather than the cleanup
 	// it is.
 	metrics.RoomsReclaimed.WithLabelValues(metrics.ReclaimIdle).Inc()
+	// Only now, with the record gone: whatever this releases cannot be taken
+	// back, and a room that failed to delete is a room still being watched.
+	if r.hub.onReclaimed != nil {
+		r.hub.onReclaimed(r.id)
+	}
 	slog.InfoContext(ctx, "idle room reclaimed",
 		"room_id", r.id, "idle_for", r.hub.idleAfter)
 }

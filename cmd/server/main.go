@@ -104,12 +104,17 @@ func main() {
 		swarmCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		if err := store.SetSwarm(swarmCtx, roomID, room.SwarmStats{
-			Peers: stats.Peers, DownSpeed: stats.DownSpeed, HaveBytes: stats.HaveBytes, SelectedBytes: stats.SelectedBytes,
+			Peers: stats.Peers, DownSpeed: stats.DownSpeed, HaveBytes: stats.HaveBytes,
+			SelectedBytes: stats.SelectedBytes, DiskBytes: stats.DiskBytes,
 		}); err != nil {
 			return
 		}
 		hub.NotifyRoomUpdated(roomID)
 	}
+	// A reclaimed room takes its torrent with it. CancelRoom existed for this
+	// and nothing called it, so the fleet kept seeding for rooms that had
+	// already been deleted and the status page and the worker disagreed.
+	hub.OnRoomReclaimed(torrents.CancelRoom)
 	workerHub.OnHeartbeat(torrents.Charge)
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)
