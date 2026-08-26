@@ -811,6 +811,19 @@ impl TorrentStateLive {
         Ok(())
     }
 
+    /// ss patch: selects pieces directly rather than by whole files, so a
+    /// streaming reader can hold a window around its cursor and let the
+    /// scheduler drop everything behind it.
+    pub(crate) fn update_selected_pieces(&self, selected: BF) -> anyhow::Result<()> {
+        let mut g = self.lock_write("update_selected_pieces");
+        let pt = g.get_pieces_mut()?;
+        let hns = pt.update_selected_pieces(selected)?;
+        if !hns.finished() {
+            self.reconnect_all_not_needed_peers();
+        }
+        Ok(())
+    }
+
     // If we have all selected pieces but not necessarily all pieces.
     pub(crate) fn is_finished(&self) -> bool {
         self.get_hns().map(|h| h.finished()).unwrap_or_default()

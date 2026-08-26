@@ -22,6 +22,11 @@ pub fn spawn(engine: Weak<Engine>) {
             let Some(engine) = engine.upgrade() else { break };
             engine.expire_stale_leases(LEASE_TTL);
             engine.drop_stale_slots(SLOT_IDLE);
+            // Readers advance between hints, and dropping a stale slot
+            // retires its window; refresh so the selection follows both.
+            for id in engine.serving_infohashes() {
+                engine.apply_window(&id);
+            }
             engine.retry_failed().await;
             let grace = engine.cfg.idle_grace;
             let ttl = engine.cfg.reap_ttl;

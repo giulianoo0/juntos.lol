@@ -78,6 +78,12 @@ pub struct TorrentStats {
     pub file_progress: Vec<u64>,
     pub error: Option<String>,
     pub progress_bytes: u64,
+    /// ss patch: bytes downloaded and verified, whatever is selected right
+    /// now. `progress_bytes` is progress *against the selection*, so with a
+    /// moving piece window it shrinks as the window advances; this one only
+    /// ever grows, which is what a "how much do we hold" readout needs.
+    #[serde(default)]
+    pub have_bytes: u64,
     pub uploaded_bytes: u64,
     pub total_bytes: u64,
     pub finished: bool,
@@ -151,6 +157,7 @@ mod tests {
             file_progress: vec![],
             error: None,
             progress_bytes: 10,
+            have_bytes: 10,
             uploaded_bytes: 0,
             total_bytes: 100,
             finished: false,

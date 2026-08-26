@@ -337,6 +337,15 @@ impl PieceTracker {
         self.chunks.update_only_files(file_infos, new_only_files)
     }
 
+    /// ss patch: select pieces directly, for a streaming reader that only
+    /// needs a window around its cursor rather than the whole file.
+    pub fn update_selected_pieces(
+        &mut self,
+        selected: crate::type_aliases::BF,
+    ) -> anyhow::Result<crate::chunk_tracker::HaveNeededSelected> {
+        self.chunks.update_selected_pieces(selected)
+    }
+
     /// Update per-file have bytes when a piece completes. Returns remaining bytes for the file.
     pub fn update_file_have_on_piece_completed(
         &mut self,
@@ -835,7 +844,7 @@ mod tests {
                 assert_eq!(piece, piece_4, "Should steal piece 4 (the one peer B has)");
                 assert_eq!(from_peer, peer_a);
                 // Verify piece 0 is still owned by peer A (wasn't stolen)
-                assert_eq!(tracker.get_inflight(piece_0).unwrap().peer, peer_a);
+                assert_eq!(tracker.get_inflight(piece_0).unwrap().peers[0], peer_a);
             }
             _ => panic!("Expected Stolen, got {:?}", result),
         }

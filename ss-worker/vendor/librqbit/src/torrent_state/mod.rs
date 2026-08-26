@@ -46,6 +46,7 @@ use crate::spawn_utils::BlockingSpawner;
 use crate::storage::BoxStorageFactory;
 use crate::stream_connect::StreamConnector;
 use crate::torrent_state::stats::LiveStats;
+use crate::type_aliases::BF;
 use crate::type_aliases::FileInfos;
 use crate::type_aliases::PeerStream;
 
@@ -513,6 +514,7 @@ impl ManagedTorrent {
             state: S::Error,
             error: None,
             progress_bytes: 0,
+            have_bytes: 0,
             uploaded_bytes: 0,
             finished: false,
             live: None,
@@ -530,6 +532,7 @@ impl ManagedTorrent {
                     let hns = p.hns();
                     resp.total_bytes = hns.total();
                     resp.progress_bytes = hns.progress();
+                    resp.have_bytes = hns.have_bytes;
                     resp.finished = hns.finished();
                     resp.file_progress = p.chunk_tracker.per_file_have_bytes().to_owned();
                 }
@@ -539,6 +542,7 @@ impl ManagedTorrent {
                     let hns = l.get_hns().unwrap_or_default();
                     resp.total_bytes = hns.total();
                     resp.progress_bytes = hns.progress();
+                    resp.have_bytes = hns.have_bytes;
                     resp.finished = hns.finished();
                     resp.uploaded_bytes = l.get_uploaded_bytes();
                     resp.file_progress = l
@@ -610,6 +614,31 @@ impl ManagedTorrent {
             Ok(())
         }
         .boxed()
+    }
+
+    /// ss patch: narrows the download to an explicit set of pieces, so a
+    /// streaming reader can hold a window around its cursor instead of
+    /// dragging the whole file behind it. Only a live torrent takes this —
+    /// a paused one has no scheduler to redirect, and the next read unpauses
+    /// it and reapplies the window anyway.
+    pub fn update_selected_pieces(&self, pieces: &[u32]) -> anyhow::Result<()> {
+        let metadata = self.metadata.load();
+        let metadata = metadata.as_ref().context("torrent is not resolved")?;
+        let lengths = metadata.lengths();
+        let mut selected = BF::from_boxed_slice(
+            vec![0u8; lengths.piece_bitfield_bytes()].into_boxed_slice(),
+        );
+        let total = lengths.total_pieces();
+        for &piece in pieces {
+            if piece < total {
+                selected.set(piece as usize, true);
+            }
+        }
+        let mut g = self.locked.write();
+        match &mut g.state {
+            ManagedTorrentState::Live(l) => l.update_selected_pieces(selected),
+            _ => Ok(()),
+        }
     }
 
     // Returns true if needed to unpause torrent.

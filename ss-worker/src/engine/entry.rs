@@ -89,7 +89,10 @@ impl Entry {
             infohash: infohash.to_string(),
             name: self.handle.name().unwrap_or_default(),
             phase: if failed { "failed" } else { self.phase.name() },
-            have_bytes: stats.progress_bytes,
+            // Not progress_bytes: that is progress against the current piece
+            // window, which shrinks every time the window moves. This is what
+            // the torrent actually holds, so the room's readout only grows.
+            have_bytes: stats.have_bytes.max(stats.progress_bytes),
             selected_bytes: self.selected_bytes,
             peers,
             down_speed: down,

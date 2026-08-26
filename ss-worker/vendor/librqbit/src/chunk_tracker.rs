@@ -339,6 +339,26 @@ impl ChunkTracker {
             |idx| new_only_files.contains(&idx),
             file_infos,
         );
+        self.update_selected_pieces(selected)
+    }
+
+    /// Selects an arbitrary set of pieces, rather than deriving the set from
+    /// whole files. A streaming reader only ever needs a window around its
+    /// cursor (plus whatever holds the container's header and index), and
+    /// file-granular selection leaves the scheduler fetching the rest of the
+    /// file behind it — for a 23 GB release that is tens of gigabytes of
+    /// bandwidth and disk nobody asked for.
+    pub fn update_selected_pieces(
+        &mut self,
+        selected: BF,
+    ) -> anyhow::Result<HaveNeededSelected> {
+        if selected.len() != self.selected.len() {
+            anyhow::bail!(
+                "selected bitfield is {} bits, expected {}",
+                selected.len(),
+                self.selected.len()
+            );
+        }
         let prev_selected = std::mem::replace(&mut self.selected, selected);
 
         // prev_selected=false and selected=true and have=false: requeue the piece
@@ -519,6 +539,66 @@ mod tests {
                 assert!(!chunks[4]);
             }
         }
+    }
+
+    #[test]
+    fn test_update_selected_pieces_narrows_to_a_window() {
+        // ss: a streaming reader wants a window around its cursor, not the
+        // whole file. Selection has to be expressible per piece, or the
+        // scheduler keeps fetching everything the file selection covers.
+        let piece_len = CHUNK_SIZE * 2 + 1;
+        let total_len = piece_len as u64 * 2 + 1;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+        assert_eq!(l.total_pieces(), 3);
+
+        let bf_len = l.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let all_selected = {
+            let mut bf = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+            bf.get_mut(0..3).unwrap().fill(true);
+            bf
+        };
+        let mut ct =
+            ChunkTracker::new(have.into_dyn(), all_selected, l, &Default::default()).unwrap();
+
+        // Narrow to the middle piece alone.
+        let mut window = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        window.set(1, true);
+        let hns = ct.update_selected_pieces(window).unwrap();
+
+        assert_eq!(hns.selected_bytes, piece_len as u64);
+        assert!(!ct.queue_pieces[0]);
+        assert!(ct.queue_pieces[1]);
+        assert!(!ct.queue_pieces[2]);
+    }
+
+    #[test]
+    fn test_update_selected_pieces_requeues_a_piece_brought_back() {
+        // Seeking back into a stretch that was dropped must fetch it again.
+        let piece_len = CHUNK_SIZE * 2 + 1;
+        let total_len = piece_len as u64 * 2 + 1;
+        let l = Lengths::new(total_len, piece_len).unwrap();
+        let bf_len = l.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let all_selected = {
+            let mut bf = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+            bf.get_mut(0..3).unwrap().fill(true);
+            bf
+        };
+        let mut ct =
+            ChunkTracker::new(have.into_dyn(), all_selected, l, &Default::default()).unwrap();
+
+        let only = |idx: usize| {
+            let mut bf = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+            bf.set(idx, true);
+            bf
+        };
+        ct.update_selected_pieces(only(2)).unwrap();
+        assert!(!ct.queue_pieces[0]);
+
+        ct.update_selected_pieces(only(0)).unwrap();
+        assert!(ct.queue_pieces[0]);
+        assert!(!ct.queue_pieces[2]);
     }
 
     #[test]

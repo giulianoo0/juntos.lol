@@ -3,6 +3,7 @@ mod disk;
 mod entry;
 mod reaper;
 mod slots;
+mod window;
 
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
@@ -342,6 +343,10 @@ impl Engine {
             entry.phase = Phase::Serving;
             entry.touch();
         }
+        // update_only_files selected the whole file; narrow it to the pins
+        // straight away, so the swarm does not spend the gap before the
+        // first read pulling down footage nobody has asked for.
+        self.apply_window(&infohash);
         Ok(selected_bytes)
     }
 
@@ -495,7 +500,61 @@ impl Engine {
             stream.seek(SeekFrom::Start(offset)).await?;
             slot.touch(offset);
         }
+        // The cursor moved, so the window moved with it: a seek to the far
+        // side of the film must stop paying for the stretch it just left.
+        self.apply_window(infohash);
         Ok(())
+    }
+
+    /// Narrows the download to what the open readers actually need: a window
+    /// around each cursor, plus the head and tail that carry the container's
+    /// header and index. Without this librqbit fetches the whole selected
+    /// file behind the readers — its stream window only reorders requests,
+    /// it never drops anything — which for a 23 GB release is tens of
+    /// gigabytes of swarm traffic and disk for footage nobody reaches.
+    ///
+    /// Best effort: a torrent still resolving, or paused, simply keeps what
+    /// it had, and the next read reapplies the window.
+    pub fn apply_window(&self, infohash: &str) {
+        let Some(handle) = self.handle(infohash) else { return };
+        let (index, cursors) = {
+            let map = self.torrents.lock().unwrap();
+            let Some(entry) = map.get(infohash) else { return };
+            let Some(index) = entry.selected_file else { return };
+            let cursors: Vec<u64> = entry
+                .slots
+                .iter()
+                .filter(|((slot_index, _), _)| *slot_index == index)
+                .map(|(_, slot)| slot.position())
+                .collect();
+            (index, cursors)
+        };
+        // No reader open yet: the pins alone still let the probe read the
+        // header and the index without pulling the body down.
+        let guard = handle.metadata.load();
+        let Some(meta) = guard.as_ref() else { return };
+        let Some(info) = meta.file_infos.get(index) else { return };
+        let lengths = meta.lengths();
+        let piece_len = lengths.default_piece_length() as u64;
+        let ranges = window::needed_ranges(
+            info.len,
+            &cursors,
+            window::AHEAD,
+            window::BEHIND,
+            window::PIN,
+        );
+        let pieces = window::pieces_for_ranges(
+            info.offset_in_torrent,
+            piece_len,
+            lengths.total_pieces(),
+            &ranges,
+        );
+        if pieces.is_empty() {
+            return;
+        }
+        if let Err(e) = handle.update_selected_pieces(&pieces) {
+            tracing::debug!(infohash, error = %e, "could not narrow the piece window");
+        }
     }
 
     /// A parked stream keeps a 64MB priority window at its cursor for as
@@ -612,6 +671,15 @@ impl Engine {
         map.iter()
             .filter(|(_, e)| e.leases.is_empty())
             .map(|(id, e)| (id.clone(), e.handle.clone(), e.phase, e.last_active.elapsed()))
+            .collect()
+    }
+
+    /// Torrents with a file picked, whose piece window is worth refreshing.
+    pub(crate) fn serving_infohashes(&self) -> Vec<String> {
+        let map = self.torrents.lock().unwrap();
+        map.iter()
+            .filter(|(_, e)| e.selected_file.is_some())
+            .map(|(id, _)| id.clone())
             .collect()
     }
 
