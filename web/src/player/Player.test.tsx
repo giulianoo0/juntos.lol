@@ -981,35 +981,47 @@ describe('scrubbing', () => {
     })
   })
 
-  it('holds the element still and parks the play while no region covers the room', () => {
+  it('refuses the controls while no region covers the room, rather than commanding a room that cannot obey', () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()
     // Room parked at 1220s; the only region covers the first 300s.
     const regioned = { ...longRoom, mediaRegions: [{ n: 0, startMs: 0, producedMs: 300_000, growing: true }] }
     const parked = { playing: false, positionMs: 1_220_000, rate: 1, serverTimeMs: 100_000 }
-    const { container, rerender } = render(
+    const { container } = render(
       <Player room={regioned} isController videoRef={videoRef} send={send} t={t} syncState={parked} serverOffsetMs={0} />,
     )
+
     // The wait is shown, not silently played through.
     expect(container.querySelector('.player-loading')).not.toBeNull()
+    const playButton = container.querySelector('button.is-play')! as HTMLButtonElement
+    expect(playButton).toBeDisabled()
+
     const video = videoRef.current!
     video.play = vi.fn(() => Promise.resolve())
-    fireEvent.click(container.querySelector('button.is-play')! as HTMLButtonElement)
-    // No play goes on the wire while nothing covers the target...
-    expect(send).not.toHaveBeenCalledWith('play', expect.anything())
-    // ...and the region landing resumes the room right at it.
-    rerender(
-      <Player
-        room={{ ...regioned, mediaVersion: 1, mediaRegions: [{ n: 0, startMs: 0, producedMs: 300_000, growing: false }, { n: 1, startMs: 1_219_000, producedMs: 8_000, growing: true }] }}
-        isController
-        videoRef={videoRef}
-        send={send}
-        t={t}
-        syncState={parked}
-        serverOffsetMs={0}
-      />,
+    fireEvent.click(playButton)
+    // Nothing on the wire either way: a play here writes a state the room
+    // cannot honour, and the pause chasing it races the pipeline.
+    expect(send).not.toHaveBeenCalled()
+    expect(video.play).not.toHaveBeenCalled()
+  })
+
+  it('reads the thumb off the room clock while the region is still being built', () => {
+    // The element is still sitting in the region it already had, and its clock
+    // moves — and jumps on every region switch. Following it is the thumb
+    // wandering to arbitrary moments after a seek into a big torrent.
+    const videoRef = createRef<HTMLVideoElement>()
+    const regioned = { ...longRoom, mediaRegions: [{ n: 0, startMs: 0, producedMs: 300_000, growing: true }] }
+    const parked = { playing: false, positionMs: 1_220_000, rate: 1, serverTimeMs: 100_000 }
+    render(
+      <Player room={regioned} isController videoRef={videoRef} send={vi.fn()} t={t} syncState={parked} serverOffsetMs={0} />,
     )
-    expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
+
+    const video = videoRef.current!
+    video.currentTime = 42
+    fireEvent.timeUpdate(video)
+
+    const slider = screen.getByLabelText('Seek') as HTMLInputElement
+    expect(Number(slider.value)).toBe(1220)
   })
 
   it('parks a room with no region map that has run past what the element holds', () => {

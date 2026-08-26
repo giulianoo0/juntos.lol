@@ -191,6 +191,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // input snaps back to currentTime on every render, and the native change
   // event that closes the gesture fires with that restored value — a second
   // seek to where the room already was, overwriting the real one.
+  // Whether the element has something it can actually advance through right
+  // now. Declared up here because the controls consult it before they are
+  // allowed to command the room.
+  const [loading, setLoading] = useState(true)
   const [scrubSec, setScrubSec] = useState<number | null>(null)
   const [pendingSeekSec, setPendingSeekSec] = useState<number | null>(null)
   const scrubbingRef = useRef(false)
@@ -257,6 +261,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     playRequestedRef.current = false
     videoRef.current?.pause()
   }, [coldWait, videoRef])
+  // What the scrubber and the clock read. While the target is cold the element
+  // is still sitting in the region it already had — a different part of the
+  // film — and its clock jumps again on every region switch, which is the
+  // thumb wandering to arbitrary moments after a seek into a big torrent.
+  // The room's own clock is the only thing that knows where we are then.
+  const shownSec = coldWait && coldTargetMs !== null ? coldTargetMs / 1000 : currentTime
+
   // The timeline is the room's, not the element's: the scrubber promises the
   // whole episode from the first publish, while the element grows region by
   // region behind it.
@@ -650,6 +661,18 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // element was held paused — nobody sends a new state message, so the
   // element is nudged back into playback here. Only the transition out of
   // the wait nudges; an ordinary mount plays through its own paths.
+  // Whether the controls have anything to command. Not plain `loading`: that
+  // is true from the first paint and on every momentary flicker, and a play
+  // button that is dead before the first frame — or that dies whenever a
+  // buffer dips — is worse than the problem. It is the wait people actually
+  // see: no media for this position at all, or a load that has gone on long
+  // enough for the spinner to have earned its explanation.
+  //
+  // A ref beside the state because togglePlay is handed to keyboard and
+  // pointer handlers, and rebuilding it on every flicker would re-bind them
+  // constantly for a value only read at the moment of a press.
+  const notReadyRef = useRef(false)
+
   const wasColdRef = useRef(false)
   useEffect(() => {
     const wasCold = wasColdRef.current
@@ -682,6 +705,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const video = videoRef.current
     if (!video) return false
 
+    // Nothing to start or stop while the media under this position is still
+    // arriving. A play here writes a state the room cannot honour and the
+    // pause that follows races the pipeline: the two commands chase each
+    // other and the room ends up somewhere nobody chose.
+    if (notReadyRef.current) return false
+
     if (!isController) {
       // A viewer's gesture never changes what the room is doing. The one thing
       // it may do is start their own element when the room is already playing
@@ -698,20 +727,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 
     resumeAtMsRef.current = null
     if (video.paused) {
-      // A play pointed at media no region holds yet cannot start anything:
-      // the pipeline is still building it. Park the intent; the room plays
-      // by itself the moment the region publishes.
-      if (coldWait && coldTargetMs !== null) {
-        const target = Math.round(coldTargetMs)
-        resumeAtMsRef.current = target
-        // Without this the room's clock runs while everyone waits, the target
-        // walks further past what the regions cover, and the wait feeds
-        // itself. Same move the cold seek already makes.
-        if (syncState?.playing) send('pause', { positionMs: target, rate: video.playbackRate })
-        return true
-      }
       // Calling play inside the gesture preserves browser user activation. A
       // WebSocket round trip first would make browsers reject audible autoplay.
+      // A cold target never reaches here: the guard above refuses while the
+      // region is still being built, and the seek that parked the room there
+      // already sent its pause.
       requestPlay()
       return true
     }
@@ -719,7 +739,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     video.pause()
     send('pause', { positionMs: commandPositionMs(video), rate: video.playbackRate })
     return true
-  }, [commandPositionMs, coldWait, coldTargetMs, isController, refuseControl, requestPlay, send, syncState, videoRef])
+  }, [commandPositionMs, isController, refuseControl, requestPlay, send, syncState, videoRef])
 
   // A pause the viewer performed on the element itself — a media key, the
   // system's now-playing sheet, picture-in-picture — used to stop only them.
@@ -811,8 +831,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // The thumb holds the committed target until the video actually gets
   // there — on a cold seek that is however long the new region takes.
   useEffect(() => {
+    // Not while the wait is on: the element's clock belongs to the region it
+    // still holds, and letting it release the target hands the thumb back to
+    // a position nobody asked for.
+    if (coldWait) return
     if (pendingSeekSec !== null && Math.abs(currentTime - pendingSeekSec) < 3) setPendingSeekSec(null)
-  }, [currentTime, pendingSeekSec])
+  }, [coldWait, currentTime, pendingSeekSec])
 
   // Unless the room moves on without it: a state written after our seek
   // that sits somewhere else means another command won, and a thumb still
@@ -1051,7 +1075,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // A player waiting on data looks exactly like one that has stopped working.
   // The spinner is the only thing that distinguishes them, and a room whose
   // source is still downloading spends real time here.
-  const [loading, setLoading] = useState(true)
   // A short wait is buffering; a long one on a downloading source is the
   // swarm, and saying so beats a bare spinner turning for minutes.
   const [stalledLong, setStalledLong] = useState(false)
@@ -1063,6 +1086,8 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const timer = window.setTimeout(() => setStalledLong(true), 3_000)
     return () => window.clearTimeout(timer)
   }, [loading])
+  const controlsBlocked = coldWait || stalledLong
+  notReadyRef.current = controlsBlocked
 
   // The controller defines the room position, so it can never be out of sync
   // with itself; LIVE exists only for viewers.
@@ -1251,7 +1276,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           onPointerCancel={() => { hoverRectRef.current = null; setSeekHover(null) }}
         >
           <div className="seek-track" aria-hidden="true">
-            <div className="seek-played" style={{ width: pct(scrubSec ?? pendingSeekSec ?? currentTime) }} />
+            <div className="seek-played" style={{ width: pct(scrubSec ?? pendingSeekSec ?? shownSec) }} />
             {behindBands.map((band) => (
               <div
                 key={`b${band.from}`}
@@ -1281,7 +1306,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             type="range"
             min="0"
             max={seekMax}
-            value={Math.min(scrubSec ?? pendingSeekSec ?? currentTime, seekMax)}
+            value={Math.min(scrubSec ?? pendingSeekSec ?? shownSec, seekMax)}
             disabled={!isController}
             onPointerDown={() => { scrubbingRef.current = true }}
             onPointerUp={(event) => {
@@ -1315,12 +1340,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             className="control-button is-play"
             aria-label={playLabel}
             title={`${playLabel} (Space)`}
+            disabled={controlsBlocked}
             onClick={togglePlay}
             onPointerUp={(event) => event.currentTarget.blur()}
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
           <span className="timecode">
             <NumberFlowGroup>
-              <Timecode seconds={scrubSec ?? pendingSeekSec ?? currentTime} />
+              <Timecode seconds={scrubSec ?? pendingSeekSec ?? shownSec} />
               <span className="timecode-slash">/</span>
               <Timecode seconds={timelineEnd} />
             </NumberFlowGroup>
