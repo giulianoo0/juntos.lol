@@ -49,7 +49,7 @@ describe('FleetStatus', () => {
     const rendered = screen.getAllByRole('listitem').map((item) => item.querySelector('code')?.textContent)
     expect(rendered).toEqual(['first000', 'second00', 'third000'])
     // Only the head of the list, and only when there is a choice to make.
-    expect(screen.getAllByText('Yours next')).toHaveLength(1)
+    expect(screen.getAllByText('Best')).toHaveLength(1)
   })
 
   it('measures busyness by whichever budget is closest to refusing the next room', async () => {

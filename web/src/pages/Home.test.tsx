@@ -64,7 +64,7 @@ describe('Home', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByRole('heading', { name: /fleet|frota/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /workers/i })).toBeInTheDocument()
   })
 
   it('opens on the manual tab and starts upload after file selection', async () => {
