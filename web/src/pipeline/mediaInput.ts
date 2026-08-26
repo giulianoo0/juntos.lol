@@ -12,6 +12,7 @@
  */
 import { BlobSource, CustomSource, type Source } from 'mediabunny'
 import type { TorrentVideoFile, WorkerGrant } from '../torrent'
+import { ByteTap, teeInto } from './byteTap'
 import { ReadGate, rangeBytes, rangeStream } from './rangeRead'
 
 /** What a read is for; a remote origin uses it to order its swarm. */
@@ -34,6 +35,12 @@ export interface MediaInput {
   dispose(): void
   /** Where a sibling file of this input is read from right now, if anywhere. */
   sidecarUrl?(index: number): string
+  /**
+   * Mirrors the remux's reads so a sequential pass can ride along instead of
+   * asking the origin for the same bytes again. Only remote inputs carry
+   * one: reading a local file twice costs nothing worth avoiding.
+   */
+  tap?: ByteTap
 }
 
 /** The cache a remote source keeps: larger than the prefetch extent, or the
@@ -97,6 +104,7 @@ export function torrentInput(file: TorrentVideoFile): MediaInput {
  */
 export function rangeInput(url: string, name: string, size: number): MediaInput {
   const gate = new ReadGate()
+  const tap = new ByteTap()
   const opts = (hint?: ReadHint) => ({
     url: () => (hint?.prio ? withParam(url, 'prio', hint.prio) : url),
     size,
@@ -105,15 +113,16 @@ export function rangeInput(url: string, name: string, size: number): MediaInput 
   return {
     name,
     size,
+    tap,
     read: (start, end, hint) => rangeBytes(opts(hint), start, end),
     source: () => new CustomSource({
-      read: (start, end) => rangeStream(opts({ prio: 'playhead' }), start, end),
+      read: (start, end) => teeInto(tap, start, rangeStream(opts({ prio: 'playhead' }), start, end)),
       getSize: async () => size,
       prefetchProfile: 'network',
       maxCacheSize: REMOTE_CACHE_BYTES,
     }),
     abortReads: () => gate.abort(),
-    dispose: () => gate.close(),
+    dispose: () => { tap.close(); gate.close() },
   }
 }
 
@@ -136,6 +145,7 @@ const RENEW_FRACTION = 2 / 3
  */
 export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   const gate = new ReadGate()
+  const tap = new ByteTap()
   let current = grant
   let gen = 1
   let lastHintAt = -Infinity
@@ -198,11 +208,12 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   return {
     name: grant.name,
     size: grant.size,
+    tap,
     read: (start, end, hint_) => rangeBytes(opts(hint_?.prio ?? 'head'), start, end),
     source: () => new CustomSource({
       read: (start, end) => {
         hint(start)
-        return rangeStream(opts('playhead'), start, end)
+        return teeInto(tap, start, rangeStream(opts('playhead'), start, end))
       },
       getSize: async () => grant.size,
       prefetchProfile: 'network',
@@ -216,6 +227,7 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
     dispose: () => {
       disposed = true
       if (renewTimer !== null) clearTimeout(renewTimer)
+      tap.close()
       gate.close()
     },
     sidecarUrl: (index) => `${current.readBase}/v1/file/${current.ticket}/${index}`,

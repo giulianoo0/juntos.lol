@@ -123,6 +123,10 @@ async function publishSubtitles(
   const embedded = isMatroska(input)
   if (external.length > 0) collector.register('external')
   if (embedded) collector.register('embedded')
+  // Nothing is going to walk this file, so nothing should be mirrored for it:
+  // an open tap with no reader fills its budget with copies of bytes it will
+  // never hand over, and holds them for the whole job.
+  if (!embedded) input.tap?.close()
   if (external.length === 0 && !embedded) return
   await Promise.all([
     external.length > 0 ? loadExternalSubtitles(external, collector, input) : Promise.resolve(),
@@ -130,25 +134,37 @@ async function publishSubtitles(
   ])
 }
 
-// The scan reads the whole file, at scan priority so it trails the remux
-// in the swarm. A seek aborts whatever read it was on; the scan simply asks
-// for the same slice again, however many seeks it takes — its position has
+// The scan walks the file from end to end, but it rides the remux's reads
+// wherever it can: those bytes are already crossing the wire, and on a
+// remote worker a second cursor would open a second piece window competing
+// for the same swarm. Only what the remux skipped — the gap a seek leaves —
+// is asked for, at scan priority, so the parser always sees one contiguous
+// stream. A seek aborts whatever read it was on; the scan simply asks for
+// the same slice again, however many seeks it takes — its position has
 // nothing to do with the seek. Only the input closing for good ends it.
 async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
   try {
     const stream = await createMatroskaSubtitleStream()
+    const tap = input.tap
     let lastSnapshotAt = Date.now()
-    for (let offset = 0; offset < input.size; offset += SUBTITLE_SLICE_BYTES) {
-      const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
-      let slice: Uint8Array
-      try {
-        slice = await input.read(offset, end, { prio: 'scan' })
-      } catch (error) {
-        if (!(error instanceof ReadAbortedError) || error.closed) throw error
-        offset -= SUBTITLE_SLICE_BYTES
-        await new Promise((resolve) => setTimeout(resolve, 250))
-        continue
+    let offset = 0
+    while (offset < input.size) {
+      let slice = tap ? await tap.pull() : null
+      if (!slice) {
+        const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
+        try {
+          slice = await input.read(offset, end, { prio: 'scan' })
+        } catch (error) {
+          if (!(error instanceof ReadAbortedError) || error.closed) throw error
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          continue
+        }
+        // The tap's cursor is this loop's cursor: a slice fetched here is
+        // one the remux must not hand over again.
+        tap?.fill(slice)
       }
+      if (slice.length === 0) break
+      offset += slice.length
       stream.write(slice)
       if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
         lastSnapshotAt = Date.now()
@@ -159,6 +175,10 @@ async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCo
   } catch (error) {
     console.error('subtitle extraction failed', error)
     collector.publish('embedded', [], true)
+  } finally {
+    // Whether it finished or died on its first await — the parser bundle is
+    // fetched over the network — the mirror has no reader from here on.
+    input.tap?.close()
   }
   await collector.flush()
 }
