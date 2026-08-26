@@ -50,7 +50,7 @@ describe('useSync', () => {
     Object.defineProperty(video, 'paused', { value: false, configurable: true })
     video.play = vi.fn().mockResolvedValue(undefined)
     const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
-    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
     act(() => socket.receive({ type: 'state', state: { playing: false, positionMs: 475_000, rate: 1, serverTimeMs: 100_000 } }))
@@ -59,9 +59,11 @@ describe('useSync', () => {
     // live and recovers a stall by seeking to the newest segment. The viewer
     // is thrown to the end of what has been published; the room's own position
     // is the one that counts.
-    act(() => video.dispatchEvent(new Event('waiting')))
+    // The player owns the element's events and hands the picture back here,
+    // so a room whose <video> arrives late still reports.
+    act(() => result.current.reportBuffering(true))
     video.currentTime = 1401
-    act(() => video.dispatchEvent(new Event('canplay')))
+    act(() => result.current.reportBuffering(false))
 
     expect(video.currentTime).toBe(475)
     unmount()
@@ -235,6 +237,70 @@ describe('useSync', () => {
     // A frame without a title payload is ignored rather than rendered empty.
     act(() => socket.receive({ type: 'titleRequest', memberId: 'm2' }))
     expect(result.current.titleRequests).toHaveLength(1)
+    unmount()
+  })
+  it('reconnects after the socket drops, and stops once the room is left', () => {
+    vi.useFakeTimers()
+    vi.spyOn(Date, 'now').mockReturnValue(100_000)
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    expect(FakeWebSocket.instances).toHaveLength(1)
+
+    // A dropped socket used to be permanent: the tab went mute and the room
+    // played on without the person.
+    const first = FakeWebSocket.instances[0]
+    first.readyState = 3
+    act(() => { first.onclose?.() })
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(FakeWebSocket.instances).toHaveLength(2)
+
+    // Leaving is not a drop: closing on purpose must not reconnect.
+    unmount()
+    act(() => { FakeWebSocket.instances[1].onclose?.() })
+    act(() => { vi.advanceTimersByTime(10_000) })
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    vi.useRealTimers()
+  })
+
+  it('reports whether a command actually left the tab', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    expect(result.current.send('pause', { positionMs: 1 })).toBe(true)
+
+    socket.readyState = 3
+    expect(result.current.send('pause', { positionMs: 1 })).toBe(false)
+    unmount()
+  })
+
+  it('surfaces a refusal from the server instead of swallowing it', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.receive({ type: 'error', error: 'not_controller' }))
+
+    expect(result.current.lastError).toBe('not_controller')
+    expect(result.current.errorSeq).toBe(1)
+    unmount()
+  })
+
+  it('leaves a stopped element alone when buffering ends', () => {
+    const video = document.createElement('video')
+    Object.defineProperty(video, 'paused', { value: true, configurable: true })
+    video.play = vi.fn().mockResolvedValue(undefined)
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    act(() => socket.receive({ type: 'state', state: { playing: false, positionMs: 475_000, rate: 1, serverTimeMs: 100_000 } }))
+
+    // A paused element does not drift, so dragging its clock would only
+    // repaint a frozen frame.
+    act(() => result.current.reportBuffering(true))
+    video.currentTime = 1401
+    act(() => result.current.reportBuffering(false))
+    expect(video.currentTime).toBe(1401)
     unmount()
   })
 })

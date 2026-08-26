@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	stdsync "sync"
@@ -72,7 +73,12 @@ type roomConn struct {
 	// gating mirrors the persisted room setting so the welcome frame does not
 	// cost a store read. Only this connection's goroutine ever changes it.
 	gating bool
-	gate   *playGate
+	// ownerToken is the room creator's secret, mirrored from the store. A
+	// hello frame carrying it takes the controls back: a reload mints a new
+	// member id, and without this the host returns as a spectator of their
+	// own room.
+	ownerToken string
+	gate       *playGate
 	// ignored holds members the controller has excused from synchronized
 	// playback: the room neither waits for them nor stops when they stall.
 	ignored map[string]struct{}
@@ -91,6 +97,7 @@ type joinRequest struct {
 	client       *client
 	nickname     string
 	clientTimeMs int64
+	ownerToken   string
 	result       chan string
 }
 
@@ -188,7 +195,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 
-	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.GatingEnabled)
+	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {
 		writeHandshakeError(conn, "server_stopping")
 		return
@@ -200,7 +207,8 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	}
 	result := make(chan string, 1)
 	request := joinRequest{
-		client: client, nickname: nickname, clientTimeMs: hello.ClientTimeMs, result: result,
+		client: client, nickname: nickname, clientTimeMs: hello.ClientTimeMs,
+		ownerToken: hello.OwnerToken, result: result,
 	}
 	select {
 	case roomConnection.register <- request:
@@ -246,7 +254,7 @@ func (h *Hub) notify(roomID string, event Outbound) {
 	}
 }
 
-func (h *Hub) getOrCreateRoom(roomID, controllerID string, gating bool) *roomConn {
+func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bool) *roomConn {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -259,6 +267,7 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID string, gating bool) *roomCon
 		id:           roomID,
 		hub:          h,
 		controllerID: controllerID,
+		ownerToken:   ownerToken,
 		gating:       gating,
 		nextMember:   1,
 		clients:      make(map[string]*client),
@@ -282,6 +291,13 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 }
 
 func (r *roomConn) run() {
+	// Registered first, so it runs last: every other deferred cleanup still
+	// runs, and one room's failure never takes the whole server with it.
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("room goroutine panicked", "room_id", r.id, "panic", p, "stack", string(debug.Stack()))
+		}
+	}()
 	defer r.hub.removeRoom(r.id, r)
 	defer r.dropGate()
 	defer func() {
@@ -386,7 +402,16 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		request.result <- "internal_error"
 		return
 	}
-	if r.controllerID == "" {
+	// Three ways this join owns the room. The token is a deliberate handover
+	// back to whoever created it — a reloaded host — so it wins even over a
+	// live controller. The liveness check covers a controllerID that survived
+	// in the store but names nobody: a process restart replays member ids
+	// from m1, so a stale "m2" would otherwise lock everyone out of the
+	// controls until the second person happened to join.
+	_, controllerLive := r.clients[r.controllerID]
+	claimsOwnership := r.ownerToken != "" && request.ownerToken != "" &&
+		subtle.ConstantTimeCompare([]byte(r.ownerToken), []byte(request.ownerToken)) == 1
+	if r.controllerID == "" || !controllerLive || claimsOwnership {
 		if err := r.hub.store.SetController(ctx, r.id, memberID); err != nil {
 			slog.ErrorContext(ctx, "set initial websocket controller failed", "room_id", r.id, "error", err)
 			_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
@@ -554,7 +579,13 @@ func (r *roomConn) handleTitleRequest(sender *client, message Inbound) {
 }
 
 func (r *roomConn) handleState(sender *client, message Inbound) {
-	if sender.id != r.controllerID || message.PositionMs < 0 {
+	if sender.id != r.controllerID {
+		// Silence here reads as "the app is broken": the person pressed pause
+		// and the room kept playing. Saying so lets the client explain it.
+		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
+		return
+	}
+	if message.PositionMs < 0 {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
@@ -656,6 +687,10 @@ func (r *roomConn) broadcastExcept(excluded *client, event Outbound) {
 }
 
 func (r *roomConn) send(target *client, event Outbound) {
+	// A stall gate opens with no sender: there is nobody to report an error to.
+	if target == nil {
+		return
+	}
 	// Outbound types are this package's own constants, so unlike the inbound
 	// ones they need no clamping.
 	metrics.WebsocketMessages.WithLabelValues("out", event.Type).Inc()

@@ -244,6 +244,87 @@ describe('Player', () => {
     await waitFor(() => expect(send).toHaveBeenCalledWith('play', { positionMs: 0, rate: 1 }))
   })
 
+  it('takes a native pause to the whole room', () => {
+    // A media key, the system's now-playing sheet, picture-in-picture: the
+    // controller was certain they had paused the room, and the room played on.
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const playing = { playing: true, positionMs: 12_000, rate: 1, serverTimeMs: Date.now() }
+    render(<Player room={room} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />)
+
+    const video = videoRef.current!
+    video.currentTime = 12
+    fireEvent.pause(video)
+
+    expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 12_000 }))
+  })
+
+  it('reads a pause the server just performed as an echo, not as a gesture', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const remoteSteerAtRef = { current: Date.now() }
+    const playing = { playing: true, positionMs: 12_000, rate: 1, serverTimeMs: 100_000 }
+    render(
+      <Player
+        room={room} isController videoRef={videoRef} send={send} t={t}
+        syncState={playing} serverOffsetMs={0} remoteSteerAtRef={remoteSteerAtRef}
+      />,
+    )
+
+    fireEvent.pause(videoRef.current!)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('asks for a gesture when the browser refuses to start, instead of retrying forever', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play')
+      .mockRejectedValue(new DOMException('gesture required', 'NotAllowedError'))
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const playing = { playing: true, positionMs: 0, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={room} isController={false} videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    await waitFor(() => expect(container.querySelector('.player-gesture')).not.toBeNull())
+
+    // The retry is dropped: another canplay must not produce another rejection.
+    const before = play.mock.calls.length
+    fireEvent.canPlay(videoRef.current!)
+    await Promise.resolve()
+    expect(play).toHaveBeenCalledTimes(before)
+  })
+
+  it('drops a stale play request rather than restarting a room that has since stopped', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play')
+      .mockRejectedValueOnce(new DOMException('MediaSource is not ready', 'AbortError'))
+      .mockResolvedValue(undefined)
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const stopped = { playing: false, positionMs: 0, rate: 1, serverTimeMs: Date.now() }
+    const { rerender } = render(
+      <Player room={room} isController videoRef={videoRef} send={send} t={t} syncState={stopped} serverOffsetMs={0} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    await waitFor(() => expect(play).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    send.mockClear()
+
+    // Somebody stopped the room while the play was still waiting to be
+    // retried. The retry must not undo that.
+    rerender(
+      <Player
+        room={room} isController videoRef={videoRef} send={send} t={t}
+        syncState={{ playing: false, positionMs: 0, rate: 1, serverTimeMs: Date.now() + 1 }} serverOffsetMs={0}
+      />,
+    )
+    fireEvent.canPlay(videoRef.current!)
+    await Promise.resolve()
+    expect(play).toHaveBeenCalledOnce()
+    expect(send).not.toHaveBeenCalledWith('play', expect.anything())
+  })
+
   it('lets a viewer satisfy autoplay locally without changing synchronized state', () => {
     // The room is already playing and the browser refused to start audio, so
     // the gesture starts their own element and reports nothing upstream.

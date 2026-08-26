@@ -85,11 +85,16 @@ type Room struct {
 	// for this generation, each with its own playlists (rN_master.m3u8). A
 	// player picks the region for the time it wants and switches at the
 	// edges; the offset above is only the one still growing.
-	MediaRegions   []MediaRegion `json:"mediaRegions,omitempty"`
-	ErrorMessage   string        `json:"errorMessage,omitempty"`
-	ControllerID   string        `json:"controllerId"`
-	AudioTracks    []TrackInfo   `json:"audioTracks"`
-	SubtitleTracks []TrackInfo   `json:"subtitleTracks"`
+	MediaRegions []MediaRegion `json:"mediaRegions,omitempty"`
+	ErrorMessage string        `json:"errorMessage,omitempty"`
+	ControllerID string        `json:"controllerId"`
+	// OwnerToken is the secret handed to whoever created the room. A reload
+	// mints a new member id, so this is the only thing that can tell the
+	// server the host is back and hand control to them again. Never
+	// serialized: every member reads the room, only one may hold this.
+	OwnerToken     string      `json:"-"`
+	AudioTracks    []TrackInfo `json:"audioTracks"`
+	SubtitleTracks []TrackInfo `json:"subtitleTracks"`
 	// Chapters are the source's authored spans, when it carries any: the
 	// player draws them on the timeline so "the opening" is a place.
 	Chapters          []Chapter `json:"chapters,omitempty"`

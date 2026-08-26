@@ -212,9 +212,18 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // Raised by the player while the room points at media still being built;
   // the sync layer stops steering the element until the region lands.
   const coldWaitRef = useRef(false)
-  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef)
+  // When a server frame last steered the element, so the player can tell a
+  // remote pause from one the viewer performed.
+  const remoteSteerAtRef = useRef(0)
+  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
+  // A refusal from the server is the answer to "I pressed it and nothing
+  // happened". Keyed on the sequence so the same refusal twice still shows.
+  useEffect(() => {
+    if (!sync.errorSeq) return
+    if (sync.lastError === 'not_controller') toast(t('room.notController'))
+  }, [sync.errorSeq, sync.lastError, t, toast])
   // With a region map the Player owns this ref (the offset is its region
   // choice); the room's scalar only seeds it while there is no map.
   if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
@@ -601,7 +610,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               size="small"
               role="switch"
               aria-checked={sync.gatingEnabled}
-              onClick={() => sync.send('gating', { enabled: !sync.gatingEnabled })}
+              onClick={() => {
+                // The switch only moves when the server says so, so a frame
+                // that never left the tab reads exactly like a dead toggle.
+                if (!sync.send('gating', { enabled: !sync.gatingEnabled })) toast(t('room.offlineCommand'))
+              }}
             >
               <span className="sync-toggle-box" aria-hidden="true">
                 {sync.gatingEnabled ? <Check size={11} strokeWidth={3.5} /> : null}
@@ -670,6 +683,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               mediaOffsetMsRef={mediaOffsetMsRef}
               seekRef={playerSeekRef}
               coldWaitRef={coldWaitRef}
+              remoteSteerAtRef={remoteSteerAtRef}
+              onBuffering={sync.reportBuffering}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={

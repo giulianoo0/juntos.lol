@@ -68,6 +68,7 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 			"source_kind", r.SourceKind,
 			"media_generation", r.MediaGeneration,
 			"controller_id", r.ControllerID,
+			"owner_token", r.OwnerToken,
 			"audio_tracks", audio,
 			"subtitle_tracks", subs,
 			"bitmap_subs_skipped", r.BitmapSubsSkipped,
@@ -108,6 +109,7 @@ func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
 			"source_kind", r.SourceKind,
 			"media_generation", r.MediaGeneration,
 			"controller_id", r.ControllerID,
+			"owner_token", r.OwnerToken,
 			"audio_tracks", audio,
 			"subtitle_tracks", subs,
 			"bitmap_subs_skipped", r.BitmapSubsSkipped,
@@ -203,6 +205,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r.Status = fields["status"]
 	r.ErrorMessage = fields["error_message"]
 	r.ControllerID = fields["controller_id"]
+	r.OwnerToken = fields["owner_token"]
 	if v := fields["audio_tracks"]; v != "" {
 		if err := json.Unmarshal([]byte(v), &r.AudioTracks); err != nil {
 			return nil, fmt.Errorf("unmarshal audio tracks: %w", err)

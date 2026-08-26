@@ -11,6 +11,10 @@ type Inbound struct {
 	Nickname     string  `json:"nickname,omitempty"`
 	TargetID     string  `json:"targetId,omitempty"`
 	ClientTimeMs int64   `json:"clientTimeMs,omitempty"`
+	// OwnerToken is presented in "hello" by the client that created the room.
+	// It is the only way back to the controls after a reload, which arrives
+	// as an entirely new member.
+	OwnerToken string `json:"ownerToken,omitempty"`
 	// BufferAheadMs and Stalled belong to "ready" reports: how much contiguous
 	// buffer the client holds ahead of PositionMs, and whether it is stalled.
 	BufferAheadMs int64 `json:"bufferAheadMs,omitempty"`

@@ -357,6 +357,10 @@ button.timecode-chapter:hover { color: var(--text); }
 .player-loading { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; align-content: center; gap: 14px; pointer-events: none; }
 .player-preparing { display: grid; justify-items: center; gap: 8px; padding: 10px 16px; border-radius: 14px; background: rgba(7,8,12,.72); color: var(--text-dim); font-size: 13px; }
 .player-preparing .starting-swarm { margin: 0; }
+/* Autoplay refused for want of a gesture. It has to be reachable — unlike the
+   loading veil above it — because the one click is the whole fix. */
+.player-gesture { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; align-content: center; gap: 12px; border: 0; background: rgba(7,8,12,.55); color: var(--text); font: inherit; font-size: 14px; cursor: pointer; }
+
 .player-spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.16); border-top-color: #c9ccff; border-radius: 50%; animation: torrent-spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .player-spinner { animation-duration: 2s !important; } }
 

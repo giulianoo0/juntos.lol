@@ -82,6 +82,12 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			return
 		}
 
+		ownerToken, err := gonanoid.New(32)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+
 		now := time.Now()
 		member := room.Member{ID: "m1", Nickname: nickname, JoinedAt: now}
 		r := &room.Room{
@@ -90,6 +96,7 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			Status:       status,
 			SourceKind:   kind,
 			ControllerID: member.ID,
+			OwnerToken:   ownerToken,
 			CreatedAt:    now,
 			ExpiresAt:    now.Add(time.Duration(cfg.RoomTTLHours) * time.Hour),
 		}
@@ -100,7 +107,11 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		metrics.RoomsCreated.WithLabelValues(kind).Inc()
 
 		c.JSON(http.StatusCreated, gin.H{
-			"id":         id,
+			"id": id,
+			// The host keeps this. A reload comes back with it in the hello
+			// frame and takes the room's controls back instead of returning
+			// as a spectator of their own watch party.
+			"ownerToken": ownerToken,
 			"nickname":   nickname,
 			"sourceKind": kind,
 			"status":     status,

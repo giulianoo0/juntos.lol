@@ -46,6 +46,9 @@ func TestHubSyncFlow(t *testing.T) {
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "pause", PositionMs: 31_000}))
+	refused := readHubEvent(t, guest)
+	require.Equal(t, "error", refused.Type)
+	require.Equal(t, "not_controller", refused.ErrCode)
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 99}))
 	pong := readHubEvent(t, guest)
 	require.Equal(t, "pong", pong.Type)
@@ -108,6 +111,7 @@ func TestHubIgnoresControlTakeoverMessages(t *testing.T) {
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "claim"}))
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "delegate", TargetID: "m2"}))
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "play", PositionMs: 5_000, Rate: 1}))
+	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 9}))
 	require.Equal(t, "pong", readHubEvent(t, guest).Type)
 	stored, err := store.Get(t.Context(), "r1")
@@ -470,6 +474,7 @@ func TestHubGatingSettingIsControllerOnly(t *testing.T) {
 
 	disabled := false
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "gating", Enabled: &disabled}))
+	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 7}))
 	require.Equal(t, "pong", readHubEvent(t, guest).Type)
 	stored, err := store.Get(t.Context(), "r1")
@@ -694,4 +699,90 @@ func TestHubTitleRequestValidationAndRateLimit(t *testing.T) {
 	require.Equal(t, "titleRequest", readHubEvent(t, host).Type)
 	require.NoError(t, host.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 8}))
 	require.Equal(t, "pong", readHubEvent(t, host).Type)
+}
+
+// A host that reloads with a guest present comes back as a brand new member,
+// and the guest has already been promoted. The owner token is the only thing
+// that can tell the server this is the same person, so control follows it.
+func TestHubOwnerTokenTakesControlBack(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", FileName: "movie.mkv", Status: "processing", ControllerID: "m1",
+		OwnerToken: "secret-owner-token", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}))
+
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.Close())
+	promoted := readHubEvent(t, guest)
+	require.Equal(t, "members", promoted.Type)
+	require.Equal(t, "m2", promoted.ControllerID)
+
+	reloaded := dialHubWS(t, server)
+	require.NoError(t, reloaded.WriteJSON(Inbound{
+		Type: "hello", Nickname: "host", ClientTimeMs: 3, OwnerToken: "secret-owner-token",
+	}))
+	welcome := readHubEvent(t, reloaded)
+	require.Equal(t, "welcome", welcome.Type)
+	require.Equal(t, welcome.MemberID, welcome.ControllerID)
+	require.Equal(t, "pong", readHubEvent(t, reloaded).Type)
+
+	require.NoError(t, reloaded.WriteJSON(Inbound{Type: "pause", PositionMs: 4_000, Rate: 1}))
+	require.Equal(t, "state", readHubEvent(t, reloaded).Type)
+}
+
+// A wrong token is a guest with a guess: it must change nothing.
+func TestHubWrongOwnerTokenKeepsController(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", FileName: "movie.mkv", Status: "processing", ControllerID: "m1",
+		OwnerToken: "secret-owner-token", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}))
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+
+	guest := dialHubWS(t, server)
+	require.NoError(t, guest.WriteJSON(Inbound{
+		Type: "hello", Nickname: "guest", ClientTimeMs: 2, OwnerToken: "not-the-token",
+	}))
+	welcome := readHubEvent(t, guest)
+	require.Equal(t, "m1", welcome.ControllerID)
+	require.Equal(t, "pong", readHubEvent(t, guest).Type)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "pause", PositionMs: 1_000}))
+	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
+}
+
+// A restart replays member ids from m1, so a controller id that survived in
+// the store can name nobody at all. The first person through the door takes
+// the controls rather than the room being uncontrollable until the id
+// happens to collide.
+func TestHubStaleControllerIDDoesNotLockOutTheRoom(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", FileName: "movie.mkv", Status: "processing", ControllerID: "m7",
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	}))
+
+	host := dialHubWS(t, server)
+	welcome := helloHubClient(t, host, "host", 1)
+	require.Equal(t, "m1", welcome.MemberID)
+	require.Equal(t, "m1", welcome.ControllerID)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "pause", PositionMs: 2_000, Rate: 1}))
+	require.Equal(t, "state", readHubEvent(t, host).Type)
+}
+
+// The stall gate opens with no sender. A failing store on that path used to
+// hand a nil client to send and take the whole process down with it.
+func TestRoomSendToleratesNilTarget(t *testing.T) {
+	require.NotPanics(t, func() {
+		connection := &roomConn{id: "r1"}
+		connection.send(nil, Outbound{Type: "error", ErrCode: "internal_error"})
+	})
 }

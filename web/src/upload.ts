@@ -22,6 +22,27 @@ const REGISTRY_TTL_MS = 30_000
 interface CreateRoomResponse {
   id: string
   nickname: string
+  ownerToken?: string
+}
+
+// The room creator's proof of ownership. A reload joins as a brand new member
+// — the server has no other way to tell the host apart from a guest — so this
+// is what hands the controls back instead of leaving the host a spectator of
+// their own room. localStorage rather than sessionStorage: reopening the link
+// in a new tab is half the real cases.
+const ownerKey = (roomID: string) => `ss.owner.${roomID}`
+
+export function ownerTokenFor(roomID: string): string {
+  try {
+    return localStorage.getItem(ownerKey(roomID)) || ''
+  } catch {
+    return ''
+  }
+}
+
+function rememberOwnerToken(room: CreateRoomResponse): void {
+  if (!room.ownerToken) return
+  try { localStorage.setItem(ownerKey(room.id), room.ownerToken) } catch { /* private mode: the host simply cannot resume */ }
 }
 
 export interface UploadResult {
@@ -136,7 +157,9 @@ async function createRoom(fileName: string, nickname: string, kind?: string): Pr
     body: JSON.stringify({ fileName, nickname, kind }),
   })
   if (!response.ok) throw new Error('create room failed')
-  return await response.json() as CreateRoomResponse
+  const created = await response.json() as CreateRoomResponse
+  rememberOwnerToken(created)
+  return created
 }
 
 // A shared screen has no file and no pipeline: the room opens ready and the

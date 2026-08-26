@@ -198,7 +198,11 @@ func (r *roomConn) broadcastWaiting() {
 // gate holds every member, so a viewer's toggle is ignored just like a
 // viewer's play would be.
 func (r *roomConn) handleGatingToggle(sender *client, message Inbound) {
-	if sender.id != r.controllerID || message.Enabled == nil {
+	if sender.id != r.controllerID {
+		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
+		return
+	}
+	if message.Enabled == nil {
 		return
 	}
 	enabled := *message.Enabled

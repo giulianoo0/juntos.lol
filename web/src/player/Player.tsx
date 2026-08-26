@@ -45,11 +45,24 @@ interface PlayerProps {
   // would clamp into the old region and play the wrong minutes under a
   // clock that says otherwise.
   coldWaitRef?: MutableRefObject<boolean>
+  // Stamped by the sync layer whenever a server frame steers the element, so
+  // the pause it produces is not mistaken for one the viewer performed.
+  remoteSteerAtRef?: MutableRefObject<number>
+  // Where this player hands its buffering picture back to the sync layer.
+  // The room waits on these reports, so a player that never sends one — or
+  // never stops — is a room that never starts.
+  onBuffering?: (stalled: boolean) => void
 }
 
 // How far past a growing region's produced edge a position still counts as
 // its: the pipeline is on its way there. Mirrors the pipeline's own margin.
 const REGION_AHEAD_MS = 30_000
+// How long a play intent stays worth retrying. Long enough for hls.js to
+// finish attaching, short enough that it cannot resurrect a stopped room.
+const PLAY_INTENT_TTL_MS = 5_000
+// How long after a server frame steered the element its own play/pause events
+// are read as echo rather than as something the viewer did.
+const REMOTE_ECHO_MS = 500
 const REGION_BEHIND_MS = 1_000
 
 export function regionHolds(region: MediaRegion, ms: number): boolean {
@@ -122,7 +135,7 @@ function subtitleSource(room: RoomInfo, index: number, language: string): string
   return `${room.mediaBaseUrl}/subs/sub_${index}_${safeLanguage(language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, onBuffering }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -141,7 +154,18 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // with the element's own clock must use this one instead.
   const loadedOffsetSecRef = useRef(0)
   const playRequestedRef = useRef(false)
+  // When the intent was formed. A play kept alive across a rebuild is a
+  // retry; the same play half a minute later is a ghost that restarts a room
+  // somebody deliberately stopped.
+  const playRequestedAtRef = useRef(0)
   const playAttemptRef = useRef(false)
+  // Carries "the room was playing" through an hls.js teardown. destroy()
+  // calls media.load(), which pauses the element, and a region switch sends
+  // no state message — so without this the picture simply stops and only the
+  // clock keeps moving.
+  const resumeAfterReloadRef = useRef(false)
+  // Raised when the browser refused to start playback without a gesture.
+  const [needsGesture, setNeedsGesture] = useState(false)
   const controlsTimerRef = useRef<number | null>(null)
   const feedbackSeqRef = useRef(0)
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>(
@@ -212,11 +236,26 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const coldRegions = regions ?? (duration > 0
     ? [{ n: 0, startMs: mediaOffsetMs, producedMs: Math.round(duration * 1000), growing: true }]
     : null)
+  // Past the room's known end there is no region still coming, so waiting
+  // there is waiting for nothing: the film ended, the clock kept running, and
+  // the player used to sit forever on "preparing" with a play button that did
+  // nothing. Same bound Room.tsx already uses to decide a resume is possible.
+  const knownEndMs = room.durationMs && room.durationMs > 0 ? room.durationMs : null
+  // Only once the regions actually reach that end: a room whose clock ran off
+  // the front of a pipeline still building the middle is a different wait,
+  // and it must keep waiting.
+  const producedToEnd = knownEndMs !== null && coldRegions !== null
+    && coldRegions.some((r) => regionHolds(r, knownEndMs - 1))
   const coldWait = coldRegions !== null && coldTargetMs !== null
+    && !(producedToEnd && coldTargetMs >= (knownEndMs ?? 0))
     && !coldRegions.some((r) => regionHolds(r, coldTargetMs))
   if (coldWaitRef) coldWaitRef.current = coldWait
   useEffect(() => {
-    if (coldWait) videoRef.current?.pause()
+    if (!coldWait) return
+    // The hold is deliberate, so a play still waiting to be retried must not
+    // survive it and fire the moment the buffer recovers.
+    playRequestedRef.current = false
+    videoRef.current?.pause()
   }, [coldWait, videoRef])
   // The timeline is the room's, not the element's: the scrubber promises the
   // whole episode from the first publish, while the element grows region by
@@ -504,10 +543,19 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       disposed = true
       window.clearInterval(watchdog)
       resumeRef.current = { generation, time: video.currentTime + loadedOffsetSecRef.current }
+      // destroy() runs the element's load algorithm, which pauses it. A
+      // region switch or a republish sends no state message, so nobody would
+      // ever start it again: the picture freezes while the room's clock walks
+      // away from it. Captured here, not in the effect body — React runs this
+      // cleanup first, so by then the element is already paused.
+      resumeAfterReloadRef.current = syncRef.current?.playing ?? !video.paused
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
   }, [room.id, room.mediaGeneration, room.mediaVersion, mediaOffsetSec, masterName, videoRef])
+
+  // A different recording must not inherit the previous one's intent.
+  useEffect(() => { resumeAfterReloadRef.current = false }, [room.mediaGeneration])
 
   // Subtitle modes are driven from state instead of the <select> handler so
   // the choice survives everything that reloads cues: a subsVersion bump
@@ -554,20 +602,49 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
     if (!video || !playRequestedRef.current || playAttemptRef.current) return
+    // An intent nobody could satisfy within a few seconds is not a retry any
+    // more: firing it later restarts a room that has since been stopped.
+    if (Date.now() - playRequestedAtRef.current > PLAY_INTENT_TTL_MS) {
+      playRequestedRef.current = false
+      return
+    }
+    // A viewer never plays against a stopped room. Only the controller
+    // decides that, and their own play goes through togglePlay.
+    if (!isController && syncRef.current && !syncRef.current.playing) {
+      playRequestedRef.current = false
+      return
+    }
     playAttemptRef.current = true
     void Promise.resolve(video.play()).then(() => {
       playAttemptRef.current = false
+      setNeedsGesture(false)
       if (!playRequestedRef.current) return
       playRequestedRef.current = false
       if (isController) {
         send('play', { positionMs: commandPositionMs(video), rate: video.playbackRate })
       }
-    }).catch(() => {
-      // A click can land while hls.js is still attaching the MediaSource.
-      // Keep the intent and retry from the next canplay event.
+    }).catch((error: unknown) => {
       playAttemptRef.current = false
+      // A click can land while hls.js is still attaching the MediaSource, or
+      // a pause can abort a play that never started: keep the intent and
+      // retry from the next canplay. A refusal for want of a gesture is the
+      // opposite — retrying only produces rejected promises forever — so the
+      // intent is dropped and the viewer is asked for the one click that
+      // fixes it.
+      if (error instanceof DOMException && error.name === 'NotAllowedError') {
+        playRequestedRef.current = false
+        setNeedsGesture(true)
+      }
     })
   }, [commandPositionMs, isController, send, videoRef])
+
+  // Arms a play intent. Every caller goes through here so nobody forgets to
+  // stamp it, which is what gives the retry its expiry.
+  const requestPlay = useCallback(() => {
+    playRequestedRef.current = true
+    playRequestedAtRef.current = Date.now()
+    attemptPlay()
+  }, [attemptPlay])
 
   // When the wait ends with the room playing — the region landed while the
   // element was held paused — nobody sends a new state message, so the
@@ -580,9 +657,8 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     if (coldWait || !wasCold || !syncRef.current?.playing) return
     const video = videoRef.current
     if (!video || !video.paused) return
-    playRequestedRef.current = true
-    attemptPlay()
-  }, [coldWait, attemptPlay, videoRef])
+    requestPlay()
+  }, [coldWait, requestPlay, videoRef])
 
   // A double click fullscreens the player, and its first click is
   // indistinguishable from a single one until the second arrives. Acting
@@ -613,8 +689,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       // attemptPlay only reports a play upstream for the controller, so this
       // stays local while still inheriting the retry on canplay.
       if (video.paused && syncState?.playing) {
-        playRequestedRef.current = true
-        attemptPlay()
+        requestPlay()
         return true
       }
       refuseControl()
@@ -627,20 +702,62 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       // the pipeline is still building it. Park the intent; the room plays
       // by itself the moment the region publishes.
       if (coldWait && coldTargetMs !== null) {
-        resumeAtMsRef.current = Math.round(coldTargetMs)
+        const target = Math.round(coldTargetMs)
+        resumeAtMsRef.current = target
+        // Without this the room's clock runs while everyone waits, the target
+        // walks further past what the regions cover, and the wait feeds
+        // itself. Same move the cold seek already makes.
+        if (syncState?.playing) send('pause', { positionMs: target, rate: video.playbackRate })
         return true
       }
       // Calling play inside the gesture preserves browser user activation. A
       // WebSocket round trip first would make browsers reject audible autoplay.
-      playRequestedRef.current = true
-      attemptPlay()
+      requestPlay()
       return true
     }
     playRequestedRef.current = false
     video.pause()
     send('pause', { positionMs: commandPositionMs(video), rate: video.playbackRate })
     return true
-  }, [attemptPlay, commandPositionMs, coldWait, coldTargetMs, isController, refuseControl, send, syncState, videoRef])
+  }, [commandPositionMs, coldWait, coldTargetMs, isController, refuseControl, requestPlay, send, syncState, videoRef])
+
+  // A pause the viewer performed on the element itself — a media key, the
+  // system's now-playing sheet, picture-in-picture — used to stop only them.
+  // The controller was certain they had paused the room, and the room played
+  // on without them.
+  const reportNativeToggle = useCallback((playing: boolean) => {
+    if (!isController || coldWait) return
+    const sync = syncRef.current
+    if (!sync || sync.playing === playing) return
+    // A frame from the server steers the element too, and the DOM event it
+    // produces is indistinguishable from a real gesture. Echoing it back
+    // would have the room command itself.
+    if (Date.now() - (remoteSteerAtRef?.current ?? 0) < REMOTE_ECHO_MS) return
+    const video = videoRef.current
+    if (!video) return
+    if (!playing) playRequestedRef.current = false
+    send(playing ? 'play' : 'pause', { positionMs: commandPositionMs(video), rate: video.playbackRate })
+  }, [coldWait, commandPositionMs, isController, remoteSteerAtRef, send, videoRef])
+
+  // The end of the film is a pause nobody sends. Left alone the room's clock
+  // runs past everything that exists, the player decides it is waiting for a
+  // region that will never be published, and the play button stops doing
+  // anything at all.
+  const reportEnded = useCallback(() => {
+    if (!isController) return
+    const video = videoRef.current
+    const sync = syncRef.current
+    if (!video || !sync?.playing) return
+    const end = room.durationMs && room.durationMs > 0
+      ? room.durationMs
+      : Math.round((video.duration + loadedOffsetSecRef.current) * 1000)
+    // 'ended' also fires at the close of a finished region mid-episode. Only
+    // the end of the room's own timeline stops the room.
+    const expected = expectedPositionMs(sync, Date.now() + serverOffsetRef.current)
+    if (room.durationMs && expected < room.durationMs - REGION_BEHIND_MS * 5) return
+    playRequestedRef.current = false
+    send('pause', { positionMs: end, rate: video.playbackRate })
+  }, [isController, room.durationMs, send, videoRef])
 
   const pendingSentServerMs = useRef(0)
   const seek = useCallback((seconds: number) => {
@@ -660,6 +777,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     resumeAtMsRef.current = null
     if (cold && syncState?.playing) {
       resumeAtMsRef.current = Math.round(seconds * 1000)
+      playRequestedRef.current = false
       send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
     }
   }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, videoRef])
@@ -680,6 +798,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   useEffect(() => {
     if (syncState?.playing) resumeAtMsRef.current = null
   }, [syncState?.playing])
+  // Keyed on the state's identity, not on the boolean: by the time a rejected
+  // play is waiting for its retry the room is usually already stopped, so a
+  // transition-only effect would never fire.
+  useEffect(() => {
+    if (syncState && !syncState.playing) {
+      playRequestedRef.current = false
+      setNeedsGesture(false)
+    }
+  }, [syncState])
 
   // The thumb holds the committed target until the video actually gets
   // there — on a cold seek that is however long the new region takes.
@@ -979,6 +1106,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         toggleFullscreen()
       }}
     >
+      {needsGesture && !coldWait ? (
+        <button
+          type="button"
+          className="player-gesture"
+          onClick={() => { setNeedsGesture(false); requestPlay() }}
+        >
+          <Play size={26} />
+          <span>{t('room.tapToJoin')}</span>
+        </button>
+      ) : null}
       {loading || coldWait ? (
         <div className="player-loading" role="status" aria-live="polite">
           <span className="player-spinner" aria-hidden="true" />
@@ -999,17 +1136,33 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         // a cross-origin text track unless the media element itself declares
         // CORS. Without this the tracks are listed and never fetched.
         crossOrigin="anonymous"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onWaiting={() => setLoading(true)}
-        onStalled={() => setLoading(true)}
+        onPlay={() => {
+          setPlaying(true)
+          reportNativeToggle(true)
+        }}
+        onPause={() => {
+          setPlaying(false)
+          reportNativeToggle(false)
+        }}
+        onWaiting={() => { setLoading(true); onBuffering?.(true) }}
+        onStalled={() => { setLoading(true); onBuffering?.(true) }}
         onSeeking={() => setLoading(true)}
-        onPlaying={() => setLoading(false)}
+        onPlaying={() => { setLoading(false); onBuffering?.(false) }}
         onSeeked={() => setLoading(false)}
+        onEnded={() => reportEnded()}
         onCanPlay={() => {
           // canplay fires with enough data buffered to advance, which is the
           // honest moment to stop saying "loading" even while still paused.
           setLoading(false)
+          onBuffering?.(false)
+          const media = videoRef.current
+          if (resumeAfterReloadRef.current && !coldWait && media?.paused) {
+            resumeAfterReloadRef.current = false
+            // Straight to the element, never through requestPlay: a rebuild is
+            // nobody's gesture, and the controller must not announce a play to
+            // the room over a region switch it never asked for.
+            void media.play().catch(() => undefined)
+          }
           attemptPlay()
         }}
         onTimeUpdate={(event) => {
