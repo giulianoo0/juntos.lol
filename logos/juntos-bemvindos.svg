@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-8 -80 536 108" role="img" aria-label="bem-vindos">
+  <g fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 0 -68 L 0 -6"/>
+    <path d="M 19 -43.5 A 19 19.5 0 1 1 18.98 -43.5"/>
+    <path d="M 60 -24 L 98 -24"/>
+    <path d="M 98 -24 A 19 19.5 0 1 0 93.55 -11.47"/>
+    <path d="M 120 -42 L 120 -6"/>
+    <path d="M 120 -24 A 15 15 0 0 1 150 -24 L 150 -6"/>
+    <path d="M 150 -24 A 15 15 0 0 1 180 -24 L 180 -6"/>
+    <path d="M 202 -24 L 222 -24"/>
+    <path d="M 244 -42 L 259 -6 L 274 -42"/>
+    <path d="M 296 -42 L 296 -6"/>
+    <path d="M 318 -42 L 318 -6"/>
+    <path d="M 318 -24 A 18 18 0 0 1 354 -24 L 354 -6"/>
+    <path d="M 395 -43.5 A 19 19.5 0 1 1 394.98 -43.5"/>
+    <path d="M 414 -68 L 414 -6"/>
+    <path d="M 455 -43.5 A 19 19.5 0 1 1 454.98 -43.5"/>
+    <path d="M 519.93 -37.1 A 12 10.5 0 1 0 508 -25.5 A 12 10.5 0 1 1 496.88 -11.07"/>
+  </g>
+  <circle cx="296" cy="-58" r="6.5" fill="#fff"/>
+</svg>
