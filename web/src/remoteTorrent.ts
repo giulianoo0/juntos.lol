@@ -146,6 +146,40 @@ export async function torrentCapacity(): Promise<string> {
   }
 }
 
+/** One worker as the fleet reports it to the status page. */
+export interface FleetMember {
+  id: string
+  version?: string
+  /** available takes work now, busy is full, draining is leaving, offline stopped reporting. */
+  availability: 'available' | 'busy' | 'draining' | 'offline'
+  /** Lease and disk pressure as one number in 0..1, the same one placement sorts by. */
+  load: number
+  leases: number
+  maxLeases?: number
+  torrents: number
+  maxTorrents?: number
+  diskUsed: number
+  diskQuota?: number
+  transferUsedBps: number
+  transferCapBps?: number
+  uptimeSecs?: number
+  lastSeenSecs: number
+}
+
+export interface Fleet {
+  capacity: string
+  /** Best for this viewer first: the server orders it the way it would place a room. */
+  workers: FleetMember[]
+}
+
+/** The whole fleet and how loaded it is. */
+export async function fleetStatus(): Promise<Fleet> {
+  const response = await fetch('/api/fleet')
+  if (!response.ok) throw new Error(`fleet ${response.status}`)
+  const body = await response.json() as Partial<Fleet>
+  return { capacity: body.capacity ?? 'disabled', workers: body.workers ?? [] }
+}
+
 /** One worker as the page measured it. */
 export interface WorkerProbe {
   id: string

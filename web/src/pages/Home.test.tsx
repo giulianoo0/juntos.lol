@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Home, MAX_UPLOAD_BYTES } from './Home'
 import { createRoomAndUpload, createRoomAndUploadTorrent } from '../upload'
 import { openTorrent } from '../torrent'
@@ -34,10 +34,37 @@ describe('Home', () => {
     vi.mocked(createRoomAndUploadTorrent).mockResolvedValue({ roomID: 'torrent-room', nickname: 'giuli' })
   })
 
+  afterEach(() => vi.unstubAllGlobals())
+
   it('shows the catalog board on the other tab', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
     showCatalog()
     expect(await screen.findByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
+  })
+
+  it('gives each tab its own address, and follows the browser back to it', async () => {
+    // A catalogue and the fleet's status are places: linkable, bookmarkable,
+    // and reachable with the browser's own back button.
+    render(
+      <MemoryRouter initialEntries={['/status']}>
+        <Routes><Route path="*" element={<Home />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('tab', { name: /status/i })).toHaveAttribute('aria-selected', 'true')
+
+    showCatalog()
+    await waitFor(() => expect(screen.getByRole('tab', { name: /catalogue|catálogo/i })).toHaveAttribute('aria-selected', 'true'))
+  })
+
+  it('opens the fleet page straight from its own URL', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ capacity: 'no_workers', workers: [] }) }))
+    render(
+      <MemoryRouter initialEntries={['/status']}>
+        <Routes><Route path="*" element={<Home />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('heading', { name: /fleet|frota/i })).toBeInTheDocument()
   })
 
   it('opens on the manual tab and starts upload after file selection', async () => {

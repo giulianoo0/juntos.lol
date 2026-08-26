@@ -20,6 +20,11 @@ export default function App() {
       <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<Home />} />
+          {/* The header's tabs are routes, so a catalogue or the fleet's
+              status is a place someone can link to, bookmark, and come back
+              to with the browser's own back button. */}
+          <Route path="/catalog" element={<Home />} />
+          <Route path="/status" element={<Home />} />
           <Route path="/title/:type/:id" element={<Home />} />
           <Route path="/room/:id" element={<RoomPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

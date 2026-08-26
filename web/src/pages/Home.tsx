@@ -25,11 +25,16 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { MetaDetails } from '../catalog/lazyDetails'
 import { openCatalogStream } from '../catalog/openStream'
 import { WorkerProbes } from '../components/WorkerProbes'
+import { FleetStatus } from '../components/FleetStatus'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
 import type { TitleOpen } from '../catalog/PosterCard'
 
 import { MAX_UPLOAD_BYTES } from '../limits'
+
+// The three things the header offers: a catalogue, your own file, and how the
+// fleet behind both is doing.
+type HomeView = 'catalog' | 'manual' | 'status'
 // Re-exported so anything already importing it from the page keeps working.
 export { MAX_UPLOAD_BYTES }
 
@@ -101,26 +106,33 @@ export function Home() {
   // explanation, and it must not flip under a re-render.
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
-  // Which of the two ways in is on screen. The manual flow keeps its own step
-  // machine; this only decides whether it is the thing being shown.
-  // Manual by default: bringing your own file is what this was built for, and
-  // it is the path that works without a plugin installed.
-  const [view, setView] = useState<'catalog' | 'manual'>('manual')
+  // Which way in is on screen is the URL's to say, not a piece of local
+  // state: /catalog and /status are places, and an open title is the
+  // catalogue with a panel over it. "/" is the manual side: bringing your own
+  // file is what this was built for, and it is the path that works with no
+  // plugin installed.
+  const view: HomeView = location.pathname.startsWith('/status') ? 'status'
+    : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
+      : 'manual'
 
-  const showView = (next: 'catalog' | 'manual') => {
-    // The two sides scroll independently on the same page, so a catalog
-    // scrolled far down and then swapped for the short manual side would leave
-    // the browser clamping the scroll from where it was to the top — the
+  const showView = (next: HomeView) => {
+    if (next === view) return
+    // The sides scroll independently on the same page, so a catalog scrolled
+    // far down and then swapped for the short manual side would leave the
+    // browser clamping the scroll from where it was to the top — the
     // background sliding up under the new content. Landing each side at its own
     // top makes the swap a clean cut instead.
     window.scrollTo({ top: 0 })
-    setView(next)
-    setError('')
-    // Coming back to the manual side lands on its first step rather than
-    // wherever it was abandoned, and leaving tears it down so a half-filled
-    // magnet field is not waiting on return.
-    setManualOpen(next === 'manual' ? 'menu' : false)
+    navigate(next === 'manual' ? '/' : `/${next}`, { state: null })
   }
+
+  // Following the route rather than the click, so the browser's own back and
+  // forward land in the same shape a tap on the tab would: the manual side at
+  // its first step, and nothing half-filled waiting behind the others.
+  useEffect(() => {
+    setError('')
+    setManualOpen(view === 'manual' ? 'menu' : false)
+  }, [view])
   const [pluginsOpen, setPluginsOpen] = useState(false)
   // The panel is held one beat behind the request so the outgoing step can
   // dissolve before the next one mounts — see useMorphingStep.
@@ -196,7 +208,7 @@ export function Home() {
   }
 
   const closeTitle = () => {
-    navigate('/', { state: null })
+    navigate('/catalog', { state: null })
   }
 
   const pickStream = (pick: TitlePick) => {
@@ -396,7 +408,7 @@ export function Home() {
             As a button beside a whole catalog, bringing your own file read as
             the lesser path; it is not. */}
         <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
-          {(['catalog', 'manual'] as const).map((value) => (
+          {(['catalog', 'manual', 'status'] as const).map((value) => (
             <button
               key={value}
               type="button"
@@ -413,7 +425,7 @@ export function Home() {
                 />
               ) : null}
               <span className="season-tab-label">
-                {value === 'catalog' ? t('home.tabCatalog') : t('home.tabOwn')}
+                {value === 'catalog' ? t('home.tabCatalog') : value === 'manual' ? t('home.tabOwn') : t('home.tabStatus')}
               </span>
             </button>
           ))}
@@ -427,7 +439,9 @@ export function Home() {
       </header>
 
       <section className="catalog-stage">
-        {view === 'catalog' ? (
+        {view === 'status' ? (
+          <FleetStatus />
+        ) : view === 'catalog' ? (
           <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
         ) : (
           <div className="manual-stage">

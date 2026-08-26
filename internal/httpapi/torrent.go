@@ -35,10 +35,24 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 		rg.GET("/torrents/capacity", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"capacity": "disabled"})
 		})
+		// A build with no fleet still answers, so the status page can say so
+		// instead of failing to load.
+		rg.GET("/fleet", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"capacity": "disabled", "workers": []worker.FleetMember{}})
+		})
 		return
 	}
 	rg.GET("/torrents/capacity", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"capacity": access.Service.Capacity()})
+	})
+	// Public, like capacity: it says how busy the fleet is, never where it
+	// lives, and everyone about to start a room is entitled to know.
+	rg.GET("/fleet", func(c *gin.Context) {
+		fleet := access.Service.Fleet()
+		if fleet == nil {
+			fleet = []worker.FleetMember{}
+		}
+		c.JSON(http.StatusOK, gin.H{"capacity": access.Service.Capacity(), "workers": fleet})
 	})
 	group := rg.Group("/torrents")
 	if access.Sessions != nil {
