@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="presentation">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#8E93FF"/><stop offset="1" stop-color="#3A2FA6"/>
+    </linearGradient>
+    <radialGradient id="warm" cx="0.16" cy="0.1" r="0.85">
+      <stop offset="0" stop-color="#A9C6FF" stop-opacity="0.95"/><stop offset="1" stop-color="#A9C6FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="deep" cx="0.92" cy="0.96" r="0.8">
+      <stop offset="0" stop-color="#1B1A5E" stop-opacity="0.85"/><stop offset="1" stop-color="#1B1A5E" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="lift" cx="0.5" cy="0.02" r="0.75">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" fill="url(#base)"/>
+  <rect x="0" y="0" width="512" height="512" fill="url(#warm)"/>
+  <rect x="0" y="0" width="512" height="512" fill="url(#deep)"/>
+  <rect x="0" y="0" width="512" height="512" fill="url(#lift)"/>
+</svg>
