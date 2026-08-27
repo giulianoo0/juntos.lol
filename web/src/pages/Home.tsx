@@ -1,11 +1,12 @@
 import { Suspense, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { MonitorUp, Puzzle, Upload } from 'lucide-react'
+import { LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
+import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
@@ -41,7 +42,7 @@ type HomeView = 'catalog' | 'manual' | 'status'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
-type ManualStep = false | 'menu' | 'file' | 'magnet'
+type ManualStep = false | 'menu' | 'file' | 'magnet' | 'join'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -108,6 +109,8 @@ export function Home() {
   // explanation, and it must not flip under a re-render.
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
+  const [joinDraft, setJoinDraft] = useState('')
+  const [joinError, setJoinError] = useState('')
   // Which way in is on screen is the URL's to say, not a piece of local
   // state: /catalog and /status are places, and an open title is the
   // catalogue with a panel over it. "/" is the manual side: bringing your own
@@ -346,6 +349,13 @@ export function Home() {
             <button onClick={startScreenRoom}>
               <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
             </button>
+            {/* The other three make a room; this one goes to somebody else's.
+                It belongs here anyway: this panel is how you get to a room,
+                and a link that was pasted into a chat is not always still
+                clickable by the time it reaches the person it was meant for. */}
+            <button onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>
+              <LogIn size={18} aria-hidden="true" />{t('home.joinRoom')}
+            </button>
           </div>
         </div>
       ) : null}
@@ -370,6 +380,41 @@ export function Home() {
             <span>{t('home.dropHint')}</span>
           </button>
           {error ? <div className="error-card" role="alert">{error}</div> : null}
+        </div>
+      ) : null}
+
+      {shownManual === 'join' ? (
+        <div className="morph-step" data-step="join">
+          <div className="morph-head">
+            <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
+            <h2 className="stage-title">{t('home.joinRoom')}</h2>
+          </div>
+          <p className="stage-description">{t('home.joinGuide')}</p>
+          <form
+            className="join-room-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const code = roomCodeFrom(joinDraft)
+              if (!code) { setJoinError(t('home.joinBadCode')); return }
+              navigate(`/room/${code}`)
+            }}
+          >
+            <input
+              className="sunken text-field"
+              autoFocus
+              value={joinDraft}
+              spellCheck={false}
+              autoCapitalize="characters"
+              autoCorrect="off"
+              placeholder={t('home.joinPlaceholder')}
+              aria-label={t('home.joinRoom')}
+              onChange={(event) => { setJoinDraft(event.target.value); setJoinError('') }}
+            />
+            <button type="submit" className="primary-button" disabled={!roomCodeFrom(joinDraft)}>
+              {t('home.joinGo')}
+            </button>
+          </form>
+          {joinError ? <p className="stage-error" role="alert">{joinError}</p> : null}
         </div>
       ) : null}
 

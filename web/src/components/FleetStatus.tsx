@@ -292,20 +292,34 @@ function diskLabel(member: FleetMember): string {
   return member.diskQuota ? `${gib(held)} / ${gib(member.diskQuota)}` : gib(held)
 }
 
-function busyness(member: FleetMember): number {
+// What a worker is fullest on, and how full that is. A worker is only as
+// available as its tightest resource, so the meter has always taken the
+// largest of the four; naming which one it came from is what was missing.
+// Reading "2 / 8" beside "60%" and a separate "2 / 12 torrents" invites the
+// obvious arithmetic, which does not work, because those were three different
+// numbers: the ratio the percentage came from was neither of the pairs shown.
+function busiest(member: FleetMember): { key: string; used: number; cap: number; ratio: number } {
   const parts = [
-    member.maxLeases ? member.leases / member.maxLeases : 0,
-    member.maxTorrents ? member.torrents / member.maxTorrents : 0,
-    member.diskQuota ? member.diskUsed / member.diskQuota : 0,
-    member.transferCapBps ? member.transferUsedBps / member.transferCapBps : 0,
-  ]
-  return Math.min(1, Math.max(0, ...parts))
+    { key: 'leases', used: member.leases, cap: member.maxLeases },
+    { key: 'torrents', used: member.torrents, cap: member.maxTorrents },
+    { key: 'disk', used: member.diskUsed, cap: member.diskQuota },
+    { key: 'transfer', used: member.transferUsedBps, cap: member.transferCapBps },
+  ].map((part) => ({ ...part, ratio: part.cap ? part.used / part.cap : 0 }))
+  return parts.reduce((worst, part) => (part.ratio > worst.ratio ? part : worst), parts[0])
+}
+
+function busyness(member: FleetMember): number {
+  return Math.min(1, Math.max(0, busiest(member).ratio))
 }
 
 function busyDetail(member: FleetMember, t: (key: string) => string): string {
   if (member.availability === 'offline') return t('fleet.state.offline')
-  if (!member.maxLeases) return `${member.leases}`
-  return `${member.leases} / ${member.maxLeases}`
+  const worst = busiest(member)
+  if (!worst.cap) return `${member.leases}`
+  // Disk and transfer are measured in bytes, and their own cells already say
+  // so; here only the name of the constraint is worth carrying.
+  if (worst.key === 'disk' || worst.key === 'transfer') return t(`fleet.limit.${worst.key}`)
+  return `${worst.used} / ${worst.cap} ${t(`fleet.limit.${worst.key}`)}`
 }
 
 function Meter({ label, value, detail }: { label: string; value: number; detail: string }) {

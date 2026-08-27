@@ -65,6 +65,11 @@ h1, h2, p { margin-top: 0; }
 .dialog-close { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; color: var(--text-dim); background: rgba(255,255,255,.05); }.dialog-close:hover { color: var(--text); background: rgba(255,255,255,.1); }
 
 .source-options { display: grid; gap: 8px; }.source-options button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-field); background: rgba(255,255,255,.03); text-align: left; }.source-options button:hover { background: var(--card-hover); }.source-options button span { color: #FFB794; font-size: 15px; }
+/* The code goes in beside the button that uses it: one line, because what
+   is being asked for is one short thing someone already has on a clipboard. */
+.join-room-form { display: flex; gap: 8px; margin-top: 4px; }
+.join-room-form .text-field { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.join-room-form .primary-button { flex: 0 0 auto; }
 .screen-stage { display: grid; place-items: center; background: #05060a; }.screen-surface { position: absolute; inset: 0; display: grid; place-items: center; }.screen-surface:empty { display: none; }.screen-surface video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .screen-overlay { position: relative; z-index: 2; display: grid; justify-items: center; gap: 14px; padding: 24px; text-align: center; }.screen-overlay p { margin: 0; color: var(--text-dim); font-size: 14px; }.screen-overlay .primary-button { min-width: 220px; }
 .center-state { min-height: 100vh; display: grid; place-items: center; padding: 24px; }.state-card { width: min(520px, 100%); padding: 38px; background: var(--glass); border: 1px solid rgba(255,255,255,.1); border-radius: var(--r-surface); text-align: center; backdrop-filter: blur(12px) saturate(130%); }.state-card p { color: var(--text-dim); }
@@ -133,9 +138,22 @@ h1, h2, p { margin-top: 0; }
 .subtitle-layer .black { color: #191618; text-shadow: 1.5px 2.5px 2px rgba(255,255,255,.6), 0 0 8px rgba(255,255,255,.45); }
 /* A dark ground behind the controls, or a white video swallows them whole:
    every element in the bar is drawn in light tones over whatever the frame
-   happens to be. It fades with the controls, so a clean frame stays clean. */
-.player-wrap::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 130px; background: linear-gradient(180deg, rgba(3,4,7,0), rgba(3,4,7,.66)); pointer-events: none; opacity: 1; transition: opacity 180ms var(--ease); }
+   happens to be. It fades with the controls, so a clean frame stays clean.
+
+   The band clears the top of the bar by a good margin and its stops trace an
+   S instead of a straight ramp. A straight ramp long enough to reach the
+   scrubber announces where it begins as a seam across a flat bright wall, and
+   one short enough to hide that seam left the whole first row of the bar,
+   scrubber included, standing on nothing. */
+.player-wrap::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 176px; background: linear-gradient(180deg, rgba(3,4,7,0) 0%, rgba(3,4,7,.02) 14%, rgba(3,4,7,.07) 26%, rgba(3,4,7,.16) 36%, rgba(3,4,7,.27) 46%, rgba(3,4,7,.39) 56%, rgba(3,4,7,.49) 66%, rgba(3,4,7,.58) 76%, rgba(3,4,7,.68) 88%, rgba(3,4,7,.74) 100%); pointer-events: none; opacity: 1; transition: opacity 180ms var(--ease); }
 .controls-hidden::after { opacity: 0; }
+/* The ground carries the bar but not the thinnest light-on-light pieces of
+   it: a five-pixel rail at nine percent white and a hairline glyph dissolve
+   into a pale frame well before the gradient beneath them does. The subtitle
+   layer answers the same problem the same way, with an angled shadow rather
+   than a box, and these are sized to disappear over dark video. */
+.player-controls svg, .player-controls .seek-track { filter: drop-shadow(0 1px 2px rgba(3,4,7,.55)); }
+.timecode, .viewer-note, .live-button { text-shadow: 0 1px 3px rgba(3,4,7,.55); }
 .player-controls { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: calc(100% - 32px); padding: 12px 14px 10px; border: 0; background: transparent; opacity: 1; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
 .controls-hidden { cursor: none; }
 .controls-hidden .player-controls { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
@@ -223,7 +241,7 @@ h1, h2, p { margin-top: 0; }
 @keyframes torrent-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) and (pointer: fine) { .home-header nav button:hover > span { transform: translateY(-1px); } }
 @media (max-width: 900px) { .room-layout { grid-template-columns: 1fr; }.chat-drawer { position: fixed; inset: 80px 12px 12px auto; width: min(360px, calc(100vw - 24px)); margin: 0; z-index: 30; box-shadow: -30px 0 80px #000; }.chat-drawer:not(.is-open) { transform: translateX(calc(100% + 20px)); }.screen-tile { right: 16px; width: min(420px, calc(100vw - 32px)); }.settings-panel { width: 230px; } }
-@media (max-width: 620px) { .home-shell { padding: 80px 12px 20px; align-items: start; }.home-header { height: 68px; padding: 0 12px; }.home-header button { padding: 7px; font-size: 12px; }.home-intro { margin: 18px 0; }.room-shell { padding: 8px; }.room-header { height: 52px; padding: 0 9px 0 12px; }.room-file { display: none; }.header-actions { width: 100%; justify-content: flex-end; gap: 4px; }.header-actions button:not(.icon-button) { padding: 7px 9px; }.header-actions button { font-size: 12px; }.header-actions .sync-toggle, .header-actions .catalog-open { display: none; }.room-layout { height: calc(100dvh - 68px); }.media-column { padding-top: 8px; }.player-wrap { border-radius: 22px; }.player-controls { bottom: 8px; width: calc(100% - 16px); padding: 10px 10px 8px; }.control-button { width: 32px; height: 32px; }.control-button.is-play { width: 34px; height: 34px; }.timecode { margin: 0 4px; font-size: 11px; }.viewer-note { font-size: 0; }.viewer-note button { font-size: 11px; }.room-header .status-pill { display: none; } }
+@media (max-width: 620px) { .home-shell { padding: 80px 12px 20px; align-items: start; }.home-header { height: 68px; padding: 0 12px; }.home-header button { padding: 7px; font-size: 12px; }.home-intro { margin: 18px 0; }.room-shell { padding: 8px; }.room-header { height: 52px; padding: 0 9px 0 12px; }.room-file { display: none; }.header-actions { width: 100%; justify-content: flex-end; gap: 4px; }.header-actions button:not(.icon-button) { padding: 7px 9px; }.header-actions button { font-size: 12px; }.header-actions .sync-toggle, .header-actions .catalog-open { display: none; }.room-layout { height: calc(100dvh - 68px); }.media-column { padding-top: 8px; }.player-wrap { border-radius: 22px; }.player-wrap::after { height: 148px; }.player-controls { bottom: 8px; width: calc(100% - 16px); padding: 10px 10px 8px; }.control-button { width: 32px; height: 32px; }.control-button.is-play { width: 34px; height: 34px; }.timecode { margin: 0 4px; font-size: 11px; }.viewer-note { font-size: 0; }.viewer-note button { font-size: 11px; }.room-header .status-pill { display: none; } }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .room-header, .home-card, .state-card, .player-controls, .chat-panel { background: #1A1719; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }.home-stage { transform: none; }.controls-hidden .player-controls { transform: translateX(-50%); } }
 /* The scrub bar draws what is actually held: played ground, buffer kept

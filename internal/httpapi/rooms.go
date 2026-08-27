@@ -18,6 +18,16 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
+// A room id is read off a screen and typed back in by hand, so it is built
+// from the characters that survive that trip: capitals and digits only. The
+// url-safe default alphabet mixes cases and adds - and _, which turns "was
+// that a dash or an underscore, and was the l lower or upper" into a question
+// someone has to answer before they can join.
+const (
+	roomIDAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	roomIDLength   = 8
+)
+
 const (
 	maxCreateRoomBodyBytes = 4 << 10
 	maxFileNameBytes       = 255
@@ -76,7 +86,7 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			return
 		}
 
-		id, err := gonanoid.New(8)
+		id, err := gonanoid.Generate(roomIDAlphabet, roomIDLength)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return

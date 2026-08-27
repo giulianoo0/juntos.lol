@@ -196,6 +196,37 @@ describe('FleetStatus', () => {
     await waitFor(() => expect(screen.getByText('0.3 GB / 100.0 GB')).toBeInTheDocument())
   })
 
+  // The meter is the worker's tightest resource, but the figure beside it
+  // always read leases. A worker held back by its disk showed "1 / 8" next to
+  // "80%", which is not that fraction, next to a separate "2 / 12 torrents"
+  // which is not it either: three numbers inviting arithmetic that cannot work.
+  it('names the resource the busy percentage actually came from', async () => {
+    answer({ capacity: 'available', workers: [member({
+      leases: 1, maxLeases: 8,
+      torrents: 2, maxTorrents: 12,
+      diskUsed: 85_899_345_920, diskQuota: 107_374_182_400,
+      transferUsedBps: 1_000_000, transferCapBps: 100_000_000,
+    })] })
+    render(<FleetStatus />)
+
+    // Disk at 80% is the tightest, so that is what the meter is reporting.
+    await waitFor(() => expect(screen.getByText(/limited by disk/)).toBeInTheDocument())
+    expect(screen.getByText(/80%/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 \/ 8/)).not.toBeInTheDocument()
+  })
+
+  it('shows the count when leases are what is holding a worker back', async () => {
+    answer({ capacity: 'available', workers: [member({
+      leases: 7, maxLeases: 8,
+      torrents: 1, maxTorrents: 12,
+      diskUsed: 1, diskQuota: 107_374_182_400,
+      transferUsedBps: 1, transferCapBps: 100_000_000,
+    })] })
+    render(<FleetStatus />)
+
+    await waitFor(() => expect(screen.getByText(/7 \/ 8 reads/)).toBeInTheDocument())
+  })
+
   it('says a deployment runs no workers rather than showing an empty list', async () => {
     answer({ capacity: 'disabled', workers: [] })
     render(<FleetStatus />)

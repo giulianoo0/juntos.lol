@@ -94,13 +94,26 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
-		// Who is actually here, for the status page. Counted from the live
-		// connections rather than from the store: a room key outlives the tab
-		// that made it by the whole room TTL, so Redis would report a crowd
-		// hours after everyone left. Public — it is a count, not a roster.
+		// What is actually up right now, for the status page.
+		//
+		// The two halves are counted from different places on purpose. People
+		// come from the live socket connections, because that is what being in
+		// a room means. Rooms come from the store, because a room does not
+		// stop existing when its last tab closes: it is held for the reclaim
+		// window, and longer while a pipeline is still producing into it.
+		// Counting rooms from the sockets too dropped the number to zero the
+		// instant someone left, while the room, its media and its torrent were
+		// all still there. This follows the deletion itself.
+		//
+		// Public: two integers, not a roster.
 		r.GET("/api/live", func(c *gin.Context) {
-			rooms, members := hub.Live()
-			c.JSON(http.StatusOK, gin.H{"rooms": rooms, "members": members})
+			_, members := hub.Live()
+			census, err := store.Census(c.Request.Context())
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"members": members})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"rooms": census.Total, "members": members})
 		})
 	}
 	if options.workerLink != nil {
