@@ -299,11 +299,13 @@ function diskLabel(member: FleetMember): string {
 // obvious arithmetic, which does not work, because those were three different
 // numbers: the ratio the percentage came from was neither of the pairs shown.
 function busiest(member: FleetMember): { key: string; used: number; cap: number; ratio: number } {
+  // A worker that reports no ceiling for something cannot be measured against
+  // it, so it counts as nothing rather than as full.
   const parts = [
-    { key: 'leases', used: member.leases, cap: member.maxLeases },
-    { key: 'torrents', used: member.torrents, cap: member.maxTorrents },
-    { key: 'disk', used: member.diskUsed, cap: member.diskQuota },
-    { key: 'transfer', used: member.transferUsedBps, cap: member.transferCapBps },
+    { key: 'leases', used: member.leases, cap: member.maxLeases ?? 0 },
+    { key: 'torrents', used: member.torrents, cap: member.maxTorrents ?? 0 },
+    { key: 'disk', used: member.diskUsed, cap: member.diskQuota ?? 0 },
+    { key: 'transfer', used: member.transferUsedBps, cap: member.transferCapBps ?? 0 },
   ].map((part) => ({ ...part, ratio: part.cap ? part.used / part.cap : 0 }))
   return parts.reduce((worst, part) => (part.ratio > worst.ratio ? part : worst), parts[0])
 }
