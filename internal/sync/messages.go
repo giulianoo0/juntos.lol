@@ -64,6 +64,10 @@ type Outbound struct {
 	// Title relays a viewer's "titleRequest" to the whole room; MemberID names
 	// the requester.
 	Title *TitleRequest `json:"title,omitempty"`
+	// DeadlineMs belongs to "stillThere": when the room closes itself if
+	// nobody answers, on the server's clock, so every member counts down to
+	// the same instant rather than to their own arrival time.
+	DeadlineMs int64 `json:"deadlineMs,omitempty"`
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.

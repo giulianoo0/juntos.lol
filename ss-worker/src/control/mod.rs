@@ -38,6 +38,8 @@ pub struct Control {
     nonces: NonceStore,
     drain: Arc<Notify>,
     started: Instant,
+    // Identities minted since the last link the server kept alive.
+    reenrolls: std::sync::atomic::AtomicU32,
     // For the egress figure in the heartbeat: bytes at the last beat.
     egress_mark: std::sync::Mutex<(u64, Instant)>,
 }
@@ -49,6 +51,59 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const SILENCE_LIMIT: Duration = Duration::from_secs(45);
 const RECONNECT_MIN: Duration = Duration::from_secs(1);
 const RECONNECT_MAX: Duration = Duration::from_secs(60);
+// A link that stood this long was welcomed and did some work, so both the
+// backoff and the enrollment budget below can be treated as spent well.
+const SESSION_HEALTHY: Duration = Duration::from_secs(60);
+// Losing the server-side registry should not need a human, but a worker
+// that mints an identity on every reconnect would bury that registry in
+// orphans. A few tries buy back a worker the registry forgot; past that
+// the fault is not a forgotten identity and a new one will not mend it.
+const REENROLL_BUDGET: u32 = 3;
+
+/// The single reason the server gives when the key it has on file is not
+/// the one saying hello, or when it has no file for this worker at all:
+/// see `admit` in internal/worker/hub.go. Everything else it refuses a
+/// hello with is about this attempt, not about the identity behind it.
+const UNKNOWN_WORKER: &str = "unknown_worker";
+
+/// A hello the server turned away, carrying the reason verbatim so the
+/// reconnect loop can tell a stale identity from a passing refusal.
+#[derive(Debug)]
+struct Rejected(String);
+
+impl std::fmt::Display for Rejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "server rejected: {}", self.0)
+    }
+}
+
+impl std::error::Error for Rejected {}
+
+/// What a rejected hello leaves the worker to do.
+#[derive(Debug, PartialEq, Eq)]
+enum AfterReject {
+    /// Say hello again as the same worker; the reason may not outlast the retry.
+    Retry,
+    /// The key on disk will never be admitted: throw it away and enroll again.
+    Reenroll,
+    /// The key is dead but there is no token to trade for a live one.
+    NoToken,
+    /// Enrolling again is not helping either, so stop asking for new ids.
+    Exhausted,
+}
+
+fn after_reject(reason: &str, has_token: bool, reenrolls: u32) -> AfterReject {
+    if reason != UNKNOWN_WORKER {
+        return AfterReject::Retry;
+    }
+    if !has_token {
+        return AfterReject::NoToken;
+    }
+    if reenrolls >= REENROLL_BUDGET {
+        return AfterReject::Exhausted;
+    }
+    AfterReject::Reenroll
+}
 
 impl Control {
     pub fn new(
@@ -73,6 +128,7 @@ impl Control {
             nonces,
             drain,
             started: Instant::now(),
+            reenrolls: std::sync::atomic::AtomicU32::new(0),
             egress_mark: std::sync::Mutex::new((0, Instant::now())),
         })
     }
@@ -170,7 +226,7 @@ impl Control {
         let msg: serde_json::Value = serde_json::from_str(&text)?;
         match msg["type"].as_str() {
             Some("welcome") => self.on_welcome(&msg)?,
-            Some("reject") => anyhow::bail!("server rejected: {}", msg["error"]),
+            Some("reject") => return Err(Rejected(msg["error"].as_str().unwrap_or_default().to_string()).into()),
             other => anyhow::bail!("unexpected first message {other:?}"),
         }
         tokio::time::timeout(SEND_TIMEOUT, tx.send(Message::Text(self.heartbeat()))).await.context("send timeout")??;
@@ -242,20 +298,87 @@ impl Control {
         });
     }
 
+    /// A rejected hello is the server's last word on the identity that sent
+    /// it, so retrying that identity unchanged is what once kept a whole
+    /// fleet down after the registry was cleared. Only the one reason that
+    /// says the key itself is unknown earns a new identity.
+    fn on_reject(&self, reason: &str) {
+        let spent = self.reenrolls.load(std::sync::atomic::Ordering::Relaxed);
+        match after_reject(reason, self.cfg.enrollment_token.is_some(), spent) {
+            AfterReject::Retry => {}
+            AfterReject::NoToken => {
+                tracing::warn!(reason, "server does not know this worker and there is no enrollment token to get known again; retrying as is");
+            }
+            AfterReject::Exhausted => {
+                tracing::warn!(reason, reenrolls = spent, "server does not know this worker even after enrolling afresh; retrying as is");
+            }
+            AfterReject::Reenroll => {
+                // The ACME material next to it belongs to the address, not
+                // to the worker, and stays where it is.
+                let path = self.cfg.data_dir.join("identity.json");
+                match Identity::fresh(&path) {
+                    Ok(fresh) => {
+                        let stale = std::mem::replace(&mut *self.identity.lock().unwrap(), fresh);
+                        self.reenrolls.store(spent + 1, std::sync::atomic::Ordering::Relaxed);
+                        self.app.worker_id.write().unwrap().clear();
+                        *self.app.server_key.write().unwrap() = None;
+                        tracing::info!(
+                            previous = %stale.worker_id,
+                            attempt = spent + 1,
+                            "server no longer knows this worker; discarded its identity and will enroll again"
+                        );
+                    }
+                    Err(e) => tracing::error!(error = %e, "stale identity could not be replaced"),
+                }
+            }
+        }
+    }
+
     pub async fn run(self: Arc<Self>) {
         let mut backoff = RECONNECT_MIN;
         loop {
             let started = Instant::now();
             match self.session().await {
                 Ok(()) => {}
-                Err(e) => tracing::warn!(error = %e, "control link dropped"),
+                Err(e) => {
+                    tracing::warn!(error = %e, "control link dropped");
+                    if let Some(rejected) = e.downcast_ref::<Rejected>() {
+                        self.on_reject(&rejected.0);
+                    }
+                }
             }
-            if started.elapsed() > Duration::from_secs(60) {
+            if started.elapsed() > SESSION_HEALTHY {
                 backoff = RECONNECT_MIN;
+                self.reenrolls.store(0, std::sync::atomic::Ordering::Relaxed);
             }
             let jitter = Duration::from_millis(rand::random::<u64>() % 1000);
             tokio::time::sleep(backoff + jitter).await;
             backoff = (backoff * 2).min(RECONNECT_MAX);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_unknown_key_is_worth_a_new_identity() {
+        assert_eq!(after_reject(UNKNOWN_WORKER, true, 0), AfterReject::Reenroll);
+        // Every other refusal the server can send about a hello, plus the
+        // shapes a garbled one could take.
+        for reason in ["hello_incomplete", "hello_clock_skew", "hello_signature", "enrollment_refused", "revoked", "draining", "version_refused", "", "unknown_worker "] {
+            assert_eq!(after_reject(reason, true, 0), AfterReject::Retry, "{reason}");
+        }
+    }
+
+    #[test]
+    fn re_enrolling_is_bounded_and_needs_a_token() {
+        assert_eq!(after_reject(UNKNOWN_WORKER, false, 0), AfterReject::NoToken);
+        assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET - 1), AfterReject::Reenroll);
+        assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET), AfterReject::Exhausted);
+        assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET + 9), AfterReject::Exhausted);
+        // A budget spent on tries that got nowhere is not refilled by them.
+        assert_eq!(after_reject("hello_signature", true, REENROLL_BUDGET), AfterReject::Retry);
     }
 }

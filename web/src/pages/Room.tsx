@@ -5,6 +5,7 @@ import { Chat } from '../chat/Chat'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
+import { StillThere } from '../components/StillThere'
 import { UploadAvailability } from '../components/UploadAvailability'
 import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
@@ -824,6 +825,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           />
         </Suspense>
       ) : null}
+      <StillThere
+        deadlineMs={sync.stillThereDeadlineMs}
+        serverOffsetMs={sync.serverOffsetMs}
+        onStay={() => sync.send('stillHere')}
+        t={t}
+      />
       <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
         {sourcePanel !== null ? (
           <DialogContent

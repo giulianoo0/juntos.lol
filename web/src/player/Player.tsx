@@ -15,6 +15,8 @@ import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { TorrentReadout } from '../components/TorrentReadout'
+import { WaitLabel } from './WaitLabel'
+import { bufferAhead, holdsForBuffer } from './bufferAhead'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { lastUploadFailureDetail } from '../upload'
 import type { TorrentStats } from '../torrent'
@@ -114,8 +116,14 @@ const VIDEO_STARVATION_SECONDS = 5
 // auto-resync threshold, so it only lights up for drift that resyncing is
 // not already absorbing — a stalled or long-buffering viewer.
 const LIVE_SYNC_THRESHOLD_MS = 1000
+// How much media has to be ready ahead of the playhead before playback is let
+// go. Starting on the first frame that arrives is what makes a room stutter
+// through its opening seconds: the pipeline publishes four-second segments,
+// so anything less than a few of them means playing straight back into the
+// wait that just ended. Ten seconds is short enough not to be its own delay.
+const BUFFER_GATE_SEC = 10
 
-interface BufferedRange {
+export interface BufferedRange {
   start: number
   end: number
 }
@@ -640,6 +648,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       playRequestedRef.current = false
       return
     }
+    // Held, not dropped: the intent stands and the effect below tries again
+    // the moment the buffer is deep enough. Its expiry is restamped while it
+    // waits, because that clock is there to expire an intent nobody could
+    // satisfy in a few seconds, and this is a wait we asked for: left alone
+    // it would drop every play that took longer than the gate to fill.
+    if (bufferGateRef.current) {
+      playRequestedAtRef.current = Date.now()
+      return
+    }
     playAttemptRef.current = true
     void Promise.resolve(video.play()).then(() => {
       playAttemptRef.current = false
@@ -1087,6 +1104,32 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     }
     return [behind, ahead]
   }, [bufferedRanges, currentTime, seekMax])
+  const bufferAheadSec = useMemo(
+    () => bufferAhead(bufferedRanges, currentTime),
+    [bufferedRanges, currentTime],
+  )
+  // Held for buffer, rather than for media that does not exist yet: a cold
+  // seek has its own wait and its own words for it.
+  const bufferGate = !coldWait && holdsForBuffer({
+    aheadSec: bufferAheadSec,
+    gateSec: BUFFER_GATE_SEC,
+    currentTime,
+    timelineEnd,
+    playing,
+    ready: duration > 0,
+  })
+  const bufferGateRef = useRef(bufferGate)
+  bufferGateRef.current = bufferGate
+  // The gate opening is the one event that ends its own wait: no canplay or
+  // progress necessarily follows a buffer that filled while the element was
+  // paused. Declared here, below the gate it reads: a dependency array is
+  // evaluated while the component body runs, so referencing it any earlier is
+  // a use before initialisation that no type check would catch.
+  useEffect(() => {
+    if (bufferGate) return
+    attemptPlay()
+  }, [bufferGate, attemptPlay])
+
   // A player waiting on data looks exactly like one that has stopped working.
   // The spinner is the only thing that distinguishes them, and a room whose
   // source is still downloading spends real time here.
@@ -1156,12 +1199,22 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           <span>{t('room.tapToJoin')}</span>
         </button>
       ) : null}
-      {loading || coldWait ? (
+      {loading || coldWait || bufferGate ? (
         <div className="player-loading" role="status" aria-live="polite">
           <span className="player-spinner" aria-hidden="true" />
-          {stalledLong || coldWait ? (
+          {stalledLong || coldWait || bufferGate ? (
             <div className="player-preparing">
-              <span>{t('room.preparingPart')}</span>
+              {/* Counting what is still missing rather than what is held: the
+                  number a person is waiting on is the one that reaches zero.
+                  Only once there is media to fill against, so a cold seek
+                  still says it is preparing instead of promising ten seconds
+                  of a region that does not exist. */}
+              <WaitLabel
+                secondsLeft={bufferGate && !coldWait
+                  ? Math.max(Math.ceil(BUFFER_GATE_SEC - bufferAheadSec), 1)
+                  : null}
+                t={t}
+              />
               {swarm ? <TorrentReadout stats={swarm} /> : null}
             </div>
           ) : null}

@@ -33,6 +33,7 @@ interface Outbound {
   capability?: string
   readiness?: MemberReadiness[]
   targetMs?: number
+  deadlineMs?: number
   gating?: boolean
   title?: {
     metaId: string
@@ -64,6 +65,12 @@ interface SyncResult {
   titleRequests: TitleRequest[]
   lastError: string
   errorSeq: number
+  /**
+   * When the room closes itself for want of anyone doing anything, on the
+   * server's clock, or null when nothing is being asked. Everyone counts down
+   * to the same instant rather than to their own arrival.
+   */
+  stillThereDeadlineMs: number | null
   // Reports whether the frame actually left. A command written into a closed
   // socket used to vanish silently, which is exactly what "I pressed pause
   // and nothing happened" looks like from the outside.
@@ -131,6 +138,7 @@ export function useSync(
   // in a row still reaches whoever is showing it.
   const [lastError, setLastError] = useState('')
   const [errorSeq, setErrorSeq] = useState(0)
+  const [stillThereDeadlineMs, setStillThereDeadlineMs] = useState<number | null>(null)
   const titleSeqRef = useRef(0)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
@@ -296,6 +304,13 @@ export function useSync(
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
             break
+          case 'stillThere':
+            setStillThereDeadlineMs(message.deadlineMs ?? null)
+            break
+          case 'awake':
+            // Someone answered, or the room simply got on with something.
+            setStillThereDeadlineMs(null)
+            break
           case 'gating':
             setGatingEnabled(message.gating ?? true)
             break
@@ -410,6 +425,7 @@ export function useSync(
     titleRequests,
     lastError,
     errorSeq,
+    stillThereDeadlineMs,
     send,
     reportBuffering,
   }

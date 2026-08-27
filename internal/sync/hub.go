@@ -89,6 +89,14 @@ type roomConn struct {
 	// stallGateReadyAt is when the room may next stop for a stall, so one bad
 	// connection cannot pause everyone in a loop.
 	stallGateReadyAt time.Time
+	// lastActivity is when this room was last doing something on purpose: a
+	// play, a pause, a seek, a rate change, a line of chat. Not connections,
+	// which a forgotten tab supplies for as long as the browser is open, and
+	// which are exactly what this is here to catch.
+	lastActivity time.Time
+	// asked is whether the room is currently waiting for someone to say they
+	// are still there, so the question is put once rather than on every tick.
+	asked bool
 	// When this room last woke its viewers for progress alone. Taken from
 	// whichever request goroutine is publishing, so it carries its own lock.
 	progressMu     stdsync.Mutex
@@ -371,6 +379,9 @@ func (r *roomConn) run() {
 	}()
 	var idleTimer *time.Timer
 	var idle <-chan time.Time
+	r.lastActivity = time.Now()
+	awake := time.NewTicker(idleTick)
+	defer awake.Stop()
 	for {
 		// A nil channel blocks forever, so the case only fires while gated.
 		var gateExpired <-chan time.Time
@@ -410,6 +421,10 @@ func (r *roomConn) run() {
 			r.broadcast(event)
 		case <-gateExpired:
 			r.releaseGate()
+		case <-awake.C:
+			if r.sweepIdle() {
+				return
+			}
 		case <-idle:
 			r.cleanupIdle()
 			return
@@ -488,6 +503,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	}
 	r.hub.capabilities[r.id][memberID] = request.client.capability
 	r.hub.mu.Unlock()
+	r.touch()
 	members := r.members()
 	gating := r.gating
 	// Through send rather than straight into the channel, so the frames a
@@ -606,10 +622,17 @@ func (r *roomConn) handleInbound(event clientInbound) {
 			return
 		}
 		r.broadcast(Outbound{Type: "chat", Message: &chat})
+		r.touch()
 	case "play", "pause", "seek", "rate":
 		r.handleState(event.client, message)
+		r.touch()
 	case "titleRequest":
 		r.handleTitleRequest(event.client, message)
+		r.touch()
+	case "stillHere":
+		// Anybody may answer: the question is put to the room, and one person
+		// still watching is the whole answer.
+		r.touch()
 	}
 }
 
@@ -767,6 +790,20 @@ func (r *roomConn) send(target *client, event Outbound) {
 // and a torrent for the room's whole lifetime.
 const preparingGrace = 10 * time.Minute
 
+// A room with people in it but nothing happening is usually a tab someone
+// forgot, holding a worker's torrent and a bucket's worth of segments for an
+// audience of nobody. It is asked first and closed only if the question goes
+// unanswered, because the alternative is closing a room on people who were
+// arguing about what to watch next.
+const (
+	idleAsk   = 15 * time.Minute
+	idleClose = 20 * time.Minute
+	// How often the room checks its own clock. Coarse on purpose: this decides
+	// nothing that needs to be accurate to the second, and the countdown a
+	// member sees runs from a deadline they were handed, not from this.
+	idleTick = 15 * time.Second
+)
+
 // unfinishedWork names what an idle room still has running, or "" when
 // reclaiming it destroys nothing.
 //
@@ -794,6 +831,44 @@ func unfinishedWork(r *room.Room, now time.Time) string {
 		return "source still arriving"
 	}
 	return ""
+}
+
+// touch records that the room did something on purpose, and takes back the
+// question if one was outstanding.
+func (r *roomConn) touch() {
+	r.lastActivity = time.Now()
+	if r.asked {
+		r.asked = false
+		r.broadcast(Outbound{Type: "awake"})
+	}
+}
+
+// sweepIdle asks a quiet room whether anyone is still there, and closes it if
+// the question went unanswered. It reports whether the room is gone.
+//
+// Only rooms with someone in them: an empty one belongs to the reclaim timer,
+// which runs on a much shorter fuse and does not need to ask anybody.
+func (r *roomConn) sweepIdle() bool {
+	if len(r.clients) == 0 {
+		return false
+	}
+	quiet := time.Since(r.lastActivity)
+	if quiet >= idleClose {
+		// Deleting the record is what ends it: every socket here drops with
+		// it, and the link answers as an expired room from then on, which is
+		// what it is.
+		r.cleanupIdle()
+		return true
+	}
+	if quiet >= idleAsk && !r.asked {
+		r.asked = true
+		r.broadcast(Outbound{
+			Type:         "stillThere",
+			DeadlineMs:   r.lastActivity.Add(idleClose).UnixMilli(),
+			ServerTimeMs: time.Now().UnixMilli(),
+		})
+	}
+	return false
 }
 
 func (r *roomConn) cleanupIdle() {

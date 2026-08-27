@@ -24,6 +24,13 @@ impl Identity {
         if let Ok(raw) = std::fs::read_to_string(path) {
             return serde_json::from_str(&raw).context("identity.json");
         }
+        Self::fresh(path)
+    }
+
+    /// A new keypair with no id and no server key yet, written over
+    /// whatever was on disk. A hello signed by this asks to enroll, so
+    /// nothing but the enrollment token can get it admitted.
+    pub fn fresh(path: &Path) -> anyhow::Result<Self> {
         let key = SigningKey::generate(&mut rand::thread_rng());
         let id = Self { worker_id: String::new(), secret_key: B64.encode(key.to_bytes()), server_pubkey: None };
         id.save(path)?;
