@@ -10,7 +10,7 @@ import type { MediaRegion, PlayState, RoomInfo, TrackInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
-import { heading } from './safeHover'
+import { heading, inBox } from './safeHover'
 import { Settings, type SettingGroup } from './Settings'
 import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
@@ -980,8 +980,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // triangle on its very next event and closes it at once, so nothing hangs
   // around that nobody is reaching for. The timeout is for a pointer that
   // simply stops in the gap and never arrives.
+  const volumeRef = useRef<HTMLDivElement>(null)
   const volumePanelRef = useRef<HTMLDivElement>(null)
   const chaseRef = useRef<(() => void) | null>(null)
+  // A slider being dragged is the one thing that must never close the panel.
+  // Pressing it hands the input implicit pointer capture, which fires leave
+  // on the control behind it, so the drag announces itself as a departure —
+  // and the pointer then travels wherever the hand goes, well outside both
+  // the panel and the corridor. Nothing closes until the button comes up.
+  const draggingRef = useRef(false)
   const endChase = useCallback(() => {
     chaseRef.current?.()
     chaseRef.current = null
@@ -993,7 +1000,26 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     setVolumeOpen(true)
   }, [endChase])
 
+  const holdVolume = useCallback(() => {
+    if (draggingRef.current) return
+    draggingRef.current = true
+    endChase()
+    const release = (up: PointerEvent) => {
+      draggingRef.current = false
+      document.removeEventListener('pointerup', release)
+      document.removeEventListener('pointercancel', release)
+      // A drag that ended away from the control has no hover left to leave,
+      // so this is the only moment that can retire the panel.
+      const at = { x: up.clientX, y: up.clientY }
+      const over = (el: HTMLElement | null) => el !== null && inBox(at, el.getBoundingClientRect())
+      if (!over(volumeRef.current) && !over(volumePanelRef.current)) setVolumeOpen(false)
+    }
+    document.addEventListener('pointerup', release)
+    document.addEventListener('pointercancel', release)
+  }, [endChase])
+
   const chaseVolume = useCallback((event: React.PointerEvent) => {
+    if (draggingRef.current) return
     endChase()
     const panel = volumePanelRef.current
     if (!panel || event.pointerType !== 'mouse') {
@@ -1007,6 +1033,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       window.clearTimeout(timer)
     }
     const onMove = (move: PointerEvent) => {
+      if (draggingRef.current) return
       if (heading({ x: move.clientX, y: move.clientY }, from, box)) return
       stop()
       chaseRef.current = null
@@ -1543,8 +1570,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           <span className="controls-gap" />
           <Settings groups={settingGroups} t={t} />
           <div
+            ref={volumeRef}
             className={`volume-control ${volumeOpen ? 'is-open' : ''}`}
             onPointerEnter={openVolume}
+            onPointerDown={holdVolume}
             onPointerLeave={chaseVolume}
           >
             <button

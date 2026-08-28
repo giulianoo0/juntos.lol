@@ -63,8 +63,23 @@ export function inTriangle(p: Point, a: Point, b: Point, c: Point): boolean {
   return !(negative && positive)
 }
 
-/** Whether a pointer at `p` is still on its way from `from` to `panel`. */
+/** Whether `p` is within `panel` itself, edges included. */
+export function inBox(p: Point, panel: Box): boolean {
+  return p.x >= panel.left && p.x <= panel.right && p.y >= panel.top && p.y <= panel.bottom
+}
+
+/**
+ * Whether a pointer at `p` is still on its way to `panel`, or already on it.
+ *
+ * The panel's own box counts, and has to: the corridor ends at the panel's
+ * near edge, so every point on the panel is outside the triangle. Arriving
+ * normally re-enters the control and the chase is called off — but a slider
+ * takes implicit pointer capture the moment it is pressed, which retargets
+ * the events and fires leave on everything behind it. Without the box here,
+ * pressing the slider closed the panel under the very drag setting it.
+ */
 export function heading(p: Point, from: Point, panel: Box): boolean {
+  if (inBox(p, panel)) return true
   const [a, b, c] = safeTriangle(from, panel)
   return inTriangle(p, a, b, c)
 }

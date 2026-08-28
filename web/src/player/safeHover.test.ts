@@ -46,3 +46,19 @@ describe('inTriangle', () => {
     expect(inTriangle({ x: 9, y: 9 }, a, b, c)).toBe(false)
   })
 })
+
+describe('heading over the panel itself', () => {
+  it('counts the panel as safe, because the corridor stops at its edge', () => {
+    // Pressing the slider gives the input pointer capture, which fires leave
+    // on the control behind it. Every move along the slider then reports a
+    // point on the panel — and the panel is not inside its own corridor.
+    expect(heading({ x: 500, y: 320 }, leftButton, panel)).toBe(true)
+    expect(heading({ x: 482, y: 302 }, leftButton, panel)).toBe(true)
+    expect(heading({ x: 518, y: 338 }, leftButton, panel)).toBe(true)
+  })
+
+  it('still drops a point beyond the panel', () => {
+    expect(heading({ x: 500, y: 280 }, leftButton, panel)).toBe(false)
+    expect(heading({ x: 540, y: 320 }, leftButton, panel)).toBe(false)
+  })
+})
