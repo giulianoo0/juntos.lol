@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use super::floors::Floors;
 use super::slots::{Prio, StreamSlot};
 use super::{Handle, TorrentDigest};
 
@@ -35,7 +35,9 @@ pub struct Entry {
     /// Every file index ever selected: what may be on disk.
     pub ever_selected: HashSet<usize>,
     pub slots: HashMap<(usize, Prio), Arc<StreamSlot>>,
-    pub gen_floor: Arc<AtomicU64>,
+    /// How far each reader has seeked past. Per reader, not per torrent —
+    /// see floors.rs for why that distinction is the whole point.
+    pub floors: Floors,
     /// Whether the one in-place restart after a failure was spent.
     pub retried: bool,
     /// Blocks this torrent's files actually hold, and when that was last
@@ -58,7 +60,7 @@ impl Entry {
             selected_bytes,
             ever_selected: HashSet::new(),
             slots: HashMap::new(),
-            gen_floor: Arc::new(AtomicU64::new(0)),
+            floors: Floors::default(),
             retried: false,
             disk: Mutex::new((0, None)),
         }
@@ -126,10 +128,5 @@ impl Entry {
             leases: self.leases.keys().cloned().collect(),
             idle_secs: self.last_active.elapsed().as_secs(),
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn gen_floor(&self) -> u64 {
-        self.gen_floor.load(Ordering::Relaxed)
     }
 }

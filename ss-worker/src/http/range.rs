@@ -75,7 +75,7 @@ pub async fn get(
     let gen = query.gen.unwrap_or(u64::MAX);
     state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
 
-    let reader = match state.engine.open(&ticket.infohash, ticket.file_index, start, prio).await {
+    let reader = match state.engine.open(&ticket.infohash, &ticket.room_id, ticket.file_index, start, prio).await {
         Ok(r) => r,
         Err(e) => {
             tracing::info!(infohash = %ticket.infohash, error = %format!("{e:#}"), "range open refused");

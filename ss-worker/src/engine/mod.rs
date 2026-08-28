@@ -1,6 +1,7 @@
 mod admission;
 mod disk;
 mod entry;
+mod floors;
 mod reaper;
 mod slots;
 mod window;
@@ -137,9 +138,11 @@ impl Reader {
         }
         Ok(n)
     }
-    /// A hint moved the remux past this response; stop feeding it. Only
+    /// A hint moved this reader past this response; stop feeding it. Only
     /// playhead reads carry a generation — probes and scans are their own
-    /// cursors and never superseded by a seek.
+    /// cursors and never superseded by a seek. The floor is the reader's
+    /// own: another room seeking through the same torrent says nothing
+    /// about where this one is.
     pub fn superseded(&self, gen: u64) -> bool {
         self.prio == Prio::Playhead && gen < self.gen_floor.load(Ordering::Relaxed)
     }
@@ -587,6 +590,7 @@ impl Engine {
     pub async fn open(
         &self,
         infohash: &str,
+        reader: &str,
         index: usize,
         start: u64,
         prio: Prio,
@@ -621,8 +625,8 @@ impl Engine {
             .torrents
             .lock()
             .unwrap()
-            .get(infohash)
-            .map(|e| e.gen_floor.clone())
+            .get_mut(infohash)
+            .map(|e| e.floors.of(reader))
             .context("unknown torrent")?;
         if prio != Prio::Head && size >= slots::MIN_POOLED_FILE {
             let slot = self.slot(infohash, &handle, index, prio, start).await?;
@@ -696,6 +700,7 @@ impl Engine {
     pub async fn hint(
         &self,
         infohash: &str,
+        reader: &str,
         index: usize,
         read_offset: u64,
         gen: u64,
@@ -707,9 +712,9 @@ impl Engine {
             .slot(infohash, &handle, index, Prio::Playhead, offset)
             .await?;
         {
-            let map = self.torrents.lock().unwrap();
-            if let Some(entry) = map.get(infohash) {
-                entry.gen_floor.fetch_max(gen, Ordering::Relaxed);
+            let mut map = self.torrents.lock().unwrap();
+            if let Some(entry) = map.get_mut(infohash) {
+                entry.floors.of(reader).fetch_max(gen, Ordering::Relaxed);
             }
         }
         // The hint itself is the sign of life, whether or not the stream can
@@ -945,6 +950,7 @@ impl Engine {
                 Some(entry) if entry.leases.is_empty() => {
                     entry.phase = Phase::Idle;
                     entry.slots.clear();
+                    entry.floors.clear();
                     true
                 }
                 _ => false,
@@ -1013,6 +1019,7 @@ impl Engine {
         if let Some(entry) = self.torrents.lock().unwrap().get_mut(infohash) {
             entry.phase = phase;
             entry.slots.clear();
+            entry.floors.clear();
         }
     }
 

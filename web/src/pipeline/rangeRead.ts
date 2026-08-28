@@ -37,8 +37,12 @@ export class ReadFailedError extends Error {
 /** Nothing usable came back within the retry budget or the deadline. */
 export class ReadUnreachableError extends Error {
   readonly cause: unknown
+  // The reason travels in the message, not only in the cause: this is the
+  // error a failure screen prints, and "origin unreachable" on its own says
+  // nothing about whether the swarm was slow, the worker refused, or the
+  // network dropped — which are three different bugs.
   constructor(cause: unknown) {
-    super('origin unreachable')
+    super(typeof cause === 'string' ? cause : 'origin unreachable')
     this.name = 'ReadUnreachableError'
     this.cause = cause
   }
@@ -139,6 +143,10 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
   // Bytes the current body delivered: a body that ends after some is the
   // origin's cap or stall policy; one that ends after none is a failure.
   let deliveredByBody = 0
+  // The last thing the origin actually said, for the error if it comes to
+  // one. A run of 503s and a run of dropped connections both end as "no
+  // progress", and only this tells them apart afterwards.
+  let lastStatus = 0
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   let requestAbort: AbortController | null = null
 
@@ -166,15 +174,17 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
     } catch {
       clearTimeout(firstByte)
       if (signal.aborted) throw gate.aborted()
+      lastStatus = 0
       return null
     }
     clearTimeout(firstByte)
+    lastStatus = response.status
     if (response.status === 504) {
       // Alive, waiting on pieces nobody has yet. Not a failure, not free.
       response.body?.cancel().catch(() => {})
       slowRetries += 1
       if (slowRetries > (opts.maxSlowRetries ?? DEFAULT_SLOW_RETRIES)) {
-        throw new ReadUnreachableError(`origin kept waiting on the swarm at byte ${cursor}`)
+        throw new ReadUnreachableError(`origin kept waiting on the swarm at byte ${cursor} after ${slowRetries} answers of 504`)
       }
       attempts = Math.max(attempts - 1, 0)
       return null
@@ -224,7 +234,10 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
           if (signal.aborted) throw gate.aborted()
           if (!reader) {
             if (attempts >= (opts.maxAttempts ?? DEFAULT_ATTEMPTS)) {
-              throw new ReadUnreachableError(`no progress after ${attempts} attempts at byte ${cursor}`)
+              throw new ReadUnreachableError(
+                `no progress after ${attempts} attempts at byte ${cursor}`
+                + (lastStatus > 0 ? `, last answer ${lastStatus}` : ', no answer at all'),
+              )
             }
             reader = await open()
             if (!reader) {

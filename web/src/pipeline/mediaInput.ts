@@ -144,6 +144,20 @@ const HINT_STRIDE_BYTES = 8 * 1024 * 1024
 // with one about to expire.
 const RENEW_FRACTION = 2 / 3
 
+// Generations are compared against a floor the worker keeps per reader, and
+// a torrent outlives the pipeline that warmed it: the same room reaching the
+// same torrent a second time — a source swap, a reload, a resumed preparo —
+// meets the floor its own predecessor left behind. A count that restarted at
+// one would sit under that floor and have every playhead read refused before
+// a byte moved, while the swarm downloaded on at full speed. So generations
+// never restart: they carry on from the wall clock, above anything an earlier
+// pipeline can have reached, and above each other within a tab.
+let lastGeneration = 0
+function nextGeneration(): number {
+  lastGeneration = Math.max(Date.now(), lastGeneration + 1)
+  return lastGeneration
+}
+
 /**
  * A file a remote worker serves. Reads carry the ticket in the path and
  * the priority class in the query; the ticket renews itself through the
@@ -157,7 +171,7 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   const gate = new ReadGate()
   const tap = new ByteTap()
   let current = grant
-  let gen = 1
+  let gen = nextGeneration()
   let lastHintAt = -Infinity
   let renewTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
@@ -230,7 +244,7 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
       maxCacheSize: REMOTE_CACHE_BYTES,
     }),
     abortReads: () => {
-      gen += 1
+      gen = nextGeneration()
       lastHintAt = -Infinity
       gate.abort()
     },

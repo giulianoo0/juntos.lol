@@ -25,7 +25,7 @@ pub async fn get(State(state): State<Arc<AppState>>, Path((ticket, index)): Path
     if size == 0 || size > MAX_SIDECAR || !crate::engine::is_sidecar(&name, size) {
         return fail(StatusCode::FORBIDDEN, &aud, "not a sidecar");
     }
-    let mut reader = match state.engine.open(&ticket.infohash, index, 0, Prio::Head).await {
+    let mut reader = match state.engine.open(&ticket.infohash, &ticket.room_id, index, 0, Prio::Head).await {
         Ok(r) => r,
         Err(e) => return fail(StatusCode::SERVICE_UNAVAILABLE, &aud, &format!("open: {e:#}")),
     };

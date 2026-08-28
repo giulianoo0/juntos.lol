@@ -28,7 +28,7 @@ pub async fn post(State(state): State<Arc<AppState>>, Path(ticket): Path<String>
         Ok(h) => h,
         Err(_) => return fail(StatusCode::BAD_REQUEST, &ticket.audience, "hint body"),
     };
-    match state.engine.hint(&ticket.infohash, ticket.file_index, hint.read_offset, hint.gen).await {
+    match state.engine.hint(&ticket.infohash, &ticket.room_id, ticket.file_index, hint.read_offset, hint.gen).await {
         Ok(()) => ok_json(&ticket.audience, serde_json::json!({ "ok": true })),
         Err(e) => fail(StatusCode::NOT_FOUND, &ticket.audience, &format!("{e:#}")),
     }
