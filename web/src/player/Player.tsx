@@ -11,6 +11,7 @@ import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
+import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { Settings, type SettingGroup } from './Settings'
 import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
@@ -133,7 +134,6 @@ const VOLUME_CHASE_MS = 500
 const FEEDBACK_MS = 700
 // A media error can be a corrupt append worth retrying, but only a couple of
 // times. Past that the retry is the bug, not the fix.
-const MAX_MEDIA_RECOVERIES = 2
 const FRAME_WATCH_INTERVAL_MS = 1000
 const MANIFEST_RETRY_MS = 2000
 // Seconds the clock may advance without a single new displayed video frame
@@ -340,7 +340,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // Chrome over a region that had not arrived yet is a wrong answer told
   // confidently.
   const [unplayable, setUnplayable] = useState<{ cause: 'codec' | 'playback'; reason: string } | null>(null)
-  const recoveriesRef = useRef(0)
+  // Kept across rebuilds on purpose: the count is a window, not a life, and
+  // the window is what tells a player thrashing apart from a long film that
+  // hit two rough patches hours apart.
+  const recoveriesRef = useRef<Recoveries>({ spent: 0, atMs: 0 })
   const resumeRef = useRef({ generation: -1, time: 0 })
 
   // A pointer sweep across the video calls this once per pointermove — a
@@ -429,7 +432,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${mediaReload}`
     let disposed = false
     setUnplayable(null)
-    recoveriesRef.current = 0
     // A republish of the same recording resumes where this player was; only
     // a different recording starts over from its beginning. When the room's
     // clock is known it wins: a region switch rebuilds the player exactly
@@ -606,11 +608,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             hls.startLoad()
             return
           }
-          if (data.type === ErrorTypes.MEDIA_ERROR && recoveriesRef.current < MAX_MEDIA_RECOVERIES) {
-            recoveriesRef.current += 1
-            plog('warn', `attempting media error recovery ${recoveriesRef.current}/${MAX_MEDIA_RECOVERIES}`)
-            hls.recoverMediaError()
-            return
+          if (data.type === ErrorTypes.MEDIA_ERROR) {
+            const next = nextRecovery(recoveriesRef.current, Date.now())
+            if (next !== null) {
+              recoveriesRef.current = next
+              plog('warn', `attempting media error recovery ${next.spent}/${MAX_RECOVERIES}`)
+              hls.recoverMediaError()
+              return
+            }
           }
           failPlayback(`unrecoverable ${data.type}/${data.details}`)
         })
