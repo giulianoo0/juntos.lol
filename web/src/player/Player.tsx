@@ -10,6 +10,7 @@ import type { MediaRegion, PlayState, RoomInfo, TrackInfo } from '../types'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
+import { heading } from './safeHover'
 import { Settings, type SettingGroup } from './Settings'
 import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
@@ -93,6 +94,26 @@ export function regionFor(regions: MediaRegion[], ms: number, current: number | 
   return loaded ? loaded.n : (growing ?? regions[regions.length - 1]).n
 }
 
+/**
+ * The version that is allowed to rebuild the player.
+ *
+ * A region still growing republishes every couple of seconds, and every one
+ * of those bumps the room's media version. Rebuilding on each meant tearing
+ * the whole picture down and putting it back twice a minute for as long as a
+ * file took to prepare — the audio came back first, because its segments are
+ * small, so the picture sat frozen under a soundtrack that kept going. The
+ * subtitles remounted with it and blinked in time.
+ *
+ * hls.js follows a growing live playlist by itself: there is nothing to
+ * rebuild for while a region grows, so the version is pinned. A region that
+ * has stopped growing is the other case the version exists for — the final
+ * remux replacing the progressive preview — and that one still reloads.
+ */
+export function reloadVersion(region: { growing?: boolean } | null, version: number | undefined): number {
+  if (region?.growing) return 0
+  return version ?? 0
+}
+
 // TAP_TOGGLE_DELAY_MS is how long a tap waits to see whether it is really the
 // first half of a double click. Long enough for a deliberate double click,
 // short enough that pausing still feels like it happened on contact.
@@ -105,6 +126,10 @@ const SEEK_STEP_LARGE_SECONDS = 10
 const VOLUME_STEP = 0.05
 // Long enough to read the symbol, short enough that holding an arrow key still
 // feels like scrubbing rather than a stack of notifications.
+// How long a pointer may linger in the gap between the volume button and its
+// slider before the panel gives up on it. Long enough for a hand that pauses
+// mid-reach, short enough that a panel nobody wants does not sit there.
+const VOLUME_CHASE_MS = 500
 const FEEDBACK_MS = 700
 // A media error can be a corrupt append worth retrying, but only a couple of
 // times. Past that the retry is the bug, not the fix.
@@ -233,6 +258,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const mediaOffsetMs = activeRegion ? activeRegion.startMs : (room.mediaOffsetMs ?? 0)
   const mediaOffsetSec = mediaOffsetMs / 1000
   const masterName = activeRegion ? `r${activeRegion.n}_master.m3u8` : 'master.m3u8'
+  const mediaReload = reloadVersion(activeRegion, room.mediaVersion)
   // Re-decided whenever the map or the room's clock moves. A change here is
   // what reloads the player onto another region's playlists.
   useEffect(() => {
@@ -293,6 +319,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const [playing, setPlaying] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [controlsVisible, setControlsVisible] = useState(true)
+  // The volume panel floats above the bar, in the video's own space. While it
+  // is open the bar may not retire: hiding it takes the panel with it — and
+  // with pointer-events too — so the slider would vanish from under the very
+  // pointer reaching for it. Read through a ref because revealControls is
+  // handed to pointer handlers and must not be rebuilt as this changes.
+  const [volumeOpen, setVolumeOpen] = useState(false)
+  const volumeOpenRef = useRef(false)
+  volumeOpenRef.current = volumeOpen
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
   const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
@@ -314,6 +348,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const lastRevealRef = useRef(0)
   const revealControls = useCallback((autoHide = true) => {
     const now = performance.now()
+    if (volumeOpenRef.current) {
+      if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
+      controlsTimerRef.current = null
+      setControlsVisible(true)
+      return
+    }
     if (autoHide && controlsTimerRef.current !== null && now - lastRevealRef.current < 150) return
     lastRevealRef.current = now
     if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
@@ -343,12 +383,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   }, [feedback])
 
   useEffect(() => {
-    if (playing) revealControls()
+    // Closing the panel hands the bar back to its own clock, so it retires
+    // on its own the moment the volume is no longer being set.
+    if (playing && !volumeOpen) revealControls()
     else revealControls(false)
     return () => {
       if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
     }
-  }, [playing, revealControls])
+  }, [playing, volumeOpen, revealControls])
 
   useEffect(() => {
     const updateFullscreen = () => setFullscreen(document.fullscreenElement === playerRef.current)
@@ -380,7 +422,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // version moves when the same media is republished behind the URL — the
     // final remux replacing the progressive preview — and reloading then is
     // what hands a preview viewer the finished playlists.
-    const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${room.mediaVersion ?? 0}`
+    const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${mediaReload}`
     let disposed = false
     setUnplayable(null)
     recoveriesRef.current = 0
@@ -585,7 +627,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, room.mediaVersion, mediaOffsetSec, masterName, videoRef])
+  }, [room.id, room.mediaGeneration, mediaReload, mediaOffsetSec, masterName, videoRef])
 
   // A different recording must not inherit the previous one's intent.
   useEffect(() => { resumeAfterReloadRef.current = false }, [room.mediaGeneration])
@@ -622,7 +664,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       // and cannot be styled away.
       textTracks[position].mode = position === chosen ? 'hidden' : 'disabled'
     }
-  }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, room.mediaVersion, videoRef])
+  }, [subtitle, subtitleCount, subtitleTracks, room.subsVersion, room.mediaGeneration, mediaReload, videoRef])
 
   // The position a play or pause speaks for the room. The element's clock
   // only counts while it holds the room's position: after a cold seek it
@@ -931,6 +973,53 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     video.muted = !video.muted
     return video.muted
   }, [videoRef])
+
+  // Leaving the button for the slider crosses a gap neither of them covers,
+  // so the pointer is followed across it: while it stays inside the triangle
+  // aimed at the panel, the panel stays. A move that turns away leaves the
+  // triangle on its very next event and closes it at once, so nothing hangs
+  // around that nobody is reaching for. The timeout is for a pointer that
+  // simply stops in the gap and never arrives.
+  const volumePanelRef = useRef<HTMLDivElement>(null)
+  const chaseRef = useRef<(() => void) | null>(null)
+  const endChase = useCallback(() => {
+    chaseRef.current?.()
+    chaseRef.current = null
+  }, [])
+  useEffect(() => endChase, [endChase])
+
+  const openVolume = useCallback(() => {
+    endChase()
+    setVolumeOpen(true)
+  }, [endChase])
+
+  const chaseVolume = useCallback((event: React.PointerEvent) => {
+    endChase()
+    const panel = volumePanelRef.current
+    if (!panel || event.pointerType !== 'mouse') {
+      setVolumeOpen(false)
+      return
+    }
+    const from = { x: event.clientX, y: event.clientY }
+    const box = panel.getBoundingClientRect()
+    const stop = () => {
+      document.removeEventListener('pointermove', onMove)
+      window.clearTimeout(timer)
+    }
+    const onMove = (move: PointerEvent) => {
+      if (heading({ x: move.clientX, y: move.clientY }, from, box)) return
+      stop()
+      chaseRef.current = null
+      setVolumeOpen(false)
+    }
+    const timer = window.setTimeout(() => {
+      stop()
+      chaseRef.current = null
+      setVolumeOpen(false)
+    }, VOLUME_CHASE_MS)
+    chaseRef.current = stop
+    document.addEventListener('pointermove', onMove)
+  }, [endChase])
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) {
@@ -1301,7 +1390,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             // mediaVersion rides along so a region switch remounts the
             // element: cues are shifted onto the region's rebased clock at
             // load, and a fresh load is the only moment that shift is safe.
-            key={`${track.index}-${track.language}-${room.mediaGeneration}-${room.mediaVersion ?? 0}-${track.digest ?? room.subsVersion ?? 0}`}
+            key={`${track.index}-${track.language}-${room.mediaGeneration}-${mediaReload}-${track.digest ?? room.subsVersion ?? 0}`}
             kind="subtitles"
             onLoad={(event) => shiftTrackCues(event.currentTarget.track, mediaOffsetSec)}
             src={subtitleSource(room, track)}
@@ -1313,7 +1402,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       <SubtitleLayer
         videoRef={videoRef}
         position={subtitleTracks.findIndex((track) => track.index === subtitle)}
-        revision={`${room.mediaGeneration}-${room.mediaVersion ?? 0}-${room.subsVersion ?? 0}-${subtitleCount}`}
+        revision={`${room.mediaGeneration}-${mediaReload}-${room.subsVersion ?? 0}-${subtitleCount}`}
       />
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       {unplayable ? (
@@ -1453,7 +1542,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           ) : null}
           <span className="controls-gap" />
           <Settings groups={settingGroups} t={t} />
-          <div className="volume-control">
+          <div
+            className={`volume-control ${volumeOpen ? 'is-open' : ''}`}
+            onPointerEnter={openVolume}
+            onPointerLeave={chaseVolume}
+          >
             <button
               className="control-button"
               aria-label={muteLabel}
@@ -1461,7 +1554,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
               onClick={toggleMute}
               onPointerUp={(event) => event.currentTarget.blur()}
             >{volumeIcon(muted ? 0 : volume, 16)}</button>
-            <div className="volume-panel">
+            <div className="volume-panel" ref={volumePanelRef}>
               <input
                 className="volume-range"
                 aria-label={t('room.volume')}
