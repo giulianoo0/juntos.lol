@@ -172,6 +172,8 @@ h1, h2, p { margin-top: 0; }
 /* An open menu outlives the idle timer. Reading a list of dubs means holding
    the pointer still over it, which is exactly what the timer counts as idle:
    the bar would fade out from under the hand that opened it. */
+.controls-hidden:has(.player-controls .volume-control.is-open) { cursor: auto; }
+.controls-hidden:has(.player-controls .volume-control.is-open) .player-controls { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
 .controls-hidden:has(.player-controls [aria-expanded="true"]) { cursor: auto; }
 .controls-hidden:has(.player-controls [aria-expanded="true"]) .player-controls { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
 /* The scrubber spans the bar; the controls that act on it sit underneath. */
@@ -199,7 +201,7 @@ h1, h2, p { margin-top: 0; }
    actually be reached. */
 .volume-control::after { content: ''; position: absolute; bottom: 100%; left: -6px; right: -6px; height: 16px; }
 .volume-panel { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%) scale(.96); transform-origin: bottom center; display: grid; place-items: center; padding: 14px 10px; border-radius: 999px; background: rgba(16,18,24,.94); box-shadow: 0 14px 40px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); backdrop-filter: blur(18px) saturate(135%); opacity: 0; pointer-events: none; transition: opacity 150ms var(--ease), transform 150ms var(--ease); }
-.volume-control:hover .volume-panel, .volume-control:focus-within .volume-panel { opacity: 1; pointer-events: auto; transform: translateX(-50%) scale(1); }
+.volume-control.is-open .volume-panel, .volume-control:focus-within .volume-panel { opacity: 1; pointer-events: auto; transform: translateX(-50%) scale(1); }
 /* writing-mode is how a range input is turned upright now; the old
    appearance: slider-vertical is gone from current engines. */
 .volume-range { writing-mode: vertical-lr; direction: rtl; width: 20px; height: 92px; margin: 0; accent-color: var(--primary); cursor: pointer; }
