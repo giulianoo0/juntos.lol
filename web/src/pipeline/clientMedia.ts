@@ -31,6 +31,7 @@ import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
 import { readMkvChapters } from './mkvChapters'
 import type { MediaInput } from './mediaInput'
+import { postJson } from './postJson'
 import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
 import { createSegmentLedger } from './segmentLedger'
 import { isUnreadableFile } from '../uploadErrors'
@@ -378,15 +379,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   }
 
   const pumpBatch = async (batch: PendingObject[], signal: AbortSignal) => {
-    const presign = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal,
-      body: JSON.stringify({
-        claim,
-        objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
-      }),
-    })
+    const presign = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
+      claim,
+      objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
+    }, { signal })
     if (!presign.ok) throw await serverError(presign)
     const { objects } = await presign.json() as { objects: { name: string; url: string; headers: Record<string, string> }[] }
     const byName = new Map(objects.map((object) => [object.name, object]))
@@ -445,11 +441,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       body.audioTracks = plan.audioTracks.map((track) => ({ language: track.language, title: '' }))
       if (chapters.length > 0) body.chapters = chapters
     }
-    const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/publish`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    const response = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/publish`, body)
     if (!response.ok) throw await serverError(response)
     // The metadata stuck only now that the request succeeded, and so did the
     // seals this round actually carried. The rest wait for their region's
