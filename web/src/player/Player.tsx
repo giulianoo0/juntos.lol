@@ -52,6 +52,9 @@ interface PlayerProps {
   // Stamped by the sync layer whenever a server frame steers the element, so
   // the pause it produces is not mistaken for one the viewer performed.
   remoteSteerAtRef?: MutableRefObject<number>
+  // The sync layer could not start this viewer's element, muted or otherwise:
+  // the room is playing and only a click of theirs will join them to it.
+  autoplayBlocked?: boolean
   // Where this player hands its buffering picture back to the sync layer.
   // The room waits on these reports, so a player that never sends one — or
   // never stops — is a room that never starts.
@@ -149,7 +152,7 @@ function subtitleSource(room: RoomInfo, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, onBuffering }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, autoplayBlocked, onBuffering }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -859,6 +862,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       setNeedsGesture(false)
     }
   }, [syncState])
+
+  // A refusal the sync layer met on arrival wears the same face as one this
+  // player met: the room is playing and this viewer is not, and the way in is
+  // the one click the overlay asks for.
+  useEffect(() => {
+    if (autoplayBlocked) setNeedsGesture(true)
+  }, [autoplayBlocked])
 
   // The thumb holds the committed target until the video actually gets
   // there — on a cold seek that is however long the new region takes.

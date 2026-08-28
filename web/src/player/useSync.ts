@@ -58,6 +58,12 @@ interface SyncResult {
   roomVersion: number
   connected: boolean
   buffering: boolean
+  /**
+   * The browser refused to start this viewer's element and muting it did not
+   * help either, so only a click of theirs will. The room plays on without
+   * them until then, which is why the player says so on screen.
+   */
+  autoplayBlocked: boolean
   serverOffsetMs: number
   capability: string
   waiting: RoomWaiting | null
@@ -123,6 +129,7 @@ export function useSync(
   // the baseline to diff against rather than a room full of arrivals.
   const knownMembersRef = useRef<Map<string, string> | null>(null)
   const presenceSeqRef = useRef(0)
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false)
   const [roomStatus, setRoomStatus] = useState('connecting')
   // Bumps on every roomStatus message, even repeated ones, so consumers can
   // refetch tracks without interpreting a subtitle update as media readiness.
@@ -229,6 +236,32 @@ export function useSync(
         setMembers(next)
       }
 
+      // Starts this viewer's element for a room that is already playing.
+      //
+      // Arriving is the one moment nobody has clicked anything yet, which is
+      // precisely when a browser refuses to play audio — so the refusal is
+      // not an error to swallow, it is the normal case. Muted playback is
+      // always allowed: the picture starts in sync and the mute button is
+      // already lit, one click from sound. Only a browser that refuses even
+      // that leaves the viewer to click, and then the player says so rather
+      // than sitting paused under a clock that keeps running.
+      const start = async (media: HTMLVideoElement) => {
+        try {
+          await media.play()
+          setAutoplayBlocked(false)
+          return
+        } catch (error) {
+          if (!(error instanceof DOMException) || error.name !== 'NotAllowedError') return
+        }
+        media.muted = true
+        try {
+          await media.play()
+          setAutoplayBlocked(false)
+        } catch {
+          setAutoplayBlocked(true)
+        }
+      }
+
       const applyState = (nextState: PlayState) => {
         setState(nextState)
         const media = videoRef.current
@@ -244,8 +277,11 @@ export function useSync(
         const expected = expectedPositionMs(nextState, Date.now() + offsetRef.current)
         if (!bufferingRef.current && needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
         media.playbackRate = nextState.rate || 1
-        if (nextState.playing && media.paused) void media.play().catch(() => undefined)
-        if (!nextState.playing && !media.paused) media.pause()
+        if (nextState.playing && media.paused) void start(media)
+        if (!nextState.playing && !media.paused) {
+          media.pause()
+          setAutoplayBlocked(false)
+        }
       }
 
       socket.onopen = () => {
@@ -418,6 +454,7 @@ export function useSync(
     roomVersion,
     connected,
     buffering,
+    autoplayBlocked,
     serverOffsetMs,
     capability,
     waiting,

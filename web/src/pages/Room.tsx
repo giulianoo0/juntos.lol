@@ -712,6 +712,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               seekRef={playerSeekRef}
               coldWaitRef={coldWaitRef}
               remoteSteerAtRef={remoteSteerAtRef}
+              autoplayBlocked={sync.autoplayBlocked}
               onBuffering={sync.reportBuffering}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.

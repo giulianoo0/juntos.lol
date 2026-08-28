@@ -303,4 +303,49 @@ describe('useSync', () => {
     expect(video.currentTime).toBe(1401)
     unmount()
   })
+
+  it('falls back to muted playback when the browser refuses to autoplay on arrival', async () => {
+    // Joining a room already playing is the one moment nobody has clicked
+    // anything yet, so an audible play is exactly what browsers refuse. The
+    // refusal used to be swallowed: the clock ran on and the picture never
+    // started, and the only way out was finding the play button.
+    const video = document.createElement('video')
+    Object.defineProperty(video, 'paused', { value: true, configurable: true })
+    const refused = new DOMException('gesture required', 'NotAllowedError')
+    video.play = vi.fn()
+      .mockRejectedValueOnce(refused)
+      .mockResolvedValueOnce(undefined)
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    await act(async () => {
+      socket.receive({ type: 'state', state: { playing: true, positionMs: 0, rate: 1, serverTimeMs: 100_000 } })
+    })
+
+    expect(video.muted).toBe(true)
+    expect(video.play).toHaveBeenCalledTimes(2)
+    expect(result.current.autoplayBlocked).toBe(false)
+    unmount()
+  })
+
+  it('asks for a gesture when even muted playback is refused', async () => {
+    const video = document.createElement('video')
+    Object.defineProperty(video, 'paused', { value: true, configurable: true })
+    const refused = new DOMException('gesture required', 'NotAllowedError')
+    video.play = vi.fn().mockRejectedValue(refused)
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    await act(async () => {
+      socket.receive({ type: 'state', state: { playing: true, positionMs: 0, rate: 1, serverTimeMs: 100_000 } })
+    })
+
+    expect(result.current.autoplayBlocked).toBe(true)
+    unmount()
+  })
+
 })
