@@ -208,6 +208,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const resumeAfterReloadRef = useRef(false)
   // Raised when the browser refused to start playback without a gesture.
   const [needsGesture, setNeedsGesture] = useState(false)
+  // Read by the catch-up below, which runs from element events and must not
+  // re-arm an intent the browser has already refused for want of a gesture.
+  const needsGestureRef = useRef(false)
+  needsGestureRef.current = needsGesture
   const controlsTimerRef = useRef<number | null>(null)
   const feedbackSeqRef = useRef(0)
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>(
@@ -678,6 +682,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     return Math.abs(elementMs - expected) > 5_000 ? Math.round(expected) : elementMs
   }, [])
 
+  // Raised while the intent came from reconciling with the room rather than
+  // from a person. The controller's own play is a command everyone follows;
+  // catching their element up to a room that is already playing is not, and
+  // announcing it would have the room command itself.
+  const localPlayRef = useRef(false)
+
   const attemptPlay = useCallback(() => {
     const video = videoRef.current
     if (!video || !playRequestedRef.current || playAttemptRef.current) return
@@ -708,7 +718,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       setNeedsGesture(false)
       if (!playRequestedRef.current) return
       playRequestedRef.current = false
-      if (isController) {
+      const local = localPlayRef.current
+      localPlayRef.current = false
+      if (isController && !local) {
         send('play', { positionMs: commandPositionMs(video), rate: video.playbackRate })
       }
     }).catch((error: unknown) => {
@@ -734,6 +746,22 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     attemptPlay()
   }, [attemptPlay])
 
+  // A room already playing when someone arrives sends no further state frame,
+  // so the single applyState on the welcome is the only chance the sync layer
+  // gets — and at that moment this element may not exist yet, or the cold wait
+  // may still be up. Either way nothing came back to try again, and the viewer
+  // sat paused under a clock that kept running, with nothing on screen saying
+  // why. Reconciled here instead, from every angle that can reveal it: the
+  // room's state, the wait ending, and the element becoming playable.
+  const catchUp = useCallback(() => {
+    const video = videoRef.current
+    if (!video || !video.paused || playRequestedRef.current) return
+    if (needsGestureRef.current) return
+    if (!syncRef.current?.playing || coldWaitRef?.current) return
+    localPlayRef.current = true
+    requestPlay()
+  }, [coldWaitRef, requestPlay, videoRef])
+
   // When the wait ends with the room playing — the region landed while the
   // element was held paused — nobody sends a new state message, so the
   // element is nudged back into playback here. Only the transition out of
@@ -749,6 +777,8 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // pointer handlers, and rebuilding it on every flicker would re-bind them
   // constantly for a value only read at the moment of a press.
   const notReadyRef = useRef(false)
+
+  useEffect(() => { catchUp() }, [catchUp, syncState, coldWait])
 
   const wasColdRef = useRef(false)
   useEffect(() => {
@@ -1369,6 +1399,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         onPlaying={() => { setLoading(false); onBuffering?.(false) }}
         onSeeked={() => setLoading(false)}
         onEnded={() => reportEnded()}
+        onLoadedData={() => catchUp()}
         onCanPlay={() => {
           // canplay fires with enough data buffered to advance, which is the
           // honest moment to stop saying "loading" even while still paused.
@@ -1383,6 +1414,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             void media.play().catch(() => undefined)
           }
           attemptPlay()
+          catchUp()
         }}
         onTimeUpdate={(event) => {
           // The element's clock belongs to the source it holds: between a

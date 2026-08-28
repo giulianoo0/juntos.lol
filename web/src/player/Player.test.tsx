@@ -1060,4 +1060,23 @@ describe('scrubbing', () => {
     expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_220_000 })
     expect(send).not.toHaveBeenCalledWith('pause', expect.anything())
   })
+
+  it('catches a paused element up to a room that is already playing, without telling the room', async () => {
+    // A room already playing when someone arrives sends no further state
+    // frame, so nothing came back to start their element: they sat paused
+    // under a running clock. The controller's own catch-up must stay silent —
+    // announcing it would have the room command itself.
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const playing = { playing: true, positionMs: 12_000, rate: 1, serverTimeMs: 100_000 }
+    render(
+      <Player room={room} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
+    )
+
+    fireEvent.loadedData(videoRef.current!)
+    await waitFor(() => expect(play).toHaveBeenCalled())
+    expect(send).not.toHaveBeenCalledWith('play', expect.anything())
+  })
+
 })

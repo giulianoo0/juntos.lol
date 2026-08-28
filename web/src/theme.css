@@ -195,7 +195,11 @@ h1, h2, p { margin-top: 0; }
 
 .player-feedback { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 92px; padding: 16px 20px; border-radius: 20px; background: rgba(9,8,10,.72); backdrop-filter: blur(14px) saturate(130%); box-shadow: 0 18px 50px rgba(0,0,0,.5); color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; animation: feedback-pop 700ms var(--ease) both; }
 @keyframes feedback-pop { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.86); } 18% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.04); } }
-.volume-control { position: relative; display: flex; align-items: center; flex: 0 0 auto; }
+/* Above the seek row: the panel and the invisible bridge up to it both hang
+   over the scrubber, and without this the scrubber wins the hit test in that
+   band — the pointer reaching for the slider lands on the seek bar instead,
+   which is what made the volume unusable. */
+.volume-control { position: relative; z-index: 3; display: flex; align-items: center; flex: 0 0 auto; }
 /* The panel floats clear of the button, and that gap would drop :hover the
    moment the pointer travelled up into it. This bridges it so the slider can
    actually be reached. */
