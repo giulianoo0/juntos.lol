@@ -12,19 +12,21 @@
 export const GATE_READY_BUFFER_MS = 3000
 /** The least the player's gate ever asks for, in seconds: the server's. */
 export const GATE_FLOOR_SEC = GATE_READY_BUFFER_MS / 1000
-/** What the player's gate asks for when nothing argues it down. Four-second
- * segments: less than a few of them plays straight back into the wait. */
-export const GATE_BASE_SEC = 10
+/** What the player's gate asks for before a wait ends: enough that the
+ * opening plays through an uplink hiccup without dropping straight back into
+ * the wait it just left. */
+export const GATE_BASE_SEC = 30
 
 /**
  * The seconds the gate asks for in this exact situation.
  *
- * Never more than the host has published: a region still growing has a
- * produced edge, and waiting for ten seconds past it is waiting for media
- * that does not exist yet — the viewer sits while the host's uplink fills
- * seconds that would have played fine one at a time. A sealed region and a
- * gated start both take the floor: the first only has downloading left to
- * do, the second was already held by the server for everyone at once.
+ * The base, strictly: a wait ends with the buffer built, not with whatever
+ * the host had published when the viewer arrived — the host is producing
+ * ahead the whole time, and leaving early on a thin edge means stalling
+ * again seconds later. A sealed region and a gated start both take the
+ * floor: the first only has downloading left to do, the second was already
+ * held by the server for everyone at once, and holding it longer here would
+ * start this viewer late.
  */
 export function gateSecondsFor(input: {
   /** Element seconds where the growing region's published media ends; null
@@ -37,7 +39,5 @@ export function gateSecondsFor(input: {
   gatedStart: boolean
 }): number {
   if (input.sealed || input.gatedStart) return GATE_FLOOR_SEC
-  if (input.producedEdgeSec === null) return GATE_BASE_SEC
-  const available = input.producedEdgeSec - input.currentTime - 0.5
-  return Math.min(GATE_BASE_SEC, Math.max(GATE_FLOOR_SEC, available))
+  return GATE_BASE_SEC
 }

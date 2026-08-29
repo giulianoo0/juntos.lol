@@ -39,12 +39,12 @@ describe('UploadAvailability', () => {
 
   it('names the phase the source is actually in', () => {
     const { rerender } = renderPrep({ sourceBytes: 100 * MB, receivedBytes: MB, previewPhase: 'probing' })
-    expect(screen.getByText('Analysing what has arrived so far.')).toBeInTheDocument()
+    expect(screen.getByText('Analysing what has arrived…')).toBeInTheDocument()
 
     rerender(<UploadAvailability t={t} progress={null} preparation={{
       sourceBytes: 100 * MB, receivedBytes: 2 * MB, previewPhase: 'segmenting',
     }} />)
-    expect(screen.getByText('Preparing the first playable segment.')).toBeInTheDocument()
+    expect(screen.getByText('Building the first segment…')).toBeInTheDocument()
   })
 
   it('says outright when a source cannot be previewed, and measures the whole file', () => {
