@@ -227,10 +227,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // Raised by the player while the room points at media still being built;
   // the sync layer stops steering the element until the region lands.
   const coldWaitRef = useRef(false)
+  const coldForRef = useRef<((ms: number) => boolean) | null>(null)
   // When a server frame last steered the element, so the player can tell a
   // remote pause from one the viewer performed.
   const remoteSteerAtRef = useRef(0)
-  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef)
+  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef, coldForRef)
   // Nobody answered the room's question: this person is out of it, the
   // picture stops, and a dialog says why. The socket is what membership is,
   // so closing it is leaving.
@@ -741,6 +742,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               mediaOffsetMsRef={mediaOffsetMsRef}
               seekRef={playerSeekRef}
               coldWaitRef={coldWaitRef}
+              coldForRef={coldForRef}
               remoteSteerAtRef={remoteSteerAtRef}
               autoplayBlocked={sync.autoplayBlocked}
               gatedStart={sync.waiting !== null}

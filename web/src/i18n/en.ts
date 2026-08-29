@@ -123,7 +123,7 @@ export const en: Record<string, string> = {
   'room.closedIdleGuide': 'Nobody answered, so you were taken out of the room rather than leaving everything running for no one. Join again whenever you like.',
   'room.closedIdleRejoin': 'Join again',
   'room.closedIdleHome': 'Back to start',
-  'room.bufferingLead': 'Buffering\u00a0',
+  'room.bufferingLead': 'Buffering',
   'room.bufferingTail': 's',
   'room.resumeFailed': 'Could not resume the preparation. Reopen the torrent under Change media.',
   'room.screenWaiting': 'Waiting for the host to start sharing',

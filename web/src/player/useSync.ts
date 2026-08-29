@@ -122,12 +122,23 @@ export function useSync(
   // is indistinguishable from the one a media key produces, and echoing it
   // back would have the room paused twice over.
   remoteSteerAtRef?: MutableRefObject<number>,
+  // Whether a room position has no region under it: judged per message,
+  // against the position that message carries.
+  coldForRef?: MutableRefObject<((ms: number) => boolean) | null>,
 ): SyncResult {
   const socketRef = useRef<WebSocket | null>(null)
   const offsetRef = useRef(0)
   const bufferingRef = useRef(false)
   const mediaOffset = () => mediaOffsetMsRef?.current ?? 0
   const coldWait = () => coldWaitRef?.current ?? false
+  // The wait as the player last rendered it lags one frame behind a state
+  // message that moves the room somewhere cold; seeking the element on that
+  // stale answer sent it to the old region's edge and showed a frame from
+  // there. The message is judged on its own position instead.
+  const coldAt = (state: PlayState): boolean => {
+    const judge = coldForRef?.current
+    return judge ? judge(expectedPositionMs(state, Date.now() + offsetRef.current)) : coldWait()
+  }
   const [state, setState] = useState(initialState)
   const [controllerId, setControllerId] = useState('')
   const [memberId, setMemberId] = useState('')
@@ -283,7 +294,7 @@ export function useSync(
         const media = videoRef.current
         if (!media) return
         if (remoteSteerAtRef) remoteSteerAtRef.current = Date.now()
-        if (coldWait()) {
+        if (coldAt(nextState)) {
           // The wrong region is all the element has; playing it would show the
           // wrong minutes under the room's clock. The player reloads it onto
           // the right region when that region publishes.

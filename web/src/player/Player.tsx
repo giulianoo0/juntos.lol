@@ -54,6 +54,8 @@ interface PlayerProps {
   // would clamp into the old region and play the wrong minutes under a
   // clock that says otherwise.
   coldWaitRef?: MutableRefObject<boolean>
+  // Whether a given room position has no region under it right now.
+  coldForRef?: MutableRefObject<((ms: number) => boolean) | null>
   // Stamped by the sync layer whenever a server frame steers the element, so
   // the pause it produces is not mistaken for one the viewer performed.
   remoteSteerAtRef?: MutableRefObject<number>
@@ -192,7 +194,7 @@ function subtitleSource(room: RoomInfo, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -312,10 +314,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // and it must keep waiting.
   const producedToEnd = knownEndMs !== null && coldRegions !== null
     && coldRegions.some((r) => regionHolds(r, knownEndMs - 1))
-  const coldWait = coldRegions !== null && coldTargetMs !== null
-    && !(producedToEnd && coldTargetMs >= (knownEndMs ?? 0))
-    && !coldRegions.some((r) => regionHolds(r, coldTargetMs))
+  const coldFor = (ms: number): boolean => coldRegions !== null
+    && !(producedToEnd && ms >= (knownEndMs ?? 0))
+    && !coldRegions.some((r) => regionHolds(r, ms))
+  const coldWait = coldTargetMs !== null && coldFor(coldTargetMs)
   if (coldWaitRef) coldWaitRef.current = coldWait
+  // The predicate itself, for the sync layer: a state message is judged
+  // against the position it carries, not against the wait as of the last
+  // render — by then the element had already been sent to the old region's
+  // edge and shown its frame.
+  if (coldForRef) coldForRef.current = coldFor
   useEffect(() => {
     if (!coldWait) {
       viewerTrace.mark('coldWaitEnd')

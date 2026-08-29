@@ -33,7 +33,7 @@ export function WaitLabel({ secondsLeft, t }: { secondsLeft: number | null; t: T
         >
           {phase === 'preparing' ? t('room.preparingPart') : (
             <>
-              {t('room.bufferingLead')}
+              <span>{t('room.bufferingLead').trim()}</span>
               <NumberFlow value={secondsLeft ?? 0} suffix={t('room.bufferingTail')} />
             </>
           )}

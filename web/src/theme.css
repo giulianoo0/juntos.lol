@@ -405,7 +405,7 @@ button.timecode-chapter:hover { color: var(--text); }
 /* The two lines occupy the same slot and cross through it, so the box does
    not resize as one leaves and the other arrives. */
 .wait-label { position: relative; display: inline-grid; overflow: hidden; }
-.wait-label > span { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+.wait-label > span { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; gap: .3em; }
 .player-preparing .starting-swarm { margin: 0; }
 /* Autoplay refused for want of a gesture. It has to be reachable — unlike the
    loading veil above it — because the one click is the whole fix. */

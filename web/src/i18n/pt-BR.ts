@@ -123,7 +123,7 @@ export const ptBR: Record<string, string> = {
   'room.closedIdleGuide': 'Ninguém respondeu ao aviso, então você foi tirado da sala para não deixar tudo ligado à toa. Se quiser, é só entrar de novo.',
   'room.closedIdleRejoin': 'Entrar de novo',
   'room.closedIdleHome': 'Voltar ao início',
-  'room.bufferingLead': 'Carregando\u00a0',
+  'room.bufferingLead': 'Carregando',
   'room.bufferingTail': 's de buffer',
   'room.resumeFailed': 'Não deu para retomar o preparo. Abra o torrent de novo em Trocar mídia.',
   'room.screenWaiting': 'Esperando o anfitrião começar a compartilhar',
