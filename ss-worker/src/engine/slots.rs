@@ -44,6 +44,9 @@ pub struct StreamSlot {
     /// The cursor the last window was built around, and whether that window
     /// was the narrow startup one.
     windowed: Mutex<(u64, bool)>,
+    /// When the reader last went somewhere new — a hint, or a read that
+    /// landed outside the window. The fill waits for this to go quiet.
+    moved_at: Mutex<Instant>,
 }
 
 impl StreamSlot {
@@ -54,7 +57,14 @@ impl StreamSlot {
             wanted: Mutex::new(None),
             hinted_at: Mutex::new(None),
             windowed: Mutex::new((position, false)),
+            moved_at: Mutex::new(Instant::now()),
         }
+    }
+    pub fn mark_moved(&self) {
+        *self.moved_at.lock() = Instant::now();
+    }
+    pub fn since_moved(&self) -> std::time::Duration {
+        self.moved_at.lock().elapsed()
     }
     /// The reader is going here; the window follows even if the stream
     /// itself cannot be seeked yet.
@@ -72,6 +82,7 @@ impl StreamSlot {
     }
     pub fn mark_hinted(&self) {
         *self.hinted_at.lock() = Some(Instant::now());
+        self.mark_moved();
     }
     pub fn since_hint(&self) -> Option<std::time::Duration> {
         self.hinted_at.lock().map(|at| at.elapsed())

@@ -127,6 +127,15 @@ mod tests {
     const MB: u64 = 1024 * 1024;
 
     #[test]
+    fn a_fill_cursor_swallows_pins_and_windows_alike() {
+        let cursors = [
+            Cursor { at: 500 * MB, ahead: 100 * MB, behind: 10 * MB },
+            Cursor { at: 0, ahead: 1000 * MB, behind: 0 },
+        ];
+        assert_eq!(needed_ranges_for(1000 * MB, &cursors, 32 * MB), vec![(0, 1000 * MB)]);
+    }
+
+    #[test]
     fn pins_the_head_and_tail_around_a_cursor_in_the_middle() {
         // Without the tail, a Matroska file's Cues stop being fetched and the
         // next seek has nothing to seek with.

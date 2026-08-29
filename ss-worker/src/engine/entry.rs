@@ -3,6 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
+use super::fill::Fill;
 use super::floors::Floors;
 use super::slots::{Prio, StreamSlot};
 use super::{Handle, TorrentDigest};
@@ -41,6 +42,9 @@ pub struct Entry {
     pub floors: Floors,
     /// Whether the one in-place restart after a failure was spent.
     pub retried: bool,
+    /// Whether the swarm is filling the rest of the file behind the
+    /// readers, or holding what a fill already brought in. See fill.rs.
+    pub fill: Fill,
     /// Blocks this torrent's files actually hold, and when that was last
     /// counted. Walking the folder is cheap but the digest is asked for far
     /// more often than the number moves.
@@ -63,6 +67,7 @@ impl Entry {
             slots: HashMap::new(),
             floors: Floors::default(),
             retried: false,
+            fill: Fill::Off,
             disk: Mutex::new((0, None)),
         }
     }

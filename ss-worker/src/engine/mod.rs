@@ -1,6 +1,7 @@
 mod admission;
 mod disk;
 mod entry;
+mod fill;
 mod floors;
 mod reaper;
 mod slots;
@@ -25,6 +26,7 @@ use crate::config::WorkerConfig;
 pub use admission::{is_sidecar, LeaseInfo, Rejection};
 use disk::DiskAccountant;
 use entry::{Entry, Phase};
+use fill::Fill;
 pub use slots::Prio;
 
 pub type Handle = Arc<ManagedTorrent>;
@@ -489,11 +491,11 @@ impl Engine {
     pub async fn select(&self, infohash: &str, file_index: usize) -> Result<u64, Rejection> {
         let infohash = infohash.to_ascii_lowercase();
         let handle = self.handle(&infohash).ok_or(Rejection::Unknown)?;
-        let previously = self
+        let (previously, filling) = self
             .torrents
             .lock()
             .get(&infohash)
-            .map(|e| e.ever_selected.clone())
+            .map(|e| (e.ever_selected.clone(), e.fill.reserves_file()))
             .unwrap_or_default();
         let (only, selected_bytes, reserve_bytes, ever) = {
             let guard = handle.metadata.load();
@@ -516,14 +518,22 @@ impl Engine {
             // so the reservation covers every file ever selected here.
             let mut ever = previously;
             ever.extend(only.iter().copied());
+            // A torrent already holding a fill keeps promising the whole of
+            // its files: re-selecting it must not shrink the reservation
+            // under bytes that are really on the disk.
             let reserve: u64 = ever
                 .iter()
                 .filter_map(|i| meta.file_infos.get(*i))
-                .map(|f| window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN))
+                .map(|f| if filling { f.len } else { window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN) })
                 .sum();
             (only, total, reserve, ever)
         };
         let before = self.disk.reserved(&infohash);
+        if !self.disk.reserve(&infohash, reserve_bytes) {
+            // Fills go before rooms: what they hold is a convenience, and a
+            // torrent someone is opening is not.
+            self.shed_fill(reserve_bytes);
+        }
         if !self.disk.reserve(&infohash, reserve_bytes) {
             self.evict_idle_until_room(reserve_bytes).await;
             if !self.disk.reserve(&infohash, reserve_bytes) {
@@ -642,6 +652,10 @@ impl Engine {
                 let (windowed_at, startup) = slot.windowed();
                 let moved = start.abs_diff(windowed_at) > window::BEHIND;
                 let startup_over = startup && slot.since_hint().is_none_or(|since| since >= window::STARTUP);
+                if moved {
+                    slot.mark_moved();
+                    self.reader_moved(infohash);
+                }
                 if moved || startup_over {
                     self.apply_window_with(infohash, false);
                 }
@@ -666,6 +680,8 @@ impl Engine {
                 if slot.cursor().abs_diff(start) > window::BEHIND {
                     slot.set_wanted(start);
                     slot.keep_alive();
+                    slot.mark_moved();
+                    self.reader_moved(infohash);
                     self.apply_window_with(infohash, false);
                 }
             }
@@ -756,6 +772,7 @@ impl Engine {
         // reader wants, and a busy stream must not leave it on the old region.
         slot.set_wanted(offset);
         slot.mark_hinted();
+        self.reader_moved(infohash);
         // A busy slot is a response in flight for the old region; it notices
         // the floor on its next chunk and ends, freeing the slot to move.
         let seeked = match slot.stream.clone().try_lock_owned() {
@@ -803,7 +820,12 @@ impl Engine {
         let Some(handle) = self.handle(infohash) else {
             return;
         };
-        let (index, cursors) = {
+        // The sweep is the only place the fill turns on: the hot paths only
+        // ever narrow it, and the decision needs the HAVE bitfield.
+        if release {
+            self.sweep_fill(infohash, &handle);
+        }
+        let (index, mut cursors, fill) = {
             let map = self.torrents.lock();
             let Some(entry) = map.get(infohash) else {
                 return;
@@ -838,7 +860,7 @@ impl Engine {
                     Some(window::Cursor { at, ahead, behind: window::BEHIND })
                 })
                 .collect();
-            (index, cursors)
+            (index, cursors, entry.fill)
         };
         // No reader open yet: the pins alone still let the probe read the
         // header and the index without pulling the body down.
@@ -847,6 +869,11 @@ impl Engine {
         let Some(info) = meta.file_infos.get(index) else {
             return;
         };
+        // Filling: everything. The stream priority keeps the readers'
+        // windows first; the rest is what the swarm does with its idle time.
+        if fill == Fill::Filling {
+            cursors.push(window::Cursor { at: 0, ahead: info.len, behind: 0 });
+        }
         let lengths = meta.lengths();
         let piece_len = lengths.default_piece_length() as u64;
         let ranges = window::needed_ranges_for(info.len, &cursors, window::PIN);
@@ -869,10 +896,121 @@ impl Engine {
         // player's buffer looks like, and what a backgrounded tab does the
         // whole time. Narrowing the selection while nobody reads is free;
         // releasing is not.
-        if cursors.is_empty() || !release {
+        // Holding keeps what a fill brought in: the reservation still says the
+        // whole file, and the next fill — or the host's own background remux
+        // — reads it instead of fetching it again.
+        if cursors.is_empty() || !release || fill != Fill::Off {
             return;
         }
         self.release_behind_window(infohash, &handle, info, &pieces, piece_len);
+    }
+
+    /// The sweep's look at whether the swarm should be filling the file
+    /// behind the readers, and the bookkeeping when the answer changes.
+    fn sweep_fill(&self, infohash: &str, handle: &Handle) {
+        let (index, now, playhead, quiet, ever) = {
+            let map = self.torrents.lock();
+            let Some(entry) = map.get(infohash) else { return };
+            let Some(index) = entry.selected_file else { return };
+            let playhead = entry.slots.get(&(index, Prio::Playhead)).cloned();
+            // A retired slot is a reader that has not read in a while — the
+            // quiet the fill is waiting for, dated from the last open or hint.
+            let quiet = match &playhead {
+                Some(slot) => slot.since_moved() >= fill::QUIET,
+                None => entry.last_active.elapsed() >= fill::QUIET,
+            };
+            (index, entry.fill, playhead, quiet, entry.ever_selected.clone())
+        };
+        let guard = handle.metadata.load();
+        let Some(meta) = guard.as_ref() else { return };
+        let Some(info) = meta.file_infos.get(index) else { return };
+        let lengths = meta.lengths();
+        let piece_len = lengths.default_piece_length() as u64;
+        let (full, footprint) = ever
+            .iter()
+            .filter_map(|i| meta.file_infos.get(*i))
+            .fold((0u64, 0u64), |(full, fp), f| {
+                (full + f.len, fp + window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN))
+            });
+        let window_have = match &playhead {
+            None => true,
+            Some(slot) => {
+                let cursor = window::Cursor { at: slot.cursor(), ahead: window::AHEAD, behind: window::BEHIND };
+                let ranges = window::needed_ranges_for(info.len, &[cursor], 0);
+                let pieces = window::pieces_for_ranges(info.offset_in_torrent, piece_len, lengths.total_pieces(), &ranges);
+                handle
+                    .with_chunk_tracker(|ct| {
+                        let have = ct.get_have_pieces();
+                        pieces.iter().all(|p| have.as_slice()[*p as usize])
+                    })
+                    .unwrap_or(false)
+            }
+        };
+        let fits = self.disk.fits_replacing(infohash, full);
+        let next = fill::decide(now, fill::Reader { quiet, window_have }, fits);
+        if next == now {
+            return;
+        }
+        self.set_fill(infohash, next, full, footprint);
+    }
+
+    fn set_fill(&self, infohash: &str, next: Fill, full: u64, footprint: u64) {
+        let from = {
+            let mut map = self.torrents.lock();
+            let Some(entry) = map.get_mut(infohash) else { return };
+            std::mem::replace(&mut entry.fill, next)
+        };
+        if from == next {
+            return;
+        }
+        self.disk
+            .reserve_unchecked(infohash, if next.reserves_file() { full } else { footprint });
+        tracing::info!(infohash, from = from.name(), to = next.name(), reserved_mib = if next.reserves_file() { full } else { footprint } / (1024 * 1024), "fill");
+    }
+
+    /// The reader went somewhere new: a fill in progress stops widening the
+    /// selection, so every peer goes back to the window. What it fetched is
+    /// held, not released.
+    fn reader_moved(&self, infohash: &str) {
+        let mut map = self.torrents.lock();
+        if let Some(entry) = map.get_mut(infohash) {
+            if entry.fill == Fill::Filling {
+                entry.fill = Fill::Holding;
+                tracing::info!(infohash, from = "filling", to = "holding", "fill");
+            }
+        }
+    }
+
+    /// Gives back what fills are holding until `need` bytes fit. Largest
+    /// first; each one is released on the spot, so the room is real by the
+    /// time the reservation that asked for it is made.
+    fn shed_fill(&self, need: u64) {
+        loop {
+            if self.disk.room_for(need) {
+                return;
+            }
+            let victim = {
+                let map = self.torrents.lock();
+                map.iter()
+                    .filter(|(_, e)| e.fill != Fill::Off)
+                    .map(|(id, _)| (self.disk.reserved(id), id.clone()))
+                    .max()
+            };
+            let Some((_, id)) = victim else { return };
+            let Some(handle) = self.handle(&id) else { return };
+            let (full, footprint) = {
+                let guard = handle.metadata.load();
+                let Some(meta) = guard.as_ref() else { return };
+                let ever = self.torrents.lock().get(&id).map(|e| e.ever_selected.clone()).unwrap_or_default();
+                ever.iter()
+                    .filter_map(|i| meta.file_infos.get(*i))
+                    .fold((0u64, 0u64), |(full, fp), f| {
+                        (full + f.len, fp + window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN))
+                    })
+            };
+            self.set_fill(&id, Fill::Off, full, footprint);
+            self.apply_window_with(&id, true);
+        }
     }
 
     /// Gives back the storage of everything the window left behind. Narrowing

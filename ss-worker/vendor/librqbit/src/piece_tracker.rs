@@ -132,17 +132,23 @@ impl PieceTracker {
         P: Fn(ValidPieceIndex) -> bool,
         S: Fn(ValidPieceIndex) -> bool,
     {
+        // ss patch: the priority pieces are collected so that, when every one
+        // of them is already in flight, an idle peer can steal the most stuck
+        // one below instead of wandering off to the far side of the file.
+        let priority: Vec<ValidPieceIndex> = req.priority_pieces.by_ref().collect();
+
         // 1. Try steal with 10x threshold (very slow peer)
-        if let Some(result) = self.try_steal(&req, 10.0) {
+        // ss patch: while a reader is waiting on priority pieces, a steal
+        // only takes one of those. With the whole file selected behind the
+        // window, the in-flight map is full of far-away pieces that have
+        // been sitting the longest, and an idle peer would otherwise be
+        // sent to rescue one of them instead of what the reader is on.
+        if let Some(result) = self.try_steal(&req, 10.0, &priority) {
             return result;
         }
 
         // 2. Try reserve from priority_pieces then queued pieces
         // First check priority pieces that aren't already downloaded or in-flight
-        // ss patch: the priority pieces are collected so that, when every one
-        // of them is already in flight, an idle peer can steal the most stuck
-        // one below instead of wandering off to the far side of the file.
-        let priority: Vec<ValidPieceIndex> = req.priority_pieces.by_ref().collect();
         for &piece in &priority {
             if !self.chunks.is_piece_have(piece)
                 && !self.inflight.contains_key(&piece)
@@ -185,7 +191,7 @@ impl PieceTracker {
         }
 
         // 3. Try steal with 3x threshold (moderately slow peer)
-        if let Some(result) = self.try_steal(&req, 3.0) {
+        if let Some(result) = self.try_steal(&req, 3.0, &priority) {
             return result;
         }
 
@@ -210,6 +216,7 @@ impl PieceTracker {
         &mut self,
         req: &AcquireRequest<I, P, S>,
         threshold: f64,
+        priority: &[ValidPieceIndex],
     ) -> Option<AcquireResult>
     where
         I: Iterator<Item = ValidPieceIndex>,
@@ -225,6 +232,7 @@ impl PieceTracker {
             .inflight
             .iter()
             .filter(|(_, info)| !info.peers.contains(&req.peer))
+            .filter(|(p, _)| priority.is_empty() || priority.contains(p))
             .filter(|(p, _)| (req.peer_has_piece)(**p))
             .filter_map(|(p, info)| {
                 info.peers.first().map(|peer| (*p, *peer, info.started.elapsed()))

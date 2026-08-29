@@ -60,6 +60,17 @@ impl DiskAccountant {
         self.used() + bytes <= self.high_water
     }
 
+    /// Whether `bytes` would fit in place of this torrent's own reservation.
+    pub fn fits_replacing(&self, infohash: &str, bytes: u64) -> bool {
+        let map = self.reserved.lock();
+        let others: u64 = map
+            .iter()
+            .filter(|(k, _)| k.as_str() != infohash)
+            .map(|(_, v)| *v)
+            .sum();
+        others + bytes <= self.high_water
+    }
+
     /// Reserves `bytes` for a torrent, replacing any earlier reservation.
     pub fn reserve(&self, infohash: &str, bytes: u64) -> bool {
         let mut map = self.reserved.lock();
