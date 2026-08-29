@@ -212,14 +212,18 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   if (roomID) void renew()
   else scheduleRenewal()
 
-  const hint = (offset: number) => {
-    if (Math.abs(offset - lastHintAt) < HINT_STRIDE_BYTES) return
+  // `seek` says the reader jumped, as opposed to drifting forward through
+  // what it was already reading. The worker narrows its window to what the
+  // first byte is waiting on only for a jump; a stride hint that looked like
+  // one kept the swarm on a startup window most of the time.
+  const hint = (offset: number, seek: boolean) => {
+    if (!seek && Math.abs(offset - lastHintAt) < HINT_STRIDE_BYTES) return
     lastHintAt = offset
     // text/plain keeps the POST a simple request: no preflight per hint.
     void fetch(`${current.readBase}/v1/hint/${current.ticket}`, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ readOffset: offset, gen }),
+      body: JSON.stringify({ readOffset: offset, gen, seek }),
     }).catch(() => undefined)
   }
 
@@ -236,7 +240,7 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
     read: (start, end, hint_) => rangeBytes(opts(hint_?.prio ?? 'head'), start, end),
     source: () => new CustomSource({
       read: (start, end) => {
-        hint(start)
+        hint(start, false)
         return teeInto(tap, start, rangeStream(opts('playhead'), start, end))
       },
       getSize: async () => grant.size,
@@ -257,7 +261,7 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
     sidecarUrl: (index) => `${current.readBase}/v1/file/${current.ticket}/${index}`,
     // Sent with the generation the abort just minted, so the worker treats it
     // as the seek's own cursor and lets the responses behind it go.
-    prefetchAt: (offset) => hint(Math.min(Math.max(offset, 0), Math.max(grant.size - 1, 0))),
+    prefetchAt: (offset) => hint(Math.min(Math.max(offset, 0), Math.max(grant.size - 1, 0)), true),
   }
 }
 

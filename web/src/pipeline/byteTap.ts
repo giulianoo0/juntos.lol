@@ -16,8 +16,10 @@
 
 /** Held for the scan while the remux runs ahead of it. */
 const DEFAULT_BUFFER_BYTES = 64 * 1024 * 1024
-/** How long a pull waits on the remux before deciding it went elsewhere. */
-const DEFAULT_IDLE_MS = 3_000
+/** How long a pull waits on the remux before handing the decision back to
+ * the caller. Longer than a range takes to arrive while the swarm is still
+ * fetching it, or the tap gives up in the middle of every delivery. */
+const DEFAULT_IDLE_MS = 10_000
 /** Most one pull hands over, so the parser gets bytes rather than a backlog. */
 const MAX_PULL_BYTES = 8 * 1024 * 1024
 
@@ -45,6 +47,15 @@ export class ByteTap {
   /** The next byte the scan has not seen. */
   get cursor(): number {
     return this.at
+  }
+
+  /**
+   * Whether the remux is reading within reach of the cursor: what it reads
+   * next is what the scan wants next, and fetching it separately would be
+   * the same bytes over the wire twice. False across a gap, and once closed.
+   */
+  get riding(): boolean {
+    return !this.done && this.furthest <= this.at + this.bufferBytes
   }
 
   /** Bytes the remux just read, at their absolute offset in the file. */

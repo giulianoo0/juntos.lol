@@ -750,6 +750,7 @@ impl Engine {
         index: usize,
         read_offset: u64,
         gen: u64,
+        seek: bool,
     ) -> anyhow::Result<()> {
         let handle = self.touch(infohash).context("unknown torrent")?;
         let size = self.file_size(infohash, index)?;
@@ -757,6 +758,14 @@ impl Engine {
         let slot = self
             .slot(infohash, &handle, index, Prio::Playhead, offset)
             .await?;
+        // A jump, by the reader's own word or by where it landed: outside the
+        // window it was reading through. Only a jump narrows the window to
+        // what the first byte is waiting on — the reader drifting forward
+        // says so every few megabytes, and treating that as a seek kept the
+        // swarm on the startup window most of the time, and threw the
+        // read-ahead behind it away on every sweep.
+        let before = slot.cursor();
+        let jump = seek || offset < before.saturating_sub(window::BEHIND) || offset > before.saturating_add(window::AHEAD);
         {
             let mut map = self.torrents.lock();
             if let Some(entry) = map.get_mut(infohash) {
@@ -771,8 +780,10 @@ impl Engine {
         // Said before the stream is tried: the window is built from what the
         // reader wants, and a busy stream must not leave it on the old region.
         slot.set_wanted(offset);
-        slot.mark_hinted();
-        self.reader_moved(infohash);
+        if jump {
+            slot.mark_hinted();
+            self.reader_moved(infohash);
+        }
         // A busy slot is a response in flight for the old region; it notices
         // the floor on its next chunk and ends, freeing the slot to move.
         let seeked = match slot.stream.clone().try_lock_owned() {
@@ -795,6 +806,7 @@ impl Engine {
             index,
             read_offset = offset,
             gen,
+            seek = jump,
             seeked,
             "hint",
         );
@@ -916,7 +928,7 @@ impl Engine {
             // A retired slot is a reader that has not read in a while — the
             // quiet the fill is waiting for, dated from the last open or hint.
             let quiet = match &playhead {
-                Some(slot) => slot.since_moved() >= fill::QUIET,
+                Some(slot) => slot.since_moved() >= fill::QUIET && slot.idle_for() >= fill::QUIET,
                 None => entry.last_active.elapsed() >= fill::QUIET,
             };
             (index, entry.fill, playhead, quiet, entry.ever_selected.clone())

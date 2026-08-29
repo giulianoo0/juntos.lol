@@ -44,6 +44,11 @@ export interface RemuxJobCallbacks {
 // new region's first segment is in the bucket, and this long at the most,
 // so a region that never warms cannot starve it forever.
 const SCAN_HOLDOFF_MAX_MS = 45_000
+// How long the scan keeps waiting for bytes the remux is about to read past
+// its cursor before fetching them itself. The remux is slow exactly when the
+// swarm is — and a second cursor on the same stretch is what it least needs
+// then — so the wait is generous; the cap only guards a remux that stopped.
+const SCAN_PATIENCE_MS = 60_000
 
 /** Thrown when the planner looked at the source and declined it. */
 export class UnsupportedMediaError extends Error {
@@ -183,6 +188,7 @@ async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: Subtit
     const stream = await createMatroskaSubtitleStream()
     const tap = input.tap
     let lastSnapshotAt = Date.now()
+    let lastProgressAt = Date.now()
     let offset = 0
     while (offset < input.size) {
       let slice = tap ? await tap.pull() : null
@@ -193,6 +199,14 @@ async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: Subtit
         const { cold, forMs } = input.cold()
         if (tap && cold && forMs < SCAN_HOLDOFF_MAX_MS) {
           await new Promise((resolve) => setTimeout(resolve, 500))
+          continue
+        }
+        // The remux is reading right here, only slowly: what it gets next is
+        // what the scan wants next. Fetching it separately would cost the
+        // origin the same bytes twice, and on a swarm, a second cursor on
+        // the stretch the reader is blocked on.
+        if (tap?.riding && Date.now() - lastProgressAt < SCAN_PATIENCE_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 250))
           continue
         }
         const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
@@ -209,6 +223,7 @@ async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: Subtit
       }
       if (slice.length === 0) break
       offset += slice.length
+      lastProgressAt = Date.now()
       stream.write(slice)
       if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
         lastSnapshotAt = Date.now()

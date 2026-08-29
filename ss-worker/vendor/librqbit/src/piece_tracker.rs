@@ -149,21 +149,40 @@ impl PieceTracker {
 
         // 2. Try reserve from priority_pieces then queued pieces
         // First check priority pieces that aren't already downloaded or in-flight
+        //
+        // ss patch: the pieces at the head of the priority list are the ones
+        // a reader is blocked on right now, and with large pieces the peer
+        // that owns one sets the pace on its own. So, before taking a free
+        // piece further down, an idle peer joins a head piece that still has
+        // room: the head fetches with several peers, the rest with one each.
+        // Without this the join only happened once every priority piece was
+        // in flight — which, with dozens of peers and sixteen pieces in the
+        // window, was never.
+        const MAX_CODOWNLOADERS: usize = 4;
+        const HEAD_PIECES: usize = 2;
+        let mut head = 0usize;
         for &piece in &priority {
-            if !self.chunks.is_piece_have(piece)
-                && !self.inflight.contains_key(&piece)
-                && (req.peer_has_piece)(piece)
-            {
-                return self.reserve_piece(piece, req.peer);
+            if self.chunks.is_piece_have(piece) || !(req.peer_has_piece)(piece) {
+                continue;
+            }
+            match self.inflight.get_mut(&piece) {
+                None => return self.reserve_piece(piece, req.peer),
+                Some(info) if head < HEAD_PIECES => {
+                    head += 1;
+                    if info.peers.contains(&req.peer) || info.peers.len() >= MAX_CODOWNLOADERS {
+                        continue;
+                    }
+                    info.peers.push(req.peer);
+                    return AcquireResult::Joined(piece);
+                }
+                Some(_) => continue,
             }
         }
 
-        // 2.5 Priority co-download: a reader is blocked on these exact
-        // pieces, and with large pieces the owning peer alone sets the pace.
-        // An idle peer joins the first priority piece with room and fetches
-        // the chunks the others have not taken, back to front. This is the
-        // intra-piece parallelism streaming clients get from virtual pieces.
-        const MAX_CODOWNLOADERS: usize = 4;
+        // 2.5 Priority co-download: every priority piece is in flight. An
+        // idle peer joins the first one with room and fetches the chunks the
+        // others have not taken, back to front. This is the intra-piece
+        // parallelism streaming clients get from virtual pieces.
         for &piece in &priority {
             if self.chunks.is_piece_have(piece) || !(req.peer_has_piece)(piece) {
                 continue;

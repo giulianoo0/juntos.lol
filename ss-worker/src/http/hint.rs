@@ -13,6 +13,9 @@ pub struct Hint {
     pub read_offset: u64,
     #[serde(default)]
     pub gen: u64,
+    /// The reader jumped, rather than drifted forward through its window.
+    #[serde(default)]
+    pub seek: bool,
 }
 
 /// POST /v1/hint/{ticket}: the remux's read offset moved. Carries the
@@ -28,7 +31,7 @@ pub async fn post(State(state): State<Arc<AppState>>, Path(ticket): Path<String>
         Ok(h) => h,
         Err(_) => return fail(StatusCode::BAD_REQUEST, &ticket.audience, "hint body"),
     };
-    match state.engine.hint(&ticket.infohash, &ticket.room_id, ticket.file_index, hint.read_offset, hint.gen).await {
+    match state.engine.hint(&ticket.infohash, &ticket.room_id, ticket.file_index, hint.read_offset, hint.gen, hint.seek).await {
         Ok(()) => ok_json(&ticket.audience, serde_json::json!({ "ok": true })),
         Err(e) => fail(StatusCode::NOT_FOUND, &ticket.audience, &format!("{e:#}")),
     }
