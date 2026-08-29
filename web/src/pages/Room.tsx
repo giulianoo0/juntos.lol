@@ -659,7 +659,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
-          {uploadProgress !== null ? <PipelineChip swarm={swarmStats} progress={uploadProgress} videoRef={videoRef} t={t} /> : null}
+          {/* Everyone in the room, not only the host: a viewer waiting on a
+              cold seek wants to see the source arriving and their own
+              buffer just as much. */}
+          {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
+            ? <PipelineChip swarm={swarmStats} progress={uploadProgress} videoRef={videoRef} t={t} />
+            : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController && !isScreenRoom ? (

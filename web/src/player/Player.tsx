@@ -836,6 +836,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // pointer handlers, and rebuilding it on every flicker would re-bind them
   // constantly for a value only read at the moment of a press.
   const notReadyRef = useRef(false)
+  // A seek is one command from the gesture to the frame: while the room is
+  // still on its way to the target — the server has not confirmed it, the
+  // element has not reached it, or the region under it is still being
+  // built — no other command may cut in. A pause here writes a position the
+  // room cannot honour and a second seek stacks on the first; the room ends
+  // up somewhere nobody chose. The ref is read by the seek callback, whose
+  // identity must not follow this state.
+  const seekBusyRef = useRef(false)
 
   useEffect(() => { catchUp() }, [catchUp, syncState, coldWait])
 
@@ -949,6 +957,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
     if (!video || !isController) return
+    if (seekBusyRef.current) {
+      toast(t('room.seekBusy'))
+      return
+    }
     pendingSentServerMs.current = Date.now() + serverOffsetMs
     setPendingSeekSec(seconds)
     send('seek', { positionMs: Math.round(seconds * 1000) })
@@ -966,7 +978,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       playRequestedRef.current = false
       send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
     }
-  }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, videoRef])
+  }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, t, toast, videoRef])
   if (seekRef) seekRef.current = seek
 
   // The parked room wakes up when the region it waited on arrives. A play or
@@ -1373,7 +1385,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const timer = window.setTimeout(() => setStalledLong(true), 3_000)
     return () => window.clearTimeout(timer)
   }, [loading])
-  const controlsBlocked = coldWait || stalledLong
+  const seekBusy = coldWait || pendingSeekSec !== null
+  seekBusyRef.current = seekBusy
+  const controlsBlocked = seekBusy || stalledLong
   notReadyRef.current = controlsBlocked
 
   // The controller defines the room position, so it can never be out of sync
@@ -1611,7 +1625,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             min="0"
             max={seekMax}
             value={Math.min(scrubSec ?? pendingSeekSec ?? shownSec, seekMax)}
-            disabled={!isController}
+            disabled={!isController || seekBusy}
             onPointerDown={() => { scrubbingRef.current = true }}
             onPointerUp={(event) => {
               if (scrubbingRef.current) {

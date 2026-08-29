@@ -695,8 +695,17 @@ describe('Player', () => {
     fireEvent.keyDown(document, { key: 'ArrowRight' })
     expect(send).toHaveBeenCalledWith('seek', { positionMs: 35_000 })
 
+    // Until the element has actually arrived, the seek is still in flight
+    // and a second one is refused rather than stacked on it.
     fireEvent.keyDown(document, { key: 'ArrowLeft' })
-    expect(send).toHaveBeenCalledWith('seek', { positionMs: 25_000 })
+    expect(send).toHaveBeenCalledTimes(1)
+    video.currentTime = 35
+    fireEvent.timeUpdate(video)
+
+    fireEvent.keyDown(document, { key: 'ArrowLeft' })
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 30_000 })
+    video.currentTime = 30
+    fireEvent.timeUpdate(video)
 
     // J and L are the wider jumps every video player binds.
     fireEvent.keyDown(document, { key: 'l' })
@@ -930,7 +939,10 @@ describe('scrubbing', () => {
   it('parks a playing room on a cold seek and resumes when the region lands', () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()
-    const playing = { playing: true, positionMs: 120_000, rate: 1, serverTimeMs: 100_000 }
+    // Stamped now: a room that has been playing since the epoch would have
+    // walked past the produced media, and a room already waiting on a region
+    // refuses every command until it arrives.
+    const playing = { playing: true, positionMs: 120_000, rate: 1, serverTimeMs: Date.now() }
     const { container, rerender } = render(
       <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
     )
@@ -939,6 +951,8 @@ describe('scrubbing', () => {
     // media the pipeline has not produced yet.
     Object.defineProperty(video, 'duration', { configurable: true, value: 300 })
     fireEvent.durationChange(video)
+    video.currentTime = 120
+    fireEvent.timeUpdate(video)
     const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
     fireEvent.pointerDown(scrubber)
     fireEvent.change(scrubber, { target: { value: '1220' } })

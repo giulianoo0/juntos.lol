@@ -53,6 +53,7 @@ export const en: Record<string, string> = {
   'room.audio': 'Audio',
   'room.subtitles': 'Subtitles',
   'room.off': 'Off',
+  'room.seekBusy': 'Wait for the seek to finish first',
   'room.controllerOnly': 'Only the host can control playback',
   'room.offlineCommand': 'Reconnecting to the room. Try again in a moment',
   'room.notController': 'The room handed control to someone else',

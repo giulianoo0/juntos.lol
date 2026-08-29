@@ -18,7 +18,9 @@ import type { Translator } from '../i18n/useT'
  */
 export function PipelineChip({ swarm, progress, videoRef, t }: {
   swarm: TorrentStats | null
-  progress: RoomUploadProgress
+  /** The host's own pipeline. A viewer has none: their chip reads the swarm
+   *  the host reported through the room, and their own buffer. */
+  progress: RoomUploadProgress | null
   videoRef: MutableRefObject<HTMLVideoElement | null>
   t: Translator
 }) {
@@ -28,8 +30,8 @@ export function PipelineChip({ swarm, progress, videoRef, t }: {
   // for.
   const [bufferSec, setBufferSec] = useState(0)
   const [upSpeed, setUpSpeed] = useState(0)
-  const uploadedRef = useRef(progress.bytesUploaded)
-  uploadedRef.current = progress.bytesUploaded
+  const uploadedRef = useRef(progress?.bytesUploaded ?? 0)
+  uploadedRef.current = progress?.bytesUploaded ?? 0
   useEffect(() => {
     let lastBytes = uploadedRef.current
     let lastAt = Date.now()
@@ -65,7 +67,7 @@ export function PipelineChip({ swarm, progress, videoRef, t }: {
           <ArrowDown size={11} aria-hidden="true" />
           <NumberFlow value={round(swarm.downloadSpeed / 1_048_576, 1)} suffix=" MB/s" />
         </span>
-      ) : upSpeed > 0 ? (
+      ) : progress === null ? null : upSpeed > 0 ? (
         <span className="pipeline-metric" title={t('room.uploadSpeed')}>
           <ArrowUp size={11} aria-hidden="true" />
           <NumberFlow value={round(upSpeed / 1_048_576, 1)} suffix=" MB/s" />
@@ -76,7 +78,7 @@ export function PipelineChip({ swarm, progress, videoRef, t }: {
           <NumberFlow value={round(progress.bytesUploaded / 1_073_741_824, 2)} suffix=" GB" />
         </span>
       )}
-      <span className="pipeline-dot" aria-hidden="true">·</span>
+      {arriving || progress !== null ? <span className="pipeline-dot" aria-hidden="true">·</span> : null}
       <span className="pipeline-metric" title={t('room.bufferAhead')}>
         <NumberFlow value={bufferSec} suffix={` s ${t('room.bufferAheadShort')}`} />
       </span>
