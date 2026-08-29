@@ -960,8 +960,9 @@ describe('scrubbing', () => {
     expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_220_000 })
     expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 1_220_000 }))
     send.mockClear()
-    // The new region publishing bumps mediaVersion; the room wakes up at the
-    // parked target instead of wherever the clock would have walked to.
+    // The new region publishing is not enough on its own: the room wakes up
+    // at the parked target only once the buffer under it is built, at the
+    // opening's thirty seconds.
     rerender(
       <Player
         room={{ ...longRoom, mediaVersion: 1, mediaOffsetMs: 1_219_000 }}
@@ -973,6 +974,14 @@ describe('scrubbing', () => {
         serverOffsetMs={0}
       />,
     )
+    expect(send).not.toHaveBeenCalledWith('play', expect.anything())
+    Object.defineProperty(video, 'buffered', {
+      configurable: true,
+      value: { length: 1, start: () => 0, end: () => 40 },
+    })
+    video.currentTime = 1
+    fireEvent.progress(video)
+    fireEvent.timeUpdate(video)
     expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
   })
 
@@ -1057,22 +1066,27 @@ describe('scrubbing', () => {
     expect(video.pause).toHaveBeenCalled()
   })
 
-  it('does not park when the target is already covered', () => {
+  it('parks a playing room on a warm seek too, until the buffer under the target is built', () => {
+    // Left running, the room plays on from the target with nothing buffered
+    // under it — a stall dressed as a seek. It parks, and resumes on its own
+    // once the buffer is there (see the cold-seek test for the resume).
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()
-    const playing = { playing: true, positionMs: 120_000, rate: 1, serverTimeMs: 100_000 }
+    const playing = { playing: true, positionMs: 120_000, rate: 1, serverTimeMs: Date.now() }
     const { container } = render(
       <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
     )
     const video = videoRef.current!
     Object.defineProperty(video, 'duration', { configurable: true, value: 1_440 })
     fireEvent.durationChange(video)
+    video.currentTime = 120
+    fireEvent.timeUpdate(video)
     const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
     fireEvent.pointerDown(scrubber)
     fireEvent.change(scrubber, { target: { value: '1220' } })
     fireEvent.pointerUp(scrubber)
     expect(send).toHaveBeenCalledWith('seek', { positionMs: 1_220_000 })
-    expect(send).not.toHaveBeenCalledWith('pause', expect.anything())
+    expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 1_220_000 }))
   })
 
   it('catches a paused element up to a room that is already playing, without telling the room', async () => {

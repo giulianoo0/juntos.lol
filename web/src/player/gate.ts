@@ -12,21 +12,25 @@
 export const GATE_READY_BUFFER_MS = 3000
 /** The least the player's gate ever asks for, in seconds: the server's. */
 export const GATE_FLOOR_SEC = GATE_READY_BUFFER_MS / 1000
-/** What the player's gate asks for before a wait ends: enough that the
- * opening plays through an uplink hiccup without dropping straight back into
- * the wait it just left. */
-export const GATE_BASE_SEC = 30
+/** What the room's opening waits for: enough that the first minutes play
+ * through an uplink hiccup without dropping straight back into the wait
+ * they just left. The preparing card stays up for this. */
+export const GATE_OPEN_SEC = 30
+/** What a later wait asks for when nothing argues it down. Four-second
+ * segments: less than a few of them plays straight back into the wait. */
+export const GATE_BASE_SEC = 10
 
 /**
  * The seconds the gate asks for in this exact situation.
  *
- * The base, strictly: a wait ends with the buffer built, not with whatever
- * the host had published when the viewer arrived — the host is producing
- * ahead the whole time, and leaving early on a thin edge means stalling
- * again seconds later. A sealed region and a gated start both take the
- * floor: the first only has downloading left to do, the second was already
- * held by the server for everyone at once, and holding it longer here would
- * start this viewer late.
+ * The opening takes the whole opening figure, strictly: the room starts with
+ * its buffer built, not with whatever the host had published when the
+ * viewer arrived. After that a wait never asks for more than the host has
+ * published: a region still growing has a produced edge, and waiting for ten
+ * seconds past it is waiting for media that does not exist yet. A sealed
+ * region and a gated start both take the floor: the first only has
+ * downloading left to do, the second was already held by the server for
+ * everyone at once.
  */
 export function gateSecondsFor(input: {
   /** Element seconds where the growing region's published media ends; null
@@ -37,7 +41,12 @@ export function gateSecondsFor(input: {
   sealed: boolean
   /** The server is holding a gated start the room will release together. */
   gatedStart: boolean
+  /** This player has not opened yet: the room's first wait since it mounted. */
+  opening: boolean
 }): number {
   if (input.sealed || input.gatedStart) return GATE_FLOOR_SEC
-  return GATE_BASE_SEC
+  if (input.opening) return GATE_OPEN_SEC
+  if (input.producedEdgeSec === null) return GATE_BASE_SEC
+  const available = input.producedEdgeSec - input.currentTime - 0.5
+  return Math.min(GATE_BASE_SEC, Math.max(GATE_FLOOR_SEC, available))
 }

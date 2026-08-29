@@ -841,6 +841,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // pointer handlers, and rebuilding it on every flicker would re-bind them
   // constantly for a value only read at the moment of a press.
   const notReadyRef = useRef(false)
+  // Whether this player has opened once: the opening asks for a larger
+  // buffer than any wait after it, and its wait is the preparing card's.
+  const [opened, setOpened] = useState(false)
   // A seek is one command from the gesture to the frame: while the room is
   // still on its way to the target — the server has not confirmed it, the
   // element has not reached it, or the region under it is still being
@@ -969,16 +972,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     pendingSentServerMs.current = Date.now() + serverOffsetMs
     setPendingSeekSec(seconds)
     send('seek', { positionMs: Math.round(seconds * 1000) })
-    // A jump into media the pipeline has not produced yet parks the room at
-    // the target: left running, the clock walks away while the region is
-    // prepared and the video comes back minutes past where the viewer
-    // pointed. The room resumes on its own when the new region publishes.
-    const coveredEnd = mediaOffsetSec + (Number.isFinite(duration) ? duration : 0)
-    const cold = regions
-      ? !regions.some((r) => regionHolds(r, seconds * 1000))
-      : duration > 0 && (seconds < mediaOffsetSec - 1 || seconds > coveredEnd + 5)
+    // A seek parks a playing room at the target: left running, the clock
+    // walks away while the media there is fetched — minutes, for a region
+    // the pipeline has not produced yet; seconds, for one it has — and the
+    // room comes back past where the viewer pointed, or playing on a buffer
+    // of nothing. It resumes on its own once the target's media is here and
+    // the buffer under it is built.
     resumeAtMsRef.current = null
-    if (cold && syncState?.playing) {
+    if (syncState?.playing) {
       resumeAtMsRef.current = Math.round(seconds * 1000)
       playRequestedRef.current = false
       send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
@@ -986,23 +987,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, t, toast, videoRef])
   if (seekRef) seekRef.current = seek
 
-  // The parked room wakes up when the region it waited on arrives. A play or
-  // pause anyone sends in the meantime takes the room over instead.
-  const lastVersionRef = useRef(room.mediaVersion ?? 0)
-  useEffect(() => {
-    const version = room.mediaVersion ?? 0
-    if (version === lastVersionRef.current) return
-    lastVersionRef.current = version
-    const at = resumeAtMsRef.current
-    if (at === null) return
-    // Only the region it waited on: the pipeline also publishes regions it
-    // fills in the background, and a straggler of the region a seek left,
-    // and neither holds the target. Left parked, the next publish is asked
-    // again.
-    if (regions && !regions.some((r) => regionHolds(r, at))) return
-    resumeAtMsRef.current = null
-    send('play', { positionMs: at, rate: videoRef.current?.playbackRate ?? 1 })
-  }, [regions, room.mediaVersion, send, videoRef])
+  // A play or pause anyone sends while the room is parked takes it over.
   useEffect(() => {
     if (syncState?.playing) resumeAtMsRef.current = null
   }, [syncState?.playing])
@@ -1355,6 +1340,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     currentTime,
     sealed: activeRegion !== null && !activeRegion.growing,
     gatedStart,
+    opening: !opened,
   })
   const bufferGate = !coldWait && holdsForBuffer({
     aheadSec: bufferAheadSec,
@@ -1372,7 +1358,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   useEffect(() => {
     if (!(duration > 0)) return
     onWaitRef.current?.({ secondsLeft: bufferGate ? waitLeft : null, cold: coldWait })
+    // The first open is the opening; every wait after it asks for less.
+    if (!bufferGate && !coldWait) setOpened(true)
   }, [bufferGate, coldWait, duration, waitLeft])
+  // A seek parked the room (see seek); it resumes once the target's media
+  // is here and the buffer under it is built — not when a region merely
+  // publishes, which is also what the pipeline's background fills and the
+  // stragglers of the region a seek left do.
+  useEffect(() => {
+    const at = resumeAtMsRef.current
+    if (at === null) return
+    if (coldWait || bufferGate || !(duration > 0)) return
+    if (regions && !regions.some((r) => regionHolds(r, at))) return
+    resumeAtMsRef.current = null
+    send('play', { positionMs: at, rate: videoRef.current?.playbackRate ?? 1 })
+  }, [bufferGate, coldWait, duration, regions, room.mediaVersion, send, videoRef])
   // The gate opening is the one event that ends its own wait: no canplay or
   // progress necessarily follows a buffer that filled while the element was
   // paused. Declared here, below the gate it reads: a dependency array is

@@ -414,7 +414,7 @@ button.timecode-chapter:hover { color: var(--text); }
 /* The room's opening card sits over the player that is building the buffer it
    reports on — the picture is there behind the glass, arriving — and fades as
    the panel dissolves. */
-.gate-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(6,5,8,.42); backdrop-filter: blur(26px) saturate(120%); -webkit-backdrop-filter: blur(26px) saturate(120%); opacity: 1; transition: opacity var(--t-morph) var(--ease); }
+.gate-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(6,5,8,.42); backdrop-filter: blur(26px) saturate(120%); opacity: 1; transition: opacity var(--t-morph) var(--ease); }
 .gate-overlay.is-leaving { opacity: 0; pointer-events: none; }
 /* Solid on purpose: the glass is the ground around it, not the card. */
 .gate-overlay .gate-panel { background: #141216; }
