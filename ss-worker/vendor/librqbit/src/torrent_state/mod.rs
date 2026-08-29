@@ -618,7 +618,7 @@ impl ManagedTorrent {
 
     /// ss patch: narrows the download to an explicit set of pieces, so a
     /// streaming reader can hold a window around its cursor instead of
-    /// dragging the whole file behind it. Only a live torrent takes this —
+    /// dragging the whole file behind it. Only a live torrent takes this â
     /// a paused one has no scheduler to redirect, and the next read unpauses
     /// it and reapplies the window anyway.
     pub fn update_selected_pieces(&self, pieces: &[u32]) -> anyhow::Result<()> {
@@ -634,16 +634,19 @@ impl ManagedTorrent {
                 selected.set(piece as usize, true);
             }
         }
-        let mut g = self.locked.write();
-        match &mut g.state {
-            ManagedTorrentState::Live(l) => l.update_selected_pieces(selected),
-            _ => Ok(()),
+        // The live state is taken by Arc, never under `locked`: a writer parked
+        // on `locked` makes every re-entrant `locked.read()` in the stream
+        // path wait behind it, and the writer waits on the live lock those
+        // readers hold — the whole runtime stops.
+        match self.live() {
+            Some(l) => l.update_selected_pieces(selected),
+            None => Ok(()),
         }
     }
 
     /// ss patch: gives up pieces this torrent holds but no longer wants, so
     /// the caller may release the storage behind them. Pieces still selected,
-    /// or still in flight, are ignored — passing the whole set of candidates
+    /// or still in flight, are ignored â passing the whole set of candidates
     /// is safe. Returns the pieces actually given up.
     ///
     /// Call this before releasing any storage, never after: while a piece
@@ -662,10 +665,9 @@ impl ManagedTorrent {
                 forget.set(piece as usize, true);
             }
         }
-        let g = self.locked.read();
-        match &g.state {
-            ManagedTorrentState::Live(l) => l.forget_pieces(&forget),
-            _ => Ok(Vec::new()),
+        match self.live() {
+            Some(l) => l.forget_pieces(&forget),
+            None => Ok(Vec::new()),
         }
     }
 

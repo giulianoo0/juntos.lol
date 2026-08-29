@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::Instant;
 
 pub trait RangeStream: tokio::io::AsyncRead + tokio::io::AsyncSeek + Send + Unpin {}
@@ -58,31 +59,31 @@ impl StreamSlot {
     /// The reader is going here; the window follows even if the stream
     /// itself cannot be seeked yet.
     pub fn set_wanted(&self, position: u64) {
-        *self.wanted.lock().unwrap() = Some(position);
+        *self.wanted.lock() = Some(position);
     }
     /// The stream actually moved: whatever was wanted has been honoured.
     pub fn clear_wanted(&self) {
-        *self.wanted.lock().unwrap() = None;
+        *self.wanted.lock() = None;
     }
     /// Where the window should sit: the announced position if one is
     /// pending, the stream's own otherwise.
     pub fn cursor(&self) -> u64 {
-        self.wanted.lock().unwrap().unwrap_or_else(|| self.position())
+        self.wanted.lock().unwrap_or_else(|| self.position())
     }
     pub fn mark_hinted(&self) {
-        *self.hinted_at.lock().unwrap() = Some(Instant::now());
+        *self.hinted_at.lock() = Some(Instant::now());
     }
     pub fn since_hint(&self) -> Option<std::time::Duration> {
-        self.hinted_at.lock().unwrap().map(|at| at.elapsed())
+        self.hinted_at.lock().map(|at| at.elapsed())
     }
     pub fn note_windowed(&self, cursor: u64, startup: bool) {
-        *self.windowed.lock().unwrap() = (cursor, startup);
+        *self.windowed.lock() = (cursor, startup);
     }
     pub fn windowed(&self) -> (u64, bool) {
-        *self.windowed.lock().unwrap()
+        *self.windowed.lock()
     }
     pub fn touch(&self, position: u64) {
-        *self.meta.lock().unwrap() = (position, Instant::now());
+        *self.meta.lock() = (position, Instant::now());
     }
     /// Says the reader is still there without claiming it moved. A hint
     /// arrives precisely when the reader is not reading — it is telling us
@@ -91,12 +92,12 @@ impl StreamSlot {
     /// sweeper retires it, and the window drops the pieces the hint just
     /// asked for.
     pub fn keep_alive(&self) {
-        self.meta.lock().unwrap().1 = Instant::now();
+        self.meta.lock().1 = Instant::now();
     }
     pub fn position(&self) -> u64 {
-        self.meta.lock().unwrap().0
+        self.meta.lock().0
     }
     pub fn idle_for(&self) -> std::time::Duration {
-        self.meta.lock().unwrap().1.elapsed()
+        self.meta.lock().1.elapsed()
     }
 }

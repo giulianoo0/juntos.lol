@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use anyhow::{bail, Context};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
@@ -79,7 +79,7 @@ impl NonceStore {
 
     /// Records a nonce; false when it was already seen.
     pub fn insert(&self, nonce: &str, exp: u64) -> bool {
-        let mut seen = self.seen.lock().unwrap();
+        let mut seen = self.seen.lock();
         let now = now_secs();
         seen.retain(|_, e| *e > now);
         if seen.contains_key(nonce) {

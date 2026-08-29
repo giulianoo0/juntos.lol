@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 /// How long a walk of the data directory stands in for the next one. The
@@ -37,18 +37,18 @@ impl DiskAccountant {
     /// asks far more often than the number moves.
     pub fn real_used(&self) -> u64 {
         {
-            let cached = self.real.lock().unwrap();
+            let cached = self.real.lock();
             if cached.1.is_some_and(|at| at.elapsed() < REAL_TTL) {
                 return cached.0;
             }
         }
         let total = allocated_under(&self.dir);
-        *self.real.lock().unwrap() = (total, Some(Instant::now()));
+        *self.real.lock() = (total, Some(Instant::now()));
         total
     }
 
     pub fn used(&self) -> u64 {
-        self.reserved.lock().unwrap().values().sum()
+        self.reserved.lock().values().sum()
     }
 
     #[allow(dead_code)]
@@ -62,7 +62,7 @@ impl DiskAccountant {
 
     /// Reserves `bytes` for a torrent, replacing any earlier reservation.
     pub fn reserve(&self, infohash: &str, bytes: u64) -> bool {
-        let mut map = self.reserved.lock().unwrap();
+        let mut map = self.reserved.lock();
         let others: u64 = map
             .iter()
             .filter(|(k, _)| k.as_str() != infohash)
@@ -78,7 +78,6 @@ impl DiskAccountant {
     pub fn reserved(&self, infohash: &str) -> u64 {
         self.reserved
             .lock()
-            .unwrap()
             .get(infohash)
             .copied()
             .unwrap_or(0)
@@ -87,12 +86,11 @@ impl DiskAccountant {
     pub fn reserve_unchecked(&self, infohash: &str, bytes: u64) {
         self.reserved
             .lock()
-            .unwrap()
             .insert(infohash.to_string(), bytes);
     }
 
     pub fn release(&self, infohash: &str) {
-        self.reserved.lock().unwrap().remove(infohash);
+        self.reserved.lock().remove(infohash);
     }
 }
 

@@ -5,9 +5,11 @@ mod engine;
 mod http;
 mod metrics;
 mod ticket;
+mod watchdog;
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 use std::time::Duration;
 
 use config::{TlsMode, WorkerConfig};
@@ -47,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         .compact()
         .init();
     let _ = rustls::crypto::ring::default_provider().install_default();
+    watchdog::spawn();
     let cfg = WorkerConfig::load()?;
     std::fs::create_dir_all(&cfg.data_dir)?;
     tracing::info!(data_dir = %cfg.data_dir.display(), public_base = %cfg.public_base(), tls = ?cfg.tls, "starting");

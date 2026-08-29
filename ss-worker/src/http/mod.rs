@@ -9,7 +9,8 @@ pub mod tls;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use parking_lot::{Mutex, RwLock};
 use std::time::Duration;
 
 use axum::extract::{Path, State};
@@ -45,18 +46,17 @@ impl AppState {
         let key = self
             .server_key
             .read()
-            .unwrap()
             .ok_or_else(|| anyhow::anyhow!("worker not enrolled"))?;
-        let worker_id = self.worker_id.read().unwrap().clone();
+        let worker_id = self.worker_id.read().clone();
         let ticket = ticket::verify(raw, &key, &worker_id)?;
-        if self.revoked.lock().unwrap().contains_key(&ticket.jti) {
+        if self.revoked.lock().contains_key(&ticket.jti) {
             anyhow::bail!("ticket revoked");
         }
         Ok(ticket)
     }
 
     pub fn revoke(&self, jti: &str, exp: u64) {
-        let mut revoked = self.revoked.lock().unwrap();
+        let mut revoked = self.revoked.lock();
         let now = ticket::now_secs();
         revoked.retain(|_, e| *e > now);
         revoked.insert(jti.to_string(), exp);
@@ -184,7 +184,7 @@ async fn probe(
         .unwrap_or(2 * 1024 * 1024)
         .min(PROBE_CAP);
     {
-        let mut spent = state.probe_spent.lock().unwrap();
+        let mut spent = state.probe_spent.lock();
         if !spend_probe_budget(&mut spent, &ticket.jti, ticket.exp, bytes) {
             return fail(
                 StatusCode::TOO_MANY_REQUESTS,
@@ -289,7 +289,7 @@ pub async fn serve_challenges(
             get(
                 |Path(token): Path<String>,
                  State(map): State<Arc<Mutex<HashMap<String, String>>>>| async move {
-                    match map.lock().unwrap().get(&token) {
+                    match map.lock().get(&token) {
                         Some(auth) => (StatusCode::OK, auth.clone()).into_response(),
                         None => StatusCode::NOT_FOUND.into_response(),
                     }

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use super::floors::Floors;
@@ -72,13 +73,13 @@ impl Entry {
     /// how full the volume is.
     fn disk_bytes(&self) -> u64 {
         {
-            let cached = self.disk.lock().unwrap();
+            let cached = self.disk.lock();
             if cached.1.is_some_and(|at| at.elapsed() < DISK_TTL) {
                 return cached.0;
             }
         }
         let total = super::disk::allocated_under(&self.handle.output_folder());
-        *self.disk.lock().unwrap() = (total, Some(Instant::now()));
+        *self.disk.lock() = (total, Some(Instant::now()));
         total
     }
 

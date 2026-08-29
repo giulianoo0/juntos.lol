@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 /// A token bucket over the data plane's egress. The pump asks before every
@@ -26,7 +26,7 @@ impl Throttle {
         let need = bytes as f64;
         loop {
             let wait = {
-                let mut state = self.state.lock().unwrap();
+                let mut state = self.state.lock();
                 let (ref mut tokens, ref mut last) = *state;
                 let now = Instant::now();
                 *tokens = (*tokens + now.duration_since(*last).as_secs_f64() * self.cap_bps).min(self.cap_bps / 4.0);

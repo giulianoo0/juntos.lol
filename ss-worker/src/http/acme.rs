@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
@@ -159,11 +160,11 @@ impl Acme {
             let mut challenge = authz.challenge(ChallengeType::Http01).context("no http-01 challenge offered")?;
             let token = challenge.token.clone();
             let key_auth = challenge.key_authorization().as_str().to_string();
-            self.challenges.lock().unwrap().insert(token.clone(), key_auth);
+            self.challenges.lock().insert(token.clone(), key_auth);
             challenge.set_ready().await?;
         }
         let status = order.poll_ready(&RetryPolicy::default()).await?;
-        self.challenges.lock().unwrap().clear();
+        self.challenges.lock().clear();
         if status != OrderStatus::Ready {
             bail!("order ended {status:?}");
         }
@@ -223,11 +224,11 @@ impl Acme {
             tokio::time::sleep(wait).await;
             match self.issue().await {
                 Ok(()) => {
-                    *self.last_result.lock().unwrap() = Some("ok".into());
+                    *self.last_result.lock() = Some("ok".into());
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "certificate issuance failed");
-                    *self.last_result.lock().unwrap() = Some(format!("error: {e:#}"));
+                    *self.last_result.lock() = Some(format!("error: {e:#}"));
                     tokio::time::sleep(Duration::from_secs(if self.slot.ready(0) { 3600 } else { 300 })).await;
                 }
             }

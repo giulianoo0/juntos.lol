@@ -34,14 +34,14 @@ pub struct Control {
     app: Arc<AppState>,
     slot: Option<Arc<CertSlot>>,
     acme_result: Option<Arc<crate::http::acme::Acme>>,
-    identity: std::sync::Mutex<Identity>,
+    identity: parking_lot::Mutex<Identity>,
     nonces: NonceStore,
     drain: Arc<Notify>,
     started: Instant,
     // Identities minted since the last link the server kept alive.
     reenrolls: std::sync::atomic::AtomicU32,
     // For the egress figure in the heartbeat: bytes at the last beat.
-    egress_mark: std::sync::Mutex<(u64, Instant)>,
+    egress_mark: parking_lot::Mutex<(u64, Instant)>,
 }
 
 const HEARTBEAT: Duration = Duration::from_secs(10);
@@ -115,8 +115,8 @@ impl Control {
         drain: Arc<Notify>,
     ) -> anyhow::Result<Self> {
         let identity = Identity::load_or_create(&cfg.data_dir.join("identity.json"))?;
-        *app.worker_id.write().unwrap() = identity.worker_id.clone();
-        *app.server_key.write().unwrap() = identity.server_key()?;
+        *app.worker_id.write() = identity.worker_id.clone();
+        *app.server_key.write() = identity.server_key()?;
         let nonces = NonceStore::open(cfg.data_dir.join("nonces.json"));
         Ok(Self {
             cfg,
@@ -124,17 +124,17 @@ impl Control {
             app,
             slot,
             acme_result: acme,
-            identity: std::sync::Mutex::new(identity),
+            identity: parking_lot::Mutex::new(identity),
             nonces,
             drain,
             started: Instant::now(),
             reenrolls: std::sync::atomic::AtomicU32::new(0),
-            egress_mark: std::sync::Mutex::new((0, Instant::now())),
+            egress_mark: parking_lot::Mutex::new((0, Instant::now())),
         })
     }
 
     fn hello(&self) -> anyhow::Result<String> {
-        let id = self.identity.lock().unwrap();
+        let id = self.identity.lock();
         let ts = crate::ticket::now_secs();
         let pubkey = id.pubkey_b64()?;
         let public_base = self.cfg.public_base();
@@ -161,7 +161,7 @@ impl Control {
         let cert = self.slot.as_ref().map(|s| {
             json!({
                 "notAfter": s.not_after(),
-                "lastResult": self.acme_result.as_ref().and_then(|a| a.last_result.lock().unwrap().clone()),
+                "lastResult": self.acme_result.as_ref().and_then(|a| a.last_result.lock().clone()),
             })
         });
         let ready = match &self.slot {
@@ -170,7 +170,7 @@ impl Control {
         };
         let used_bps = {
             let total = self.app.metrics.bytes_served.load(std::sync::atomic::Ordering::Relaxed);
-            let mut mark = self.egress_mark.lock().unwrap();
+            let mut mark = self.egress_mark.lock();
             let elapsed = mark.1.elapsed().as_secs_f64().max(0.5);
             let delta = total.saturating_sub(mark.0);
             *mark = (total, Instant::now());
@@ -200,15 +200,15 @@ impl Control {
         let worker_id = msg["workerId"].as_str().context("welcome without workerId")?;
         let server_pubkey = msg["serverPubkey"].as_str().context("welcome without serverPubkey")?;
         let key = identity::parse_pubkey(server_pubkey)?;
-        let mut id = self.identity.lock().unwrap();
+        let mut id = self.identity.lock();
         let changed = id.worker_id != worker_id || id.server_pubkey.as_deref() != Some(server_pubkey);
         id.worker_id = worker_id.to_string();
         id.server_pubkey = Some(server_pubkey.to_string());
         if changed {
             id.save(&self.cfg.data_dir.join("identity.json"))?;
         }
-        *self.app.worker_id.write().unwrap() = worker_id.to_string();
-        *self.app.server_key.write().unwrap() = Some(key);
+        *self.app.worker_id.write() = worker_id.to_string();
+        *self.app.server_key.write() = Some(key);
         tracing::info!(worker_id, "enrolled with server");
         Ok(())
     }
@@ -279,9 +279,9 @@ impl Control {
                 return;
             }
         };
-        let key = self.app.server_key.read().unwrap();
+        let key = self.app.server_key.read();
         let Some(key) = key.as_ref() else { return };
-        let worker_id = self.app.worker_id.read().unwrap().clone();
+        let worker_id = self.app.worker_id.read().clone();
         let job = match envelope::verify(&envelope, key, &worker_id, &self.nonces) {
             Ok(j) => j,
             Err(e) => {
@@ -318,10 +318,10 @@ impl Control {
                 let path = self.cfg.data_dir.join("identity.json");
                 match Identity::fresh(&path) {
                     Ok(fresh) => {
-                        let stale = std::mem::replace(&mut *self.identity.lock().unwrap(), fresh);
+                        let stale = std::mem::replace(&mut *self.identity.lock(), fresh);
                         self.reenrolls.store(spent + 1, std::sync::atomic::Ordering::Relaxed);
-                        self.app.worker_id.write().unwrap().clear();
-                        *self.app.server_key.write().unwrap() = None;
+                        self.app.worker_id.write().clear();
+                        *self.app.server_key.write() = None;
                         tracing::info!(
                             previous = %stale.worker_id,
                             attempt = spent + 1,

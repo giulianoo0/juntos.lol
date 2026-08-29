@@ -9,7 +9,8 @@ mod window;
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context};
@@ -368,7 +369,7 @@ impl Engine {
     }
 
     pub fn snapshot(&self) -> EngineSnapshot {
-        let map = self.torrents.lock().unwrap();
+        let map = self.torrents.lock();
         let torrents = map.iter().map(|(id, e)| e.digest(id)).collect::<Vec<_>>();
         let leases = map.values().map(|e| e.leases.len()).sum();
         EngineSnapshot {
@@ -429,7 +430,7 @@ impl Engine {
                 // attaches to that handle, and the map learns it.
                 if let Some(handle) = other.into_handle() {
                     if self.attach_existing(&infohash, lease_id).is_none() {
-                        let mut map = self.torrents.lock().unwrap();
+                        let mut map = self.torrents.lock();
                         let entry = map
                             .entry(infohash.clone())
                             .or_insert_with(|| Entry::new(handle.clone(), Phase::Ready, 0));
@@ -468,7 +469,7 @@ impl Engine {
             return Err(Rejection::NoMetadata);
         }
         let info = admission::lease_info(&handle).map_err(Rejection::Internal)?;
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         let entry = map
             .entry(infohash.clone())
             .or_insert_with(|| Entry::new(handle.clone(), Phase::Ready, 0));
@@ -477,7 +478,7 @@ impl Engine {
     }
 
     fn attach_existing(&self, infohash: &str, lease_id: &str) -> Option<Handle> {
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         let entry = map.get_mut(infohash)?;
         entry.take_lease(lease_id);
         Some(entry.handle.clone())
@@ -491,7 +492,6 @@ impl Engine {
         let previously = self
             .torrents
             .lock()
-            .unwrap()
             .get(&infohash)
             .map(|e| e.ever_selected.clone())
             .unwrap_or_default();
@@ -535,7 +535,7 @@ impl Engine {
             return Err(Rejection::Internal(anyhow!(e)));
         }
         let _ = self.session.unpause(&handle).await;
-        if let Some(entry) = self.torrents.lock().unwrap().get_mut(&infohash) {
+        if let Some(entry) = self.torrents.lock().get_mut(&infohash) {
             entry.selected_bytes = selected_bytes;
             entry.selected_file = Some(file_index);
             entry.ever_selected = ever;
@@ -553,7 +553,7 @@ impl Engine {
     /// reload or a failover comes back to warm pieces.
     pub async fn release(&self, infohash: &str, lease_id: &str) {
         let infohash = infohash.to_ascii_lowercase();
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         if let Some(entry) = map.get_mut(&infohash) {
             entry.leases.remove(lease_id);
             entry.touch();
@@ -624,7 +624,6 @@ impl Engine {
         let gen_floor = self
             .torrents
             .lock()
-            .unwrap()
             .get_mut(infohash)
             .map(|e| e.floors.of(reader))
             .context("unknown torrent")?;
@@ -696,7 +695,7 @@ impl Engine {
     }
 
     fn existing_slot(&self, infohash: &str, index: usize, prio: Prio) -> Option<Arc<slots::StreamSlot>> {
-        let map = self.torrents.lock().unwrap();
+        let map = self.torrents.lock();
         map.get(infohash).and_then(|e| e.slots.get(&(index, prio)).cloned())
     }
 
@@ -710,7 +709,7 @@ impl Engine {
     ) -> anyhow::Result<Arc<slots::StreamSlot>> {
         let key = (index, prio);
         {
-            let map = self.torrents.lock().unwrap();
+            let map = self.torrents.lock();
             let entry = map.get(infohash).context("unknown torrent")?;
             if let Some(slot) = entry.slots.get(&key) {
                 return Ok(slot.clone());
@@ -721,7 +720,7 @@ impl Engine {
             .context("stream open timed out")?
             .context("stream")?;
         let slot = Arc::new(slots::StreamSlot::new(Box::new(stream), start));
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         let entry = map.get_mut(infohash).context("unknown torrent")?;
         Ok(entry.slots.entry(key).or_insert(slot).clone())
     }
@@ -743,7 +742,7 @@ impl Engine {
             .slot(infohash, &handle, index, Prio::Playhead, offset)
             .await?;
         {
-            let mut map = self.torrents.lock().unwrap();
+            let mut map = self.torrents.lock();
             if let Some(entry) = map.get_mut(infohash) {
                 entry.floors.of(reader).fetch_max(gen, Ordering::Relaxed);
             }
@@ -805,7 +804,7 @@ impl Engine {
             return;
         };
         let (index, cursors) = {
-            let map = self.torrents.lock().unwrap();
+            let map = self.torrents.lock();
             let Some(entry) = map.get(infohash) else {
                 return;
             };
@@ -949,7 +948,7 @@ impl Engine {
     /// stealing focus from the live one — after a seek, the abandoned
     /// region's — so it is dropped; the next read simply parks a new one.
     pub fn drop_stale_slots(&self, idle: Duration) {
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         for entry in map.values_mut() {
             entry
                 .slots
@@ -959,7 +958,7 @@ impl Engine {
 
     async fn evict_idle_until_room(&self, need: u64) {
         let candidates: Vec<(String, Handle)> = {
-            let map = self.torrents.lock().unwrap();
+            let map = self.torrents.lock();
             let mut idle: Vec<_> = map
                 .iter()
                 .filter(|(_, e)| e.leases.is_empty())
@@ -978,7 +977,7 @@ impl Engine {
 
     pub(crate) async fn reap(&self, infohash: &str, handle: &Handle) {
         let removed = {
-            let mut map = self.torrents.lock().unwrap();
+            let mut map = self.torrents.lock();
             match map.get(infohash) {
                 Some(e) if e.leases.is_empty() => map.remove(infohash).is_some(),
                 _ => false,
@@ -997,7 +996,7 @@ impl Engine {
     /// it could use, so anything left is a disk that only grows.
     pub async fn reap_all(&self) {
         let all: Vec<(String, Handle)> = {
-            let mut map = self.torrents.lock().unwrap();
+            let mut map = self.torrents.lock();
             map.drain()
                 .map(|(id, entry)| (id, entry.handle.clone()))
                 .collect()
@@ -1017,7 +1016,7 @@ impl Engine {
     pub(crate) async fn pause_if_idle(&self, infohash: &str, handle: &Handle) {
         let _ = self.session.pause(handle).await;
         let still_idle = {
-            let mut map = self.torrents.lock().unwrap();
+            let mut map = self.torrents.lock();
             match map.get_mut(infohash) {
                 Some(entry) if entry.leases.is_empty() => {
                     entry.phase = Phase::Idle;
@@ -1038,7 +1037,7 @@ impl Engine {
     /// fail fast instead of waiting on pieces that will never come.
     pub(crate) async fn retry_failed(&self) {
         let failed: Vec<(String, Handle, bool)> = {
-            let map = self.torrents.lock().unwrap();
+            let map = self.torrents.lock();
             map.iter()
                 .filter(|(_, e)| {
                     e.handle
@@ -1056,7 +1055,7 @@ impl Engine {
                 _ => String::new(),
             });
             tracing::warn!(infohash = %id, error, "torrent failed; restarting once");
-            if let Some(entry) = self.torrents.lock().unwrap().get_mut(&id) {
+            if let Some(entry) = self.torrents.lock().get_mut(&id) {
                 entry.retried = true;
             }
             let _ = self.session.unpause(&handle).await;
@@ -1064,7 +1063,7 @@ impl Engine {
     }
 
     pub(crate) fn idle_candidates(&self) -> Vec<(String, Handle, Phase, Duration)> {
-        let map = self.torrents.lock().unwrap();
+        let map = self.torrents.lock();
         map.iter()
             .filter(|(_, e)| e.leases.is_empty())
             .map(|(id, e)| {
@@ -1080,7 +1079,7 @@ impl Engine {
 
     /// Torrents with a file picked, whose piece window is worth refreshing.
     pub(crate) fn serving_infohashes(&self) -> Vec<String> {
-        let map = self.torrents.lock().unwrap();
+        let map = self.torrents.lock();
         map.iter()
             .filter(|(_, e)| e.selected_file.is_some())
             .map(|(id, _)| id.clone())
@@ -1088,7 +1087,7 @@ impl Engine {
     }
 
     pub(crate) fn set_phase(&self, infohash: &str, phase: Phase) {
-        if let Some(entry) = self.torrents.lock().unwrap().get_mut(infohash) {
+        if let Some(entry) = self.torrents.lock().get_mut(infohash) {
             entry.phase = phase;
             entry.slots.clear();
             entry.floors.clear();
@@ -1098,13 +1097,12 @@ impl Engine {
     pub(crate) fn lease_count(&self) -> usize {
         self.torrents
             .lock()
-            .unwrap()
             .values()
             .map(|e| e.leases.len())
             .sum()
     }
     pub(crate) fn torrent_count(&self) -> usize {
-        self.torrents.lock().unwrap().len()
+        self.torrents.lock().len()
     }
     pub(crate) fn max_torrents(&self) -> usize {
         self.cfg.max_torrents
@@ -1114,7 +1112,7 @@ impl Engine {
     }
 
     pub fn expire_stale_leases(&self, ttl: Duration) {
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         for entry in map.values_mut() {
             let before = entry.leases.len();
             entry.leases.retain(|_, at| at.elapsed() < ttl);
@@ -1125,7 +1123,7 @@ impl Engine {
     }
 
     pub fn renew_lease(&self, infohash: &str, lease_id: &str) -> bool {
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         match map.get_mut(&infohash.to_ascii_lowercase()) {
             Some(entry) if entry.leases.contains_key(lease_id) => {
                 entry.leases.insert(lease_id.to_string(), Instant::now());
@@ -1137,7 +1135,7 @@ impl Engine {
     }
 
     fn touch(&self, infohash: &str) -> Option<Handle> {
-        let mut map = self.torrents.lock().unwrap();
+        let mut map = self.torrents.lock();
         let entry = map.get_mut(infohash)?;
         entry.touch();
         Some(entry.handle.clone())
@@ -1146,7 +1144,6 @@ impl Engine {
     fn handle(&self, infohash: &str) -> Option<Handle> {
         self.torrents
             .lock()
-            .unwrap()
             .get(infohash)
             .map(|e| e.handle.clone())
     }
