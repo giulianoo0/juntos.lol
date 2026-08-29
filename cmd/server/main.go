@@ -124,6 +124,7 @@ func main() {
 		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{
 			NotifyStatus:       hub.NotifyStatus,
 			NotifyRoomUpdated:  hub.NotifyRoomUpdated,
+			NotifyRoomMedia:    hub.NotifyRoomMedia,
 			NotifyRoomProgress: hub.NotifyRoomProgress,
 		}),
 		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, CancelMedia: torrents.CancelRoom}),

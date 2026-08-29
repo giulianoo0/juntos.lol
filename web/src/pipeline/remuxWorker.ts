@@ -8,6 +8,7 @@ import { PlanFailedError, runRemuxJob, UnsupportedMediaError, type RemuxJob } fr
 import { RoomMovedOnError, type ClientRemuxHandle } from './clientMedia'
 import { SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, readFailureCode } from '../uploadErrors'
 import { ReadAbortedError } from './rangeRead'
+import type { SeekTrace } from './seekTrace'
 
 export type WorkerToPage =
   | { type: 'progress'; pct: number }
@@ -16,6 +17,7 @@ export type WorkerToPage =
   | { type: 'moved-on' }
   | { type: 'failed'; code: string; detail?: string }
   | { type: 'trouble'; detail: string }
+  | { type: 'trace'; trace: SeekTrace }
 
 export type PageToWorker =
   | { type: 'start'; job: RemuxJob }
@@ -57,6 +59,7 @@ self.onmessage = (event: MessageEvent<PageToWorker>) => {
   if (message.type !== 'start') return
   void runRemuxJob(message.job, {
     onProgress: (pct) => post({ type: 'progress', pct }),
+    onTrace: (trace) => post({ type: 'trace', trace }),
     onHandle: (next) => {
       handle = next
       if (pendingFollowMs !== null) next.follow(pendingFollowMs)

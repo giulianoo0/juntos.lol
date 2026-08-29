@@ -6,6 +6,7 @@
  * never runs ffmpeg. A source this browser cannot remux is a room that does
  * not open, and the host is told why.
  */
+import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
 import { mockCreateRoom, mocksEnabled } from './mocks'
 import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
@@ -400,9 +401,12 @@ export function startRoomUpload(
     const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
     ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
     const settle = (fn: () => void) => { fn(); worker.terminate() }
-    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string; detail?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string; detail?: string; trace?: SeekTrace }>) => {
       const message = event.data
       if (message.type === 'trouble') console.error('[remux-worker]', message.detail)
+      // The worker's own console is easy to never look at; the page's is
+      // what a person, or a rig, reads.
+      else if (message.type === 'trace' && message.trace) console.info(formatSeekTrace('host', message.trace))
       else if (message.type === 'progress') onProgressPct(message.pct ?? 0)
       else if (message.type === 'handle' && ownHandle) remuxHandles.set(roomID, ownHandle)
       else if (message.type === 'done') settle(() => finish(null))

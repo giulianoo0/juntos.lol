@@ -1,18 +1,20 @@
+import { GATE_READY_BUFFER_MS } from './gate'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { ChatMessage, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, TitleRequest } from '../types'
+import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, TitleRequest } from '../types'
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
 
 // Presence is a rolling log: the room header shows the newest entries and the
 // chat keeps them inline, so an unbounded list would only grow memory.
 const PRESENCE_LIMIT = 50
-// Mirrors the server's GateReadyBufferMs. Only used to round a buffer that
-// runs to the very end of the media up to "enough": the last seconds of a
-// video can never hold 3s of lookahead, and must not stall a gated start.
-const GATE_READY_BUFFER_MS = 3000
+// The server's GateReadyBufferMs (see ./gate). Only used to round a buffer
+// that runs to the very end of the media up to "enough": the last seconds of
+// a video can never hold 3s of lookahead, and must not stall a gated start.
 // Readiness cadence while the room is waiting on a gated start. The 5s
 // heartbeat carries the steady reports; this only exists during the wait.
 const WAITING_REPORT_MS = 1000
+// How long a buffer event waits for the next before the report goes.
+const READINESS_DEBOUNCE_MS = 100
 // Reconnect backoff. A dropped socket used to be permanent: the tab went mute,
 // every command was swallowed, and the room played on without the person.
 const RECONNECT_MIN_MS = 500
@@ -35,6 +37,7 @@ interface Outbound {
   targetMs?: number
   deadlineMs?: number
   gating?: boolean
+  media?: MediaSnapshot
   title?: {
     metaId: string
     metaType: 'movie' | 'series'
@@ -56,6 +59,10 @@ interface SyncResult {
   presence: PresenceEvent[]
   roomStatus: string
   roomVersion: number
+  /** What the last publish moved, for the page to apply in place. */
+  mediaPatch: MediaSnapshot | null
+  /** Fetch the room again: a patch the page could not apply. */
+  refreshRoom: () => void
   connected: boolean
   buffering: boolean
   /**
@@ -77,6 +84,9 @@ interface SyncResult {
    * to the same instant rather than to their own arrival.
    */
   stillThereDeadlineMs: number | null
+  /** Whether this client left the room on purpose. */
+  left: boolean
+  leave: () => void
   // Reports whether the frame actually left. A command written into a closed
   // socket used to vanish silently, which is exactly what "I pressed pause
   // and nothing happened" looks like from the outside.
@@ -134,6 +144,9 @@ export function useSync(
   // Bumps on every roomStatus message, even repeated ones, so consumers can
   // refetch tracks without interpreting a subtitle update as media readiness.
   const [roomVersion, setRoomVersion] = useState(0)
+  // The last publish's media, applied in place by the page; a bare update
+  // still bumps roomVersion and costs a fetch.
+  const [mediaPatch, setMediaPatch] = useState<MediaSnapshot | null>(null)
   const [connected, setConnected] = useState(false)
   const [buffering, setBuffering] = useState(false)
   const [serverOffsetMs, setServerOffsetMs] = useState(0)
@@ -146,6 +159,9 @@ export function useSync(
   const [lastError, setLastError] = useState('')
   const [errorSeq, setErrorSeq] = useState(0)
   const [stillThereDeadlineMs, setStillThereDeadlineMs] = useState<number | null>(null)
+  // Left on purpose: the socket is closed and stays closed. A reconnect out
+  // of a room the person was just taken out of would put them back in it.
+  const [left, setLeft] = useState(false)
   const titleSeqRef = useRef(0)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
@@ -362,7 +378,8 @@ export function useSync(
             setRoomVersion((version) => version + 1)
             break
           case 'roomUpdated':
-            setRoomVersion((version) => version + 1)
+            if (message.media) setMediaPatch(message.media)
+            else setRoomVersion((version) => version + 1)
             break
           case 'titleRequest': {
             const title = message.title
@@ -417,6 +434,7 @@ export function useSync(
       })
     }, 5000)
 
+    if (left) return
     connect()
 
     return () => {
@@ -430,7 +448,13 @@ export function useSync(
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [nickname, roomId, send, sendReadiness, videoRef])
+  }, [nickname, roomId, send, sendReadiness, videoRef, left])
+  /** Leaves the room for good: the socket closes and nothing reopens it. */
+  const leave = useCallback(() => {
+    setLeft(true)
+    setStillThereDeadlineMs(null)
+    setConnected(false)
+  }, [])
 
   // The waiting window is exactly when readiness matters, so reports tighten
   // to ~1s for its duration — and only for its duration.
@@ -439,8 +463,26 @@ export function useSync(
     if (!waitingForStart) return
     sendReadiness()
     const reporter = window.setInterval(sendReadiness, WAITING_REPORT_MS)
-    return () => window.clearInterval(reporter)
-  }, [sendReadiness, waitingForStart])
+    // The interval is the floor. The element says when its buffer moved, and
+    // the report that releases the room should not wait for the next tick:
+    // with three viewers the gate opens on the slowest, and a second lost
+    // per report is a second lost for everyone.
+    let soon: number | null = null
+    const reportSoon = () => {
+      if (soon !== null) return
+      soon = window.setTimeout(() => { soon = null; sendReadiness() }, READINESS_DEBOUNCE_MS)
+    }
+    const media = videoRef.current
+    const events = ['progress', 'canplay', 'loadeddata', 'seeked'] as const
+    for (const name of events) media?.addEventListener(name, reportSoon)
+    return () => {
+      window.clearInterval(reporter)
+      if (soon !== null) window.clearTimeout(soon)
+      for (const name of events) media?.removeEventListener(name, reportSoon)
+    }
+  }, [sendReadiness, waitingForStart, videoRef])
+  /** Asks the page to fetch the room again: for a patch it cannot apply. */
+  const refreshRoom = useCallback(() => setRoomVersion((version) => version + 1), [])
 
   return {
     state,
@@ -452,6 +494,8 @@ export function useSync(
     presence,
     roomStatus,
     roomVersion,
+    mediaPatch,
+    refreshRoom,
     connected,
     buffering,
     autoplayBlocked,
@@ -463,6 +507,8 @@ export function useSync(
     lastError,
     errorSeq,
     stillThereDeadlineMs,
+    left,
+    leave,
     send,
     reportBuffering,
   }

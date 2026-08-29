@@ -22,7 +22,7 @@ const testPlaylist = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nstream_0.m3u8
 
 func mediaEngine(store *room.Store) *gin.Engine {
 	e := gin.New()
-	RegisterMediaRoutes(e, store)
+	RegisterMediaRoutes(e, store, newPlaylistWaiter())
 	return e
 }
 

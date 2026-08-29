@@ -287,15 +287,26 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
     ).then(onClose)
   }, [sheet, onClose])
 
+  // The panel takes focus once, when it opens. Not on every render: the
+  // close callback comes from the page and is a new function on each of its
+  // renders, and an effect keyed on it re-focused this panel on every
+  // keystroke typed into the nickname dialog stacked above it — the dialog
+  // then pulled focus back with the whole name selected, and the next key
+  // replaced it.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true })
+  }, [])
+
   // Escape closes; the page behind must not scroll while the panel is up.
+  const requestCloseRef = useRef(requestClose)
+  requestCloseRef.current = requestClose
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    panelRef.current?.focus({ preventScroll: true })
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        requestClose()
+        requestCloseRef.current()
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -303,7 +314,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
       document.body.style.overflow = previousOverflow
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [requestClose])
+  }, [])
 
   const resolutionOptions = useMemo(
     () => [...new Set((streams ?? []).map((stream) => stream.resolution))],

@@ -283,6 +283,13 @@ func (h *Hub) NotifyRoomUpdated(roomID string) {
 	h.notify(roomID, Outbound{Type: "roomUpdated"})
 }
 
+// NotifyRoomMedia is a roomUpdated that says what moved: the regions, the
+// offset, the version. A viewer waiting on a cold seek applies it in place,
+// one round trip sooner than refetching the room.
+func (h *Hub) NotifyRoomMedia(roomID string, media room.MediaSnapshot) {
+	h.notify(roomID, Outbound{Type: "roomUpdated", Media: &media})
+}
+
 // How often a room's progress alone may wake every viewer. Each wake costs
 // them a full room refetch, and a preparo publishes progress every couple of
 // seconds for as long as it runs.

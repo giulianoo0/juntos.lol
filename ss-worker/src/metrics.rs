@@ -14,6 +14,7 @@ pub fn render(state: &AppState, slot: Option<&CertSlot>) -> String {
     let _ = writeln!(out, "# TYPE ssw_bytes_served_total counter\nssw_bytes_served_total {}", m.bytes_served.load(Ordering::Relaxed));
     let _ = writeln!(out, "# TYPE ssw_range_stalls_total counter\nssw_range_stalls_total {}", m.stalls.load(Ordering::Relaxed));
     let _ = writeln!(out, "# TYPE ssw_first_byte_timeouts_total counter\nssw_first_byte_timeouts_total {}", m.first_byte_timeouts.load(Ordering::Relaxed));
+    let _ = writeln!(out, "# TYPE ssw_reads_superseded_total counter\nssw_reads_superseded_total {}", m.superseded.load(Ordering::Relaxed));
     let _ = writeln!(out, "# TYPE ssw_in_flight gauge\nssw_in_flight {}", m.in_flight.load(Ordering::Relaxed));
     let _ = writeln!(out, "# TYPE ssw_disk_used_bytes gauge\nssw_disk_used_bytes {}", snap.disk_used);
     let _ = writeln!(out, "# TYPE ssw_disk_quota_bytes gauge\nssw_disk_quota_bytes {}", snap.disk_quota);

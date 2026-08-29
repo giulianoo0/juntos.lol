@@ -123,6 +123,26 @@ type Room struct {
 	ExpiresAt           time.Time `json:"expiresAt"`
 }
 
+// MediaSnapshot is the part of a room a publish can change, carried inside
+// the update that announces it so a viewer applies it in place instead of
+// fetching the whole room again.
+type MediaSnapshot struct {
+	MediaGeneration int           `json:"mediaGeneration"`
+	MediaVersion    int           `json:"mediaVersion"`
+	MediaOffsetMs   int64         `json:"mediaOffsetMs"`
+	MediaRegions    []MediaRegion `json:"mediaRegions"`
+}
+
+// Snapshot is the room's media, as a publish leaves it.
+func (r *Room) Snapshot() MediaSnapshot {
+	return MediaSnapshot{
+		MediaGeneration: r.MediaGeneration,
+		MediaVersion:    r.MediaVersion,
+		MediaOffsetMs:   r.MediaOffsetMs,
+		MediaRegions:    r.MediaRegions,
+	}
+}
+
 // MediaRegion is one contiguous stretch of produced media, in room time.
 type MediaRegion struct {
 	N          int   `json:"n"`

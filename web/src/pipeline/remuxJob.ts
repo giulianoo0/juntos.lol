@@ -18,6 +18,7 @@ import { fileInput, rangeInput, torrentInput, workerInput, type MediaInput } fro
 export * from './remuxTypes'
 import type { RemuxJob, RemuxSideFile, RemuxSource } from './remuxTypes'
 import { ReadAbortedError } from './rangeRead'
+import type { SeekTrace } from './seekTrace'
 import { lastPlanRefusal, planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
 // Headroom under the server's per-room track cap for the tracks muxed into
@@ -32,7 +33,17 @@ const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
 export interface RemuxJobCallbacks {
   onProgress?: (pct: number) => void
   onHandle?: (handle: ClientRemuxHandle) => void
+  onTrace?: (trace: SeekTrace) => void
 }
+
+// The longest the subtitle scan waits after a seek for the region to warm
+// before it asks the origin for its own bytes again. A torrent's swarm
+// gives every open stream its own window: while the remux is fetching the
+// first pieces of a fresh region, a scan slice of 8 MiB competes with them.
+// The scan's position has nothing to do with the seek; it waits until the
+// new region's first segment is in the bucket, and this long at the most,
+// so a region that never warms cannot starve it forever.
+const SCAN_HOLDOFF_MAX_MS = 45_000
 
 /** Thrown when the planner looked at the source and declined it. */
 export class UnsupportedMediaError extends Error {
@@ -79,8 +90,8 @@ function buildInput(source: RemuxSource, roomID: string): MediaInput {
  * thrown raw — the caller classifies them, because the page and the worker
  * report them through different seams.
  */
-export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: RemuxJobCallbacks): Promise<void> {
-  const input = buildInput(job.source, job.roomID)
+export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace }: RemuxJobCallbacks): Promise<void> {
+  const input = coldAware(buildInput(job.source, job.roomID))
   let plan: Awaited<ReturnType<typeof planClientRemux>>
   try {
     plan = await planClientRemux(input)
@@ -100,6 +111,8 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: Remux
       plan,
       onProgress,
       onHandle,
+      onTrace,
+      onRegionWarm: input.warm,
     })
   } catch (error) {
     // A failed run takes the subtitle scan down with it: the room is not
@@ -111,12 +124,32 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle }: Remux
   void subtitles.finally(() => input.dispose())
 }
 
+/** An input that knows whether the origin is busy with a fresh region. */
+interface ColdAwareInput extends MediaInput {
+  /** Whether the region being produced has nothing in the bucket yet — a
+   * seek just happened, or the job just began, which is the same to the
+   * origin — and for how long that has been so. */
+  cold(): { cold: boolean; forMs: number }
+  /** The region's first segment landed: the origin has room for others. */
+  warm(): void
+}
+
+function coldAware(input: MediaInput): ColdAwareInput {
+  let coldSince: number | null = Date.now()
+  const abortReads = input.abortReads.bind(input)
+  return Object.assign(input, {
+    abortReads: () => { coldSince = Date.now(); abortReads() },
+    cold: () => ({ cold: coldSince !== null, forMs: coldSince === null ? 0 : Date.now() - coldSince }),
+    warm: () => { coldSince = null },
+  })
+}
+
 // Subtitles arrive from two places: muxed into the video, found by a
 // sequential pass, and as sibling files in the torrent, read whole. Both
 // publish as they arrive, and the collector holds the final "complete" until
 // every registered source has delivered.
 async function publishSubtitles(
-  input: MediaInput,
+  input: ColdAwareInput,
   sideFiles: RemuxSideFile[],
   roomID: string,
   mediaGeneration: number,
@@ -145,7 +178,7 @@ async function publishSubtitles(
 // stream. A seek aborts whatever read it was on; the scan simply asks for
 // the same slice again, however many seeks it takes — its position has
 // nothing to do with the seek. Only the input closing for good ends it.
-async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCollector): Promise<void> {
+async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: SubtitleCollector): Promise<void> {
   try {
     const stream = await createMatroskaSubtitleStream()
     const tap = input.tap
@@ -154,6 +187,14 @@ async function extractEmbeddedSubtitles(input: MediaInput, collector: SubtitleCo
     while (offset < input.size) {
       let slice = tap ? await tap.pull() : null
       if (!slice) {
+        // Nothing to ride: the remux is elsewhere. While that elsewhere is a
+        // region with nothing published yet, it is the only thing that
+        // matters, and the scan waits before asking the origin for its own.
+        const { cold, forMs } = input.cold()
+        if (tap && cold && forMs < SCAN_HOLDOFF_MAX_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          continue
+        }
         const end = Math.min(offset + SUBTITLE_SLICE_BYTES, input.size)
         try {
           slice = await input.read(offset, end, { prio: 'scan' })

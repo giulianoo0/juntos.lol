@@ -6,6 +6,7 @@ import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
+import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability } from '../components/UploadAvailability'
 import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
@@ -163,6 +164,7 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, failure, e
               value={draft}
               maxLength={64}
               placeholder={t('home.nicknamePlaceholder')}
+              onFocus={caretToEndOnFocus}
               onChange={(event) => setDraft(event.target.value)}
             />
             <button type="submit" className="primary-button">{t('room.join')}</button>
@@ -229,6 +231,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // remote pause from one the viewer performed.
   const remoteSteerAtRef = useRef(0)
   const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef)
+  // Nobody answered the room's question: this person is out of it, the
+  // picture stops, and a dialog says why. The socket is what membership is,
+  // so closing it is leaving.
+  const { leave } = sync
+  const leaveIdle = useCallback(() => {
+    videoRef.current?.pause()
+    leave()
+  }, [leave])
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
   // A refusal from the server is the answer to "I pressed it and nothing
@@ -510,6 +520,26 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs))
   }, [room.id, sync.state, sync.serverOffsetMs])
 
+  // A publish says what it moved; applied here without a round trip. A
+  // patch from another generation, or older than what is held, means the
+  // room changed under it — fetch the whole thing instead.
+  const { mediaPatch, refreshRoom } = sync
+  useEffect(() => {
+    if (!mediaPatch) return
+    setLiveRoom((current) => {
+      if (mediaPatch.mediaGeneration !== current.mediaGeneration || mediaPatch.mediaVersion < (current.mediaVersion ?? 0)) {
+        refreshRoom()
+        return current
+      }
+      return {
+        ...current,
+        mediaVersion: mediaPatch.mediaVersion,
+        mediaOffsetMs: mediaPatch.mediaOffsetMs,
+        mediaRegions: mediaPatch.mediaRegions ?? undefined,
+      }
+    })
+  }, [mediaPatch, refreshRoom])
+
   useEffect(() => {
     const state = refetch.current
     state.latest = sync.roomVersion
@@ -713,6 +743,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               coldWaitRef={coldWaitRef}
               remoteSteerAtRef={remoteSteerAtRef}
               autoplayBlocked={sync.autoplayBlocked}
+              gatedStart={sync.waiting !== null}
               onBuffering={sync.reportBuffering}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
@@ -830,8 +861,27 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         deadlineMs={sync.stillThereDeadlineMs}
         serverOffsetMs={sync.serverOffsetMs}
         onStay={() => sync.send('stillHere')}
+        onExpired={leaveIdle}
         t={t}
       />
+      <Dialog open={sync.left} onOpenChange={() => undefined}>
+        {sync.left ? (
+          <DialogContent
+            className="still-there-dialog"
+            closeLabel={t('room.closedIdleHome')}
+            title={t('room.closedIdleTitle')}
+            description={t('room.closedIdleGuide')}
+            onCloseClick={() => { window.location.assign("/") }}
+          >
+            <div className="closed-idle-actions">
+              <button type="button" className="primary-button" autoFocus onClick={() => window.location.reload()}>
+                {t('room.closedIdleRejoin')}
+              </button>
+              <Link className="secondary-button" to="/">{t('room.closedIdleHome')}</Link>
+            </div>
+          </DialogContent>
+        ) : null}
+      </Dialog>
       <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
         {sourcePanel !== null ? (
           <DialogContent

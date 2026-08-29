@@ -101,6 +101,34 @@ describe('useSync', () => {
     unmount()
   })
 
+  it('hands a publish that says what moved to the page instead of bumping roomVersion', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    const media = { mediaGeneration: 0, mediaVersion: 3, mediaOffsetMs: 1000, mediaRegions: [{ n: 0, startMs: 0, producedMs: 4000, growing: true }] }
+    act(() => socket.receive({ type: 'roomUpdated', media }))
+    expect(result.current.roomVersion).toBe(0)
+    expect(result.current.mediaPatch).toEqual(media)
+    // The page could not apply it: it asks for the room instead.
+    act(() => result.current.refreshRoom())
+    expect(result.current.roomVersion).toBe(1)
+    unmount()
+  })
+
+  it('leaves for good: the socket closes and no reconnect follows', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.receive({ type: 'stillThere', deadlineMs: Date.now() + 1000 }))
+    expect(result.current.stillThereDeadlineMs).not.toBeNull()
+    act(() => result.current.leave())
+    expect(result.current.left).toBe(true)
+    expect(result.current.stillThereDeadlineMs).toBeNull()
+    expect(socket.close).toHaveBeenCalled()
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    unmount()
+  })
+
   it('bumps roomVersion on welcome so a reconnect refetches missed room updates', () => {
     const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))

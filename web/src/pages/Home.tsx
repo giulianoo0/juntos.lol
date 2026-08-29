@@ -11,6 +11,7 @@ import { DiscordLink } from '../components/DiscordLink'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
 import { playError } from '../onboarding/sounds'
+import { caretToEndOnFocus } from '../ui/caret'
 import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
@@ -589,7 +590,7 @@ export function Home() {
             </span>
             <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
               <label htmlFor="nickname">{t('home.nickname')}</label>
-              <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onChange={(event) => setDraftNickname(event.target.value)} />
+              <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onFocus={caretToEndOnFocus} onChange={(event) => setDraftNickname(event.target.value)} />
               <div className="dialog-actions">
                 <Button onClick={() => {
                   discardPending(pendingMedia)

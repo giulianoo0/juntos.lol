@@ -13,6 +13,8 @@ interface Region {
    * the names that confirm afterwards leave holes. Anything that cuts a
    * playlist has to know where the first hole is, not how many landed. */
   landed: Map<number, Set<number>>
+  /** Segment lengths per playlist, in playlist order, from the rendered m3u8. */
+  durations: Map<number, number[]>
 }
 
 export interface SegmentLedger {
@@ -24,6 +26,20 @@ export interface SegmentLedger {
   noteConfirmed(names: Iterable<string>): void
   /** Segments of this region a viewer can actually play. */
   covered(region: number): number
+  /** The playlist the muxer rendered for one rendition, in order: each
+   * segment's real length. The muxer only closes a segment on a keyframe at
+   * or past the target, so a long GOP makes segments far longer than the
+   * target — counting them as the target undercounts the region by the same
+   * factor, and a seek into its unclaimed tail restarts the whole pipeline
+   * for media the bucket already holds. */
+  noteDurations(region: number, playlist: number, durationsSec: readonly number[]): void
+  /** Milliseconds of this region a viewer can actually play: the shortest
+   * rendition's unbroken run from its first segment, summed by real length.
+   * A rendition whose playlist has not been seen yet is counted at the
+   * fallback length per segment. */
+  coveredMs(region: number, fallbackSegmentMs: number): number
+  /** Mean and longest segment this region has rendered, for the log. */
+  segmentStats(region: number): { count: number; meanSec: number; maxSec: number }
   /** Whether every segment this region emitted has reached the bucket. A
    * region that ran to the end of the file may still claim the tail the
    * segment count rounds off, but only once nothing is in flight. */
@@ -43,7 +59,7 @@ export function createSegmentLedger(): SegmentLedger {
   const at = (region: number): Region => {
     let found = regions.get(region)
     if (!found) {
-      found = { emitted: new Map(), confirmed: new Map(), landed: new Map() }
+      found = { emitted: new Map(), confirmed: new Map(), landed: new Map(), durations: new Map() }
       regions.set(region, found)
     }
     return found
@@ -57,6 +73,15 @@ export function createSegmentLedger(): SegmentLedger {
     const match = SEGMENT_NAME.exec(name)
     if (!match) return null
     return { region: Number(match[1] ?? 0), playlist: Number(match[2]), n: Number(match[3]) }
+  }
+
+  const contiguous = (region: number, playlist: number): number => {
+    const landed = regions.get(region)?.landed.get(playlist)
+    if (!landed) return 0
+    // The muxer numbers a playlist's segments from one.
+    let run = 0
+    while (landed.has(run + 1)) run += 1
+    return run
   }
 
   return {
@@ -94,12 +119,31 @@ export function createSegmentLedger(): SegmentLedger {
       return shortest === Infinity ? 0 : shortest
     },
     contiguousIn(region, playlist) {
-      const landed = regions.get(region)?.landed.get(playlist)
-      if (!landed) return 0
-      // The muxer numbers a playlist's segments from one.
-      let run = 0
-      while (landed.has(run + 1)) run += 1
-      return run
+      return contiguous(region, playlist)
+    },
+    noteDurations(region, playlist, durationsSec) {
+      at(region).durations.set(playlist, [...durationsSec])
+    },
+    coveredMs(region, fallbackSegmentMs) {
+      const found = regions.get(region)
+      if (!found || found.emitted.size === 0) return 0
+      let shortest = Infinity
+      for (const playlist of found.emitted.keys()) {
+        const run = contiguous(region, playlist)
+        const known = found.durations.get(playlist) ?? []
+        let ms = 0
+        for (let i = 0; i < run; i += 1) {
+          ms += i < known.length ? Math.round(known[i] * 1000) : fallbackSegmentMs
+        }
+        shortest = Math.min(shortest, ms)
+      }
+      return shortest === Infinity ? 0 : shortest
+    },
+    segmentStats(region) {
+      const all = [...(regions.get(region)?.durations.values() ?? [])].flat()
+      if (all.length === 0) return { count: 0, meanSec: 0, maxSec: 0 }
+      const sum = all.reduce((a, b) => a + b, 0)
+      return { count: all.length, meanSec: sum / all.length, maxSec: Math.max(...all) }
     },
     settled(region) {
       const found = regions.get(region)

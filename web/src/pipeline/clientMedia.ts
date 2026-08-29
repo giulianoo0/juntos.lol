@@ -34,6 +34,7 @@ import type { MediaInput } from './mediaInput'
 import { postJson } from './postJson'
 import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
 import { createSegmentLedger } from './segmentLedger'
+import { createSeekTracer, formatSeekTrace, type SeekTrace } from './seekTrace'
 import { isUnreadableFile } from '../uploadErrors'
 
 // The WASM decoders register lazily: nothing loads until a file actually
@@ -63,8 +64,15 @@ const COPYABLE_VIDEO = new Set(['avc', 'hevc', 'vp9', 'av1'])
 const SEGMENT_SECONDS = 4
 /** How many segments ride in one presign batch. */
 const PRESIGN_BATCH = 32
-/** How often accumulated segments and playlists are pushed to the server. */
+/** How often accumulated segments and playlists are pushed to the server
+ * when nothing else asks for it: the floor, not the pace. A publish is
+ * normally kicked by the upload that gives it something to say. */
 const PUBLISH_INTERVAL_MS = 2_000
+/** How long a kicked publish waits for company: the init and the first
+ * segment of every rendition land within a breath of each other, and the
+ * master only renders once each rendition has one — sent apart, the first
+ * round would confirm names the master could not use yet. */
+const PUBLISH_DEBOUNCE_MS = 200
 const PUT_RETRIES = 2
 /** How many extra drain rounds a stuck object gets before the complete pass. */
 const DRAIN_ROUNDS = 10
@@ -151,6 +159,11 @@ export interface RunClientRemuxOptions {
   file: MediaInput
   plan: ClientRemuxPlan
   onProgress?: (pct: number) => void
+  /** Where the time of each cold seek went, once it is known. */
+  onTrace?: (trace: SeekTrace) => void
+  /** The region being produced has its first segment in the bucket: whatever
+   * held back for the seek — the subtitle scan — may go on. */
+  onRegionWarm?: () => void
   /** Hands out the live pipeline handle once the remux is running. */
   onHandle?: (handle: ClientRemuxHandle) => void
 }
@@ -220,7 +233,7 @@ async function serverError(response: Response): Promise<ServerError> {
  * any other error when the run itself failed (fall back to tus). The claim is
  * released on the way out either way, so the fallback upload can proceed.
  */
-export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress, onHandle }: RunClientRemuxOptions): Promise<void> {
+export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions): Promise<void> {
   const claimResponse = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/claim`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -234,7 +247,7 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
   }
 
   try {
-    await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle })
+    await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle, onTrace, onRegionWarm })
   } catch (error) {
     // The server releases the claim itself on a successful complete; this
     // covers every path that threw before it, so a retry from the host does
@@ -288,6 +301,16 @@ function renditionOf(name: string): number | null {
  * Null when there is nothing to end: a playlist with no confirmed segment is
  * not a finished region, it is an empty one.
  */
+/** The segment lengths a media playlist declares, in order. */
+export function segmentDurations(body: string): number[] {
+  const out: number[] = []
+  for (const line of body.split('\n')) {
+    const match = /^#EXTINF:([\d.]+)/.exec(line.trim())
+    if (match) out.push(Number(match[1]))
+  }
+  return out
+}
+
 export function endPlaylist(body: string, keep: number): string | null {
   if (keep <= 0) return null
   const out: string[] = []
@@ -309,7 +332,7 @@ export function endPlaylist(body: string, keep: number): string | null {
   return `${out.join('\n')}\n#EXT-X-ENDLIST\n`
 }
 
-async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle }: RunClientRemuxOptions & { claim: string }): Promise<void> {
+async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions & { claim: string }): Promise<void> {
   // Object flow: the muxer hands finished files to `pending`; `pump` drains
   // them through presign + PUT into `uploaded`; each publish confirms
   // `uploaded` names with the server, which HEADs the bucket and extends the
@@ -392,7 +415,38 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       await putWithRetry(signed.url, signed.headers, object.bytes, signal)
       uploaded.push(object.name)
       uploadedBytes += object.bytes.byteLength
+      // A name of the region being watched is worth a publish of its own;
+      // a straggler of an abandoned one can ride the floor.
+      if (inCurrentRegion(object.name)) {
+        trace.mark('firstPutOk', object.name)
+        kickPublish()
+      }
     }))
+  }
+
+  const inCurrentRegion = (name: string): boolean =>
+    (region <= 0 ? !/^r\d+_/.test(name) : name.startsWith(`r${region}_`))
+
+  // The publish runs on demand — kicked by an upload or a master — and on a
+  // floor timer for what nobody kicks: retries of names the bucket did not
+  // vouch for, progress. One at a time; a kick during a round marks it
+  // dirty and the round that follows carries what arrived meanwhile.
+  let publishing: Promise<void> | null = null
+  let publishDirty = false
+  let publishStopped = false
+  let kickTimer: ReturnType<typeof setTimeout> | null = null
+  const runPublish = () => {
+    if (failure || publishStopped) return
+    if (publishing) { publishDirty = true; return }
+    publishDirty = false
+    publishing = publish(false).then(() => undefined, fail).finally(() => {
+      publishing = null
+      if (publishDirty) kickPublish()
+    })
+  }
+  const kickPublish = () => {
+    if (kickTimer !== null || failure || publishStopped) return
+    kickTimer = setTimeout(() => { kickTimer = null; runPublish() }, PUBLISH_DEBOUNCE_MS)
   }
 
   // Returns whether the server considers the room playable, which is the
@@ -401,8 +455,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // The current region's names confirm first: after a seek, hundreds of
     // the dead region's uploads would otherwise queue ahead of the very
     // segments the master is waiting on, at 128 names a round.
-    const prefix = `r${region}_`
-    const current = (name: string) => (region <= 0 ? !/^r\d+_/.test(name) : name.startsWith(prefix))
+    const current = inCurrentRegion
     // A seal only travels once its region has nothing left to confirm. Sent
     // early, the server renders the playlist against what it holds, cuts at
     // the first name it cannot vouch for, and drops the end marker with the
@@ -452,6 +505,14 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // Confirmed means the server HEADed the object and the playlists can
     // now reach it: this, and nothing earlier, is what a region may claim.
     ledger.noteConfirmed(confirmed)
+    if (warmRegion !== region && confirmed.some((name) => /cs_\d+_\d+\.m4s$/.test(name) && current(name))) {
+      warmRegion = region
+      onRegionWarm?.()
+    }
+    if (trace.open() && region > seekFromRegion && confirmed.some((name) => /cs_\d+_\d+\.m4s$/.test(name) && current(name)) && playlists.has('master.m3u8')) {
+      trace.mark('publishOk', regionSpanMs(regions.find((r) => r.growing) ?? regions[regions.length - 1]))
+      trace.end()
+    }
     // Whatever the bucket did not vouch for is claimed again next round.
     const vouched = new Set(confirmed)
     for (const name of confirm) if (!vouched.has(name)) uploaded.push(name)
@@ -470,12 +531,16 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   interface RegionRecord { n: number; startMs: number; growing: boolean; ranToEnd: boolean }
   const regions: RegionRecord[] = []
   const ledger = createSegmentLedger()
+  const trace = createSeekTracer((done) => {
+    console.info(formatSeekTrace('host', done))
+    onTrace?.(done)
+  })
   // A region spans what the bucket confirmed, never what the muxer emitted.
   // The muxer runs far ahead of the uplink — a local file stream-copies many
   // times faster than a home connection uploads — so counting emissions
   // claims media no viewer can fetch and no seek can land in.
   const regionSpanMs = (r: RegionRecord): number => {
-    const covered = ledger.covered(r.n) * SEGMENT_SECONDS * 1000
+    const covered = ledger.coveredMs(r.n, SEGMENT_SECONDS * 1000)
     // A region that ran to the end of the file is as long as the file says
     // minus where it started; the segment count rounds off its last partial
     // segment. That claim is only honest once nothing is still in flight.
@@ -514,6 +579,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     const current = regions.find((r) => r.growing)
     if (!current) return
     current.growing = false
+    const stats = ledger.segmentStats(current.n)
+    console.log(`[remux-worker] region ${current.n} closed: ${stats.count} segments, mean ${stats.meanSec.toFixed(2)}s, max ${stats.maxSec.toFixed(2)}s (target ${SEGMENT_SECONDS}s)`)
     const prefix = region <= 0 ? '' : `r${region}_`
     for (const [name, content] of playlists) {
       // Masters carry no segments and are never reloaded on a timer.
@@ -528,6 +595,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   }
   let seekTargetSeconds: number | null = null
   let nextStartSeconds = 0
+  // The region a traced seek left: its stragglers still confirm for a while
+  // after, and must not read as the new region publishing.
+  let seekFromRegion = -1
+  // The last region whose first segment the bucket vouched for.
+  let warmRegion = -1
 
   // Seeks snap back to the keyframe at or before the target, so a region
   // always starts on a frame the copied stream can actually begin at.
@@ -550,12 +622,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // Publishing runs alongside the remux for the same reason the server's
   // does: a room that only became watchable at the end would not be a
   // preview. A publish failure aborts the whole run through fail().
-  let publishing = false
-  const ticker = setInterval(() => {
-    if (publishing || failure) return
-    publishing = true
-    void publish(false).catch(fail).finally(() => { publishing = false })
-  }, PUBLISH_INTERVAL_MS)
+  const ticker = setInterval(runPublish, PUBLISH_INTERVAL_MS)
 
   let restartPending = false
   let pendingRestart: Promise<void> | null = null
@@ -579,6 +646,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const restartAt = (absoluteMs: number) => {
     restartPending = true
     console.log(`[remux-worker] restart at ${absoluteMs}`)
+    trace.begin(absoluteMs)
+    seekFromRegion = region
     closeRegion()
     pendingRestart = (async () => {
       // The dying region goes first: its queued and in-flight segments would
@@ -589,6 +658,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // The reads go before the conversion: a cancel waits on the demuxer,
       // and the demuxer may be parked on a range the swarm has not fetched.
       file.abortReads()
+      trace.mark('readsAborted')
       // Then say where we are going, before anything here reads there. The
       // cancel below and the keyframe probe after it are the slow part of a
       // seek, and a remote origin would otherwise spend all of it fetching
@@ -600,8 +670,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       }
       await conversion?.cancel().catch(() => {})
       console.log('[remux-worker] old region canceled')
+      trace.mark('canceled')
       seekTargetSeconds = await snapToKeyframe(absoluteMs / 1000)
       console.log(`[remux-worker] snapped to ${seekTargetSeconds}`)
+      trace.mark('keyframe', Math.round(seekTargetSeconds * 1000 - absoluteMs))
       regionAimMs = absoluteMs
       wakeFollow?.()
     })()
@@ -642,14 +714,23 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
         getInitPath: ({ n }) => `${prefix}cinit_${n}.mp4`,
         // The bare name is the growing region's, for players that only know
         // an offset; the prefixed one is this region's for good.
-        onMaster: (content) => { playlists.set('master.m3u8', content); playlists.set(`r${region}_master.m3u8`, content) },
-        onPlaylist: (content, info) => { playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content) },
+        onMaster: (content) => {
+          playlists.set('master.m3u8', content)
+          playlists.set(`r${region}_master.m3u8`, content)
+          trace.mark('masterRendered')
+          kickPublish()
+        },
+        onPlaylist: (content, info) => {
+          playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content)
+          ledger.noteDurations(region, info.n, segmentDurations(content))
+        },
         onInit: (target, info) => { enqueue(`${prefix}cinit_${info.n}.mp4`, target) },
         onSegment: (target, info) => {
           const name = `${prefix}cs_${info.playlist.n}_${info.n}.m4s`
           // Registers the playlist so a rendition that has confirmed nothing
           // yet still holds this region's span down to what a viewer can play.
           ledger.noteEmitted(name)
+          trace.mark('firstSegmentMuxed', (target as BufferTarget).buffer?.byteLength ?? '')
           enqueue(name, target)
         },
       }),
@@ -674,6 +755,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     }
     conversion = current
     console.log(`[remux-worker] region ${region} converting from ${startSeconds}`)
+    trace.mark('convInit')
     restartPending = false
     if (region === 0) onHandle?.(handle)
     // A seek that arrived while this region was being set up may point
@@ -727,7 +809,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   if (failure) throw failure
   } finally {
     clearInterval(ticker)
+    publishStopped = true
+    if (kickTimer !== null) clearTimeout(kickTimer)
   }
+  // A round the last kick started is still splicing `uploaded`; the drain
+  // must not race it for names.
+  await publishing
   // Drain what the remux produced, bounded: an object the bucket never
   // vouches for must not spin here forever short of the complete pass.
   for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)

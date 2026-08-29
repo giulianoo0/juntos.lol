@@ -12,10 +12,12 @@ describe('reloadVersion', () => {
     expect(reloadVersion({ growing: true }, 512)).toBe(0)
   })
 
-  it('lets a finished region reload, which is what the version is for', () => {
-    // The final remux replacing the progressive preview: same URL, new bytes,
-    // and the only way a preview viewer is handed the finished playlists.
-    expect(reloadVersion({ growing: false }, 37)).toBe(37)
+  it('keeps a finished region pinned too: the version belongs to the region being produced', () => {
+    // After a cold seek the old region seals, and every publish of the new
+    // region's offset bumps the room's version. The player holding the old
+    // region under its own r{n}_ name has nothing to reload for.
+    expect(reloadVersion({ growing: false }, 37)).toBe(0)
+    expect(reloadVersion({}, 512)).toBe(0)
   })
 
   it('reads a room with no region map at its face value', () => {

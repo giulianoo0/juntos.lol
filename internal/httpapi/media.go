@@ -27,11 +27,94 @@ import (
 // Keeping playlists here is deliberate. They are kilobytes, and this handler
 // is the one request a viewer must make before anything plays, which makes it
 // the place to check that the room still exists.
-func RegisterMediaRoutes(r gin.IRoutes, store *room.Store) {
-	r.GET("/media/:id/hls/*filepath", servePlaylist(store))
+func RegisterMediaRoutes(r gin.IRoutes, store *room.Store, waiter *playlistWaiter) {
+	r.GET("/media/:id/hls/*filepath", servePlaylist(store, waiter))
+	r.GET("/media/:id/bundle", serveBundle(store))
 }
 
-func servePlaylist(store *room.Store) gin.HandlerFunc {
+// serveBundle hands a master and every media playlist it names in one
+// response. A region switch otherwise costs the player a master, then the
+// video and audio playlists, then the init segments, each a round trip
+// behind the last; with the bundle the playlists arrive together and the
+// init segments can be fetched before hls.js asks.
+func serveBundle(store *room.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		roomID := c.Param("id")
+		master := c.Query("master")
+		if !validMediaRoomID(roomID) || master == "" || master != filepath.Base(master) || !strings.EqualFold(filepath.Ext(master), ".m3u8") {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		ctx := c.Request.Context()
+		storedRoom, err := store.Get(ctx, roomID)
+		if errors.Is(err, room.ErrNotFound) || (err == nil && !storedRoom.ExpiresAt.After(time.Now())) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		body, err := store.Playlist(ctx, roomID, master)
+		if errors.Is(err, room.ErrNotFound) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		playlists := make(map[string]string)
+		for _, name := range masterPlaylistNames(body) {
+			media, err := store.Playlist(ctx, roomID, name)
+			if err != nil {
+				// A rendition whose playlist is not stored yet is the
+				// player's to fetch and retry on its own schedule.
+				continue
+			}
+			playlists[name] = withBlockingReload(media)
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{"master": body, "playlists": playlists})
+	}
+}
+
+// masterPlaylistNames lists the media playlists a master refers to: bare
+// lines under EXT-X-STREAM-INF, and the URI of every EXT-X-MEDIA.
+func masterPlaylistNames(master string) []string {
+	var names []string
+	seen := make(map[string]struct{})
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || name != filepath.Base(name) || !strings.HasSuffix(name, ".m3u8") {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	for _, line := range strings.Split(master, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "":
+		case strings.HasPrefix(trimmed, "#EXT-X-MEDIA:"):
+			if _, after, ok := strings.Cut(trimmed, `URI="`); ok {
+				if uri, _, ok := strings.Cut(after, `"`); ok {
+					add(uri)
+				}
+			}
+		case strings.HasPrefix(trimmed, "#"):
+		default:
+			add(trimmed)
+		}
+	}
+	return names
+}
+
+func servePlaylist(store *room.Store, waiter *playlistWaiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		roomID := c.Param("id")
@@ -63,6 +146,9 @@ func servePlaylist(store *room.Store) gin.HandlerFunc {
 			return
 		}
 
+		// Taken before the read below: a publish that lands between the two
+		// closes this channel, and the wait returns at once.
+		published := waiter.channel(roomID)
 		playlist, err := store.Playlist(c.Request.Context(), roomID, name)
 		if errors.Is(err, room.ErrNotFound) {
 			c.Status(http.StatusNotFound)
@@ -74,6 +160,32 @@ func servePlaylist(store *room.Store) gin.HandlerFunc {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
+		// A player that asks for a sequence the playlist has not reached is
+		// held until a publish gets it there — or until the wait runs out,
+		// when it gets the playlist as it stands, which hls.js reads as a
+		// missed update and not as an error.
+		if wanted, ok := requestedSequence(c.Request.URL.RawQuery); ok {
+			deadline := time.Now().Add(blockingReloadMax)
+			for {
+				reach, ended := playlistReach(playlist)
+				if ended || wanted <= reach {
+					break
+				}
+				if !waiter.wait(c.Request.Context(), published, deadline) {
+					if c.Request.Context().Err() != nil {
+						return
+					}
+					break
+				}
+				published = waiter.channel(roomID)
+				next, err := store.Playlist(c.Request.Context(), roomID, name)
+				if err != nil {
+					break
+				}
+				playlist = next
+			}
+		}
+		playlist = withBlockingReload(playlist)
 
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
 		// An event playlist grows with every segment the preview publishes,

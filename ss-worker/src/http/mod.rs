@@ -69,6 +69,9 @@ pub struct Metrics {
     pub bytes_served: AtomicU64,
     pub stalls: AtomicU64,
     pub first_byte_timeouts: AtomicU64,
+    /// Responses a hint ended before their body ran out: the old region's
+    /// reads a seek left behind.
+    pub superseded: AtomicU64,
     pub in_flight: AtomicU64,
     // Histogram buckets in seconds for the first byte of a range: the SLI
     // a viewer actually feels.

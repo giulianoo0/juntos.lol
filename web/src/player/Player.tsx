@@ -19,6 +19,9 @@ import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { TorrentReadout } from '../components/TorrentReadout'
 import { WaitLabel } from './WaitLabel'
 import { bufferAhead, holdsForBuffer } from './bufferAhead'
+import { gateSecondsFor } from './gate'
+import { bundledLoader, fetchBundle, prefetchInitSegments } from './bundle'
+import { createSeekTracer, formatSeekTrace } from '../pipeline/seekTrace'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { lastUploadFailureDetail } from '../upload'
 import type { TorrentStats } from '../torrent'
@@ -57,6 +60,10 @@ interface PlayerProps {
   // The sync layer could not start this viewer's element, muted or otherwise:
   // the room is playing and only a click of theirs will join them to it.
   autoplayBlocked?: boolean
+  // The server is holding a gated start: everyone is released together once
+  // the slowest member holds the server's buffer, so this player's own gate
+  // asks for no more than that.
+  gatedStart?: boolean
   // Where this player hands its buffering picture back to the sync layer.
   // The room waits on these reports, so a player that never sends one — or
   // never stops — is a room that never starts.
@@ -107,11 +114,17 @@ export function regionFor(regions: MediaRegion[], ms: number, current: number | 
  *
  * hls.js follows a growing live playlist by itself: there is nothing to
  * rebuild for while a region grows, so the version is pinned. A region that
- * has stopped growing is the other case the version exists for — the final
- * remux replacing the progressive preview — and that one still reloads.
+ * has stopped growing gets the same treatment: its playlists live under a
+ * name no other region ever reuses, and the room's version is bumped by the
+ * offset of whichever region is being produced — a number that says nothing
+ * about the one this player holds. Letting it through rebuilt the player
+ * three times per region switch, twice for nothing. The seal that ends a
+ * finished region's playlists reaches hls.js through its own reload timer.
+ * Only a room with no region map — the bare master.m3u8 — still reloads on
+ * the version, which there means the finished playlists replacing a preview.
  */
 export function reloadVersion(region: { growing?: boolean } | null, version: number | undefined): number {
-  if (region?.growing) return 0
+  if (region) return 0
   return version ?? 0
 }
 
@@ -145,11 +158,13 @@ const VIDEO_STARVATION_SECONDS = 5
 // not already absorbing — a stalled or long-buffering viewer.
 const LIVE_SYNC_THRESHOLD_MS = 1000
 // How much media has to be ready ahead of the playhead before playback is let
-// go. Starting on the first frame that arrives is what makes a room stutter
-// through its opening seconds: the pipeline publishes four-second segments,
-// so anything less than a few of them means playing straight back into the
-// wait that just ended. Ten seconds is short enough not to be its own delay.
-const BUFFER_GATE_SEC = 10
+// go lives in ./gate: never more than the host has published, never less
+// than the server asks of a gated start.
+
+// One trace per cold wait, on the viewer's side of the seek: from the room
+// pointing at media no region holds, to the first frame of the region that
+// came for it and the gate letting it play.
+const viewerTrace = createSeekTracer((trace) => console.info(formatSeekTrace('viewer', trace)))
 
 export interface BufferedRange {
   start: number
@@ -177,7 +192,7 @@ function subtitleSource(room: RoomInfo, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, autoplayBlocked, onBuffering }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -302,11 +317,26 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     && !coldRegions.some((r) => regionHolds(r, coldTargetMs))
   if (coldWaitRef) coldWaitRef.current = coldWait
   useEffect(() => {
-    if (!coldWait) return
+    if (!coldWait) {
+      viewerTrace.mark('coldWaitEnd')
+      // The same region may turn out to hold the target after all — the
+      // host's edge caught up with the room — and then the loader it had
+      // must pick up again. A region switch rebuilds the player instead.
+      hlsRef.current?.startLoad()
+      return
+    }
+    viewerTrace.begin(coldTargetMs ?? 0)
     // The hold is deliberate, so a play still waiting to be retried must not
     // survive it and fire the moment the buffer recovers.
     playRequestedRef.current = false
     videoRef.current?.pause()
+    // Nothing the loaded region holds is where the room is going. Left
+    // running, hls.js clamps the seek to that region's produced edge and
+    // pulls twenty seconds of segments there — a different part of the film
+    // on screen, and on the host a download competing with the very upload
+    // everyone is waiting on.
+    hlsRef.current?.stopLoad()
+    // The target is read once, when the wait begins; the trace is about it.
   }, [coldWait, videoRef])
   // What the scrubber and the clock read. While the target is cold the element
   // is still sitting in the region it already had — a different part of the
@@ -430,6 +460,10 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     // final remux replacing the progressive preview — and reloading then is
     // what hands a preview viewer the finished playlists.
     const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${mediaReload}`
+    // The region's playlists, all at once, and its init segments warming the
+    // cache while hls.js is still being imported and attached.
+    const bundle = fetchBundle(room.id, masterName)
+    void bundle.then(prefetchInitSegments)
     let disposed = false
     setUnplayable(null)
     // A republish of the same recording resumes where this player was; only
@@ -525,7 +559,8 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         // those at the live edge and waits for the next uploaded segment;
         // hls.js lets an episode reliably start at its beginning instead.
         const config: Partial<HlsConfig> = { startPosition }
-        if (stripCodecs) config.pLoader = codecStrippingLoader(HlsClass)
+        const bundled = bundledLoader(HlsClass.DefaultConfig.loader as Parameters<typeof bundledLoader>[0], bundle)
+        config.pLoader = stripCodecs ? codecStrippingLoader(bundled as HlsModule['default']['DefaultConfig']['loader']) : bundled
         const hls = new HlsClass(config)
         hlsRef.current = hls
         // MEDIA_ATTACHED fires again on every recoverMediaError re-attach, and
@@ -545,7 +580,18 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           setAudioTracks(hls.audioTracks)
           readLevels()
           logLevels(hls, 'parsed')
+          // Only the player built for the region that ended the wait counts;
+          // the one still showing the old region keeps buffering meanwhile.
+          if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('manifestParsed')
         })
+        hls.on(HlsClass.Events.FRAG_BUFFERED, () => { if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('firstFragBuffered') })
+        if (typeof video.requestVideoFrameCallback === 'function') {
+          const onFrame = () => {
+            if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('firstFrame')
+            else if (viewerTrace.open()) video.requestVideoFrameCallback(onFrame)
+          }
+          video.requestVideoFrameCallback(onFrame)
+        }
         // Fires when hls.js drops a level, e.g. after an undecodable codec.
         hls.on(HlsClass.Events.LEVELS_UPDATED, () => {
           readLevels()
@@ -1271,9 +1317,18 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   )
   // Held for buffer, rather than for media that does not exist yet: a cold
   // seek has its own wait and its own words for it.
+  // The element's clock is the region's own, rebased to zero, so the
+  // produced edge is the region's span; a region that stopped growing has
+  // only downloading left.
+  const gateSec = gateSecondsFor({
+    producedEdgeSec: activeRegion?.growing ? activeRegion.producedMs / 1000 : null,
+    currentTime,
+    sealed: activeRegion !== null && !activeRegion.growing,
+    gatedStart,
+  })
   const bufferGate = !coldWait && holdsForBuffer({
     aheadSec: bufferAheadSec,
-    gateSec: BUFFER_GATE_SEC,
+    gateSec,
     currentTime,
     timelineEnd,
     playing,
@@ -1288,7 +1343,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // a use before initialisation that no type check would catch.
   useEffect(() => {
     if (bufferGate) return
+    if (viewerTrace.open()) {
+      viewerTrace.mark('gateOpen', Math.round(gateSec * 10) / 10)
+      viewerTrace.end()
+    }
     attemptPlay()
+    // The gate's size is a fact about the moment it opened, not a trigger.
   }, [bufferGate, attemptPlay])
 
   // A player waiting on data looks exactly like one that has stopped working.
@@ -1372,7 +1432,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
                   of a region that does not exist. */}
               <WaitLabel
                 secondsLeft={bufferGate && !coldWait
-                  ? Math.max(Math.ceil(BUFFER_GATE_SEC - bufferAheadSec), 1)
+                  ? Math.max(Math.ceil(gateSec - bufferAheadSec), 1)
                   : null}
                 t={t}
               />
@@ -1784,8 +1844,7 @@ function plog(level: 'info' | 'warn' | 'error', ...parts: unknown[]): void {
 // playlist, so hls.js probes the init segments instead of trusting a codec
 // string some ffmpeg releases render invalidly. Used only for the retry after
 // every declared codec was rejected up front.
-function codecStrippingLoader(HlsClass: HlsModule['default']): HlsConfig['pLoader'] {
-  const Base = HlsClass.DefaultConfig.loader
+function codecStrippingLoader(Base: HlsModule['default']['DefaultConfig']['loader']): HlsConfig['pLoader'] {
   return class extends Base {
     load(context: LoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>): void {
       if (context.type === 'manifest') {

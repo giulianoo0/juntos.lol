@@ -88,7 +88,8 @@ pub async fn get(
     let first_byte = state.engine.cfg.first_byte_deadline + Duration::from_secs(1);
     let metrics = state.metrics.clone();
     let throttle = state.throttle.clone();
-    tokio::spawn(pump(reader, len, chunk, first_byte, stall, gen, tx, metrics, throttle));
+    let tag = RangeTag { infohash: ticket.infohash.clone(), room: ticket.room_id.clone(), prio, gen, start, len };
+    tokio::spawn(pump(reader, tag, chunk, first_byte, stall, tx, metrics, throttle));
 
     // Headers wait for the first chunk: a piece nobody has yet is a 504 the
     // client waits out on its own budget, not a silent open body.
@@ -123,58 +124,90 @@ pub async fn get(
 // superseded by a hint. A receiver that went away — the browser aborted,
 // or the handler gave up waiting for the first byte — cancels the read in
 // progress, so the slot and the permit go back at once.
+/// What one range was, for the line it leaves behind.
+struct RangeTag {
+    infohash: String,
+    room: String,
+    prio: Prio,
+    gen: u64,
+    start: u64,
+    len: u64,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn pump(
     mut reader: Reader,
-    len: u64,
+    tag: RangeTag,
     chunk: usize,
     first_byte: Duration,
     stall: Duration,
-    gen: u64,
     tx: mpsc::Sender<bytes::Bytes>,
     metrics: Arc<super::Metrics>,
     throttle: Arc<super::throttle::Throttle>,
 ) {
-    let mut left = len;
+    let mut left = tag.len;
     let mut buf = vec![0u8; chunk];
     let started = std::time::Instant::now();
     let mut first = true;
-    while left > 0 {
-        if reader.superseded(gen) {
-            return;
+    let mut ttfb_ms: u64 = 0;
+    let ended = loop {
+        if left == 0 {
+            break "complete";
+        }
+        if reader.superseded(tag.gen) {
+            metrics.superseded.fetch_add(1, Ordering::Relaxed);
+            break "superseded";
         }
         let want = (left as usize).min(buf.len());
         let deadline = if first { first_byte } else { stall };
         let read = tokio::select! {
             r = tokio::time::timeout(deadline, reader.read(&mut buf[..want])) => r,
-            _ = tx.closed() => return,
+            _ = tx.closed() => break "receiver gone",
         };
         let n = match read {
-            Ok(Ok(0)) => return,
+            Ok(Ok(0)) => break "eof",
             Ok(Ok(n)) => n,
             Ok(Err(e)) => {
                 tracing::debug!(error = %e, "read failed");
-                return;
+                break "read failed";
             }
             Err(_) => {
                 if !first {
                     metrics.stalls.fetch_add(1, Ordering::Relaxed);
                     metrics.observe_stall(started.elapsed());
+                    break "stall";
                 }
-                return;
+                break "first byte timeout";
             }
         };
         if first {
             metrics.observe_first_byte(started.elapsed());
+            ttfb_ms = started.elapsed().as_millis() as u64;
             first = false;
         }
         left -= n as u64;
         metrics.bytes_served.fetch_add(n as u64, Ordering::Relaxed);
         throttle.acquire(n).await;
         if tx.send(bytes::Bytes::copy_from_slice(&buf[..n])).await.is_err() {
-            return;
+            break "receiver gone";
         }
-    }
+    };
+    // One line per range: with these the shape of a seek can be read off
+    // the log — how long the first byte took, whether the body ran to its
+    // end, and what cut it short — per room, class and generation.
+    tracing::info!(
+        infohash = %tag.infohash,
+        room = %tag.room,
+        prio = ?tag.prio,
+        gen = tag.gen,
+        start = tag.start,
+        len = tag.len,
+        sent = tag.len - left,
+        ttfb_ms,
+        total_ms = started.elapsed().as_millis() as u64,
+        ended,
+        "range",
+    );
 }
 
 pub async fn head(

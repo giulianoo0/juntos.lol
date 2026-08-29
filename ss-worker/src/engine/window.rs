@@ -7,6 +7,20 @@
 
 /// Kept selected ahead of each cursor.
 pub const AHEAD: u64 = 256 * 1024 * 1024;
+/// Kept ahead of the playhead in the first seconds after a seek. The swarm
+/// gives each selected piece to one peer and only doubles up once every
+/// selected piece is in flight; with sixteen pieces selected the one the
+/// first byte is waiting on has one peer while fifteen fetch read-ahead
+/// nobody can use yet. Two pieces' worth puts every peer on what blocks.
+pub const STARTUP_AHEAD: u64 = 32 * 1024 * 1024;
+/// How long after a hint the startup window holds before the full one
+/// returns. Enough for the first segment's pieces; short enough that the
+/// read-ahead is back before the remux could outrun it.
+pub const STARTUP: std::time::Duration = std::time::Duration::from_secs(3);
+/// Kept ahead of the subtitle scan. It walks the file once, sequentially,
+/// and is never what a viewer is waiting on; a full window for it halves
+/// what reaches the playhead.
+pub const SCAN_AHEAD: u64 = 32 * 1024 * 1024;
 /// Kept behind it, so a small step back does not refetch.
 pub const BEHIND: u64 = 32 * 1024 * 1024;
 /// The head and tail of the file always stay selected: the container's header
@@ -33,9 +47,24 @@ pub fn footprint(file_len: u64, ahead: u64, behind: u64, pin: u64) -> u64 {
     spans.saturating_add(pins).min(file_len)
 }
 
+/// One reader's cursor and how far around it to hold.
+#[derive(Clone, Copy, Debug)]
+pub struct Cursor {
+    pub at: u64,
+    pub ahead: u64,
+    pub behind: u64,
+}
+
 /// File-relative byte ranges worth holding for these read cursors, as
 /// half-open `[start, end)` pairs, merged and in order.
+#[cfg(test)]
 pub fn needed_ranges(file_len: u64, cursors: &[u64], ahead: u64, behind: u64, pin: u64) -> Vec<(u64, u64)> {
+    let cursors: Vec<Cursor> = cursors.iter().map(|&at| Cursor { at, ahead, behind }).collect();
+    needed_ranges_for(file_len, &cursors, pin)
+}
+
+/// Like `needed_ranges`, with each cursor carrying its own span.
+pub fn needed_ranges_for(file_len: u64, cursors: &[Cursor], pin: u64) -> Vec<(u64, u64)> {
     if file_len == 0 {
         return Vec::new();
     }
@@ -43,10 +72,10 @@ pub fn needed_ranges(file_len: u64, cursors: &[u64], ahead: u64, behind: u64, pi
     let pin = pin.min(file_len);
     ranges.push((0, pin));
     ranges.push((file_len.saturating_sub(pin), file_len));
-    for &cursor in cursors {
-        let cursor = cursor.min(file_len);
-        let start = cursor.saturating_sub(behind);
-        let end = cursor.saturating_add(ahead).min(file_len);
+    for cursor in cursors {
+        let at = cursor.at.min(file_len);
+        let start = at.saturating_sub(cursor.behind);
+        let end = at.saturating_add(cursor.ahead).min(file_len);
         if start < end {
             ranges.push((start, end));
         }
@@ -156,6 +185,22 @@ mod tests {
         let pieces = pieces_for_ranges(0, MB, 4, &[(0, 100 * MB)]);
 
         assert_eq!(pieces, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn each_cursor_carries_its_own_span() {
+        // The playhead just seeked: narrow. The scan is far behind: narrower
+        // still, and never widened by the playhead's window.
+        let ranges = needed_ranges_for(
+            1000 * MB,
+            &[
+                Cursor { at: 500 * MB, ahead: 32 * MB, behind: 10 * MB },
+                Cursor { at: 100 * MB, ahead: 32 * MB, behind: 0 },
+            ],
+            1 * MB,
+        );
+
+        assert_eq!(ranges, vec![(0, MB), (100 * MB, 132 * MB), (490 * MB, 532 * MB), (999 * MB, 1000 * MB)]);
     }
 
     #[test]

@@ -75,7 +75,7 @@ vi.mock('@mediabunny/dts', () => ({ registerDtsDecoder: () => undefined }))
 vi.mock('@mediabunny/aac-encoder', () => ({ registerAacEncoder: () => undefined }))
 vi.mock('./mkvChapters', () => ({ readMkvChapters: async () => [] }))
 
-import { endPlaylist, runClientRemux, type ClientRemuxHandle } from './clientMedia'
+import { endPlaylist, runClientRemux, segmentDurations, type ClientRemuxHandle } from './clientMedia'
 
 // Fake timers so the publish ticker can be driven on purpose: a region's
 // span is what the server confirmed, and confirmation only happens on a
@@ -309,6 +309,86 @@ describe('client remux regions', () => {
     await flush()
     expect(completes()).toHaveLength(0)
   })
+
+describe('publish on demand', () => {
+  it('publishes the first segment of a region as soon as it lands, without waiting for the ticker', async () => {
+    const calls = mockServer()
+    const plan = {
+      input: { getPrimaryVideoTrack: async () => ({}) },
+      audioTracks: [],
+      durationSeconds: 1440,
+    }
+    void runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan as never,
+    })
+    await flush()
+    const first = conversions[0].opts.output.opts.format.options
+    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    ;(first.onPlaylist as (c: string, i: unknown) => void)('#EXTM3U\n#EXTINF:10.000,\ncs_0_1.m4s\n', { n: 0 })
+    ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
+    await flush()
+    const before = calls.filter((call) => call.url.endsWith('/client-media/publish')).length
+    expect(before).toBe(0)
+    // Well inside the two-second ticker: the upload itself kicked the round.
+    await vi.advanceTimersByTimeAsync(300)
+    const publishes = calls.filter((call) => call.url.endsWith('/client-media/publish'))
+    expect(publishes).toHaveLength(1)
+    expect(publishes[0].body!.confirm).toEqual(expect.arrayContaining(['cinit_0.mp4', 'cs_0_1.m4s']))
+    // The ticker is still the floor for what nobody kicks.
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(calls.filter((call) => call.url.endsWith('/client-media/publish')).length).toBeGreaterThan(1)
+    // The region spans the ten seconds the playlist declares, not four.
+    const last = calls.filter((call) => call.url.endsWith('/client-media/publish')).at(-1)!.body!
+    expect((last.timeline as { regions: { producedMs: number }[] }).regions[0].producedMs).toBe(10_000)
+    conversions[0].finish()
+  })
+})
+
+describe('region warm signal', () => {
+  it('says a region is warm once, when the bucket vouches for its first segment', async () => {
+    mockServer()
+    const warm = vi.fn()
+    const plan = {
+      input: { getPrimaryVideoTrack: async () => ({}) },
+      audioTracks: [],
+      durationSeconds: 1440,
+    }
+    void runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan as never,
+      onRegionWarm: warm,
+    })
+    await flush()
+    const first = conversions[0].opts.output.opts.format.options
+    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(300)
+    // The init alone is not a warm region.
+    expect(warm).not.toHaveBeenCalled()
+    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
+    await flush()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(warm).toHaveBeenCalledTimes(1)
+    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 2 })
+    await flush()
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(warm).toHaveBeenCalledTimes(1)
+    conversions[0].finish()
+  })
+})
+
+describe('segmentDurations', () => {
+  it('reads EXTINF in playlist order', () => {
+    expect(segmentDurations('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.000,\ncs_0_1.m4s\n#EXTINF:9.5,\ncs_0_2.m4s\n')).toEqual([4, 9.5])
+  })
+})
 
 describe('endPlaylist', () => {
   const body = [

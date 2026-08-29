@@ -71,6 +71,14 @@ export interface MemberReadiness {
 
 // The pending gated start the server is holding: where playback will begin
 // and how far along each member's buffer is.
+// What a publish moved, carried inside the roomUpdated that announces it.
+export interface MediaSnapshot {
+  mediaGeneration: number
+  mediaVersion: number
+  mediaOffsetMs: number
+  mediaRegions: MediaRegion[] | null
+}
+
 export interface RoomWaiting {
   targetMs: number
   readiness: MemberReadiness[]

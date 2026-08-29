@@ -67,6 +67,12 @@ type ClientMediaHooks struct {
 	// one signal worth coalescing: the preparo's byte counters moving. Falls
 	// back to NotifyRoomUpdated when unset.
 	NotifyRoomProgress func(roomID string)
+	// NotifyRoomMedia carries what a publish changed. Falls back to
+	// NotifyRoomUpdated when unset.
+	NotifyRoomMedia func(roomID string, media room.MediaSnapshot)
+	// NotifyPlaylists says this room's playlists just changed: a request
+	// holding for the next segment can have it now.
+	NotifyPlaylists func(roomID string)
 }
 
 // RegisterClientMediaRoutes mounts the claim, presign and publish endpoints.
@@ -312,6 +318,9 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 				c.Status(http.StatusInternalServerError)
 				return
 			}
+			if hooks.NotifyPlaylists != nil {
+				hooks.NotifyPlaylists(roomID)
+			}
 		}
 
 		if !storeClientMetadata(c, store, roomID, req) {
@@ -324,14 +333,13 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			}
 			// The region map only names regions whose master has rendered:
 			// a player sent to rN_master.m3u8 must find it.
+			mediaMoved := false
 			if regions := renderedRegions(ctx, store, roomID, req.Timeline.Regions, rendered, storedRoom.MediaRegions); regions != nil && !sameRegions(regions, storedRoom.MediaRegions) {
 				if err := store.SetMediaRegions(ctx, roomID, regions); err != nil {
 					c.Status(http.StatusInternalServerError)
 					return
 				}
-				if hooks.NotifyRoomUpdated != nil {
-					hooks.NotifyRoomUpdated(roomID)
-				}
+				mediaMoved = true
 			}
 			if req.Timeline.DurationMs > 0 && req.Timeline.DurationMs != storedRoom.DurationMs {
 				if err := store.SetMediaDuration(ctx, roomID, req.Timeline.DurationMs); err != nil {
@@ -347,9 +355,13 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 					c.Status(http.StatusInternalServerError)
 					return
 				}
-				if hooks.NotifyRoomUpdated != nil {
-					hooks.NotifyRoomUpdated(roomID)
-				}
+				mediaMoved = true
+			}
+			// One update per publish, however many things it moved, and it
+			// carries what moved: two bare updates used to cost every viewer
+			// two room fetches and the player two rebuilds.
+			if mediaMoved {
+				notifyMedia(ctx, store, roomID, hooks)
 			}
 		}
 		if req.Progress != nil {
@@ -653,4 +665,18 @@ func loadLiveRoom(c *gin.Context, store *room.Store, roomID string) (*room.Room,
 
 func maxClientBytes(cfg config.Config) int64 {
 	return cfg.MaxUploadMB << 20 * budgetSlackNumerator / budgetSlackDenominator
+}
+
+// notifyMedia announces a publish that moved the room's media, with the
+// room as it now stands when the hook can carry it.
+func notifyMedia(ctx context.Context, store *room.Store, roomID string, hooks ClientMediaHooks) {
+	if hooks.NotifyRoomMedia != nil {
+		if fresh, err := store.Get(ctx, roomID); err == nil {
+			hooks.NotifyRoomMedia(roomID, fresh.Snapshot())
+			return
+		}
+	}
+	if hooks.NotifyRoomUpdated != nil {
+		hooks.NotifyRoomUpdated(roomID)
+	}
 }

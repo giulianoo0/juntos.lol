@@ -633,6 +633,19 @@ impl Engine {
             if let Ok(mut stream) = slot.stream.clone().try_lock_owned() {
                 stream.seek(SeekFrom::Start(start)).await?;
                 slot.touch(start);
+                slot.clear_wanted();
+                // The window follows the read, not only the hint: a read that
+                // lands outside the last window — a retry, a hint swallowed by
+                // the client's stride, a scan slice — would otherwise wait for
+                // the sweep before its pieces are even wanted. And a startup
+                // window that has done its time gives way to the full one
+                // here, on the next read, rather than on the sweep.
+                let (windowed_at, startup) = slot.windowed();
+                let moved = start.abs_diff(windowed_at) > window::BEHIND;
+                let startup_over = startup && slot.since_hint().is_none_or(|since| since >= window::STARTUP);
+                if moved || startup_over {
+                    self.apply_window_with(infohash, false);
+                }
                 return Ok(Reader {
                     slot: Some(slot),
                     stream: Some(stream),
@@ -643,6 +656,19 @@ impl Engine {
                     gen_floor,
                     permits: self.permits_in_use.clone(),
                 });
+            }
+        }
+        // A playhead read that could not take its slot — the response for the
+        // region it left still holds the stream — still says where the
+        // playhead is. Left unsaid, the window stays on the old region until
+        // that response notices its generation and ends.
+        if prio == Prio::Playhead && size >= slots::MIN_POOLED_FILE {
+            if let Some(slot) = self.existing_slot(infohash, index, prio) {
+                if slot.cursor().abs_diff(start) > window::BEHIND {
+                    slot.set_wanted(start);
+                    slot.keep_alive();
+                    self.apply_window_with(infohash, false);
+                }
             }
         }
         let permit = self
@@ -667,6 +693,11 @@ impl Engine {
             gen_floor,
             permits: self.permits_in_use.clone(),
         })
+    }
+
+    fn existing_slot(&self, infohash: &str, index: usize, prio: Prio) -> Option<Arc<slots::StreamSlot>> {
+        let map = self.torrents.lock().unwrap();
+        map.get(infohash).and_then(|e| e.slots.get(&(index, prio)).cloned())
     }
 
     async fn slot(
@@ -722,15 +753,35 @@ impl Engine {
         // touch the slot with, and letting it look idle is what retires the
         // window out from under the very seek it is describing.
         slot.keep_alive();
+        // Said before the stream is tried: the window is built from what the
+        // reader wants, and a busy stream must not leave it on the old region.
+        slot.set_wanted(offset);
+        slot.mark_hinted();
         // A busy slot is a response in flight for the old region; it notices
         // the floor on its next chunk and ends, freeing the slot to move.
-        if let Ok(mut stream) = slot.stream.clone().try_lock_owned() {
-            stream.seek(SeekFrom::Start(offset)).await?;
-            slot.touch(offset);
-        }
-        // The cursor moved, so the window moved with it: a seek to the far
-        // side of the film must stop paying for the stretch it just left.
-        self.apply_window(infohash);
+        let seeked = match slot.stream.clone().try_lock_owned() {
+            Ok(mut stream) => {
+                stream.seek(SeekFrom::Start(offset)).await?;
+                slot.touch(offset);
+                slot.clear_wanted();
+                true
+            }
+            Err(_) => false,
+        };
+        // The cursor moved, so the window moved with it. Selection only: what
+        // the old region left behind is the sweep's to release, not this
+        // request's — a hint runs on the seek's critical path, and a guess a
+        // few percent off would punch holes in what the real read needs next.
+        self.apply_window_with(infohash, false);
+        tracing::info!(
+            infohash,
+            reader,
+            index,
+            read_offset = offset,
+            gen,
+            seeked,
+            "hint",
+        );
         Ok(())
     }
 
@@ -744,6 +795,12 @@ impl Engine {
     /// Best effort: a torrent still resolving, or paused, simply keeps what
     /// it had, and the next read reapplies the window.
     pub fn apply_window(&self, infohash: &str) {
+        self.apply_window_with(infohash, true);
+    }
+
+    /// `release` says whether what falls outside the window is also given
+    /// back to the disk; the sweep does that, the hot paths only select.
+    pub fn apply_window_with(&self, infohash: &str, release: bool) {
         let Some(handle) = self.handle(infohash) else {
             return;
         };
@@ -755,11 +812,32 @@ impl Engine {
             let Some(index) = entry.selected_file else {
                 return;
             };
-            let cursors: Vec<u64> = entry
+            let slots: Vec<(Prio, &Arc<slots::StreamSlot>)> = entry
                 .slots
                 .iter()
                 .filter(|((slot_index, _), _)| *slot_index == index)
-                .map(|(_, slot)| slot.position())
+                .map(|((_, prio), slot)| (*prio, slot))
+                .collect();
+            // Right after a seek every peer belongs to the pieces the first
+            // byte is waiting on: the playhead's window narrows, and the scan
+            // — which no viewer waits for — gets none at all for the moment.
+            let starting = slots.iter().any(|(prio, slot)| {
+                *prio == Prio::Playhead && slot.since_hint().is_some_and(|since| since < window::STARTUP)
+            });
+            let cursors: Vec<window::Cursor> = slots
+                .iter()
+                .filter_map(|(prio, slot)| {
+                    let at = slot.cursor();
+                    let ahead = match prio {
+                        Prio::Playhead if starting => window::STARTUP_AHEAD,
+                        Prio::Playhead => window::AHEAD,
+                        Prio::Scan if starting => return None,
+                        Prio::Scan => window::SCAN_AHEAD,
+                        Prio::Head => return None,
+                    };
+                    slot.note_windowed(at, starting && *prio == Prio::Playhead);
+                    Some(window::Cursor { at, ahead, behind: window::BEHIND })
+                })
                 .collect();
             (index, cursors)
         };
@@ -772,13 +850,7 @@ impl Engine {
         };
         let lengths = meta.lengths();
         let piece_len = lengths.default_piece_length() as u64;
-        let ranges = window::needed_ranges(
-            info.len,
-            &cursors,
-            window::AHEAD,
-            window::BEHIND,
-            window::PIN,
-        );
+        let ranges = window::needed_ranges_for(info.len, &cursors, window::PIN);
         let pieces = window::pieces_for_ranges(
             info.offset_in_torrent,
             piece_len,
@@ -798,7 +870,7 @@ impl Engine {
         // player's buffer looks like, and what a backgrounded tab does the
         // whole time. Narrowing the selection while nobody reads is free;
         // releasing is not.
-        if cursors.is_empty() {
+        if cursors.is_empty() || !release {
             return;
         }
         self.release_behind_window(infohash, &handle, info, &pieces, piece_len);

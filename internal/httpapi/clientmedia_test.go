@@ -438,3 +438,41 @@ func TestClientMediaPublishKeepsARegionMap(t *testing.T) {
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", dup)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
+
+func TestClientMediaPublishCarriesWhatMoved(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	bucket := objectstore.NewFake()
+	snapshots := make(chan room.MediaSnapshot, 4)
+	bare := make(chan string, 4)
+	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{
+		NotifyRoomUpdated: func(id string) { bare <- id },
+		NotifyRoomMedia:   func(_ string, media room.MediaSnapshot) { snapshots <- media },
+	})
+	claim := claimRoom(t, e, "r1")
+	for _, key := range []string{"r1_cinit_1.mp4", "r1_cs_1_1.m4s"} {
+		require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/"+key,
+			strings.NewReader("data"), 4, media.ClientSegmentContentType, media.ClientObjectCacheControl))
+	}
+	playlist := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n" +
+		"#EXT-X-MAP:URI=\"r1_cinit_1.mp4\"\n#EXTINF:4.0,\nr1_cs_1_1.m4s\n"
+	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028,mp4a.40.2\"\nr1_client_stream_1.m3u8\n"
+	body := `{"claim":"` + claim + `","mediaGeneration":0,` +
+		`"confirm":["r1_cinit_1.mp4","r1_cs_1_1.m4s"],` +
+		`"playlists":{"master.m3u8":` + strconvQuote(master) + `,"r1_master.m3u8":` + strconvQuote(master) + `,"r1_client_stream_1.m3u8":` + strconvQuote(playlist) + `},` +
+		`"timeline":{"durationMs":1440000,"offsetMs":1080000,"regions":[{"n":1,"startMs":1080000,"producedMs":4000,"growing":true}]}}`
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish", body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Regions and offset both moved in this publish: one update, with both.
+	select {
+	case snap := <-snapshots:
+		require.Equal(t, int64(1080000), snap.MediaOffsetMs)
+		require.Equal(t, []room.MediaRegion{{N: 1, StartMs: 1080000, ProducedMs: 4000, Growing: true}}, snap.MediaRegions)
+		require.Positive(t, snap.MediaVersion)
+	case <-time.After(time.Second):
+		t.Fatal("no media snapshot")
+	}
+	require.Empty(t, snapshots)
+	require.Empty(t, bare)
+}

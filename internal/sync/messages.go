@@ -58,6 +58,9 @@ type Outbound struct {
 	// start is pending, so every member can see who is still buffering.
 	Readiness []MemberReadiness `json:"readiness,omitempty"`
 	TargetMs  int64             `json:"targetMs,omitempty"`
+	// Media rides a "roomUpdated" that a publish caused: what changed, so
+	// the viewer need not fetch the room to learn it.
+	Media *room.MediaSnapshot `json:"media,omitempty"`
 	// Gating carries the room's synchronized-start setting, in the welcome
 	// frame and in "gating" broadcasts when the controller changes it.
 	Gating *bool `json:"gating,omitempty"`

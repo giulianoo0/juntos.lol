@@ -15,21 +15,35 @@ import type { Translator } from '../i18n/useT'
  * offset the sync layer already measures, so every member watches the same
  * clock rather than one that started when their tab happened to hear about it.
  */
-export function StillThere({ deadlineMs, serverOffsetMs, onStay, t }: {
+export function StillThere({ deadlineMs, serverOffsetMs, onStay, onExpired, t }: {
   deadlineMs: number | null
   serverOffsetMs: number
   onStay: () => void
+  /** The countdown reached zero with nobody answering. */
+  onExpired: () => void
   t: Translator
 }) {
   const [left, setLeft] = useState(0)
 
   useEffect(() => {
     if (deadlineMs === null) return
-    const read = () => setLeft(Math.max(Math.ceil((deadlineMs - (Date.now() + serverOffsetMs)) / 1000), 0))
+    let fired = false
+    const read = () => {
+      const remaining = Math.max(Math.ceil((deadlineMs - (Date.now() + serverOffsetMs)) / 1000), 0)
+      setLeft(remaining)
+      // Zero is the answer nobody gave. The room does not always close on
+      // its own at this point — a host still preparing keeps it alive on the
+      // server — so a dialog stuck at zero was what people saw. The person is
+      // taken out here, and told why.
+      if (remaining === 0 && !fired) {
+        fired = true
+        onExpired()
+      }
+    }
     read()
     const timer = window.setInterval(read, 1000)
     return () => window.clearInterval(timer)
-  }, [deadlineMs, serverOffsetMs])
+  }, [deadlineMs, serverOffsetMs, onExpired])
 
   // Answering is the only thing this asks for, so the close affordance answers
   // too: dismissing it is a person saying they are there by acting at all.

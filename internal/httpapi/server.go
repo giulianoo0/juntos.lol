@@ -77,7 +77,14 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	})
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
 	RegisterScreenshareRoute(r.Group("/api"), store, cfg, hub)
-	RegisterMediaRoutes(r, store)
+	// Playlist requests hold for the publish that grows them; the publish
+	// handler is what lets them go.
+	waiter := newPlaylistWaiter()
+	RegisterMediaRoutes(r, store, waiter)
+	options.clientMediaHooks.NotifyPlaylists = waiter.Notify
+	if hub != nil && options.clientMediaHooks.NotifyRoomMedia == nil {
+		options.clientMediaHooks.NotifyRoomMedia = hub.NotifyRoomMedia
+	}
 	var onSubsStored func(string)
 	if hub != nil {
 		onSubsStored = hub.NotifyRoomUpdated

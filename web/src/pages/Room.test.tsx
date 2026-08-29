@@ -140,7 +140,10 @@ describe('RoomPage refetch under version churn', () => {
     // response ever lands and the room stays frozen at its join-time state.
     const slow: Array<(json: unknown) => void> = []
     let calls = 0
-    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      // Only the room itself is slow here; the player's own fetches (the
+      // region's playlist bundle) are not what this test is about.
+      if (!String(url).includes('/api/rooms/')) return Promise.resolve({ ok: false, status: 404, json: async () => ({}) })
       calls += 1
       if (calls === 1) return Promise.resolve({ ok: true, status: 200, json: async () => base })
       return new Promise((resolve, reject) => {
