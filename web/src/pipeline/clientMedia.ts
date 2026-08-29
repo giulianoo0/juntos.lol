@@ -356,7 +356,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   let metadataSent = false
 
   // Wakes the region loop when it is parked between regions (see below).
-  let wakeFollow: (() => void) | null = null
 
   const fail = (error: unknown) => {
     // The first failure aborts everything: the conversion stops encoding, the
@@ -364,7 +363,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // upload the rest of a doomed run.
     failure ??= error
     void conversion?.cancel().catch(() => {})
-    wakeFollow?.()
   }
 
   // Backpressure: the muxer must not outrun the uplink. enqueue awaits a slot,
@@ -583,8 +581,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     console.log(`[remux-worker] region ${current.n} closed: ${stats.count} segments, mean ${stats.meanSec.toFixed(2)}s, max ${stats.maxSec.toFixed(2)}s (target ${SEGMENT_SECONDS}s)`)
     const prefix = region <= 0 ? '' : `r${region}_`
     for (const [name, content] of playlists) {
-      // Masters carry no segments and are never reloaded on a timer.
-      if (!content.includes('#EXTINF') || content.includes('#EXT-X-ENDLIST')) continue
+      // Masters carry no segments and are never reloaded on a timer. A
+      // playlist the muxer already ended is sealed all the same: the publish
+      // re-cuts it to what the bucket vouches for, and a fill region that
+      // ends short of the file would otherwise lose its playlists to the
+      // next region's map reset before any publish carried them.
+      if (!content.includes('#EXTINF')) continue
       const rendition = renditionOf(name)
       if (rendition === null) continue
       sealed.set(name, { prefix, region: current.n, playlist: rendition, body: content })
@@ -595,6 +597,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   }
   let seekTargetSeconds: number | null = null
   let nextStartSeconds = 0
+  // Where the region being set up stops, when it is filling a gap between
+  // regions rather than running to the end of the file. Null otherwise.
+  let fillEndSeconds: number | null = null
   // The region a traced seek left: its stragglers still confirm for a while
   // after, and must not read as the new region publishing.
   let seekFromRegion = -1
@@ -638,7 +643,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   const uncovered = (absoluteMs: number): boolean => {
     for (const r of regionMap()) {
       const end = r.startMs + r.producedMs
-      const forwardEdge = r.growing ? Math.max(end, regionAimMs) + COLD_AHEAD_MS : end
+      const growingEdge = Math.min(Math.max(end, regionAimMs) + COLD_AHEAD_MS, fillEndSeconds !== null ? fillEndSeconds * 1000 : Number.POSITIVE_INFINITY)
+      const forwardEdge = r.growing ? growingEdge : end
       if (absoluteMs >= r.startMs - COLD_BEHIND_MS && absoluteMs <= forwardEdge) return false
     }
     return true
@@ -675,8 +681,37 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       console.log(`[remux-worker] snapped to ${seekTargetSeconds}`)
       trace.mark('keyframe', Math.round(seekTargetSeconds * 1000 - absoluteMs))
       regionAimMs = absoluteMs
-      wakeFollow?.()
     })()
+  }
+  // Waits for a region's confirmations to catch up with its uploads, or for
+  // a seek to arrive, bounded: a name the bucket never vouches for must not
+  // hold the fill forever.
+  const SETTLE_MAX_MS = 30_000
+  const settled = async (n: number): Promise<void> => {
+    const deadline = Date.now() + SETTLE_MAX_MS
+    while (!ledger.settled(n) && !restartPending && !failure && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 500))
+    }
+  }
+  // The next stretch of the timeline no region holds: the one just behind
+  // where the room last pointed — where a viewer is likeliest to go back to
+  // — else the earliest. Null when everything is held.
+  const nextGap = (): { startMs: number; endMs: number } | null => {
+    const durationMs = Math.round(plan.durationSeconds * 1000)
+    const spans = regionMap()
+      .map((r) => ({ start: r.startMs, end: r.startMs + r.producedMs }))
+      .sort((a, b) => a.start - b.start)
+    const gaps: { startMs: number; endMs: number }[] = []
+    let reach = 0
+    for (const span of spans) {
+      if (span.start > reach + COLD_BEHIND_MS) gaps.push({ startMs: reach, endMs: span.start })
+      reach = Math.max(reach, span.end)
+    }
+    if (reach < durationMs - SEGMENT_SECONDS * 1000) gaps.push({ startMs: reach, endMs: durationMs })
+    if (gaps.length === 0) return null
+    const wanted = lastFollowMs
+    const behind = wanted === null ? [] : gaps.filter((g) => g.startMs <= wanted)
+    return behind.length > 0 ? behind[behind.length - 1] : gaps[0]
   }
   const handle: ClientRemuxHandle = {
     follow: (absoluteMs) => {
@@ -693,7 +728,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     region += 1
     const startSeconds = nextStartSeconds
     regionStartMs = Math.round(startSeconds * 1000)
-    regionAimMs = Math.max(regionAimMs, regionStartMs)
+    // A fill region aims at its own start: the aim is only ever raised, and
+    // the seek target the previous region was built for would otherwise let
+    // this one claim it covers everything up to there.
+    regionAimMs = fillEndSeconds !== null ? regionStartMs : Math.max(regionAimMs, regionStartMs)
     closeRegion()
     seekTargetSeconds = null
     regions.push({ n: region, startMs: regionStartMs, growing: true, ranToEnd: false })
@@ -737,11 +775,15 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       target: new PathedTarget('master.m3u8', () => new BufferTarget()),
     })
 
+    const trim = {
+      ...(startSeconds > 0 ? { start: startSeconds } : {}),
+      ...(fillEndSeconds !== null ? { end: fillEndSeconds } : {}),
+    }
     const current = await Conversion.init({
       input: plan.input,
       output,
       audio: { codec: 'aac' },
-      ...(startSeconds > 0 ? { trim: { start: startSeconds } } : {}),
+      ...(Object.keys(trim).length > 0 ? { trim } : {}),
     })
     if (!current.isValid) {
       throw new Error('client remux plan rejected by conversion: '
@@ -750,11 +792,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // Progress is the whole timeline's, not the region's: the bar must not
     // jump back to zero because someone sought.
     current.onProgress = (progress) => {
-      const regionSpan = Math.max(plan.durationSeconds - startSeconds, 0)
+      const regionSpan = Math.max((fillEndSeconds ?? plan.durationSeconds) - startSeconds, 0)
       onProgress?.(Math.round(((startSeconds + progress * regionSpan) / plan.durationSeconds) * 100))
     }
     conversion = current
-    console.log(`[remux-worker] region ${region} converting from ${startSeconds}`)
+    console.log(`[remux-worker] region ${region} converting from ${startSeconds}${fillEndSeconds !== null ? ` to ${fillEndSeconds} (fill)` : ''}`)
     trace.mark('convInit')
     restartPending = false
     if (region === 0) onHandle?.(handle)
@@ -779,6 +821,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       pendingRestart = null
     }
     if (seekTargetSeconds !== null) {
+      // A seek out of a fill region is a plain region again: it runs from
+      // the target to the end, not to the fill's bound.
+      fillEndSeconds = null
       nextStartSeconds = seekTargetSeconds
       continue
     }
@@ -787,22 +832,37 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     // back until every one of its segments has actually reached the bucket.
     closeRegion()
     const finished = regions.find((r) => r.n === region)
-    if (finished) finished.ranToEnd = true
+    const wasFill = fillEndSeconds !== null
+    fillEndSeconds = null
+    if (finished && !wasFill) finished.ranToEnd = true
     // The whole timeline is done once the regions together cover it —
-    // this one from a breath of zero, or several stitched by seeks.
-    if (startSeconds <= COLD_BEHIND_MS / 1000 || timelineCovered()) break
-    // This region ran to the end of the file, but something before its
-    // start is still unproduced. Park here: the next cold seek wakes the
-    // loop and re-prepares wherever the room went.
-    await new Promise<void>((resolve) => { wakeFollow = resolve })
-    wakeFollow = null
+    // one from a breath of zero to the end, or several stitched by seeks
+    // and fills.
+    if ((!wasFill && startSeconds <= COLD_BEHIND_MS / 1000) || timelineCovered()) break
+    // Something is still unproduced. Rather than park until the next cold
+    // seek, go and produce it: every gap filled now is a seek that opens in
+    // a second later instead of ten. The gaps are measured against what
+    // the bucket holds, so this region's stragglers get a moment to land.
+    await settled(region)
     if (failure) throw failure
     if (pendingRestart) {
       await pendingRestart
       pendingRestart = null
     }
-    if (seekTargetSeconds === null) break
-    nextStartSeconds = seekTargetSeconds
+    if (seekTargetSeconds !== null) {
+      nextStartSeconds = seekTargetSeconds
+      continue
+    }
+    if (timelineCovered()) break
+    const gap = nextGap()
+    if (!gap) break
+    const start = await snapToKeyframe(gap.startMs / 1000)
+    // A segment of slack past the gap so the two regions overlap on a
+    // whole segment; a gap that reaches the end is a plain run to the end.
+    const end = gap.endMs >= Math.round(plan.durationSeconds * 1000) ? null : gap.endMs / 1000 + SEGMENT_SECONDS
+    nextStartSeconds = start
+    fillEndSeconds = end !== null && end > start ? end : null
+    console.log(`[remux-worker] gap ${gap.startMs}-${gap.endMs}: filling from ${start}`)
   }
 
   await Promise.all([...inflight])

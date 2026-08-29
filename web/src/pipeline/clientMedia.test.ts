@@ -10,7 +10,7 @@ const mocked = vi.hoisted(() => {
   interface FakeConversionOpts {
     input: unknown
     output: { opts: { format: { options: Record<string, (...args: never[]) => void> } } }
-    trim?: { start: number }
+    trim?: { start?: number; end?: number }
   }
 
   class FakeConversion {
@@ -170,32 +170,40 @@ describe('client remux regions', () => {
     await publishRound()
 
     // Region 1 hits the end of the file: everything between region zero's
-    // four seconds and 18:00 is still unproduced, so the pipeline parks.
+    // four seconds and 18:00 is still unproduced, so the pipeline goes and
+    // fills it — a region from the keyframe before the gap, ending a segment
+    // past where region 1 begins.
     conversions[1].finish()
+    await publishRound()
     await flush()
-    await flush()
+    expect(conversions).toHaveLength(3)
+    expect(conversions[2].opts.trim).toEqual({ start: 2, end: 1_082 })
     // Seeking back into region zero's produced stretch is covered: the
     // player switches to that region on its own, nothing restarts.
     handle!.follow(500)
     await flush()
     await flush()
-    expect(conversions).toHaveLength(2)
-    // Past its end is not: a new region continues from there.
+    expect(conversions).toHaveLength(3)
+    // Just past its end is covered too: the fill region is about to be
+    // there, so nothing restarts either.
     handle!.follow(4_500)
     await flush()
     await flush()
     expect(conversions).toHaveLength(3)
-    expect(conversions[2].opts.trim?.start).toBe(2)
 
-    // Region 2 runs to the end; together the regions cover the timeline and
-    // the run completes. A region that emitted nothing spans nothing, so it
-    // has to produce a segment before it can claim the tail.
+    // The fill region produces the whole gap; together the regions cover
+    // the timeline and the run completes.
     const third = conversions[2].opts.output.opts.format.options
-    ;(third.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    for (let n = 1; n <= 270; n += 1) {
+      ;(third.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n })
+    }
     ;(third.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
     await publishRound()
+    await publishRound()
+    await publishRound()
     conversions[2].finish()
+    await publishRound()
     await run
 
     const presigned = calls
@@ -214,7 +222,7 @@ describe('client remux regions', () => {
       regions: [
         { n: 0, startMs: 0, producedMs: 4_000, growing: false },
         { n: 1, startMs: 1_078_000, producedMs: 1_440_000 - 1_078_000, growing: false },
-        { n: 2, startMs: 2_000, producedMs: 1_440_000 - 2_000, growing: false },
+        { n: 2, startMs: 2_000, producedMs: 270 * 4_000, growing: false },
       ],
     })
   })
@@ -257,7 +265,7 @@ describe('client remux regions', () => {
     expect(conversions).toHaveLength(2)
   })
 
-  it('parks at a region end instead of completing, and wakes on the next seek', async () => {
+  it('fills the gaps behind a region instead of parking, and a seek still wins', async () => {
     const calls = mockServer()
     let handle: ClientRemuxHandle | null = null
     const plan = {
@@ -265,7 +273,8 @@ describe('client remux regions', () => {
       audioTracks: [],
       durationSeconds: 1440,
     }
-    // Never awaited on purpose: parking forever is this test's point.
+    // Never awaited on purpose: the run only completes once every gap is
+    // filled, and this test stops well before that.
     void runClientRemux({
       roomID: 'r1',
       mediaGeneration: 0,
@@ -286,28 +295,35 @@ describe('client remux regions', () => {
     await flush()
 
     // The region runs to the end of the file. Everything before 18:00 is
-    // still unproduced, so the run must not complete — it parks.
+    // still unproduced, so the run must not complete — it goes and fills
+    // the head, bounded a segment past where region 1 begins.
     conversions[1].finish()
-    await flush()
+    await publishRound()
     await flush()
     const completes = () => calls.filter((call) =>
       call.url.endsWith('/client-media/publish') && call.body?.complete === true)
     expect(completes()).toHaveLength(0)
-
-    // The next cold seek wakes the loop and re-prepares from the start.
-    handle!.follow(30_000)
-    await flush()
-    await flush()
     expect(conversions).toHaveLength(3)
-    const third = conversions[2].opts.output.opts.format.options
-    ;(third.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    expect(conversions[2].opts.trim).toEqual({ end: 1_082 })
+
+    // A cold seek during the fill is a seek like any other: the fill region
+    // dies and the new one starts at the target.
+    handle!.follow(200_000)
     await flush()
-    // Region from ~0:28 runs to EOF; still not the whole timeline from zero,
-    // so it parks again rather than completing with the head missing.
-    conversions[2].finish()
     await flush()
+    expect(conversions).toHaveLength(4)
+    expect(conversions[3].opts.trim).toEqual({ start: 198 })
+    const fourth = conversions[3].opts.output.opts.format.options
+    ;(fourth.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    await flush()
+    // Region 3 runs to EOF; the head is still missing, so the next fill goes
+    // back for it — this time up to where region 3 starts.
+    conversions[3].finish()
+    await publishRound()
     await flush()
     expect(completes()).toHaveLength(0)
+    expect(conversions).toHaveLength(5)
+    expect(conversions[4].opts.trim).toEqual({ end: 202 })
   })
 
 describe('publish on demand', () => {

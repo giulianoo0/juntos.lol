@@ -990,9 +990,14 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     lastVersionRef.current = version
     const at = resumeAtMsRef.current
     if (at === null) return
+    // Only the region it waited on: the pipeline also publishes regions it
+    // fills in the background, and a straggler of the region a seek left,
+    // and neither holds the target. Left parked, the next publish is asked
+    // again.
+    if (regions && !regions.some((r) => regionHolds(r, at))) return
     resumeAtMsRef.current = null
     send('play', { positionMs: at, rate: videoRef.current?.playbackRate ?? 1 })
-  }, [room.mediaVersion, send, videoRef])
+  }, [regions, room.mediaVersion, send, videoRef])
   useEffect(() => {
     if (syncState?.playing) resumeAtMsRef.current = null
   }, [syncState?.playing])
