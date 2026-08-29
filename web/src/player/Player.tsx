@@ -70,6 +70,11 @@ interface PlayerProps {
   // The room waits on these reports, so a player that never sends one — or
   // never stops — is a room that never starts.
   onBuffering?: (stalled: boolean) => void
+  /** What the buffer gate is waiting on, whenever it changes: the seconds
+   * still to build, or null once open; `cold` while there is no media at
+   * the position at all. Only once the media has a duration — before that
+   * there is nothing to wait on and nothing open either. */
+  onWait?: (wait: { secondsLeft: number | null; cold: boolean }) => void
 }
 
 // How far past a growing region's produced edge a position still counts as
@@ -194,7 +199,7 @@ function subtitleSource(room: RoomInfo, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering }: PlayerProps) {
+export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
   const { toast } = useToast()
   // Says why a control did nothing, at the moment it is used. The standing
   // note this replaces sat in the bar for the whole session, explaining
@@ -1361,6 +1366,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   })
   const bufferGateRef = useRef(bufferGate)
   bufferGateRef.current = bufferGate
+  const waitLeft = bufferGate && !coldWait ? Math.max(Math.ceil(gateSec - bufferAheadSec), 1) : null
+  const onWaitRef = useRef(onWait)
+  onWaitRef.current = onWait
+  useEffect(() => {
+    if (!(duration > 0)) return
+    onWaitRef.current?.({ secondsLeft: bufferGate ? waitLeft : null, cold: coldWait })
+  }, [bufferGate, coldWait, duration, waitLeft])
   // The gate opening is the one event that ends its own wait: no canplay or
   // progress necessarily follows a buffer that filled while the element was
   // paused. Declared here, below the gate it reads: a dependency array is
@@ -1457,12 +1469,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
                   Only once there is media to fill against, so a cold seek
                   still says it is preparing instead of promising ten seconds
                   of a region that does not exist. */}
-              <WaitLabel
-                secondsLeft={bufferGate && !coldWait
-                  ? Math.max(Math.ceil(gateSec - bufferAheadSec), 1)
-                  : null}
-                t={t}
-              />
+              <WaitLabel secondsLeft={waitLeft} t={t} />
               {swarm ? <TorrentReadout stats={swarm} /> : null}
             </div>
           ) : null}

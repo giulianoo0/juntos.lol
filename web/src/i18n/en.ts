@@ -125,6 +125,8 @@ export const en: Record<string, string> = {
   'room.closedIdleRejoin': 'Join again',
   'room.closedIdleHome': 'Back to start',
   'room.bufferingLead': 'Building buffer',
+  'room.playerBufferingLead': 'Buffering',
+  'room.playerBufferingTail': 's',
   'room.bufferingTail': ' s',
   'room.resumeFailed': 'Could not resume the preparation. Reopen the torrent under Change media.',
   'room.screenWaiting': 'Waiting for the host to start sharing',

@@ -125,6 +125,8 @@ export const ptBR: Record<string, string> = {
   'room.closedIdleRejoin': 'Entrar de novo',
   'room.closedIdleHome': 'Voltar ao início',
   'room.bufferingLead': 'Montando buffer',
+  'room.playerBufferingLead': 'Carregando',
+  'room.playerBufferingTail': 's de buffer',
   'room.bufferingTail': ' s',
   'room.resumeFailed': 'Não deu para retomar o preparo. Abra o torrent de novo em Trocar mídia.',
   'room.screenWaiting': 'Esperando o anfitrião começar a compartilhar',

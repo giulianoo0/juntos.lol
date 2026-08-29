@@ -410,10 +410,15 @@ button.timecode-chapter:hover { color: var(--text); }
    cell and the box clips the one on its way out. */
 .slot-text { position: relative; display: inline-grid; overflow: hidden; vertical-align: bottom; }
 .slot-text.is-block { display: grid; width: 100%; }
-.slot-text > span { grid-area: 1 / 1; will-change: transform, filter; }
+.slot-text > span { grid-area: 1 / 1; }
+/* The room's opening card sits over the player that is building the buffer it
+   reports on — the picture is there behind the glass, arriving — and fades as
+   the panel dissolves. */
+.gate-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(6,5,8,.42); backdrop-filter: blur(26px) saturate(120%); -webkit-backdrop-filter: blur(26px) saturate(120%); opacity: 1; transition: opacity var(--t-morph) var(--ease); }
+.gate-overlay.is-leaving { opacity: 0; pointer-events: none; }
 /* Text the light runs through while something is being built: the sweep is
    the movement, the letters stay put. Same keyframes as the connecting pill. */
-.text-shimmer { color: transparent; background-image: linear-gradient(100deg, var(--text-dim) 34%, var(--text) 50%, var(--text-dim) 66%); background-size: 260% 100%; background-repeat: no-repeat; background-position: 180% 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
+.text-shimmer { padding: 0 .12em; margin: 0 -.12em; color: transparent; background-image: linear-gradient(100deg, var(--text-dim) 34%, var(--text) 50%, var(--text-dim) 66%); background-size: 260% 100%; background-repeat: no-repeat; background-position: 180% 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .text-shimmer { animation-duration: 4s; } }
 .player-preparing .starting-swarm { margin: 0; }
 /* Autoplay refused for want of a gesture. It has to be reachable — unlike the

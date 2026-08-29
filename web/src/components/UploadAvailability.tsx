@@ -5,6 +5,16 @@ import type { RoomUploadProgress } from '../upload'
 import type { TorrentStats } from '../torrent'
 import { TorrentReadout } from './TorrentReadout'
 import { SlotText } from '../ui/SlotText'
+import NumberFlow from '@number-flow/react'
+import { GATE_BASE_SEC } from '../player/gate'
+
+/** What the player under the card is waiting on, once the room has media. */
+export interface OpeningWait {
+  /** Seconds of buffer still to build; null while there is no media at the
+   * room's position yet (a cold start). */
+  secondsLeft: number | null
+  cold: boolean
+}
 
 // How long a byte count stays in the rate window. Long enough that a swarm
 // pausing on one slow piece does not read as "stalled", short enough that the
@@ -73,12 +83,16 @@ export function UploadAvailability({
   progress,
   preparation,
   swarm,
+  wait,
   t,
 }: {
   progress: RoomUploadProgress | null
   preparation?: RoomPreparation | null
   /** Live torrent numbers, present only on the machine fetching the swarm. */
   swarm?: TorrentStats | null
+  /** The last stage: the room has media and the player behind this card is
+   * building its opening buffer. The card stays until that is done. */
+  wait?: OpeningWait | null
   t: Translator
 }) {
   // The server's count covers every viewer; the local one only exists in the
@@ -109,29 +123,48 @@ export function UploadAvailability({
       : t(phaseKey(prep))
   const etaLabel = eta !== null ? formatDuration(eta, t) : barPct >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
 
+  // The buffer stage takes over the whole card: the bar becomes the buffer
+  // filling towards the gate, the countdown the seconds it still needs.
+  const buffering = wait !== null && wait !== undefined
+  const bufferLeft = buffering && !wait.cold ? wait.secondsLeft : null
+  const bufferPct = bufferLeft === null ? 0 : Math.max(0, Math.min(100, Math.round((1 - bufferLeft / GATE_BASE_SEC) * 100)))
+  const stageKey = !buffering ? label : wait.cold ? 'cold' : 'buffer'
+  const shownPct = buffering ? bufferPct : barPct
+
   return (
     <div className="availability-card">
       <h1>{t('room.processing')}</h1>
       {/* The stages travel through the same line (see SlotText): receiving,
-          then analysing, then the first segment — each one legible as the
-          previous one finishing. */}
-      <p><SlotText k={label} block>{label}</SlotText></p>
+          then analysing, then the first segment, then the buffer being
+          built — each one legible as the previous one finishing. */}
+      <p>
+        <SlotText k={stageKey} block>
+          {!buffering ? label : wait.cold ? t('room.preparingPart') : (
+            <>
+              <span className="text-shimmer">{t('room.bufferingLead')}</span>
+              {bufferLeft !== null ? <NumberFlow value={bufferLeft} suffix={t('room.bufferingTail')} /> : null}
+            </>
+          )}
+        </SlotText>
+      </p>
       <div className="availability-meter">
         {/* No size, no percentage: a calm shimmer that stays alive even at zero,
             so a slow start never reads as stuck. */}
         <div
-          className={`prep-bar ${barPct > 0 ? 'is-progress' : 'is-indeterminate'}`}
+          className={`prep-bar ${shownPct > 0 ? 'is-progress' : 'is-indeterminate'}`}
           role="progressbar"
           aria-label={t('prep.untilPlayable')}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-valuenow={barPct}
+          aria-valuenow={shownPct}
         >
-          <span style={barPct > 0 ? { width: `${barPct}%` } : undefined} />
+          <span style={shownPct > 0 ? { width: `${shownPct}%` } : undefined} />
         </div>
         <div className="prep-eta">
-          <span>{target.bytes > 0 && !target.certain ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
-          <strong>{etaLabel}</strong>
+          <span>{buffering || (target.bytes > 0 && !target.certain) ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
+          {buffering
+            ? <strong>{bufferLeft !== null ? <NumberFlow value={bufferLeft} suffix={t('room.bufferingTail')} /> : t('prep.etaUnknown')}</strong>
+            : <strong>{etaLabel}</strong>}
         </div>
       </div>
       {swarm ? <TorrentReadout stats={swarm} /> : null}

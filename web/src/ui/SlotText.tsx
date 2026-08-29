@@ -21,7 +21,10 @@ export function SlotText({ k, block = false, children }: { k: string; block?: bo
         <motion.span
           key={k}
           initial={{ transform: travel(1), opacity: 0, filter: soft }}
-          animate={{ transform: 'translateY(0%)', opacity: 1, filter: 'blur(0px)' }}
+          // The filter is cleared once landed: a blur of zero is still a
+          // filter, and text painted through a background clip (the shimmer)
+          // renders cropped inside one.
+          animate={{ transform: 'translateY(0%)', opacity: 1, filter: 'blur(0px)', transitionEnd: { filter: 'none' } }}
           exit={{ transform: travel(-1), opacity: 0, filter: soft }}
           transition={{ duration: still ? 0.12 : 0.32, ease: [0.16, 1, 0.3, 1] }}
         >

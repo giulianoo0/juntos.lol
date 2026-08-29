@@ -19,8 +19,8 @@ export function WaitLabel({ secondsLeft, t }: { secondsLeft: number | null; t: T
       <SlotText k={phase}>
         {phase === 'preparing' ? t('room.preparingPart') : (
           <>
-            <span className="text-shimmer">{t('room.bufferingLead').trim()}</span>
-            <NumberFlow value={secondsLeft ?? 0} suffix={t('room.bufferingTail')} />
+            <span>{t('room.playerBufferingLead').trim()}</span>
+            <NumberFlow value={secondsLeft ?? 0} suffix={t('room.playerBufferingTail')} />
           </>
         )}
       </SlotText>

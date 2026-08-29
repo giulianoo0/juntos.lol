@@ -7,7 +7,7 @@ import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
-import { UploadAvailability } from '../components/UploadAvailability'
+import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
 import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
@@ -116,14 +116,14 @@ export function RoomPage() {
 }
 
 /** Every state the room passes through before there is a picture to show. */
-type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'failed' | 'error' | null
+type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'buffering' | 'failed' | 'error' | null
 
 /**
  * The room's waiting room: one panel that changes what it is asking for or
  * reporting, travelling between the sizes each state needs and dissolving
  * between them, rather than swapping whole screens.
  */
-function RoomGate({ step, room, onJoin, progress, preparation, swarm, failure, errorMessage }: {
+function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, overlay = false, leaving = false, failure, errorMessage }: {
   step: GateStep
   /** The room as last read, for the report a failure screen can hand over. */
   room?: RoomInfo
@@ -131,6 +131,13 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, failure, e
   progress?: RoomUploadProgress | null
   preparation?: RoomInfo['preparation']
   swarm?: TorrentStats | null
+  /** The opening buffer, for the last stage of preparing. */
+  wait?: OpeningWait | null
+  /** Laid over the room rather than in place of it: the player underneath is
+   * what is building the buffer this card reports on. */
+  overlay?: boolean
+  /** The overlay's last beat: it fades while the panel dissolves. */
+  leaving?: boolean
   failure?: string | null
   errorMessage?: string
 }) {
@@ -138,7 +145,7 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, failure, e
   const [draft, setDraft] = useState('')
   const { shown, morphing } = useMorphingStep(step)
   return (
-    <main className="center-state">
+    <main className={`center-state${overlay ? ' gate-overlay' : ''}${leaving ? ' is-leaving' : ''}`}>
       <MorphPanel className="gate-panel raised" sizeKey={shown} morphing={morphing}>
         {shown === 'connecting' ? (
           <div className="gate-centered">
@@ -171,8 +178,8 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, failure, e
           </form>
         ) : null}
 
-        {shown === 'preparing' ? (
-          <UploadAvailability progress={progress ?? null} preparation={preparation} swarm={swarm} t={t} />
+        {shown === 'preparing' || shown === 'buffering' ? (
+          <UploadAvailability progress={progress ?? null} preparation={preparation} swarm={swarm} wait={shown === 'buffering' ? wait ?? { secondsLeft: null, cold: false } : null} t={t} />
         ) : null}
 
         {shown === 'expired' ? (
@@ -389,6 +396,21 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     : mediaStatus === 'error' ? 'error'
     : null
   const { shown: shownGate } = useMorphingStep(gate)
+  // The opening: the room has media, and the player is building the buffer
+  // it starts with. The preparing card stays over it for that — "montando
+  // buffer" is the last stage of preparing, not the first of playing — and
+  // lifts once the gate opens. Every fresh source opens again.
+  const [opening, setOpening] = useState(true)
+  const [openingWait, setOpeningWait] = useState<OpeningWait | null>(null)
+  useEffect(() => {
+    if (gate === 'preparing') { setOpening(true); setOpeningWait(null) }
+  }, [gate])
+  const onWait = useCallback((wait: OpeningWait) => {
+    setOpeningWait(wait)
+    if (wait.secondsLeft === null && !wait.cold) setOpening(false)
+  }, [])
+  const openingGate: GateStep = opening && !isScreenRoom && mediaStatus === 'ready' ? 'buffering' : null
+  const { shown: shownOpening } = useMorphingStep(openingGate)
 
   // Repointing the room is the controller's call alone; the server enforces it
   // too, so a stale client cannot swap what everyone is watching.
@@ -655,6 +677,18 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }
 
   return (
+    <>
+    {shownOpening !== null ? (
+      <RoomGate
+        overlay
+        leaving={openingGate === null}
+        step={openingGate}
+        room={liveRoom}
+        preparation={liveRoom.preparation}
+        swarm={swarmStats}
+        wait={openingWait}
+      />
+    ) : null}
     <main className="room-shell room-enter">
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
@@ -752,6 +786,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               autoplayBlocked={sync.autoplayBlocked}
               gatedStart={sync.waiting !== null}
               onBuffering={sync.reportBuffering}
+              onWait={onWait}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
               // Inside the wrap, so both survive fullscreen.
               overlay={
@@ -907,6 +942,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         ) : null}
       </Dialog>
     </main>
+    </>
   )
 }
 
