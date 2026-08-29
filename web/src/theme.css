@@ -416,9 +416,11 @@ button.timecode-chapter:hover { color: var(--text); }
    the panel dissolves. */
 .gate-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(6,5,8,.42); backdrop-filter: blur(26px) saturate(120%); -webkit-backdrop-filter: blur(26px) saturate(120%); opacity: 1; transition: opacity var(--t-morph) var(--ease); }
 .gate-overlay.is-leaving { opacity: 0; pointer-events: none; }
+/* Solid on purpose: the glass is the ground around it, not the card. */
+.gate-overlay .gate-panel { background: #141216; }
 /* Text the light runs through while something is being built: the sweep is
    the movement, the letters stay put. Same keyframes as the connecting pill. */
-.text-shimmer { padding: 0 .12em; margin: 0 -.12em; color: transparent; background-image: linear-gradient(100deg, var(--text-dim) 34%, var(--text) 50%, var(--text-dim) 66%); background-size: 260% 100%; background-repeat: no-repeat; background-position: 180% 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
+.text-shimmer { padding: 0 .12em; margin: 0 -.12em; color: transparent; background-image: linear-gradient(100deg, rgba(255,255,255,0) 34%, var(--text) 50%, rgba(255,255,255,0) 66%), linear-gradient(var(--text-dim), var(--text-dim)); background-size: 260% 100%, 100% 100%; background-repeat: no-repeat, no-repeat; background-position: 180% 0, 0 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .text-shimmer { animation-duration: 4s; } }
 .player-preparing .starting-swarm { margin: 0; }
 /* Autoplay refused for want of a gesture. It has to be reachable — unlike the
