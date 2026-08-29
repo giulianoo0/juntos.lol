@@ -140,10 +140,7 @@ export function UploadAvailability({
       <p>
         <SlotText k={stageKey} block>
           {!buffering ? label : wait.cold ? t('room.preparingPart') : (
-            <>
-              <span className="text-shimmer">{t('room.bufferingLead')}</span>
-              {bufferLeft !== null ? <NumberFlow value={bufferLeft} suffix={t('room.bufferingTail')} /> : null}
-            </>
+            <span className="text-shimmer">{t('room.bufferingLead')}</span>
           )}
         </SlotText>
       </p>
