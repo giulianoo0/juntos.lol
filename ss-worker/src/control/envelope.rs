@@ -35,6 +35,8 @@ pub struct Job {
     pub jti: Option<String>,
     #[serde(default)]
     pub limits: Option<Limits>,
+    #[serde(default)]
+    pub remux: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -150,6 +152,7 @@ mod tests {
             trackers: vec![],
             jti: None,
             limits: None,
+            remux: None,
         }
     }
 

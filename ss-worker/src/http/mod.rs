@@ -2,7 +2,7 @@ pub mod acme;
 mod cors;
 mod file;
 mod hint;
-mod range;
+pub mod range;
 pub mod relay;
 pub mod throttle;
 pub mod tls;
@@ -39,6 +39,8 @@ pub struct AppState {
     /// endpoint from being an unmetered firehose of zeros.
     pub probe_spent: Mutex<HashMap<String, (usize, u64)>>,
     pub metrics: Arc<Metrics>,
+    /// The remote-remux supervisor; None when the capability is off.
+    pub remux: parking_lot::RwLock<Option<Arc<crate::remux::Remux>>>,
 }
 
 impl AppState {
