@@ -73,6 +73,9 @@ export interface TorrentSession {
   /** Rejects every read in flight; the seek moved on. */
   abortReads?(): void
   destroy(): void
+  /** Stops this tab's polling and readers without releasing the server-side
+   * job: the room's production moved to the worker and still needs it. */
+  detach?(): void
 }
 
 /**

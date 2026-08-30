@@ -471,5 +471,13 @@ export async function openRemoteTorrent(
     },
     abortReads: () => gate.abort(),
     destroy,
+    detach: () => {
+      // Same teardown as destroy, minus the DELETE: the job now feeds the
+      // worker's own remux and must outlive this tab.
+      if (destroyed) return
+      destroyed = true
+      gate.close()
+      if (statsTimer !== null) clearInterval(statsTimer)
+    },
   }
 }
