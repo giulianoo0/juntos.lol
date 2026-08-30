@@ -13,7 +13,7 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // From the leaf module, never from remuxJob: a value import of remuxJob here
 // pulls mediabunny and its WASM decoders into the chunk the browser parses
 // before the first paint, and defeats the dynamic import further down.
-import { sourceIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
+import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
 import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 
 export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
@@ -410,7 +410,7 @@ export function startRoomUpload(
   // page drawing the player, and the page visibly stutters for the whole
   // preparo. The page-thread path stays for sources that cannot cross
   // (mocks, tests) and environments without workers.
-  if (typeof Worker !== 'undefined' && sourceIsCloneable(source) && sideFiles.every((file) => file.url !== undefined)) {
+  if (typeof Worker !== 'undefined' && jobIsCloneable(job)) {
     const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
     ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
     const settle = (fn: () => void) => { fn(); worker.terminate() }
