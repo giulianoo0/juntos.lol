@@ -29,7 +29,7 @@ import {
 import { registerAc3Decoder } from '@mediabunny/ac3'
 import { registerDtsDecoder } from '@mediabunny/dts'
 import { registerAacEncoder } from '@mediabunny/aac-encoder'
-import { readMkvChapters } from './mkvChapters'
+import { readMkvChapters, type MkvChapter } from './mkvChapters'
 import type { MediaInput } from './mediaInput'
 import { postJson } from './postJson'
 import { ReadAbortedError, ReadFailedError, ReadUnreachableError } from './rangeRead'
@@ -62,8 +62,16 @@ function ensureCodecs(): Promise<void> {
  * transcode away from. */
 const COPYABLE_VIDEO = new Set(['avc', 'hevc', 'vp9', 'av1'])
 const SEGMENT_SECONDS = 4
-/** How many segments ride in one presign batch. */
+/** How many objects ride in one presign call at most. Presigns coalesce
+ * whatever is ready; nothing waits to fill a batch. */
 const PRESIGN_BATCH = 32
+/** Global ceiling of simultaneous segment PUTs. The experiment matrix tests
+ * 4/8/16; 8 is the opening value, not a law. */
+const PUT_CONCURRENCY = 8
+/** Global ceiling of bytes admitted but not yet uploaded. The muxer's own
+ * finalize callback awaits admission, so hitting this stalls production —
+ * backpressure — instead of growing an unbounded array. */
+const MAX_QUEUED_BYTES = 192 * 1024 * 1024
 /** How often accumulated segments and playlists are pushed to the server
  * when nothing else asks for it: the floor, not the pace. A publish is
  * normally kicked by the upload that gives it something to say. */
@@ -146,6 +154,9 @@ interface ClaimResponse {
   claim: string
   mediaGeneration: number
   maxBytes: number
+  /** Authorizes the late-metadata endpoint; outlives the claim, dies with
+   * the source. Absent from older servers. */
+  metadataToken?: string
 }
 
 interface PendingObject {
@@ -240,14 +251,14 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
     body: '{}',
   })
   if (!claimResponse.ok) throw new Error(`client media claim refused: ${claimResponse.status}`)
-  const { claim, mediaGeneration: serverGeneration } = await claimResponse.json() as ClaimResponse
+  const { claim, mediaGeneration: serverGeneration, metadataToken } = await claimResponse.json() as ClaimResponse
   if (serverGeneration !== mediaGeneration) {
     await releaseClaim(roomID, claim)
     throw new RoomMovedOnError('client media claim raced a source swap')
   }
 
   try {
-    await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle, onTrace, onRegionWarm })
+    await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, metadataToken, onProgress, onHandle, onTrace, onRegionWarm })
   } catch (error) {
     // The server releases the claim itself on a successful complete; this
     // covers every path that threw before it, so a retry from the host does
@@ -332,16 +343,20 @@ export function endPlaylist(body: string, keep: number): string | null {
   return `${out.join('\n')}\n#EXT-X-ENDLIST\n`
 }
 
-async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions & { claim: string }): Promise<void> {
-  // Object flow: the muxer hands finished files to `pending`; `pump` drains
-  // them through presign + PUT into `uploaded`; each publish confirms
-  // `uploaded` names with the server, which HEADs the bucket and extends the
-  // published set the playlists are cut against.
-  // The chapters ride the first publish; mediabunny does not read them, so
-  // a small EBML pass over the file's head does.
-  const chaptersOnce = readMkvChapters(file)
+async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, metadataToken, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions & { claim: string; metadataToken?: string }): Promise<void> {
+  // Object flow: the muxer finalizes a file and awaits its admission; the
+  // pump drains admitted objects through presign + PUT into `uploaded`; each
+  // publish confirms `uploaded` names with the server, which HEADs the
+  // bucket and extends the published set the playlists are cut against.
+  //
+  // Chapters are optional and may live in a cold part of a remote file. They
+  // ride their own late-metadata protocol: they never gate a publish, never
+  // hold up complete, and still land after the claim is released.
+  void readMkvChapters(file).then(async (found: MkvChapter[]) => {
+    if (found.length === 0 || !metadataToken) return
+    await postMetadataWithRetry(roomID, mediaGeneration, metadataToken, found)
+  }).catch(() => undefined)
   const totalBytes = file.size
-  const pending: PendingObject[] = []
   const uploaded: string[] = []
   const playlists = new Map<string, string>()
   // Playlists of regions that closed, waiting for the publish that hands them
@@ -354,72 +369,146 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   let uploadedBytes = 0
   let failure: unknown = null
   let metadataSent = false
+  // One execution, one committer: the id fences this run's publishes on the
+  // server, the sequence orders them.
+  const runId = crypto.randomUUID()
+  let seq = 0
 
   // Wakes the region loop when it is parked between regions (see below).
 
   const fail = (error: unknown) => {
     // The first failure aborts everything: the conversion stops encoding, the
     // ticker stops publishing, and execute() throws — instead of paying to
-    // upload the rest of a doomed run.
+    // upload the rest of a doomed run. Admissions parked on capacity and the
+    // drain parked on idle are woken so nothing awaits a queue that died.
     failure ??= error
+    onFailure()
     void conversion?.cancel().catch(() => {})
   }
+  let onFailure: () => void = () => {}
 
-  // Backpressure: the muxer must not outrun the uplink. enqueue awaits a slot,
-  // so `pending` never holds more than a few segments' worth of bytes even on
-  // a huge file over a slow connection — the OOM the 50 GB ceiling would
-  // otherwise invite.
-  const inflight = new Set<Promise<void>>()
+  // Backpressure that reaches the producer: admission happens inside the
+  // muxer's own awaited finalize callback, bounded by one global budget of
+  // bytes and one global ceiling of PUTs. The old shape counted "pumps",
+  // each fanning into up to 32 PUTs — a blocked transport could hold 1,024
+  // objects in flight; this one cannot.
+  const queued: PendingObject[] = []
+  let queuedBytes = 0
+  // Objects that left the queue and are presigning or uploading. The slot
+  // count is what caps simultaneous PUTs; the byte count is what admission
+  // budgets against.
+  let activeSlots = 0
+  let inflightBytes = 0
   const inflightAborts = new Set<AbortController>()
-  const enqueue = async (name: string, target: unknown): Promise<void> => {
-    if (failure) return
-    const buffer = (target as BufferTarget).buffer
-    if (!buffer) { fail(new Error(`segment ${name} finished without bytes`)); return }
-    pending.push({ name, bytes: new Uint8Array(buffer) })
-    while (inflight.size >= PRESIGN_BATCH) await Promise.race(inflight)
-    const task = pump().catch(fail)
-    inflight.add(task)
-    void task.finally(() => inflight.delete(task))
-    if (pending.length >= PRESIGN_BATCH) await Promise.race(inflight)
-  }
-
-  const pump = async () => {
-    const batch = pending.splice(0, PRESIGN_BATCH)
-    if (batch.length === 0) return
-    const abort = new AbortController()
-    inflightAborts.add(abort)
-    try {
-      await pumpBatch(batch, abort.signal)
-    } catch (error) {
-      // An aborted batch belonged to a region the room already left; its
-      // names simply never confirm.
-      if (!abort.signal.aborted) throw error
-    } finally {
-      inflightAborts.delete(abort)
+  const capacityWaiters: (() => void)[] = []
+  const idleWaiters: (() => void)[] = []
+  const wake = () => {
+    for (const waiter of capacityWaiters.splice(0)) waiter()
+    if (queued.length === 0 && activeSlots === 0 && inflightBytes === 0) {
+      for (const waiter of idleWaiters.splice(0)) waiter()
     }
   }
-
-  const pumpBatch = async (batch: PendingObject[], signal: AbortSignal) => {
-    const presign = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
-      claim,
-      objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
-    }, { signal })
-    if (!presign.ok) throw await serverError(presign)
-    const { objects } = await presign.json() as { objects: { name: string; url: string; headers: Record<string, string> }[] }
-    const byName = new Map(objects.map((object) => [object.name, object]))
-    await Promise.all(batch.map(async (object) => {
-      const signed = byName.get(object.name)
-      if (!signed) throw new Error(`presign missing ${object.name}`)
-      await putWithRetry(signed.url, signed.headers, object.bytes, signal)
-      uploaded.push(object.name)
-      uploadedBytes += object.bytes.byteLength
-      // A name of the region being watched is worth a publish of its own;
-      // a straggler of an abandoned one can ride the floor.
-      if (inCurrentRegion(object.name)) {
-        trace.mark('firstPutOk', object.name)
-        kickPublish()
+  const waitCapacity = () => new Promise<void>((resolve) => capacityWaiters.push(resolve))
+  onFailure = () => {
+    for (const waiter of capacityWaiters.splice(0)) waiter()
+    for (const waiter of idleWaiters.splice(0)) waiter()
+  }
+  /** Resolves once nothing is queued or in flight — the whole-lifecycle
+   * drain the complete pass depends on. */
+  const queueIdle = async () => {
+    while (queued.length > 0 || activeSlots > 0 || inflightBytes > 0) {
+      if (failure) return
+      await new Promise<void>((resolve) => idleWaiters.push(resolve))
+    }
+  }
+  const admit = async (name: string, buffer: ArrayBuffer | null): Promise<void> => {
+    if (failure) return
+    if (!buffer) { fail(new Error(`segment ${name} finished without bytes`)); return }
+    while (!failure && queuedBytes + inflightBytes >= MAX_QUEUED_BYTES) await waitCapacity()
+    if (failure) return
+    queued.push({ name, bytes: new Uint8Array(buffer) })
+    queuedBytes += buffer.byteLength
+    kickPump()
+  }
+  // A seek abandons the dying region's work wholesale: queued objects are
+  // dropped before they cost a presign, in-flight ones are aborted. Their
+  // names simply never confirm.
+  const dropQueued = () => {
+    for (const object of queued.splice(0)) queuedBytes -= object.bytes.byteLength
+    for (const abort of inflightAborts) abort.abort()
+    wake()
+  }
+  let pumping = false
+  const kickPump = () => {
+    if (pumping || failure) return
+    pumping = true
+    void pumpLoop().catch(fail).finally(() => {
+      pumping = false
+      // Admissions that landed while the loop was winding down restart it.
+      if (queued.length > 0 && !failure) kickPump()
+    })
+  }
+  // The pump reserves PUT slots, presigns whatever is ready, and hands each
+  // batch off without awaiting it: one held PUT must not park the objects
+  // behind it. A full pool means presigning more would only hoard URLs.
+  const pumpLoop = async () => {
+    while (queued.length > 0 && !failure) {
+      const roomLeft = PUT_CONCURRENCY - activeSlots
+      if (roomLeft <= 0) { await waitCapacity(); continue }
+      const batch = queued.splice(0, Math.min(PRESIGN_BATCH, roomLeft))
+      for (const object of batch) {
+        queuedBytes -= object.bytes.byteLength
+        inflightBytes += object.bytes.byteLength
+        activeSlots += 1
       }
-    }))
+      void uploadBatch(batch).catch(fail)
+    }
+  }
+  const uploadBatch = async (batch: PendingObject[]) => {
+    const abort = new AbortController()
+    inflightAborts.add(abort)
+    // Every object settles exactly once, whether its PUT ran, failed, or
+    // never started — an abort must not leak slots or byte budget.
+    const remaining = new Set(batch)
+    const settle = (object: PendingObject) => {
+      if (!remaining.delete(object)) return
+      activeSlots -= 1
+      inflightBytes -= object.bytes.byteLength
+      wake()
+    }
+    try {
+      const presign = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/presign`, {
+        claim,
+        objects: batch.map((object) => ({ name: object.name, size: object.bytes.byteLength })),
+      }, { signal: abort.signal })
+      if (!presign.ok) throw await serverError(presign)
+      const { objects } = await presign.json() as { objects: { name: string; url: string; headers: Record<string, string> }[] }
+      const byName = new Map(objects.map((object) => [object.name, object]))
+      await Promise.all(batch.map(async (object) => {
+        try {
+          const signed = byName.get(object.name)
+          if (!signed) throw new Error(`presign missing ${object.name}`)
+          await putWithRetry(signed.url, signed.headers, object.bytes, abort.signal)
+        } finally {
+          settle(object)
+        }
+        uploaded.push(object.name)
+        uploadedBytes += object.bytes.byteLength
+        // A name of the region being watched is worth a publish of its
+        // own; a straggler of an abandoned one can ride the floor.
+        if (inCurrentRegion(object.name)) {
+          trace.mark('firstPutOk', object.name)
+          kickPublish()
+        }
+      }))
+    } catch (error) {
+      // An aborted batch belonged to a region the room already left.
+      if (!abort.signal.aborted) throw error
+    } finally {
+      for (const object of [...remaining]) settle(object)
+      inflightAborts.delete(abort)
+      wake()
+    }
   }
 
   const inCurrentRegion = (name: string): boolean =>
@@ -476,6 +565,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     const body: Record<string, unknown> = {
       claim,
       mediaGeneration,
+      // One committer, one run, one monotonic sequence: the server fences
+      // with these, so a straggling round can never regress a newer one.
+      runId,
+      seq: (seq += 1),
       confirm,
       // The growing region wins any name it shares with a sealed one:
       // master.m3u8 always names whichever region is live.
@@ -487,10 +580,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // actually renders.
       timeline: { durationMs: Math.round(plan.durationSeconds * 1000), offsetMs: regionStartMs, regions: regionMap() },
     }
-    const chapters = metadataSent ? [] : await chaptersOnce
     if (!metadataSent) {
       body.audioTracks = plan.audioTracks.map((track) => ({ language: track.language, title: '' }))
-      if (chapters.length > 0) body.chapters = chapters
     }
     const response = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/publish`, body)
     if (!response.ok) throw await serverError(response)
@@ -664,8 +755,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // The dying region goes first: its queued and in-flight segments would
       // otherwise hold the uplink, and its conversion would compete with the
       // keyframe snap for the worker. Aborted names simply never confirm.
-      pending.length = 0
-      for (const abort of inflightAborts) abort.abort()
+      dropQueued()
       // The reads go before the conversion: a cancel waits on the demuxer,
       // and the demuxer may be parked on a range the swarm has not fetched.
       file.abortReads()
@@ -771,17 +861,23 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
           playlists.set(`${prefix}client_stream_${info.n}.m3u8`, content)
           ledger.noteDurations(region, info.n, segmentDurations(content))
         },
-        onInit: (target, info) => { enqueue(`${prefix}cinit_${info.n}.mp4`, target) },
         onSegment: (target, info) => {
           const name = `${prefix}cs_${info.playlist.n}_${info.n}.m4s`
           // Registers the playlist so a rendition that has confirmed nothing
           // yet still holds this region's span down to what a viewer can play.
           ledger.noteEmitted(name)
           trace.mark('firstSegmentMuxed', (target as BufferTarget).buffer?.byteLength ?? '')
-          enqueue(name, target)
         },
       }),
-      target: new PathedTarget('master.m3u8', () => new BufferTarget()),
+      // Admission rides each file's own finalize: the muxer awaits the
+      // returned promise, so a saturated queue stalls production itself —
+      // the backpressure no notification callback could apply. Playlists
+      // are not uploaded as objects; their content arrives via onPlaylist.
+      target: new PathedTarget('master.m3u8', ({ path }) => new BufferTarget({
+        onFinalize: path.endsWith('.m3u8')
+          ? undefined
+          : (buffer) => admit(path, buffer),
+      })),
     })
 
     const trim = {
@@ -875,7 +971,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   }
 
   draining = true
-  await Promise.all([...inflight])
+  // The whole lifecycle drains: everything admitted, presigned or mid-PUT
+  // finishes (or fails the run) before completion is even considered. The
+  // old drain snapshotted a set that admissions could outrun, and a
+  // complete has gone out with 33 PUTs still pending.
+  await queueIdle()
   if (failure) throw failure
   } finally {
     clearInterval(ticker)
@@ -889,8 +989,28 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
   // vouches for must not spin here forever short of the complete pass.
   for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)
   // The complete pass throws (409 no_playable_media) if it produced nothing
-  // watchable.
+  // watchable. Chapters do not hold it up: they travel the late-metadata
+  // protocol and land whenever they land, claim or no claim.
   await publish(true)
+}
+
+/**
+ * Posts late metadata — today, chapters — under the producer's metadata
+ * token. Best-effort with bounded retries: metadata is a courtesy, and its
+ * failure is never allowed to look like a failure of the media.
+ */
+async function postMetadataWithRetry(roomID: string, mediaGeneration: number, token: string, chapters: MkvChapter[]): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/metadata`, {
+        token, mediaGeneration, chapters,
+      })
+      // 4xx will not improve on retry: the source moved on or the token died.
+      if (response.ok || response.status < 500) return
+    } catch { /* network hiccup — retry */ }
+    await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)))
+  }
+  console.warn('chapters were read but could not be posted; the timeline stays unmarked')
 }
 
 async function putWithRetry(url: string, headers: Record<string, string>, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {

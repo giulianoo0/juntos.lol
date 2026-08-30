@@ -9,7 +9,7 @@ const mocked = vi.hoisted(() => {
 
   interface FakeConversionOpts {
     input: unknown
-    output: { opts: { format: { options: Record<string, (...args: never[]) => void> } } }
+    output: { opts: { format: { options: Record<string, (...args: never[]) => void> }; target: { getTarget: (request: { path: string }) => { buffer: ArrayBuffer | null; options?: { onFinalize?: (buffer: ArrayBuffer) => unknown } } } } }
     trim?: { start?: number; end?: number }
   }
 
@@ -51,7 +51,11 @@ const conversions = mocked.FakeConversion.conversions
 
 vi.mock('mediabunny', () => ({
   ALL_FORMATS: [],
-  BufferTarget: class {},
+  BufferTarget: class {
+    buffer: ArrayBuffer | null = null
+    options?: { onFinalize?: (buffer: ArrayBuffer) => unknown }
+    constructor(options?: { onFinalize?: (buffer: ArrayBuffer) => unknown }) { this.options = options }
+  },
   CmafOutputFormat: class {},
   Conversion: mocked.FakeConversion,
   ConversionCanceledError: mocked.ConversionCanceledError,
@@ -67,13 +71,19 @@ vi.mock('mediabunny', () => ({
     opts: unknown
     constructor(opts: unknown) { this.opts = opts }
   },
-  PathedTarget: class {},
+  PathedTarget: class {
+    getTarget: (request: { path: string }) => unknown
+    constructor(_root: string, getTarget: (request: { path: string }) => unknown) { this.getTarget = getTarget }
+  },
   canEncodeAudio: async () => true,
 }))
 vi.mock('@mediabunny/ac3', () => ({ registerAc3Decoder: () => undefined }))
 vi.mock('@mediabunny/dts', () => ({ registerDtsDecoder: () => undefined }))
 vi.mock('@mediabunny/aac-encoder', () => ({ registerAacEncoder: () => undefined }))
-vi.mock('./mkvChapters', () => ({ readMkvChapters: async () => [] }))
+const chaptersMock = vi.hoisted(() => ({
+  read: (): Promise<{ startMs: number; endMs: number; title: string }[]> => Promise.resolve([]),
+}))
+vi.mock('./mkvChapters', () => ({ readMkvChapters: () => chaptersMock.read() }))
 
 import { endPlaylist, runClientRemux, segmentDurations, type ClientRemuxHandle } from './clientMedia'
 
@@ -83,6 +93,19 @@ import { endPlaylist, runClientRemux, segmentDurations, type ClientRemuxHandle }
 const flush = async () => { await vi.advanceTimersByTimeAsync(1) }
 /** One turn of the publish ticker, which confirms what has been uploaded. */
 const publishRound = async () => { await vi.advanceTimersByTimeAsync(2_000) }
+
+// Emits one finished file the way mediabunny does now: the PathedTarget
+// hands out a BufferTarget whose awaited onFinalize is the admission gate,
+// and segments additionally notify onSegment for the ledger.
+const emit = (conversion: (typeof conversions)[number], path: string, info?: { playlist: { n: number }; n: number }): Promise<unknown> => {
+  const target = conversion.opts.output.opts.target.getTarget({ path })
+  const buffer = new ArrayBuffer(4)
+  target.buffer = buffer
+  if (info) {
+    ;(conversion.opts.output.opts.format.options.onSegment as (t: unknown, i: unknown) => void)(target, info)
+  }
+  return Promise.resolve(target.options?.onFinalize?.(buffer))
+}
 
 interface Recorded { url: string; body?: Record<string, unknown> }
 
@@ -108,7 +131,7 @@ function mockServer({ holdUploads = false } = {}): Recorded[] {
     if (typeof init?.body === 'string') record.body = JSON.parse(init.body) as Record<string, unknown>
     calls.push(record)
     if (url.endsWith('/client-media/claim')) {
-      return { ok: true, json: async () => ({ claim: 'client:t', mediaGeneration: 0, maxBytes: 1 << 30 }) }
+      return { ok: true, json: async () => ({ claim: 'client:t', mediaGeneration: 0, maxBytes: 1 << 30, metadataToken: 'meta:t' }) }
     }
     if (url.endsWith('/client-media/presign')) {
       const objects = (record.body!.objects as { name: string }[]).map((object) => ({
@@ -162,8 +185,9 @@ describe('client remux regions', () => {
 
     // The muxer emits region zero's first files under the legacy names.
     const first = conversions[0].opts.output.opts.format.options
-    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
-    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    void emit(conversions[0], 'cinit_0.mp4')
+    void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
+    void first
     await flush()
     // The bucket confirms region zero's segment: only now does it span
     // anything a player could seek into.
@@ -178,8 +202,8 @@ describe('client remux regions', () => {
     expect(conversions[1].opts.trim?.start).toBe(1078)
 
     const second = conversions[1].opts.output.opts.format.options
-    ;(second.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
-    ;(second.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    void emit(conversions[1], 'r1_cinit_0.mp4')
+    void emit(conversions[1], 'r1_cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     ;(second.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
     await publishRound()
@@ -210,7 +234,7 @@ describe('client remux regions', () => {
     // the timeline and the run completes.
     const third = conversions[2].opts.output.opts.format.options
     for (let n = 1; n <= 270; n += 1) {
-      ;(third.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n })
+      void emit(conversions[2], `r2_cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
     }
     ;(third.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
@@ -263,10 +287,9 @@ describe('client remux regions', () => {
     // The muxer runs far ahead of the uplink — stream-copying a local file
     // outruns a home connection many times over — so twenty segments exist
     // in the queue while the bucket still holds none of them.
-    const first = conversions[0].opts.output.opts.format.options
-    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    void emit(conversions[0], 'cinit_0.mp4')
     for (let n = 1; n <= 20; n += 1) {
-      ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n })
+      void emit(conversions[0], `cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
     }
     await flush()
 
@@ -297,9 +320,9 @@ describe('client remux regions', () => {
     })
     await flush()
     const first = conversions[0].opts.output.opts.format.options
-    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    void emit(conversions[0], 'cinit_0.mp4')
     for (let n = 1; n <= 6; n += 1) {
-      ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n })
+      void emit(conversions[0], `cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
     }
     ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
     // The whole file is produced; only the tail of the uploads is left.
@@ -349,7 +372,7 @@ describe('client remux regions', () => {
     await flush()
     expect(conversions).toHaveLength(2)
     const second = conversions[1].opts.output.opts.format.options
-    ;(second.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    void emit(conversions[1], 'r1_cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     ;(second.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
 
@@ -372,8 +395,7 @@ describe('client remux regions', () => {
     await flush()
     expect(conversions).toHaveLength(4)
     expect(conversions[3].opts.trim).toEqual({ start: 198 })
-    const fourth = conversions[3].opts.output.opts.format.options
-    ;(fourth.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    void emit(conversions[3], 'r3_cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     await flush()
     // Region 3 runs to EOF; the head is still missing, so the next fill goes
     // back for it — this time up to where region 3 starts.
@@ -401,8 +423,8 @@ describe('publish on demand', () => {
     })
     await flush()
     const first = conversions[0].opts.output.opts.format.options
-    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
-    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    void emit(conversions[0], 'cinit_0.mp4')
+    void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     ;(first.onPlaylist as (c: string, i: unknown) => void)('#EXTM3U\n#EXTINF:10.000,\ncs_0_1.m4s\n', { n: 0 })
     ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
@@ -441,21 +463,140 @@ describe('region warm signal', () => {
     })
     await flush()
     const first = conversions[0].opts.output.opts.format.options
-    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    void emit(conversions[0], 'cinit_0.mp4')
     await flush()
     await vi.advanceTimersByTimeAsync(300)
     // The init alone is not a warm region.
     expect(warm).not.toHaveBeenCalled()
-    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 1 })
+    void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
     await vi.advanceTimersByTimeAsync(300)
     expect(warm).toHaveBeenCalledTimes(1)
-    ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n: 2 })
+    void emit(conversions[0], 'cs_0_2.m4s', { playlist: { n: 0 }, n: 2 })
     await flush()
     await vi.advanceTimersByTimeAsync(2_500)
     expect(warm).toHaveBeenCalledTimes(1)
     conversions[0].finish()
+  })
+})
+
+
+describe('admission and drain', () => {
+  const plan = () => ({
+    input: { getPrimaryVideoTrack: async () => ({}) },
+    audioTracks: [],
+    durationSeconds: 1440,
+  })
+
+  it('never holds more PUTs in flight than the global ceiling', async () => {
+    const calls = mockServer({ holdUploads: true })
+    const run = runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan() as never,
+    })
+    await flush()
+    // Forty finished files land at once — the reproduction that used to put
+    // 1,024 objects in flight.
+    const first = conversions[0].opts.output.opts.format.options
+    void emit(conversions[0], 'cinit_0.mp4')
+    for (let n = 1; n <= 40; n += 1) {
+      void emit(conversions[0], `cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
+    }
+    ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
+    await flush()
+    await flush()
+    const inFlight = calls.filter((call) => call.url.startsWith('https://bucket/')).length
+    expect(inFlight).toBeGreaterThan(0)
+    expect(inFlight).toBeLessThanOrEqual(8)
+    // The run must not leak into the next test: everything is released and
+    // the run driven to its end.
+    conversions[0].finish()
+    for (let round = 0; round < 12; round += 1) {
+      releaseUploads()
+      await flush()
+      await publishRound()
+    }
+    await run
+  })
+
+  it('does not send complete while uploads are still pending', async () => {
+    const calls = mockServer({ holdUploads: true })
+    const run = runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan() as never,
+    })
+    await flush()
+    const first = conversions[0].opts.output.opts.format.options
+    void emit(conversions[0], 'cinit_0.mp4')
+    void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
+    ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
+    conversions[0].finish()
+    await flush()
+    await publishRound()
+    // The producer is done, but the tail is still uploading: complete must
+    // not have gone out.
+    const completes = () => calls.filter((call) =>
+      call.url.endsWith('/client-media/publish') && call.body?.complete === true)
+    expect(completes()).toHaveLength(0)
+    releaseUploads()
+    await flush()
+    await publishRound()
+    await flush()
+    await run
+    expect(completes()).toHaveLength(1)
+    // And when it went, nothing was pending: every uploaded name had been
+    // offered for confirmation before or at the complete pass.
+    const puts = calls.filter((call) => call.url.startsWith('https://bucket/')).length
+    const confirmed = calls
+      .filter((call) => call.url.endsWith('/client-media/publish'))
+      .flatMap((call) => (call.body?.confirm as string[] | undefined) ?? [])
+    expect(new Set(confirmed).size).toBe(puts)
+  })
+
+  it('publishes media without waiting for chapters, and posts them late through the metadata protocol', async () => {
+    let releaseChapters: (chapters: { startMs: number; endMs: number; title: string }[]) => void = () => {}
+    chaptersMock.read = () => new Promise((resolve) => { releaseChapters = resolve })
+    const calls = mockServer()
+    const run = runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan() as never,
+    })
+    await flush()
+    const first = conversions[0].opts.output.opts.format.options
+    void emit(conversions[0], 'cinit_0.mp4')
+    void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
+    ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
+    await flush()
+    await publishRound()
+    // Chapters are still stuck in a cold read; the media published anyway.
+    expect(calls.filter((call) => call.url.endsWith('/client-media/publish')).length).toBeGreaterThan(0)
+    conversions[0].finish()
+    await publishRound()
+    await flush()
+    // Complete does not wait for them either.
+    await run
+    expect(calls.filter((call) => call.url.endsWith('/client-media/publish') && call.body?.complete === true)).toHaveLength(1)
+    expect(calls.some((call) => call.url.endsWith('/client-media/metadata'))).toBe(false)
+
+    // They surface after the claim died — and still land, through the token.
+    releaseChapters([{ startMs: 0, endMs: 90_000, title: 'Opening' }])
+    await flush()
+    await flush()
+    const metadata = calls.filter((call) => call.url.endsWith('/client-media/metadata'))
+    expect(metadata).toHaveLength(1)
+    expect(metadata[0].body).toMatchObject({
+      token: 'meta:t',
+      mediaGeneration: 0,
+      chapters: [{ startMs: 0, endMs: 90_000, title: 'Opening' }],
+    })
+    chaptersMock.read = () => Promise.resolve([])
   })
 })
 
