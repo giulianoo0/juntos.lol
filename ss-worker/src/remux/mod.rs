@@ -309,6 +309,7 @@ impl Remux {
             offset_ms,
             source.duration_ms,
             size,
+            source.audios.iter().map(|a| a.language.clone()).collect(),
         );
 
         let prefix = plan::region_prefix(spec.region);

@@ -61,6 +61,7 @@ pub struct Publisher {
     pub duration_ms: u64,
     pub source_bytes: u64,
     pub prefix: String,
+    pub audio_langs: Vec<String>,
 
     seq: u64,
     uploaded_bytes: u64,
@@ -100,6 +101,7 @@ impl Publisher {
         offset_ms: u64,
         duration_ms: u64,
         source_bytes: u64,
+        audio_langs: Vec<String>,
     ) -> Self {
         Self {
             client,
@@ -113,6 +115,7 @@ impl Publisher {
             duration_ms,
             source_bytes,
             prefix: super::plan::region_prefix(region),
+            audio_langs,
             seq: 0,
             uploaded_bytes: 0,
             pending: Vec::new(),
@@ -140,13 +143,18 @@ impl Publisher {
     pub async fn round(&mut self, sink: &Arc<Sink>, growing: bool, complete: bool) -> anyhow::Result<bool> {
         let confirm: Vec<ClosedObject> = self.pending.drain(..self.pending.len().min(128)).collect();
         let mut playlists = sink.manifests();
-        // The bare master names whichever region is live; the prefixed one
-        // is this region's for good.
-        if let Some(master) = playlists.get(&format!("{}master.m3u8", self.prefix)).cloned() {
+        // FFmpeg's own master is not trusted: 5.x writes it once, early, and
+        // omits EXT-X-STREAM-INF entirely when stream-copying without
+        // bitrate metadata. The master is synthesized here from what is
+        // actually known — the variant playlists and the bytes uploaded —
+        // and BANDWIDTH is a live estimate, refined every round.
+        playlists.remove(&format!("{}master.m3u8", self.prefix));
+        let produced = self.produced_ms(sink);
+        if playlists.contains_key(&format!("{}client_stream_0.m3u8", self.prefix)) {
+            let master = self.synthesize_master(produced);
             playlists.insert("master.m3u8".into(), master.clone());
             playlists.insert(format!("r{}_master.m3u8", self.region), master);
         }
-        let produced = self.produced_ms(sink);
         self.seq += 1;
         let body = serde_json::json!({
             "claim": self.claim,
@@ -198,6 +206,29 @@ impl Publisher {
     }
 }
 
+impl Publisher {
+    fn synthesize_master(&self, produced_ms: u64) -> String {
+        let seconds = (produced_ms as f64 / 1000.0).max(4.0);
+        let bandwidth = (((self.uploaded_bytes as f64 * 8.0) / seconds) as u64).max(2_000_000);
+        let mut out = String::from("#EXTM3U\n#EXT-X-VERSION:7\n");
+        for (index, lang) in self.audio_langs.iter().enumerate() {
+            out.push_str(&format!(
+                "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"audio_{n}\",LANGUAGE=\"{lang}\",{d}URI=\"{p}client_stream_{n}.m3u8\"\n",
+                n = index + 1,
+                lang = lang,
+                d = if index == 0 { "DEFAULT=YES,AUTOSELECT=YES," } else { "" },
+                p = self.prefix,
+            ));
+        }
+        let audio_attr = if self.audio_langs.is_empty() { String::new() } else { ",AUDIO=\"aud\"".into() };
+        out.push_str(&format!(
+            "#EXT-X-STREAM-INF:BANDWIDTH={bandwidth}{audio_attr}\n{}client_stream_0.m3u8\n",
+            self.prefix,
+        ));
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +266,38 @@ mod tests {
     fn playlist_urls_reduce_to_names() {
         let body = "#EXTINF:2.0,\nhttp://x/y/cs_0_0.m4s\n";
         assert_eq!(playlist_segments(body), vec![("cs_0_0.m4s".to_string(), 2.0)]);
+    }
+}
+
+#[cfg(test)]
+mod master_tests {
+    use super::*;
+
+    fn publisher(langs: Vec<String>, prefix_region: u64) -> Publisher {
+        let mut p = Publisher::new(
+            reqwest::Client::new(), "http://a".into(), "r".into(), "c".into(),
+            "run".into(), 0, prefix_region, 0, 60_000, 0, langs,
+        );
+        p.uploaded_bytes = 8_000_000;
+        p
+    }
+
+    #[test]
+    fn master_names_video_and_audio_within_the_grammar() {
+        let m = publisher(vec!["jpn".into(), "eng".into()], 2).synthesize_master(20_000);
+        assert!(m.contains("#EXT-X-STREAM-INF:BANDWIDTH="));
+        assert!(m.contains("AUDIO=\"aud\""));
+        assert!(m.contains("URI=\"r2_client_stream_1.m3u8\""));
+        assert!(m.contains("URI=\"r2_client_stream_2.m3u8\""));
+        assert!(m.ends_with("r2_client_stream_0.m3u8\n"));
+        assert!(m.contains("DEFAULT=YES"));
+    }
+
+    #[test]
+    fn master_without_audio_has_no_media_lines() {
+        let m = publisher(vec![], 0).synthesize_master(8_000);
+        assert!(!m.contains("EXT-X-MEDIA"));
+        assert!(m.ends_with("client_stream_0.m3u8\n"));
+        assert!(!m.contains(",AUDIO"));
     }
 }
