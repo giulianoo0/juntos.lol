@@ -197,6 +197,8 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"gatingEnabled":     r.GatingEnabled,
 			"errorMessage":      r.ErrorMessage,
 			"controllerId":      r.ControllerID,
+			"sourceMemberId":    r.SourceMemberID,
+			"sourceOrigin":      r.SourceOrigin,
 			"audioTracks":       r.AudioTracks,
 			"subtitleTracks":    r.SubtitleTracks,
 			"chapters":          r.Chapters,
