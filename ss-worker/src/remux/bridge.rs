@@ -124,7 +124,18 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
         let mut buf = vec![0u8; chunk];
         while left > 0 {
             let want = (left as usize).min(buf.len());
-            match reader.read(&mut buf[..want]).await {
+            // A read that parks forever wedges FFmpeg with it; a timed-out
+            // connection dies loudly and the supervisor's retry reopens a
+            // fresh reader over whatever has downloaded meanwhile.
+            let read = tokio::time::timeout(std::time::Duration::from_secs(60), reader.read(&mut buf[..want])).await;
+            let read = match read {
+                Ok(r) => r,
+                Err(_) => {
+                    let _ = tx.send(Err(std::io::Error::other("input read stalled"))).await;
+                    return;
+                }
+            };
+            match read {
                 Ok(0) => {
                     // Short read of a range whose length was promised: the
                     // connection dies so FFmpeg sees an error, never a clean

@@ -417,7 +417,7 @@ func (o *RemuxOrchestrator) CancelRoom(roomID string) {
 // records, live runs renew the lease and the claim, and terminal runs
 // settle the room.
 func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
-	if hb.Remux == nil || len(hb.Remux.Runs) == 0 {
+	if hb.Remux == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -441,6 +441,15 @@ func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
 		}
 		report := findRun(hb.Remux.Runs, run.RunID)
 		if report == nil {
+			// The worker no longer knows this run — it restarted, or pruned a
+			// terminal run before a heartbeat carried it. A short grace covers
+			// the dispatch-to-first-heartbeat window; past it the run is lost,
+			// and lost is failed, not silently stuck.
+			if !remux.TerminalState(run.State) && time.Since(run.UpdatedAt) > 45*time.Second {
+				o.applyReport(ctx, run, &remux.RunReport{
+					RunID: run.RunID, State: remux.RunFailed, Error: "run lost by the worker",
+				})
+			}
 			continue
 		}
 		o.applyReport(ctx, run, report)

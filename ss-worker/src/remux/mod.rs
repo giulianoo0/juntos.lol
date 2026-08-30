@@ -314,52 +314,84 @@ impl Remux {
         let prefix = plan::region_prefix(spec.region);
         let end_seconds = (spec.end_ms > 0).then(|| spec.end_ms as f64 / 1000.0);
         let args = plan::ffmpeg_args(&input_url, &output_base, &prefix, &source, start_seconds, end_seconds);
-        let supervised = process::spawn(&self.cfg.ffmpeg_path, &args)?;
-        let stderr_tail = supervised.stderr_tail.clone();
-        *entry.process.lock() = Some(supervised);
-        entry.status.lock().state = state::RUNNING;
 
         let cleanup = |bridge: &Bridge| {
             bridge.revoke(&input_cap, &output_cap);
         };
 
-        // Produce and publish side by side until FFmpeg exits.
-        let mut ticker = tokio::time::interval(Duration::from_secs(2));
-        let exit = loop {
-            if Self::cancelled(entry) {
-                cleanup(&bridge);
-                run_sink.destroy().await;
-                return Ok(());
-            }
-            let process_done = {
-                let mut held = entry.process.lock();
-                match held.as_mut() {
-                    None => break None, // cancel took it
-                    Some(p) => p.child_try_wait(),
+        // A run that stops moving is killed, not waited on: a reader wedged
+        // over a cold swarm has parked FFmpeg forever before. While nothing
+        // has been produced yet the run simply respawns over the same
+        // capabilities; past first output it fails loudly instead, because a
+        // rerun would collide with objects already closed under their names.
+        const STALL: Duration = Duration::from_secs(90);
+        let mut attempts = 0u32;
+        let exit = 'attempts: loop {
+            attempts += 1;
+            let supervised = process::spawn(&self.cfg.ffmpeg_path, &args)?;
+            let stderr_tail = supervised.stderr_tail.clone();
+            let progress = supervised.progress_ms.clone();
+            *entry.process.lock() = Some(supervised);
+            entry.status.lock().state = state::RUNNING;
+
+            let mut ticker = tokio::time::interval(Duration::from_secs(2));
+            let mut last_move = (0u64, std::time::Instant::now());
+            let mut last_closed = run_sink.closed_count();
+            loop {
+                if Self::cancelled(entry) {
+                    cleanup(&bridge);
+                    run_sink.destroy().await;
+                    return Ok(());
                 }
-            };
-            if let Some(status) = process_done? {
-                break Some(status);
-            }
-            ticker.tick().await;
-            publisher.absorb(&mut uploaded_rx);
-            match publisher.round(&run_sink, true, false).await {
-                Ok(_) => {}
-                Err(e) if e.downcast_ref::<publish::Revoked>().is_some() => {
+                let process_done = {
+                    let mut held = entry.process.lock();
+                    match held.as_mut() {
+                        None => break 'attempts None, // cancel took it
+                        Some(p) => p.child_try_wait(),
+                    }
+                };
+                if let Some(status) = process_done? {
+                    break 'attempts Some((status, stderr_tail.clone()));
+                }
+                ticker.tick().await;
+                publisher.absorb(&mut uploaded_rx);
+                match publisher.round(&run_sink, true, false).await {
+                    Ok(_) => {}
+                    Err(e) if e.downcast_ref::<publish::Revoked>().is_some() => {
+                        let mut process = entry.process.lock().take();
+                        if let Some(process) = process.as_mut() {
+                            process.kill().await;
+                        }
+                        cleanup(&bridge);
+                        run_sink.destroy().await;
+                        return Err(e);
+                    }
+                    Err(e) => tracing::warn!(error = %e, "publish round failed; retrying"),
+                }
+                entry.status.lock().produced_ms = publisher.produced_ms(&run_sink);
+
+                let moved = progress.load(std::sync::atomic::Ordering::Relaxed);
+                let closed = run_sink.closed_count();
+                if moved != last_move.0 || closed != last_closed {
+                    last_move = (moved, std::time::Instant::now());
+                    last_closed = closed;
+                } else if last_move.1.elapsed() > STALL {
                     let mut process = entry.process.lock().take();
                     if let Some(process) = process.as_mut() {
                         process.kill().await;
                     }
+                    if closed == 0 && attempts < 3 {
+                        tracing::warn!(run = %spec.run_id, attempt = attempts, "ffmpeg made no progress; respawning");
+                        continue 'attempts;
+                    }
                     cleanup(&bridge);
                     run_sink.destroy().await;
-                    return Err(e);
+                    bail!("ffmpeg stalled mid-run (attempt {attempts})");
                 }
-                Err(e) => tracing::warn!(error = %e, "publish round failed; retrying"),
             }
-            entry.status.lock().produced_ms = publisher.produced_ms(&run_sink);
         };
 
-        if let Some(status) = exit {
+        if let Some((status, stderr_tail)) = exit {
             if !status.success() && !Self::cancelled(entry) {
                 let tail: String = stderr_tail.lock().clone();
                 cleanup(&bridge);

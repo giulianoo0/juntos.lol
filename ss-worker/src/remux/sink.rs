@@ -114,6 +114,10 @@ impl Sink {
         self.manifests.lock().clone()
     }
 
+    pub fn closed_count(&self) -> usize {
+        self.closed.lock().len()
+    }
+
     pub fn store_manifest(&self, name: &str, body: String) -> anyhow::Result<()> {
         if body.len() > MAX_MANIFEST_BYTES {
             bail!("manifest over size");
