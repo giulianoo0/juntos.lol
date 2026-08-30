@@ -76,6 +76,16 @@ type Config struct {
 	// relayed (private) workers through — the fleet's front door, typically
 	// the instance's own worker. Empty disables relaying.
 	WorkerRelayBase string
+
+	// RemoteRemuxEnabled turns on the remote remux path for torrents: the
+	// worker runs FFmpeg and publishes to the bucket instead of the host's
+	// browser. Off by default; rooms started while it is off stay on the
+	// legacy path even after it is flipped.
+	RemoteRemuxEnabled bool
+	// RemoteRemuxAPIBase is the address workers publish through (presign,
+	// publish, metadata). It comes from configuration, never from a client.
+	// Empty falls back to PublicOrigin.
+	RemoteRemuxAPIBase string
 }
 
 func Load() (Config, error) {
@@ -177,6 +187,11 @@ func Load() (Config, error) {
 	cfg.PublicOrigin = strings.TrimSuffix(os.Getenv("PUBLIC_ORIGIN"), "/")
 	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
 	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
+	cfg.RemoteRemuxEnabled = os.Getenv("REMOTE_REMUX") == "1"
+	cfg.RemoteRemuxAPIBase = strings.TrimSuffix(os.Getenv("REMOTE_REMUX_API_BASE"), "/")
+	if cfg.RemoteRemuxAPIBase == "" {
+		cfg.RemoteRemuxAPIBase = cfg.PublicOrigin
+	}
 
 	return cfg, nil
 }
