@@ -9,6 +9,13 @@ export interface VttTrack {
   language: string
   title: string
   vtt: string
+  /**
+   * The full ASS document, present for ass/ssa sources. It rides beside the
+   * VTT conversion: the server stores both, and the player renders the ASS
+   * with libass — styles, karaoke, signs and all — falling back to the VTT
+   * only where the renderer cannot run.
+   */
+  ass?: string
 }
 
 const SUBTITLE_EXTENSION = /\.(srt|ass|ssa|vtt|sub)$/i
@@ -117,7 +124,10 @@ export function convertSubtitleFile(path: string, data: ArrayBuffer): VttTrack |
   else if (extension === 'srt') vtt = srtToWebVTT(text)
   else if (extension === 'sub') vtt = text.includes('-->') ? srtToWebVTT(text) : null
   if (!vtt) return null
-  return { ...subtitleIdentity(path), vtt: positionDialogueCues(vtt) }
+  const track: VttTrack = { ...subtitleIdentity(path), vtt: positionDialogueCues(vtt) }
+  // A sidecar ASS file already is the document; it travels verbatim.
+  if (extension === 'ass' || extension === 'ssa') track.ass = normalizeAssSidecar(text)
+  return track
 }
 
 function normalizeWebVTT(text: string): string {
@@ -160,6 +170,16 @@ function normalizeSrtStamp(stamp: string): string {
   const [clock, fraction = '0'] = stamp.replace(',', '.').split('.')
   const [hours, minutes, seconds] = clock.split(':')
   return `${hours.padStart(2, '0')}:${minutes}:${seconds}.${fraction.padEnd(3, '0').slice(0, 3)}`
+}
+
+// The server validates ASS documents by their leading section header, so a
+// file that opens with comments or blank lines is trimmed up to it. One that
+// carries no [Script Info] at all is left as-is and the server refuses it —
+// which is right, because libass would have nothing to style with either.
+function normalizeAssSidecar(text: string): string {
+  const normalized = text.replace(/\r\n?/g, '\n')
+  const at = normalized.search(/^\[script info\]/im)
+  return at > 0 ? normalized.slice(at) : normalized
 }
 
 // Converts an ASS/SSA script. Placement, italics, bold and quantized colors

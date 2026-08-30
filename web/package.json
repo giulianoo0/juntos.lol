@@ -23,6 +23,7 @@
     "embla-carousel-react": "^8.6.0",
     "embla-carousel-wheel-gestures": "^8.1.0",
     "hls.js": "^1.7.0",
+    "jassub": "^2.5.14",
     "livekit-client": "^2.22.0",
     "lucide-react": "^1.32.0",
     "matroska-subtitles": "^3.3.2",

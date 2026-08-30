@@ -9,6 +9,7 @@ import {
   createMatroskaSubtitleStream,
   createSubtitleCollector,
   isMatroska,
+  postSubtitleFonts,
   type SubtitleCollector,
 } from '../subtitles'
 import { convertSubtitleFile, type VttTrack } from '../subtitleFormats'
@@ -171,7 +172,7 @@ async function publishSubtitles(
   if (external.length === 0 && !embedded) return
   await Promise.all([
     external.length > 0 ? loadExternalSubtitles(external, collector, input) : Promise.resolve(),
-    embedded ? extractEmbeddedSubtitles(input, collector) : Promise.resolve(),
+    embedded ? extractEmbeddedSubtitles(input, collector, roomID, mediaGeneration) : Promise.resolve(),
   ])
 }
 
@@ -183,7 +184,10 @@ async function publishSubtitles(
 // stream. A seek aborts whatever read it was on; the scan simply asks for
 // the same slice again, however many seeks it takes — its position has
 // nothing to do with the seek. Only the input closing for good ends it.
-async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: SubtitleCollector): Promise<void> {
+async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: SubtitleCollector,
+  roomID: string, mediaGeneration: number): Promise<void> {
+  // Fonts the container attached for its ASS tracks, sent as they are seen.
+  const sentFonts = new Set<string>()
   try {
     const stream = await createMatroskaSubtitleStream()
     const tap = input.tap
@@ -228,9 +232,12 @@ async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: Subtit
       if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
         lastSnapshotAt = Date.now()
         collector.publish('embedded', stream.snapshot(), false)
+        void postSubtitleFonts(roomID, mediaGeneration, stream.fonts(), sentFonts)
       }
     }
-    collector.publish('embedded', await stream.finish(), true)
+    const finalTracks = await stream.finish()
+    await postSubtitleFonts(roomID, mediaGeneration, stream.fonts(), sentFonts)
+    collector.publish('embedded', finalTracks, true)
   } catch (error) {
     console.error('subtitle extraction failed', error)
     collector.publish('embedded', [], true)

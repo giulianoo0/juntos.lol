@@ -9,6 +9,7 @@
 // package it copies no longer matches.
 const parserBundleUrl = '/matroska-subtitles.min.js?v=3.3.2'
 import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
+import { buildAssDocument, isFontAttachment } from './assDoc'
 import type { VttTrack } from './subtitleFormats'
 
 // What the server stores per room (maxSubtitleTracks on its side).
@@ -23,6 +24,13 @@ export interface SubtitleCue {
   duration: number
   /** ASS style name, present on cues of ass/ssa tracks. */
   style?: string
+  /** The remaining ASS dialogue fields the container carries per cue. */
+  layer?: string
+  name?: string
+  marginL?: string
+  marginR?: string
+  marginV?: string
+  effect?: string
 }
 
 interface ExtractedTrack {
@@ -32,6 +40,8 @@ interface ExtractedTrack {
   cues: SubtitleCue[]
   /** Parsed ASS header for ass/ssa tracks, null for plain-text ones. */
   ass: AssTrackInfo | null
+  /** The raw CodecPrivate of an ass/ssa track — the document's own head. */
+  rawHeader: string | null
 }
 
 // Types for the self-contained browser bundle of matroska-subtitles, which is
@@ -46,9 +56,16 @@ interface MatroskaTrackInfo {
   header?: string
 }
 
+interface MatroskaAttachment {
+  filename?: string
+  mimetype?: string
+  data?: Uint8Array
+}
+
 interface MatroskaSubtitleParser {
   once(event: 'tracks', listener: (tracks: MatroskaTrackInfo[]) => void): void
   on(event: 'subtitle', listener: (subtitle: SubtitleCue, trackNumber: number) => void): void
+  on(event: 'file', listener: (file: MatroskaAttachment) => void): void
   on(event: 'finish' | 'error', listener: (error?: unknown) => void): void
   resume(): void
   write(chunk: Uint8Array): void
@@ -117,7 +134,22 @@ export interface MatroskaSubtitleStream {
   snapshot(): VttTrack[]
   /** Ends the parser and resolves with the tracks that carry cues. */
   finish(): Promise<VttTrack[]>
+  /** Font attachments seen so far. Complete only once the parser has read
+   * past the attachments element, which sits near the head of most files. */
+  fonts(): AttachedFont[]
 }
+
+/** One font file muxed into the container for its ASS tracks. */
+export interface AttachedFont {
+  filename: string
+  data: Uint8Array
+}
+
+// Ceilings for what a room will carry to viewers: fonts are megabytes, and a
+// release with dozens of them must not turn the subtitle path into a second
+// video upload.
+const MAX_FONT_BYTES = 8 * 1024 * 1024
+const MAX_FONTS = 24
 
 export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleStream> {
   const { SubtitleParser } = await loadParserBundle()
@@ -141,11 +173,22 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
         title: track.name ?? '',
         cues: [],
         ass: styled && track.header ? parseAssHeader(track.header) : null,
+        rawHeader: styled ? track.header ?? null : null,
       })
       order.push(track.number)
     }
   })
   parser.on('subtitle', (subtitle, trackNumber) => tracks.get(trackNumber)?.cues.push(subtitle))
+  const fonts: AttachedFont[] = []
+  let fontBytes = 0
+  parser.on('file', (file) => {
+    const data = file.data
+    if (!data || !isFontAttachment(file)) return
+    if (fonts.length >= MAX_FONTS || data.byteLength > MAX_FONT_BYTES) return
+    if (fontBytes + data.byteLength > MAX_FONTS * MAX_FONT_BYTES) return
+    fontBytes += data.byteLength
+    fonts.push({ filename: file.filename ?? `font_${fonts.length}`, data })
+  })
   // The parser is a Transform stream: drain its readable side so the internal
   // buffer never fills up while we feed it the source.
   parser.resume()
@@ -153,7 +196,14 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   const collect = (requireCues: boolean): VttTrack[] => order
     .map((number) => tracks.get(number))
     .filter((track): track is ExtractedTrack => track !== undefined && (!requireCues || track.cues.length > 0))
-    .map((track) => ({ language: track.language, title: track.title, vtt: toWebVTT(track.cues, track.ass) }))
+    .map((track) => {
+      const out: VttTrack = { language: track.language, title: track.title, vtt: toWebVTT(track.cues, track.ass) }
+      // Styled tracks also travel as the full document, rebuilt from the
+      // container's own header and dialogue fields, so the renderer gets
+      // everything the author wrote instead of the VTT approximation.
+      if (track.rawHeader !== null) out.ass = buildAssDocument(track.rawHeader, track.cues)
+      return out
+    })
 
   return {
     write: (chunk) => parser.write(chunk),
@@ -163,6 +213,7 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
       await finished
       return collect(true)
     },
+    fonts: () => [...fonts],
   }
 }
 
@@ -265,6 +316,9 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
   // let the server keep the previous occupant's file under that index.
   const sent = new Map<string, string>()
   const slot = (track: VttTrack, index: number) => `${index}\u0000${track.language}\u0000${track.title}`
+  // What identifies a track's bytes: the VTT and the ASS travel and change
+  // together, so one record covers both.
+  const payloadOf = (track: VttTrack) => `${track.vtt}\u0000${track.ass ?? ''}`
 
   const register = (source: string) => {
     if (sources.has(source)) return
@@ -289,7 +343,7 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     // travels as its name alone; the position in the list is what identifies
     // it, on both sides.
     const body = tracks.map((track, index) => (
-      sent.get(slot(track, index)) === track.vtt
+      sent.get(slot(track, index)) === payloadOf(track)
         ? { language: track.language, title: track.title }
         : track
     ))
@@ -312,7 +366,7 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
       }
       // Only what the server acknowledged may be left out of the next post.
       sent.clear()
-      tracks.forEach((track, index) => sent.set(slot(track, index), track.vtt))
+      tracks.forEach((track, index) => sent.set(slot(track, index), payloadOf(track)))
     } catch (error) {
       console.error('subtitle upload failed', error)
     }
@@ -338,5 +392,42 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
       pending = pending.then(() => (dirty ? post() : Promise.resolve()))
       await pending
     },
+  }
+}
+
+/**
+ * Sends the fonts a container carries for its ASS tracks. Each font goes up
+ * once, raw, and the server records it on the room so every viewer's
+ * renderer can load the exact faces the subtitles were authored against.
+ * Failures are logged and skipped: fonts degrade to the renderer's fallback
+ * face, never block the media.
+ */
+export async function postSubtitleFonts(
+  roomID: string,
+  mediaGeneration: number,
+  fonts: AttachedFont[],
+  alreadySent: Set<string>,
+): Promise<void> {
+  for (const font of fonts) {
+    const key = `${font.filename}:${font.data.byteLength}`
+    if (alreadySent.has(key)) continue
+    alreadySent.add(key)
+    try {
+      const query = `name=${encodeURIComponent(font.filename)}&mediaGeneration=${mediaGeneration}`
+      const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/subtitles/fonts?${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: font.data as unknown as BodyInit,
+      })
+      // 409 is a source swap; nothing later will want these fonts either.
+      if (response.status === 409) return
+      if (!response.ok) {
+        console.warn(`subtitle font upload failed with status ${response.status}`, font.filename)
+        alreadySent.delete(key)
+      }
+    } catch (error) {
+      console.warn('subtitle font upload failed', font.filename, error)
+      alreadySent.delete(key)
+    }
   }
 }

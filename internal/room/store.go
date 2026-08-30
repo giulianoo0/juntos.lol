@@ -221,6 +221,11 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 			return nil, fmt.Errorf("unmarshal chapters: %w", err)
 		}
 	}
+	if v := fields["subtitle_fonts"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.SubtitleFonts); err != nil {
+			return nil, fmt.Errorf("unmarshal subtitle fonts: %w", err)
+		}
+	}
 	if v := fields["bitmap_subs_skipped"]; v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil {
@@ -486,6 +491,35 @@ func (s *Store) ReclaimStaleClientClaims(ctx context.Context, idleFor time.Durat
 	return freed, nil
 }
 
+// AddSubtitleFont appends one attached font to the room, deduplicated by its
+// stored file name and capped, bumping subs_version so viewers refresh. The
+// read-append-write is not atomic; fonts arrive from the one extraction that
+// owns the source, so the worst concurrent case is a duplicate the dedup in
+// the handler already caught. Returns the list as stored.
+func (s *Store) AddSubtitleFont(ctx context.Context, id string, font SubtitleFont, limit int) ([]SubtitleFont, error) {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, held := range current.SubtitleFonts {
+		if held.File == font.File {
+			return current.SubtitleFonts, nil
+		}
+	}
+	if len(current.SubtitleFonts) >= limit {
+		return current.SubtitleFonts, nil
+	}
+	fonts := append(current.SubtitleFonts, font)
+	raw, err := json.Marshal(fonts)
+	if err != nil {
+		return nil, fmt.Errorf("marshal subtitle fonts: %w", err)
+	}
+	if err := s.mutateRoomBump(ctx, id, false, "subs_version", "subtitle_fonts", string(raw)); err != nil {
+		return nil, err
+	}
+	return fonts, nil
+}
+
 // SetChapters stores the source's authored chapter spans.
 func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) error {
 	c, err := json.Marshal(chapters)
@@ -604,7 +638,7 @@ redis.call('HSET', KEYS[1],
   'audio_tracks', 'null',
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
-redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters',
+redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms')
