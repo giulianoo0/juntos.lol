@@ -13,6 +13,13 @@ export interface TrackInfo {
   digest?: string
 }
 
+export interface SubtitleFont {
+  name: string
+  // The digest-derived object name under the generation's subs/ prefix.
+  file: string
+  size: number
+}
+
 export interface PlayState {
   playing: boolean
   positionMs: number
@@ -163,6 +170,10 @@ export interface RoomInfo {
   controllerId: string
   audioTracks: TrackInfo[] | null
   subtitleTracks: TrackInfo[] | null
+  // Fonts the source attached for its styled (ASS) subtitle tracks, served
+  // from the bucket under subs/; the libass renderer loads them so scripts
+  // draw with the faces they were authored against.
+  subtitleFonts?: SubtitleFont[] | null
   // The source's authored spans (openings, recaps), when the container
   // carries any: the player draws them on the timeline.
   chapters?: RoomChapter[] | null

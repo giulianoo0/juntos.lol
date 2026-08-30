@@ -386,3 +386,93 @@ func TestStoreClientSubtitlesRefusesACarryOverUnderADifferentName(t *testing.T) 
 	shifted := `{"complete":false,"tracks":[{"language":"eng","title":"Forced"}]}`
 	require.Equal(t, http.StatusBadRequest, postSubtitles(t, e, "r8", shifted).Code)
 }
+
+const validASS = "[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,hello\n"
+
+func TestStoreClientSubtitlesWithASS(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "ra", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	body := `{"tracks":[{"language":"eng","title":"Full","vtt":` + strconvQuote(validVTT) +
+		`,"ass":` + strconvQuote(validASS) + `}]}`
+	w := postSubtitles(t, e, "ra", body)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	got, err := store.Get(t.Context(), "ra")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleTracks, 1)
+	require.Equal(t, "ass", got.SubtitleTracks[0].Codec)
+	// One digest names both files together: it must differ from a VTT-only
+	// track with the same VTT bytes.
+	require.NotEqual(t, subtitleDigest(validVTT), got.SubtitleTracks[0].Digest)
+
+	for name, want := range map[string]string{"sub_0_eng.vtt": validVTT, "sub_0_eng.ass": validASS} {
+		data, err := os.ReadFile(filepath.Join(cfg.DataDir, "rooms", "ra", "subs", name))
+		require.NoError(t, err)
+		require.Equal(t, want, string(data))
+	}
+}
+
+func TestStoreClientSubtitlesRejectsBadASS(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "rb", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	body := `{"tracks":[{"language":"eng","title":"x","vtt":` + strconvQuote(validVTT) +
+		`,"ass":` + strconvQuote("not an ass document") + `}]}`
+	w := postSubtitles(t, e, "rb", body)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestStoreSubtitleFont(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "rf", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+
+	post := func(name, payload string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/rooms/rf/subtitles/fonts?name="+name, strings.NewReader(payload))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		e.ServeHTTP(w, req)
+		return w
+	}
+
+	w := post("OpenSans.ttf", "fontbytes")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	got, err := store.Get(t.Context(), "rf")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleFonts, 1)
+	require.Equal(t, "OpenSans.ttf", got.SubtitleFonts[0].Name)
+	require.True(t, strings.HasPrefix(got.SubtitleFonts[0].File, "fonts/f_"))
+	data, err := os.ReadFile(filepath.Join(cfg.DataDir, "rooms", "rf", "subs", got.SubtitleFonts[0].File))
+	require.NoError(t, err)
+	require.Equal(t, "fontbytes", string(data))
+
+	// The same bytes land once: a duplicate post is acknowledged, not stored.
+	w = post("OpenSans.ttf", "fontbytes")
+	require.Equal(t, http.StatusOK, w.Code)
+	got, err = store.Get(t.Context(), "rf")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleFonts, 1)
+
+	// Extensions outside the whitelist are refused.
+	w = post("evil.exe", "MZ")
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}

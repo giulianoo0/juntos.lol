@@ -13,6 +13,7 @@ import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { Settings, type SettingGroup } from './Settings'
+import { AssLayer } from './AssLayer'
 import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
 import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
@@ -190,6 +191,12 @@ export interface BufferedRange {
 // so the list arrives with gaps — a forced track has nothing in it until the
 // first foreign sign appears — while each published file keeps the name of the
 // track it came from.
+// assSource is the styled document beside a codec "ass" track's VTT file.
+function assSource(room: RoomInfo, track: TrackInfo): string {
+  const version = `?g=${room.mediaGeneration}&s=${track.digest ?? room.subsVersion ?? 0}`
+  return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.ass${version}`
+}
+
 function subtitleSource(room: RoomInfo, track: TrackInfo): string {
   // The track's own digest when the server named one: a republished set is
   // mostly tracks that did not change, and a room-wide version would send
@@ -716,6 +723,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   // render, which is the same as having no memo at all.
   const subtitleTracks = room.subtitleTracks ?? NO_SUBTITLE_TRACKS
   const subtitleCount = subtitleTracks.length
+  // Styled (ASS) tracks render through libass instead of the VTT layer. The
+  // VTT stays wired as the fallback: it draws until the renderer reports
+  // ready, and again if the renderer cannot run at all.
+  const chosenSubtitleTrack = subtitleTracks.find((track) => track.index === subtitle) ?? null
+  const assChosen = chosenSubtitleTrack !== null && chosenSubtitleTrack.codec === 'ass' && !!room.mediaBaseUrl
+  const [assActive, setAssActive] = useState(false)
+  const assFontUrls = useMemo(
+    () => (room.mediaBaseUrl ? (room.subtitleFonts ?? []).map((font) => `${room.mediaBaseUrl}/subs/${font.file}`) : []),
+    [room.mediaBaseUrl, room.subtitleFonts],
+  )
   useEffect(() => {
     const textTracks = videoRef.current?.textTracks
     if (!textTracks) return
@@ -1559,9 +1576,21 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       </video>
       <SubtitleLayer
         videoRef={videoRef}
-        position={subtitleTracks.findIndex((track) => track.index === subtitle)}
+        position={assActive ? -1 : subtitleTracks.findIndex((track) => track.index === subtitle)}
         revision={`${room.mediaGeneration}-${mediaReload}-${room.subsVersion ?? 0}-${subtitleCount}`}
       />
+      {assChosen && chosenSubtitleTrack ? (
+        <AssLayer
+          // The renderer transfers its canvas to a worker, so a changed
+          // document needs a fresh element: the key remounts it.
+          key={`ass-${chosenSubtitleTrack.index}-${room.mediaGeneration}-${chosenSubtitleTrack.digest ?? room.subsVersion ?? 0}`}
+          videoRef={videoRef}
+          subUrl={assSource(room, chosenSubtitleTrack)}
+          fontUrls={assFontUrls}
+          timeOffsetSec={mediaOffsetSec}
+          onActive={setAssActive}
+        />
+      ) : null}
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       {unplayable ? (
         <div className="player-unplayable" role="alert">

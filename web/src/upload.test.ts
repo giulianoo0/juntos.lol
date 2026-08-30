@@ -27,6 +27,7 @@ const subtitleFakes = vi.hoisted(() => {
       write: (chunk: Uint8Array) => { written.push(chunk) },
       snapshot: () => [{ language: 'eng', title: 'partial', vtt: 'WEBVTT' }],
       finish: async () => [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }],
+      fonts: () => [],
     },
     collector: {
       register: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('./subtitles', () => ({
   isMatroska: (file: { name: string; type?: string }) => file.name.toLowerCase().endsWith('.mkv'),
   createMatroskaSubtitleStream: vi.fn().mockResolvedValue(subtitleFakes.stream),
   createSubtitleCollector: vi.fn(() => subtitleFakes.collector),
+  postSubtitleFonts: vi.fn().mockResolvedValue(undefined),
 }))
 const clientPipeline = vi.hoisted(() => ({
   planClientRemux: vi.fn(),

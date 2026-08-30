@@ -77,15 +77,37 @@ func subsPrefix(roomID string, generation int) string {
 	return MediaPrefix(roomID, generation) + "subs/"
 }
 
-// PublishSubtitles uploads every WebVTT file in subsDir whose content is not
-// already in the bucket. Subtitle URLs are built by the client, so they carry
-// a version query string of their own and do not need the published set.
+// subtitleContentTypes is what a subtitle-adjacent file is served back as,
+// keyed by extension. Anything else in the directory is skipped.
+var subtitleContentTypes = map[string]string{
+	".vtt":   "text/vtt; charset=utf-8",
+	".ass":   "text/x-ssa; charset=utf-8",
+	".ttf":   "font/ttf",
+	".otf":   "font/otf",
+	".ttc":   "font/collection",
+	".woff":  "font/woff",
+	".woff2": "font/woff2",
+}
+
+// PublishSubtitles uploads every subtitle file in subsDir — WebVTT, the full
+// ASS documents beside them, and the fonts/ directory of attached faces —
+// whose content is not already in the bucket. Subtitle URLs are built by the
+// client, so they carry a version query string of their own and do not need
+// the published set.
 func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string) error {
 	generation, err := p.generation(ctx, roomID)
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(subsDir)
+	if err := p.publishSubtitleDir(ctx, subsPrefix(roomID, generation), subsDir); err != nil {
+		return err
+	}
+	return p.publishSubtitleDir(ctx, subsPrefix(roomID, generation)+"fonts/",
+		filepath.Join(subsDir, "fonts"))
+}
+
+func (p *Publisher) publishSubtitleDir(ctx context.Context, prefix, dir string) error {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -93,11 +115,12 @@ func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string
 		return fmt.Errorf("list subtitles: %w", err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".vtt") {
+		contentType, known := subtitleContentTypes[strings.ToLower(filepath.Ext(entry.Name()))]
+		if entry.IsDir() || !known {
 			continue
 		}
-		if err := p.putSubtitle(ctx, subsPrefix(roomID, generation)+entry.Name(),
-			filepath.Join(subsDir, entry.Name())); err != nil {
+		if err := p.putSubtitle(ctx, prefix+entry.Name(),
+			filepath.Join(dir, entry.Name()), contentType); err != nil {
 			return err
 		}
 	}
@@ -109,7 +132,7 @@ func (p *Publisher) PublishSubtitles(ctx context.Context, roomID, subsDir string
 //
 // The file is read whole rather than streamed: subtitles are kilobytes, and
 // the read is what the digest is taken from anyway.
-func (p *Publisher) putSubtitle(ctx context.Context, key, path string) error {
+func (p *Publisher) putSubtitle(ctx context.Context, key, path, contentType string) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -127,7 +150,7 @@ func (p *Publisher) putSubtitle(ctx context.Context, key, path string) error {
 	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), uploadTimeout)
 	defer cancel()
 	if err := p.bucket.Put(uploadCtx, key, bytes.NewReader(body), int64(len(body)),
-		"text/vtt; charset=utf-8", subtitleCacheControl); err != nil {
+		contentType, subtitleCacheControl); err != nil {
 		return err
 	}
 	// Recorded only once the bytes are in the bucket, so a failed upload is

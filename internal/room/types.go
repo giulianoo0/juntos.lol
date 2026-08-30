@@ -18,6 +18,16 @@ type TrackInfo struct {
 	Digest   string `json:"digest,omitempty"`
 }
 
+// SubtitleFont is one font file the source attached for its styled (ASS)
+// subtitle tracks. File is its digest-derived name under the generation's
+// subs/fonts/ prefix; Name is what the container called it, for the renderer
+// to match against the styles' font names.
+type SubtitleFont struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+	Size int64  `json:"size"`
+}
+
 // Chapter is one authored span of the media — an opening, a recap, the
 // episode itself — read from the container's own chapter atoms.
 type Chapter struct {
@@ -109,6 +119,9 @@ type Room struct {
 	OwnerToken     string      `json:"-"`
 	AudioTracks    []TrackInfo `json:"audioTracks"`
 	SubtitleTracks []TrackInfo `json:"subtitleTracks"`
+	// SubtitleFonts are the source's attached fonts, served from the bucket
+	// so every viewer's ASS renderer can draw the faces the script names.
+	SubtitleFonts []SubtitleFont `json:"subtitleFonts,omitempty"`
 	// Chapters are the source's authored spans, when it carries any: the
 	// player draws them on the timeline so "the opening" is a place.
 	Chapters          []Chapter `json:"chapters,omitempty"`

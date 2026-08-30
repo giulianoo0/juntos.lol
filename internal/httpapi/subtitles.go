@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -22,10 +24,15 @@ import (
 )
 
 const (
-	maxSubtitlesBodyBytes = 8 << 20
+	maxSubtitlesBodyBytes = 24 << 20
 	maxSubtitleTracks     = 64
 	maxSubtitleVTTBytes   = 4 << 20
+	maxSubtitleASSBytes   = 4 << 20
 	maxSubtitleTitleBytes = 255
+	// Fonts ride with ASS tracks so the renderer draws the faces the script
+	// was authored against. Bounded hard: they are a courtesy, not media.
+	maxSubtitleFontBytes = 8 << 20
+	maxSubtitleFonts     = 24
 )
 
 // VTT is a pointer because omitting it means something: this track has not
@@ -37,6 +44,10 @@ type clientSubtitleTrack struct {
 	Language string  `json:"language"`
 	Title    string  `json:"title"`
 	VTT      *string `json:"vtt"`
+	// ASS carries the full styled document beside the VTT conversion. A
+	// track that has one is stored as codec "ass": the player renders the
+	// document with libass and keeps the VTT as its fallback.
+	ASS *string `json:"ass"`
 }
 
 // Complete distinguishes a finished extraction from a progressive one. A
@@ -80,6 +91,94 @@ type SubtitlePublisher interface {
 func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
 	publisher SubtitlePublisher, onSubsStored func(roomID string)) {
 	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, publisher, onSubsStored))
+	rg.POST("/rooms/:id/subtitles/fonts", storeSubtitleFont(store, cfg, publisher, onSubsStored))
+}
+
+// fontExtensions is what a subtitle font upload may claim to be. The bytes
+// are stored and served as opaque binaries under a digest name; the extension
+// only informs the content type they are served back with.
+var fontExtensions = map[string]struct{}{
+	".ttf": {}, ".otf": {}, ".ttc": {}, ".woff": {}, ".woff2": {},
+}
+
+// storeSubtitleFont accepts one font file a container attached for its ASS
+// tracks. Fonts are additive per generation, deduplicated by digest, and
+// bounded in count and size; they never gate media.
+func storeSubtitleFont(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
+	onSubsStored func(roomID string)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		storedRoom, ok := loadLiveRoom(c, store, roomID)
+		if !ok {
+			return
+		}
+		if v := c.Query("mediaGeneration"); v != "" {
+			if n, err := strconv.Atoi(v); err != nil || n != storedRoom.MediaGeneration {
+				c.JSON(http.StatusConflict, gin.H{"error": "stale_generation"})
+				return
+			}
+		}
+		if len(storedRoom.SubtitleFonts) >= maxSubtitleFonts {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too_many_fonts"})
+			return
+		}
+		name := filepath.Base(c.Query("name"))
+		ext := strings.ToLower(filepath.Ext(name))
+		if _, allowed := fontExtensions[ext]; !allowed || !validSubtitleTitle(name) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_font"})
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSubtitleFontBytes)
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil || len(body) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_font"})
+			return
+		}
+		digest := subtitleDigest(string(body))
+		file := "fonts/f_" + digest + ext
+		for _, held := range storedRoom.SubtitleFonts {
+			if held.File == file {
+				c.JSON(http.StatusOK, gin.H{"subtitleFonts": storedRoom.SubtitleFonts})
+				return
+			}
+		}
+
+		subsDir := filepath.Join(cfg.DataDir, "rooms", roomID, "subs")
+		if err := os.MkdirAll(filepath.Join(subsDir, "fonts"), 0o755); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(subsDir, file), body, 0o644); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		// The bucket gets the bytes before the room announces them, the same
+		// order the tracks follow.
+		if publisher != nil {
+			if err := publisher.PublishSubtitles(c.Request.Context(), roomID, subsDir); err != nil {
+				slog.ErrorContext(c.Request.Context(), "upload subtitle font failed", "room_id", roomID, "error", err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
+		fonts, err := store.AddSubtitleFont(c.Request.Context(), roomID, room.SubtitleFont{
+			Name: name, File: file, Size: int64(len(body)),
+		}, maxSubtitleFonts)
+		if err != nil {
+			if errors.Is(err, room.ErrNotFound) {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		invokeSubsStoredCallback(onSubsStored, roomID)
+		c.JSON(http.StatusOK, gin.H{"subtitleFonts": fonts})
+	}
 }
 
 func storeClientSubtitles(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
@@ -131,7 +230,7 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 		tracks := make([]room.TrackInfo, 0, len(req.Tracks))
 		type pendingWrite struct {
 			path string
-			vtt  string
+			body string
 		}
 		writes := make([]pendingWrite, 0, len(req.Tracks))
 		for i, track := range req.Tracks {
@@ -154,13 +253,24 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 				return
 			}
+			if track.ASS != nil && !validSubtitleASS(*track.ASS) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+				return
+			}
 			language := sanitizeSubtitleLanguage(track.Language)
-			digest := subtitleDigest(*track.VTT)
+			codec := "webvtt"
+			payload := *track.VTT
+			if track.ASS != nil {
+				codec = "ass"
+				// One digest names both files: they grow and travel together.
+				payload += "\x00" + *track.ASS
+			}
+			digest := subtitleDigest(payload)
 			tracks = append(tracks, room.TrackInfo{
 				Index:    i,
 				Language: language,
 				Title:    track.Title,
-				Codec:    "webvtt",
+				Codec:    codec,
 				Digest:   digest,
 			})
 			// An older client posts every track every time; the digest is what
@@ -171,8 +281,14 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			// i and the sanitized language keep the file name path-safe.
 			writes = append(writes, pendingWrite{
 				path: filepath.Join(subsDir, fmt.Sprintf("sub_%d_%s.vtt", i, language)),
-				vtt:  *track.VTT,
+				body: *track.VTT,
 			})
+			if track.ASS != nil {
+				writes = append(writes, pendingWrite{
+					path: filepath.Join(subsDir, fmt.Sprintf("sub_%d_%s.ass", i, language)),
+					body: *track.ASS,
+				})
+			}
 		}
 
 		if err := os.MkdirAll(subsDir, 0o755); err != nil {
@@ -181,7 +297,7 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			return
 		}
 		for _, write := range writes {
-			if err := os.WriteFile(write.path, []byte(write.vtt), 0o644); err != nil {
+			if err := os.WriteFile(write.path, []byte(write.body), 0o644); err != nil {
 				slog.ErrorContext(c.Request.Context(), "write subtitle file failed", "room_id", roomID, "error", err)
 				c.Status(http.StatusInternalServerError)
 				return
@@ -255,6 +371,18 @@ func validSubtitleTitle(value string) bool {
 func validSubtitleVTT(value string) bool {
 	return len(value) > 0 && len(value) <= maxSubtitleVTTBytes &&
 		utf8.ValidString(value) && strings.HasPrefix(value, "WEBVTT")
+}
+
+// validSubtitleASS accepts a complete ASS/SSA document. It must open with the
+// script info section (an optional BOM aside); the file is served verbatim as
+// text and only ever parsed by libass in the viewer, so shape is all that is
+// checked here.
+func validSubtitleASS(value string) bool {
+	if len(value) == 0 || len(value) > maxSubtitleASSBytes || !utf8.ValidString(value) {
+		return false
+	}
+	trimmed := strings.TrimPrefix(value, "\uFEFF")
+	return len(trimmed) > 13 && strings.EqualFold(trimmed[:13], "[Script Info]")
 }
 
 func invokeSubsStoredCallback(onSubsStored func(string), roomID string) {
