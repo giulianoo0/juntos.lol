@@ -60,6 +60,11 @@ type Hub struct {
 	// otherwise, seeded for nobody until its own idle sweep notices.
 	onReclaimed func(roomID string)
 
+	// onPosition is told the room's authoritative position whenever the
+	// controller moves it — play, pause, seek, gated or not. Called off the
+	// room's goroutine; the remote-remux follow hangs here. Nil-safe.
+	onPosition func(roomID string, positionMs int64)
+
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
 	capabilities map[string]map[string]string
@@ -125,6 +130,11 @@ type clientInbound struct {
 
 // NewHub creates a WebSocket hub backed by the room store and the bucket its
 // media lives in.
+// OnPosition registers the authoritative-position hook.
+func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
+	h.onPosition = fn
+}
+
 func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 	if cfg.MaxParticipants < 1 {
 		cfg.MaxParticipants = 1
@@ -736,6 +746,12 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	}
 	if message.PositionMs < 0 {
 		return
+	}
+	// The follow leaves before the early returns below: a gated seek is as
+	// authoritative as an ungated one, and openGate returning must not lose
+	// it. Never on this goroutine — the hook may talk to a worker.
+	if r.hub.onPosition != nil && message.Type != "rate" {
+		go r.hub.onPosition(r.id, message.PositionMs)
 	}
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()

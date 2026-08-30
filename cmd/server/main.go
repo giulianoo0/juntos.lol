@@ -114,8 +114,18 @@ func main() {
 	// A reclaimed room takes its torrent with it. CancelRoom existed for this
 	// and nothing called it, so the fleet kept seeding for rooms that had
 	// already been deleted and the status page and the worker disagreed.
-	hub.OnRoomReclaimed(torrents.CancelRoom)
-	workerHub.OnHeartbeat(torrents.Charge)
+	remuxOrch := worker.NewRemuxOrchestrator(torrents, store, cfg)
+	// A reclaimed or re-pointed room takes its torrent and its remote
+	// production with it.
+	hub.OnRoomReclaimed(func(roomID string) {
+		remuxOrch.CancelRoom(roomID)
+		torrents.CancelRoom(roomID)
+	})
+	hub.OnPosition(remuxOrch.Follow)
+	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
+		torrents.Charge(workerID, hb)
+		remuxOrch.ObserveHeartbeat(workerID, hb)
+	})
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)
 
@@ -127,8 +137,12 @@ func main() {
 			NotifyRoomMedia:    hub.NotifyRoomMedia,
 			NotifyRoomProgress: hub.NotifyRoomProgress,
 		}),
-		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, CancelMedia: torrents.CancelRoom}),
-		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents}, workerHub.HandleLink),
+		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, CancelMedia: func(roomID string) {
+			remuxOrch.CancelRoom(roomID)
+			torrents.CancelRoom(roomID)
+		}}),
+		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents,
+			Remux: remuxOrch, Authorizer: hub.AuthorizeMember}, workerHub.HandleLink),
 	)
 
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {

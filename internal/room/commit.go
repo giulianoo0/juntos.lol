@@ -254,6 +254,22 @@ func (s *Store) CompleteReceiptFor(ctx context.Context, id, claim string) (*Comp
 	return &receipt, nil
 }
 
+// SetProducerRun designates which run the publish fence accepts, resetting
+// its sequence. The orchestrator moves it when replacing a run on a seek,
+// before the old process is told to stop: the old committer's next publish
+// is refused first, whatever order the network delivers things in.
+func (s *Store) SetProducerRun(ctx context.Context, id, runID string) error {
+	_, err := s.rdb.Eval(ctx, `
+redis.call('HSET', KEYS[1], 'producer_run', ARGV[1])
+redis.call('HDEL', KEYS[1], 'producer_seq', 'producer_digest')
+return 1
+`, []string{roomKey(id)}, runID).Result()
+	if err != nil {
+		return fmt.Errorf("set producer run: %w", err)
+	}
+	return nil
+}
+
 // MetadataToken mints and stores the metadata capability for the room's
 // current producer: chapters and track annotations may keep arriving for a
 // while after the media completes, but never across a source swap.

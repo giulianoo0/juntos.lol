@@ -113,6 +113,16 @@ type Capability struct {
 	FFmpeg string `json:"ffmpeg"`
 	// AudioCodecs lists source audio codecs it can convert to AAC.
 	AudioCodecs []string `json:"audioCodecs"`
+	// Runs is every run the worker still remembers, live and terminal.
+	Runs []RunReport `json:"runs,omitempty"`
+}
+
+// RunReport is one run's state as the worker last told it.
+type RunReport struct {
+	RunID      string `json:"runId"`
+	State      string `json:"state"`
+	ProducedMs int64  `json:"producedMs"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Compatible reports whether the backend may dispatch a remux job here.
