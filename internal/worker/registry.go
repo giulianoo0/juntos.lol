@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/giulianoo0/ss/internal/remux"
 )
 
 // Heartbeat is what a worker reports every ten seconds. The affinity table
@@ -33,6 +35,9 @@ type Heartbeat struct {
 	MaxTorrents  int             `json:"maxTorrents"`
 	PermitsInUse int64           `json:"permitsInUse"`
 	Torrents     []TorrentDigest `json:"torrents"`
+	// Remux is the worker's remote-remux capability; absent means it takes
+	// no remux jobs. Declared as remux.Capability in internal/remux.
+	Remux *remux.Capability `json:"remux,omitempty"`
 }
 
 // TransferStats is the worker's serving-bandwidth ceiling and how much of
