@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import useEmblaCarousel from 'embla-carousel-react'
+import { WheelGesturesPlugin } from 'embla-carousel-wheel-gestures'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface CarouselProps {
@@ -9,13 +10,19 @@ interface CarouselProps {
   nextLabel: string
 }
 
-// The catalog's horizontal strip: Embla drives the scrolling (drag, wheel,
-// snap containment) and a pair of floating round buttons ride the edges,
+// The catalog's horizontal strip: Embla drives the scrolling (drag, snap
+// containment, and the wheel through its gestures plugin — bare Embla ignores
+// wheel events, and the viewport's overflow:hidden leaves no native fallback) and a pair of floating round buttons ride the edges,
 // each appearing only while there is somewhere left to go.
 export function Carousel({ children, className, prevLabel, nextLabel }: CarouselProps) {
   // slidesToScroll 'auto' makes the arrows page by whole views instead of
   // nudging one card at a time.
-  const [viewportRef, embla] = useEmblaCarousel({ align: 'start', dragFree: true, containScroll: 'trimSnaps', slidesToScroll: 'auto' })
+  // forceWheelAxis 'x' would hijack vertical scrolling of the page/modal;
+  // left unset, only sideways wheel and trackpad swipes move the strip.
+  const [viewportRef, embla] = useEmblaCarousel(
+    { align: 'start', dragFree: true, containScroll: 'trimSnaps', slidesToScroll: 'auto' },
+    [WheelGesturesPlugin()],
+  )
   const [canPrev, setCanPrev] = useState(false)
   const [canNext, setCanNext] = useState(false)
 
