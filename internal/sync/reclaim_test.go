@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
@@ -90,4 +91,40 @@ func TestAbandonedSweepReclaimsAnEmptyRoomNobodyIsWatching(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, reclaimed, "done")
 	require.NotContains(t, reclaimed, "busy")
+}
+
+func TestHubTransferHandsTheControlsToTheTarget(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	// A guest asking is refused; the host asking is honoured for everyone.
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))
+	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
+	require.NoError(t, host.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		members := readHubEvent(t, conn)
+		require.Equal(t, "members", members.Type)
+		require.Equal(t, "m2", members.ControllerID)
+	}
+}
+
+func TestHubKickTellsTheMemberAndDropsThem(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "kick", TargetID: "m2"}))
+	require.Equal(t, "kicked", readHubEvent(t, guest).ErrCode)
+	var closed Outbound
+	require.Error(t, guest.ReadJSON(&closed), "the socket stayed open behind the kick")
+	members := readHubEvent(t, host)
+	require.Equal(t, "members", members.Type)
+	require.Len(t, members.Members, 1)
 }

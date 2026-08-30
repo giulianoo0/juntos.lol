@@ -96,6 +96,12 @@ type Room struct {
 	MediaRegions []MediaRegion `json:"mediaRegions,omitempty"`
 	ErrorMessage string        `json:"errorMessage,omitempty"`
 	ControllerID string        `json:"controllerId"`
+	// SourceMemberID is the member whose browser holds the source and runs
+	// the pipeline, and SourceOrigin is what they picked — "file", "torrent"
+	// or "url". A file lives only in that one browser: when they leave, the
+	// room has nothing left to play. Members can see who that is.
+	SourceMemberID string `json:"sourceMemberId,omitempty"`
+	SourceOrigin   string `json:"sourceOrigin,omitempty"`
 	// OwnerToken is the secret handed to whoever created the room. A reload
 	// mints a new member id, so this is the only thing that can tell the
 	// server the host is back and hand control to them again. Never

@@ -25,6 +25,9 @@ type Inbound struct {
 	// Title carries a viewer's "titleRequest": a catalog title they want the
 	// controller to switch the room to.
 	Title *TitleRequest `json:"title,omitempty"`
+	// Origin belongs to "source": the browser running the room's pipeline
+	// saying what it is feeding from — "file", "torrent" or "url".
+	Origin string `json:"origin,omitempty"`
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The
@@ -71,6 +74,10 @@ type Outbound struct {
 	// nobody answers, on the server's clock, so every member counts down to
 	// the same instant rather than to their own arrival time.
 	DeadlineMs int64 `json:"deadlineMs,omitempty"`
+	// closeAfter tells the write pump this is the last frame: the socket is
+	// shut once it is on the wire. A kicked member gets told why before the
+	// connection drops, rather than seeing a reconnect loop.
+	closeAfter bool
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.

@@ -93,6 +93,16 @@ export function remuxHandleFor(roomID: string): ClientRemuxHandle | undefined {
 // this machine can see it.
 const torrentSessions = new Map<string, TorrentSession>()
 
+// What this tab's pipeline for each room feeds from, announced to the room so
+// everyone can see whose browser the video depends on.
+const origins = new Map<string, SourceOrigin>()
+export type SourceOrigin = 'file' | 'torrent' | 'url'
+
+/** What this tab's pipeline for the room feeds from, when this tab runs one. */
+export function sourceOriginFor(roomID: string): SourceOrigin | null {
+  return origins.get(roomID) ?? null
+}
+
 /** The swarm behind this room's upload, when this tab is fetching it. */
 export function torrentStatsFor(roomID: string): TorrentStats | null {
   return torrentSessions.get(roomID)?.stats() ?? null
@@ -362,6 +372,7 @@ export function startRoomUpload(
   // on mount, and deferring the entry behind the worker spawn would show no
   // progress at all.
   const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
+  origins.set(roomID, source.kind === 'file' ? 'file' : source.kind === 'url' ? 'url' : 'torrent')
   const size = sourceSize(source)
   const entry = createEntry(size)
   uploads.set(roomID, entry)

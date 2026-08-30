@@ -228,6 +228,8 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 		r.BitmapSubsSkipped = n
 	}
+	r.SourceMemberID = fields["source_member_id"]
+	r.SourceOrigin = fields["source_origin"]
 	r.SourceKind = fields["source_kind"]
 	if r.SourceKind == "" {
 		r.SourceKind = SourceUpload
@@ -311,6 +313,12 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		r.ExpiresAt = t
 	}
 	return r, nil
+}
+
+// SetSourceHolder records which member's browser holds the room's source and
+// what kind of pick it was.
+func (s *Store) SetSourceHolder(ctx context.Context, id, memberID, origin string) error {
+	return s.mutateRoom(ctx, id, false, "source_member_id", memberID, "source_origin", origin)
 }
 
 // SetIngestProgress records how much of the incoming source has landed. It is

@@ -86,6 +86,8 @@ interface SyncResult {
   stillThereDeadlineMs: number | null
   /** Whether this client left the room on purpose. */
   left: boolean
+  /** Whether the controller put this client out of the room. */
+  kicked: boolean
   leave: () => void
   // Reports whether the frame actually left. A command written into a closed
   // socket used to vanish silently, which is exactly what "I pressed pause
@@ -173,6 +175,8 @@ export function useSync(
   // Left on purpose: the socket is closed and stays closed. A reconnect out
   // of a room the person was just taken out of would put them back in it.
   const [left, setLeft] = useState(false)
+  // Left because the controller said so, not because the room went quiet.
+  const [kicked, setKicked] = useState(false)
   const titleSeqRef = useRef(0)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
@@ -366,6 +370,11 @@ export function useSync(
             // is indistinguishable from the app being broken.
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
+            if (message.error === 'kicked') {
+              setKicked(true)
+              setLeft(true)
+              setConnected(false)
+            }
             break
           case 'stillThere':
             setStillThereDeadlineMs(message.deadlineMs ?? null)
@@ -519,6 +528,7 @@ export function useSync(
     errorSeq,
     stillThereDeadlineMs,
     left,
+    kicked,
     leave,
     send,
     reportBuffering,

@@ -8,7 +8,7 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, Link2, MessageSquare, MonitorUp, Replace, Upload, X } from 'lucide-react'
+import { Check, Compass, Crown, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -60,6 +60,7 @@ import {
   uploadActive,
   resumableSourceFor,
   clearResumableSource,
+  sourceOriginFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
 import type { TorrentStats } from '../torrent'
@@ -377,6 +378,22 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   // The in-room catalog. Everyone browses their own copy; `catalogFocus` is
   // how the host lands straight on a requested title's episode.
   const [catalogOpen, setCatalogOpen] = useState(false)
+  // The controller handing the controls to someone while the video lives in
+  // this browser: asked first, because the room still ends if they leave.
+  const [transferTo, setTransferTo] = useState<Member | null>(null)
+  const transferControls = (member: Member) => {
+    if (liveRoom.sourceOrigin === 'file' && liveRoom.sourceMemberId === sync.memberId) setTransferTo(member)
+    else sync.send('transfer', { targetId: member.id })
+  }
+  // The browser running the pipeline tells the room what it feeds from, so
+  // everyone can see whose computer the video depends on. Re-announced on
+  // every reconnect (a new member id) and every new generation.
+  useEffect(() => {
+    if (!sync.memberId || !sync.connected) return
+    const origin = sourceOriginFor(room.id)
+    if (!origin || !(uploadActive(room.id) || remuxHandleFor(room.id))) return
+    sync.send('source', { origin })
+  }, [room.id, sync.memberId, sync.connected, sync.send, liveRoom.mediaGeneration])
   const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
   const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
   // What this tab believes the room is playing (catalog picks only). Kept in
@@ -816,9 +833,16 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           )}
           <div className="presence-row">
             {sync.members.map((member) => (
-              <span key={member.id} className={`member-chip ${member.id === sync.controllerId ? 'is-controller' : ''}`}>
-{member.nickname}{member.id === sync.controllerId ? <Crown size={12} aria-hidden="true" /> : null}
-              </span>
+              <MemberChip
+                key={member.id}
+                member={member}
+                isController={member.id === sync.controllerId}
+                holdsFile={liveRoom.sourceOrigin === 'file' && member.id === liveRoom.sourceMemberId}
+                canAct={sync.isController && member.id !== sync.memberId}
+                onTransfer={() => transferControls(member)}
+                onKick={() => sync.send('kick', { targetId: member.id })}
+                t={t}
+              />
             ))}
           </div>
         </section>
@@ -906,13 +930,38 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         onExpired={leaveIdle}
         t={t}
       />
+      <Dialog open={transferTo !== null} onOpenChange={(open) => { if (!open) setTransferTo(null) }}>
+        {transferTo ? (
+          <DialogContent
+            className="still-there-dialog"
+            closeLabel={t('room.transferCancel')}
+            title={t('room.transferFileTitle')}
+            description={t('room.transferFileGuide')}
+            onCloseClick={() => setTransferTo(null)}
+          >
+            <div className="closed-idle-actions">
+              <button
+                type="button"
+                className="primary-button"
+                autoFocus
+                onClick={() => { sync.send('transfer', { targetId: transferTo.id }); setTransferTo(null) }}
+              >
+                {t('room.transferConfirm')}
+              </button>
+              <button type="button" className="secondary-button" onClick={() => setTransferTo(null)}>
+                {t('room.transferCancel')}
+              </button>
+            </div>
+          </DialogContent>
+        ) : null}
+      </Dialog>
       <Dialog open={sync.left} onOpenChange={() => undefined}>
         {sync.left ? (
           <DialogContent
             className="still-there-dialog"
             closeLabel={t('room.closedIdleHome')}
-            title={t('room.closedIdleTitle')}
-            description={t('room.closedIdleGuide')}
+            title={t(sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
+            description={t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
             onCloseClick={() => { window.location.assign("/") }}
           >
             <div className="closed-idle-actions">
@@ -943,6 +992,58 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       </Dialog>
     </main>
     </>
+  )
+}
+
+// One person in the room. For the controller, every other chip opens on
+// right-click into the two things they can do to that person — hand them the
+// controls, or put them out — on the app's one menu surface. The film icon
+// marks whose computer the video is on: the room ends if they leave, whoever
+// holds the controls.
+function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKick, t }: {
+  member: Member
+  isController: boolean
+  holdsFile: boolean
+  canAct: boolean
+  onTransfer: () => void
+  onKick: () => void
+  t: Translator
+}) {
+  const className = `member-chip ${isController ? 'is-controller' : ''}`
+  const body = (
+    <>
+      {member.nickname}
+      {isController ? <Crown size={12} aria-hidden="true" /> : null}
+      {holdsFile ? (
+        <span className="member-holds-file" title={t('room.holdsFile').replace('{name}', member.nickname)}>
+          <FileVideo size={12} aria-hidden="true" />
+        </span>
+      ) : null}
+    </>
+  )
+  if (!canAct) return <span className={className}>{body}</span>
+  const pick = (close: () => void, action: () => void) => () => { close(); action() }
+  return (
+    <MorphingMenu
+      openOn="contextmenu"
+      haspopup="menu"
+      minWidth={0}
+      ariaLabel={t('room.memberMenu').replace('{name}', member.nickname)}
+      triggerClassName={className}
+      panelClassName="media-switch-panel"
+      trigger={() => body}
+    >
+      {(close) => (
+        <div className="media-switch-menu">
+          <button type="button" onClick={pick(close, onTransfer)}>
+            <Crown size={15} aria-hidden="true" />{t('room.transferHost')}
+          </button>
+          <button type="button" onClick={pick(close, onKick)}>
+            <UserX size={15} aria-hidden="true" />{t('room.kickMember')}
+          </button>
+        </div>
+      )}
+    </MorphingMenu>
   )
 }
 

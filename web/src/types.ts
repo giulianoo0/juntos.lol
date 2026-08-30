@@ -130,6 +130,11 @@ export interface RoomInfo {
   status: string
   // What the room is playing. A screen share has no media pipeline behind it.
   sourceKind: 'upload' | 'screen'
+  // Whose browser holds the source and runs the pipeline, and what they
+  // picked. A file exists only in that one browser: if they leave, the room
+  // has nothing left to play, whoever holds the controls.
+  sourceMemberId?: string
+  sourceOrigin?: 'file' | 'torrent' | 'url'
   // Increments whenever the controller swaps the source, so the player knows
   // the media behind an unchanged URL is a different recording.
   mediaGeneration: number

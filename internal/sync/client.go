@@ -78,6 +78,11 @@ func (c *client) writePump() {
 			if err := c.conn.WriteJSON(message); err != nil {
 				return
 			}
+			if message.closeAfter {
+				_ = c.conn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(writeWait))
+				return
+			}
 		case <-ticker.C:
 			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
 				return

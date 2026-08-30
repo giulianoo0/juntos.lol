@@ -95,6 +95,8 @@ interface MorphingMenuProps {
   panelClassName?: string
   /** Fired as the panel opens — for state a caller resets per opening. */
   onOpen?: () => void
+  /** 'contextmenu' makes the trigger a right-click target; a click does nothing. */
+  openOn?: 'click' | 'contextmenu'
 }
 
 export function MorphingMenu({
@@ -107,6 +109,7 @@ export function MorphingMenu({
   triggerClassName = '',
   panelClassName = '',
   onOpen,
+  openOn = 'click',
 }: MorphingMenuProps) {
   const [open, setOpen] = useState(false)
   const [geometry, setGeometry] = useState<PanelGeometry | null>(null)
@@ -208,7 +211,8 @@ export function MorphingMenu({
         aria-haspopup={haspopup}
         aria-controls={panelId}
         aria-label={ariaLabel}
-        onClick={() => (open ? closePanel(true) : openPanel())}
+        onClick={openOn === 'click' ? () => (open ? closePanel(true) : openPanel()) : undefined}
+        onContextMenu={openOn === 'contextmenu' ? (event) => { event.preventDefault(); if (!open) openPanel() } : undefined}
         onKeyDown={(event) => {
           if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
             event.preventDefault()

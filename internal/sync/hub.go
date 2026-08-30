@@ -539,6 +539,58 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	request.result <- ""
 }
 
+// handleSource records which browser holds the room's source. Only the one
+// running the pipeline says so, and only the three origins the room knows
+// are kept; everyone then refetches the room to learn it.
+func (r *roomConn) handleSource(sender *client, message Inbound) {
+	switch message.Origin {
+	case "file", "torrent", "url":
+	default:
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+	err := r.hub.store.SetSourceHolder(ctx, r.id, sender.id, message.Origin)
+	cancel()
+	if err != nil {
+		slog.ErrorContext(r.hub.ctx, "record source holder failed", "room_id", r.id, "error", err)
+		return
+	}
+	r.broadcast(Outbound{Type: "roomUpdated"})
+}
+
+// handleMemberAction is the controller acting on one other member: handing
+// them the controls, or putting them out of the room.
+func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
+	if sender.id != r.controllerID {
+		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
+		return
+	}
+	target, ok := r.clients[message.TargetID]
+	if !ok || target == sender {
+		r.send(sender, Outbound{Type: "error", ErrCode: "member_not_found"})
+		return
+	}
+	switch message.Type {
+	case "transfer":
+		ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+		err := r.hub.store.SetController(ctx, r.id, target.id)
+		cancel()
+		if err != nil {
+			slog.ErrorContext(r.hub.ctx, "transfer websocket controller failed", "room_id", r.id, "error", err)
+			r.send(sender, Outbound{Type: "error", ErrCode: "internal_error"})
+			return
+		}
+		r.controllerID = target.id
+		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
+	case "kick":
+		// Told, then dropped: the write pump closes the socket behind this
+		// frame, the read pump unregisters the member, and the roster
+		// broadcast follows from there like any other leave.
+		r.send(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
+	}
+	r.touch()
+}
+
 func (r *roomConn) handleDisconnect(disconnected *client) {
 	if disconnected == nil || r.clients[disconnected.id] != disconnected {
 		return
@@ -617,6 +669,10 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.handleGatingToggle(event.client, message)
 	case "ignore":
 		r.handleIgnore(event.client, message)
+	case "kick", "transfer":
+		r.handleMemberAction(event.client, message)
+	case "source":
+		r.handleSource(event.client, message)
 	case "chat":
 		if !validChat(message.Text) {
 			r.send(event.client, Outbound{Type: "error", ErrCode: "invalid_chat"})
@@ -1023,7 +1079,7 @@ func sameHostnameOrigin(request *http.Request) bool {
 func inboundLabel(messageType string) string {
 	switch messageType {
 	case "hello", "heartbeat", "ready", "gating", "ignore", "chat",
-		"play", "pause", "seek", "rate":
+		"play", "pause", "seek", "rate", "kick", "transfer", "source":
 		return messageType
 	}
 	return "other"
