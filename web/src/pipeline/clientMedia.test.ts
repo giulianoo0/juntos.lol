@@ -86,10 +86,25 @@ const publishRound = async () => { await vi.advanceTimersByTimeAsync(2_000) }
 
 interface Recorded { url: string; body?: Record<string, unknown> }
 
-function mockServer(): Recorded[] {
+// Segment PUTs the fixture is holding until the test lets them land; an
+// aborted one rejects the way a real fetch does.
+const heldUploads: (() => void)[] = []
+function releaseUploads(): void {
+  for (const release of heldUploads.splice(0)) release()
+}
+
+function mockServer({ holdUploads = false } = {}): Recorded[] {
   const calls: Recorded[] = []
-  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init?: { method?: string; body?: string }) => {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init?: { method?: string; body?: string; signal?: AbortSignal }) => {
     const record: Recorded = { url }
+    if (holdUploads && url.startsWith('https://bucket/')) {
+      calls.push(record)
+      await new Promise<void>((resolve, reject) => {
+        heldUploads.push(resolve)
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })
+      return { ok: true, json: async () => ({}), text: async () => '' }
+    }
     if (typeof init?.body === 'string') record.body = JSON.parse(init.body) as Record<string, unknown>
     calls.push(record)
     if (url.endsWith('/client-media/claim')) {
@@ -263,6 +278,50 @@ describe('client remux regions', () => {
     await flush()
     await flush()
     expect(conversions).toHaveLength(2)
+  })
+
+  it('a seek that lands while the finished region is still uploading does not tear the drain down', async () => {
+    const calls = mockServer({ holdUploads: true })
+    let handle: ClientRemuxHandle | null = null
+    const plan = {
+      input: { getPrimaryVideoTrack: async () => ({}) },
+      audioTracks: [],
+      durationSeconds: 634,
+    }
+    const run = runClientRemux({
+      roomID: 'r1',
+      mediaGeneration: 0,
+      file: { size: 1000, abortReads: () => {} } as never,
+      plan: plan as never,
+      onHandle: (h) => { handle = h },
+    })
+    await flush()
+    const first = conversions[0].opts.output.opts.format.options
+    ;(first.onInit as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { n: 0 })
+    for (let n = 1; n <= 6; n += 1) {
+      ;(first.onSegment as (t: unknown, i: unknown) => void)({ buffer: new ArrayBuffer(4) }, { playlist: { n: 0 }, n })
+    }
+    ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
+    // The whole file is produced; only the tail of the uploads is left.
+    conversions[0].finish()
+    await flush()
+    await flush()
+
+    // A seek now has nowhere to restart. Restarting anyway aborted the
+    // uploads still in flight, which left the region's producedMs short of
+    // the end and the seek's target uncovered for good.
+    handle!.follow(503_000)
+    await flush()
+    releaseUploads()
+    await flush()
+    await publishRound()
+    await flush()
+    await run
+    expect(conversions).toHaveLength(1)
+    const completes = calls.filter((call) =>
+      call.url.endsWith('/client-media/publish') && call.body?.complete === true)
+    expect(completes).toHaveLength(1)
+    expect((completes[0].body!.timeline as { regions: unknown[] }).regions).toEqual([{ n: 0, startMs: 0, producedMs: 634_000, growing: false }])
   })
 
   it('fills the gaps behind a region instead of parking, and a seek still wins', async () => {

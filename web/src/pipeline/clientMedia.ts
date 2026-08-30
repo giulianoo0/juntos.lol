@@ -631,6 +631,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
 
   let restartPending = false
   let pendingRestart: Promise<void> | null = null
+  // Set once the region loop is over: every position is produced and only
+  // the last uploads are draining. A seek that lands now has nowhere to
+  // restart — and tearing the drain down would strand the tail of a
+  // finished region, leaving the seek's target uncovered for good.
+  let draining = false
   let lastFollowMs: number | null = null
   // Where this region is heading: its own start, or the seek target it was
   // started for when the nearest keyframe fell well before it. Without this
@@ -719,6 +724,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
       // tearing down must win, and the new region rechecks it on arrival.
       lastFollowMs = absoluteMs
       if (failure || restartPending) return
+      if (draining) {
+        console.log(`[remux-worker] seek to ${absoluteMs} after the last region: waiting on the drain`)
+        return
+      }
       if (uncovered(absoluteMs)) restartAt(absoluteMs)
     },
   }
@@ -865,6 +874,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, onP
     console.log(`[remux-worker] gap ${gap.startMs}-${gap.endMs}: filling from ${start}`)
   }
 
+  draining = true
   await Promise.all([...inflight])
   if (failure) throw failure
   } finally {
