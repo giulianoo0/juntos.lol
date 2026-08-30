@@ -23,6 +23,11 @@ type Stats struct {
 	ByState map[string]int
 }
 
+// IDs lists every room the expiry index still names, hash present or not.
+func (s *Store) IDs(ctx context.Context) ([]string, error) {
+	return s.rdb.ZRange(ctx, byExpiryKey, 0, -1).Result()
+}
+
 // Census counts live rooms and splits them by media status.
 //
 // It reads the store rather than keeping a counter in the process, because a

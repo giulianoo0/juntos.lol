@@ -133,7 +133,7 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 		cfg.RoomIdleSeconds = 1
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Hub{
+	h := &Hub{
 		store:         store,
 		bucket:        bucket,
 		cfg:           cfg,
@@ -148,6 +148,9 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 			CheckOrigin: sameHostnameOrigin,
 		},
 	}
+	h.wg.Add(1)
+	go h.sweepAbandonedLoop()
+	return h
 }
 
 // OnRoomReclaimed registers what to do when a room is torn down for good, so
@@ -879,41 +882,90 @@ func (r *roomConn) sweepIdle() bool {
 }
 
 func (r *roomConn) cleanupIdle() {
-	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
-	defer cancel()
-	storedRoom, err := r.hub.store.Get(ctx, r.id)
-	if errors.Is(err, room.ErrNotFound) {
+	r.hub.reclaimIdle(r.id)
+}
+
+// abandonedSweepEvery is how often the hub looks for rooms nobody is in and no
+// goroutine is watching: a room kept past its idle timer for work still
+// running, or one whose goroutine died with the process.
+const abandonedSweepEvery = time.Minute
+
+// sweepAbandoned reclaims every stored room that has no goroutine here and no
+// work left to protect. The idle timer only fires once per goroutine, and a
+// room it spared ("idle room kept") used to sit in the store until its TTL
+// with nobody ever asking again — as did every empty room after a restart.
+func (h *Hub) sweepAbandoned() {
+	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
+	ids, err := h.store.IDs(ctx)
+	cancel()
+	if err != nil {
+		slog.ErrorContext(h.ctx, "list rooms for abandoned sweep failed", "error", err)
 		return
 	}
+	for _, id := range ids {
+		h.mu.Lock()
+		_, live := h.rooms[id]
+		h.mu.Unlock()
+		if live {
+			continue
+		}
+		h.reclaimIdle(id)
+	}
+}
+
+func (h *Hub) sweepAbandonedLoop() {
+	defer h.wg.Done()
+	ticker := time.NewTicker(abandonedSweepEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-ticker.C:
+			h.sweepAbandoned()
+		}
+	}
+}
+
+// reclaimIdle tears down a room nobody is in, unless it still has work
+// running. It reports whether the room is gone.
+func (h *Hub) reclaimIdle(id string) bool {
+	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
+	defer cancel()
+	storedRoom, err := h.store.Get(ctx, id)
+	if errors.Is(err, room.ErrNotFound) {
+		return true
+	}
 	if err != nil {
-		slog.ErrorContext(ctx, "load idle room before cleanup failed", "room_id", r.id, "error", err)
-		return
+		slog.ErrorContext(ctx, "load idle room before cleanup failed", "room_id", id, "error", err)
+		return false
 	}
 	if reason := unfinishedWork(storedRoom, time.Now()); reason != "" {
 		// Work that outlives the websocket idle window keeps its persisted
 		// room and files: the host's browser can go on publishing segments. A
-		// later connection gets fresh ownership.
-		if err := r.hub.store.SetController(ctx, r.id, ""); err != nil {
-			slog.ErrorContext(ctx, "clear controller for idle active upload failed", "room_id", r.id, "error", err)
+		// later connection gets fresh ownership. The abandoned sweep comes
+		// back for it once the work is done or the grace runs out.
+		if err := h.store.SetController(ctx, id, ""); err != nil {
+			slog.ErrorContext(ctx, "clear controller for idle active upload failed", "room_id", id, "error", err)
 		}
-		slog.InfoContext(ctx, "idle room kept", "room_id", r.id, "reason", reason)
-		return
+		slog.InfoContext(ctx, "idle room kept", "room_id", id, "reason", reason)
+		return false
 	}
-	fileErr := os.RemoveAll(filepath.Join(r.hub.cfg.DataDir, "rooms", r.id))
+	fileErr := os.RemoveAll(filepath.Join(h.cfg.DataDir, "rooms", id))
 	// The published media goes with the room. Nothing can reach it once the
 	// room is gone — the playlists naming it are part of the room record — so
 	// leaving it for the bucket's own rule only pays for storage nobody can
 	// watch. Removed before the room record, which is the only thing that
 	// still names these objects.
-	mediaErr := r.hub.removeMedia(ctx, r.id)
+	mediaErr := h.removeMedia(ctx, id)
 	if mediaErr != nil {
-		slog.ErrorContext(ctx, "idle room media cleanup failed", "room_id", r.id, "error", mediaErr)
-		return
+		slog.ErrorContext(ctx, "idle room media cleanup failed", "room_id", id, "error", mediaErr)
+		return false
 	}
-	storeErr := r.hub.store.Delete(ctx, r.id)
+	storeErr := h.store.Delete(ctx, id)
 	if err := errors.Join(fileErr, storeErr); err != nil {
-		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", r.id, "error", err)
-		return
+		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", id, "error", err)
+		return false
 	}
 	// A room that everyone left is reclaimed well before its TTL, and used to
 	// go without a word. Its link then answers room_not_found with nothing
@@ -922,11 +974,12 @@ func (r *roomConn) cleanupIdle() {
 	metrics.RoomsReclaimed.WithLabelValues(metrics.ReclaimIdle).Inc()
 	// Only now, with the record gone: whatever this releases cannot be taken
 	// back, and a room that failed to delete is a room still being watched.
-	if r.hub.onReclaimed != nil {
-		r.hub.onReclaimed(r.id)
+	if h.onReclaimed != nil {
+		h.onReclaimed(id)
 	}
 	slog.InfoContext(ctx, "idle room reclaimed",
-		"room_id", r.id, "idle_for", r.hub.idleAfter)
+		"room_id", id, "idle_for", h.idleAfter)
+	return true
 }
 
 // removeMedia gives a room's published objects back to the bucket.

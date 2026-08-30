@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -60,4 +61,33 @@ func TestUnfinishedWorkReleasesAFinishedRoom(t *testing.T) {
 	}
 
 	require.Empty(t, unfinishedWork(r, now))
+}
+
+func TestAbandonedSweepReclaimsAnEmptyRoomNobodyIsWatching(t *testing.T) {
+	// The idle timer fires once per goroutine; a room it spared, or one whose
+	// goroutine died with the process, has to be picked up by the sweep.
+	hub, store, _ := newHubTestServer(t, config.Config{})
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "done", Status: "ready",
+		CreatedAt: now.Add(-preparingGrace - time.Minute), ExpiresAt: now.Add(time.Hour),
+	}))
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "busy", Status: "ready",
+		CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+	}))
+	for _, id := range []string{"done", "busy"} {
+		require.NoError(t, store.SetIngestProgress(t.Context(), id, 400, 1000))
+	}
+	var reclaimed []string
+	hub.OnRoomReclaimed(func(id string) { reclaimed = append(reclaimed, id) })
+
+	hub.sweepAbandoned()
+
+	_, err := store.Get(t.Context(), "done")
+	require.ErrorIs(t, err, room.ErrNotFound)
+	_, err = store.Get(t.Context(), "busy")
+	require.NoError(t, err)
+	require.Contains(t, reclaimed, "done")
+	require.NotContains(t, reclaimed, "busy")
 }
