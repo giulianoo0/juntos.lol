@@ -313,7 +313,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (resumeTried.current || !sync.memberId || !sync.capability) return
     if (!needsPreparo) return
     if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
-    if (uploadActive(room.id) || remuxHandleFor(room.id)) { resumeTried.current = true; return }
+    // A pipeline already running here is the preparo; nothing to resume
+    // yet. The try is not spent: once that run is over, a seek into a
+    // stretch it never produced still gets to bring it back.
+    if (uploadActive(room.id) || remuxHandleFor(room.id)) return
     const source = resumableSourceFor(room.id)
     if (!source) { resumeTried.current = true; return }
     resumeTried.current = true

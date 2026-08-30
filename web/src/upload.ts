@@ -389,9 +389,11 @@ export function startRoomUpload(
     // Kept for the report a person can copy off the failure screen: the code
     // is what the screen renders, this is what says why.
     lastFailureDetail = error === null ? null : detail ?? null
-    // A finished conversion has nothing left to resume; a failed one keeps
-    // its source so re-entering the room can try the preparo again.
-    if (error === null) clearResumableSource(roomID)
+    // The source stays either way, for as long as the room can live: a
+    // failed run so re-entering the room can try the preparo again, and a
+    // finished one so a seek into a stretch the bucket somehow never got —
+    // an upload that died on the way, a region that closed short — can
+    // still bring the preparo back rather than wait for ever.
     finishEntry(roomID, entry, error, cleanup)
   }
   // The controller swapped the source; another upload owns the room now.
