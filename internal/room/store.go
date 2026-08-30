@@ -180,7 +180,7 @@ func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
 func (s *Store) ReleaseUpload(ctx context.Context, roomID, uploadID string) error {
 	_, err := s.rdb.Eval(ctx, `
 if redis.call('HGET', KEYS[1], 'upload_id') ~= ARGV[1] then return 0 end
-redis.call('HDEL', KEYS[1], 'upload_id', 'client_media_touched')
+redis.call('HDEL', KEYS[1], 'upload_id', 'client_media_touched', 'producer_run', 'producer_seq', 'producer_digest')
 redis.call('DEL', KEYS[2])
 return 1
 `, []string{roomKey(roomID), uploadKey(roomID)}, uploadID).Result()
@@ -641,7 +641,7 @@ redis.call('HSET', KEYS[1],
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
-  'duration_ms', 'media_offset_ms')
+  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])
