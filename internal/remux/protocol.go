@@ -200,7 +200,7 @@ func AudioPolicy(codec string, channels int) (AudioVerdict, error) {
 	switch codec {
 	case "aac":
 		return AudioCopy, nil
-	case "ac3", "dts", "dca":
+	case "ac3", "eac3", "dts", "dca", "opus", "flac", "mp3", "vorbis":
 		return AudioConvert, nil
 	default:
 		return AudioReject, fmt.Errorf("audio codec %q has no matrix entry", codec)

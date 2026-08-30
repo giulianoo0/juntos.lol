@@ -75,7 +75,7 @@ fn audio_action(codec: &str, channels: u32) -> anyhow::Result<AudioAction> {
     }
     match codec {
         "aac" => Ok(AudioAction::Copy),
-        "ac3" | "dts" | "dca" => Ok(AudioAction::ConvertAac { bitrate: aac_bitrate(channels) }),
+        "ac3" | "eac3" | "dts" | "dca" | "opus" | "flac" | "mp3" | "vorbis" => Ok(AudioAction::ConvertAac { bitrate: aac_bitrate(channels) }),
         other => bail!("audio codec {other:?} has no matrix entry"),
     }
 }
@@ -270,8 +270,8 @@ mod tests {
     fn refuses_unlisted_codecs_clearly() {
         let vp9 = PROBE.replace("h264", "vp9");
         assert!(plan_streams(&vp9).unwrap_err().to_string().contains("matrix"));
-        let opus = PROBE.replace("\"ac3\"", "\"opus\"");
-        assert!(plan_streams(&opus).unwrap_err().to_string().contains("matrix"));
+        let truehd = PROBE.replace("\"ac3\"", "\"truehd\"");
+        assert!(plan_streams(&truehd).unwrap_err().to_string().contains("matrix"));
         let wide = PROBE.replace("\"channels\":6", "\"channels\":10");
         assert!(plan_streams(&wide).unwrap_err().to_string().contains("channels"));
     }

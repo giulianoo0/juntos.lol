@@ -25,9 +25,10 @@ func TestAudioPolicy(t *testing.T) {
 		{"ac3", 6, AudioConvert, false},
 		{"dts", 6, AudioConvert, false},
 		{"dca", 2, AudioConvert, false},
-		{"eac3", 6, AudioReject, true},
+		{"eac3", 6, AudioConvert, false},
 		{"truehd", 8, AudioReject, true},
-		{"opus", 2, AudioReject, true},
+		{"opus", 2, AudioConvert, false},
+		{"flac", 2, AudioConvert, false},
 		{"aac", 0, AudioReject, true},
 		{"aac", 9, AudioReject, true},
 	}
