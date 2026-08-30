@@ -313,28 +313,68 @@ export function startTorrentUpload(
   if (session.magnet) {
     saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
   }
-  // With a worker grant the job is plain data and runs in the remux worker;
-  // a session without one (mocks, tests) pins the job to this thread.
-  const source: RemuxSource = file.worker
-    ? { kind: 'worker', grant: file.worker }
-    : { kind: 'torrentFile', file }
-  const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
-    name: side.name,
-    path: side.path,
-    size: side.size,
-    ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
-      : side.streamUrl ? { url: side.streamUrl }
-        : { read: () => side.read() }),
-  }))
-  startRoomUpload(roomID, mediaGeneration, source, sideFiles, {
-    onProgress,
-    cleanup: () => {
-      // By identity: a source swap registers its own session before this
-      // one's transfer notices it lost the room.
-      if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
-      session.destroy()
-    },
+  const startLocal = () => {
+    // With a worker grant the job is plain data and runs in the remux worker;
+    // a session without one (mocks, tests) pins the job to this thread.
+    const source: RemuxSource = file.worker
+      ? { kind: 'worker', grant: file.worker }
+      : { kind: 'torrentFile', file }
+    const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
+      name: side.name,
+      path: side.path,
+      size: side.size,
+      ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
+        : side.streamUrl ? { url: side.streamUrl }
+          : { read: () => side.read() }),
+    }))
+    startRoomUpload(roomID, mediaGeneration, source, sideFiles, {
+      onProgress,
+      cleanup: () => {
+        // By identity: a source swap registers its own session before this
+        // one's transfer notices it lost the room.
+        if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
+        session.destroy()
+      },
+    })
+  }
+  // The fleet may take the whole production itself — FFmpeg on the worker,
+  // segments straight to the bucket, this browser reduced to a viewer. The
+  // server decides (feature flag, capability, capacity); a no is silent and
+  // the legacy local pipeline runs exactly as before.
+  void tryRemoteRemux(roomID, mediaGeneration, session).then((remote) => {
+    if (!remote) { startLocal(); return }
+    origins.set(roomID, 'torrent')
+    // Polling and readers stop; the job itself stays alive for the worker.
+    // Progress and readiness now arrive through the room like any guest's.
+    if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
+    session.detach?.()
   })
+}
+
+// Asks the server to run this room's production on the job's own worker.
+// True only on an accepted handoff; anything else keeps the local path.
+async function tryRemoteRemux(roomID: string, mediaGeneration: number, session: TorrentSession): Promise<boolean> {
+  if (!session.jobId || mocksEnabled) return false
+  const ownerToken = ownerTokenFor(roomID)
+  if (!ownerToken) return false
+  try {
+    const response = await fetch(`/api/torrents/${encodeURIComponent(session.jobId)}/remux`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: roomID,
+        mediaGeneration,
+        requestId: crypto.randomUUID(),
+        startMs: 0,
+        auth: { ownerToken },
+      }),
+    })
+    if (response.status !== 202) return false
+    const body = await response.json() as { remote?: boolean }
+    return body.remote === true
+  } catch {
+    return false
+  }
 }
 
 export function startUrlUpload(
