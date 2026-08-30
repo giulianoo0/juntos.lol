@@ -192,6 +192,7 @@ impl Control {
             "maxTorrents": self.cfg.max_torrents,
             "permitsInUse": snap.permits_in_use,
             "torrents": snap.torrents,
+            "remux": self.app.remux.read().as_ref().and_then(|r| r.heartbeat()),
         })
         .to_string()
     }

@@ -64,6 +64,38 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
             drain.notify_one();
             ok(json!({}))
         }
+        "remuxStart" => {
+            let (Some(ih), Some(index)) = (job.infohash.as_deref(), job.file_index) else {
+                return err("bad_job", "remuxStart needs infohash and fileIndex".into());
+            };
+            let Some(raw) = job.remux.clone() else { return err("bad_job", "remuxStart needs a remux spec".into()) };
+            let spec: crate::remux::protocol::Spec = match serde_json::from_value(raw) {
+                Ok(s) => s,
+                Err(e) => return err("bad_job", format!("remux spec: {e}")),
+            };
+            let supervisor = app.remux.read().clone();
+            let Some(supervisor) = supervisor else { return err("remux_disabled", "no remux capability".into()) };
+            match supervisor.start(ih, index, spec).await {
+                Ok(()) => ok(json!({})),
+                Err(e) => err(&e.to_string(), String::new()),
+            }
+        }
+        "remuxCancel" => {
+            let run_id = job
+                .remux
+                .as_ref()
+                .and_then(|r| r.get("runId"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let Some(run_id) = run_id else { return err("bad_job", "remuxCancel needs runId".into()) };
+            let supervisor = app.remux.read().clone();
+            let Some(supervisor) = supervisor else { return err("remux_disabled", "no remux capability".into()) };
+            if supervisor.cancel(&run_id).await {
+                ok(json!({}))
+            } else {
+                err("unknown_run", "no such run".into())
+            }
+        }
         "setLimits" => {
             // Session-wide caps are what librqbit exposes at runtime; the
             // per-torrent upload cap is fixed at add time.

@@ -4,6 +4,7 @@ mod control;
 mod engine;
 mod http;
 mod metrics;
+mod remux;
 mod ticket;
 mod watchdog;
 
@@ -64,7 +65,15 @@ async fn main() -> anyhow::Result<()> {
         revoked: Mutex::new(Default::default()),
         probe_spent: Mutex::new(Default::default()),
         metrics: Arc::new(http::Metrics::default()),
+        remux: parking_lot::RwLock::new(None),
     });
+    if cfg.remux_slots > 0 {
+        let supervisor = remux::Remux::new(cfg.clone(), engine.clone()).await;
+        if supervisor.enabled() {
+            tracing::info!(ffmpeg = ?supervisor.ffmpeg_version, "remote remux capability on");
+        }
+        *app.remux.write() = Some(supervisor);
+    }
 
     let (slot, acme) = match cfg.tls {
         TlsMode::Off => (None, None),

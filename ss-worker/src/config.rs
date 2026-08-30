@@ -55,6 +55,19 @@ pub struct WorkerConfig {
     pub first_byte_deadline: Duration,
     pub stall_deadline: Duration,
     pub drain_deadline: Duration,
+
+    /// Remote remux. 0 slots disables the capability entirely.
+    pub remux_slots: usize,
+    pub ffmpeg_path: String,
+    pub ffprobe_path: String,
+    pub remux_spool_bytes: u64,
+    pub remux_object_bytes: u64,
+    pub remux_put_concurrency: usize,
+    pub remux_put_global: usize,
+    /// How far past the room's playhead a run produces at full speed before
+    /// throttling to share the box, in milliseconds.
+    #[allow(dead_code)]
+    pub remux_ahead_ms: u64,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -203,6 +216,14 @@ impl WorkerConfig {
             first_byte_deadline: env_secs("SS_WORKER_FIRST_BYTE_SECS", 30)?,
             stall_deadline: env_secs("SS_WORKER_STALL_SECS", 20)?,
             drain_deadline: env_secs("SS_WORKER_DRAIN_SECS", 30)?,
+            remux_slots: env_parse("SS_WORKER_REMUX_SLOTS", 1)?,
+            ffmpeg_path: env("SS_WORKER_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
+            ffprobe_path: env("SS_WORKER_FFPROBE").unwrap_or_else(|| "ffprobe".into()),
+            remux_spool_bytes: env_parse::<u64>("SS_WORKER_REMUX_SPOOL_MIB", 512)? * 1024 * 1024,
+            remux_object_bytes: env_parse::<u64>("SS_WORKER_REMUX_OBJECT_MIB", 256)? * 1024 * 1024,
+            remux_put_concurrency: env_parse("SS_WORKER_REMUX_PUTS", 4)?,
+            remux_put_global: env_parse("SS_WORKER_REMUX_PUTS_GLOBAL", 8)?,
+            remux_ahead_ms: env_parse::<u64>("SS_WORKER_REMUX_AHEAD_SECS", 120)? * 1000,
         };
         if cfg.tls == TlsMode::Acme && cfg.public_ip.is_none() && cfg.public_hostname.is_none() {
             bail!("SS_WORKER_TLS=acme needs SS_WORKER_PUBLIC_IP and/or SS_WORKER_PUBLIC_HOSTNAME");

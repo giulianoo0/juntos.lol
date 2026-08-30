@@ -8,6 +8,7 @@ description = "Remote torrent worker for ss: joins the swarm, serves bytes over 
 librqbit = { path = "vendor/librqbit" }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
+tokio-stream = "0.1"
 axum = { version = "0.7", features = ["http2"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -35,7 +36,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 x509-parser = "0.16"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 
 # The throttle tests drive tokio's clock with start_paused, which "full"
 # does not bring in — without this the test binary does not compile.
