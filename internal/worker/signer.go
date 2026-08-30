@@ -70,6 +70,9 @@ type Job struct {
 	LeaseID   string   `json:"leaseId,omitempty"`
 	Trackers  []string `json:"trackers,omitempty"`
 	JTI       string   `json:"jti,omitempty"`
+	// Remux carries the remux.Spec of a remuxStart, or the runId of a
+	// remuxCancel. Signed with the rest of the payload.
+	Remux any `json:"remux,omitempty"`
 }
 
 // Envelope is a signed job as it crosses the control link.

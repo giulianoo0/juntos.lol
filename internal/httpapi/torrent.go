@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
@@ -29,6 +30,12 @@ type TorrentAccess struct {
 	Sessions *Sessions
 	Quota    *Quota
 	Service  *worker.Service
+	// Remux orchestrates remote production; nil (or the flag off) keeps the
+	// route answering remux_disabled so clients stay on the legacy path.
+	Remux *worker.RemuxOrchestrator
+	// Authorizer proves a memberId+capability pair names a connected member,
+	// for the controller mode of the remux start.
+	Authorizer func(roomID, memberID, capability string) bool
 }
 
 // RegisterTorrentRoutes mounts /api/torrents. Capacity is public; the rest
@@ -71,7 +78,55 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	group.GET("/:jobId", getTorrent(access.Service))
 	group.POST("/:jobId/select", selectTorrent(access.Service, cfg))
 	group.POST("/:jobId/token", tokenTorrent(access.Service))
+	group.POST("/:jobId/remux", startRemux(access))
 	group.DELETE("/:jobId", releaseTorrent(access.Service))
+}
+
+// startRemux hands the room's production to the job's worker. 202 accepted
+// is neither ready nor running; progress arrives through the room.
+func startRemux(access TorrentAccess) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if access.Remux == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "remux_disabled"})
+			return
+		}
+		var req remux.StartRequest
+		if err := c.ShouldBindJSON(&req); err != nil || !validMediaRoomID(req.RoomID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		var authorize func(memberID, capability string) bool
+		if access.Authorizer != nil {
+			roomID := req.RoomID
+			authorize = func(memberID, capability string) bool {
+				return access.Authorizer(roomID, memberID, capability)
+			}
+		}
+		response, err := access.Remux.Start(c.Request.Context(), SessionID(c), c.Param("jobId"), req, authorize)
+		if err != nil {
+			status, code := remuxErrorStatus(err)
+			c.JSON(status, gin.H{"error": code})
+			return
+		}
+		c.JSON(http.StatusAccepted, response)
+	}
+}
+
+func remuxErrorStatus(err error) (int, string) {
+	switch {
+	case errors.Is(err, worker.ErrRemuxDisabled):
+		return http.StatusServiceUnavailable, "remux_disabled"
+	case errors.Is(err, worker.ErrRemuxUnavailable):
+		return http.StatusServiceUnavailable, "remux_unavailable"
+	case errors.Is(err, worker.ErrRemuxConflict):
+		return http.StatusConflict, "upload_reserved"
+	case errors.Is(err, worker.ErrRemuxDenied):
+		return http.StatusForbidden, "not_authorized"
+	case errors.Is(err, worker.ErrRemuxRoomState):
+		return http.StatusConflict, "room_state"
+	default:
+		return torrentErrorStatus(err)
+	}
 }
 
 type startRequest struct {

@@ -611,6 +611,11 @@ func validRegions(regions []room.MediaRegion) bool {
 // request carried no regions at all. A failed lookup must not shrink the
 // map: a region already published stays in it, because dropping it would
 // yank every player off a playlist that is in fact still there.
+//
+// Regions the sender did not name are kept as they stand: the local
+// pipeline always sends its whole map, so this changes nothing for it, and
+// a remote run that only knows its own region must not erase the regions
+// earlier runs of the same generation left published.
 func renderedRegions(ctx context.Context, store *room.Store, roomID string, regions []room.MediaRegion, rendered map[string]string, current []room.MediaRegion) []room.MediaRegion {
 	if regions == nil {
 		return nil
@@ -619,8 +624,10 @@ func renderedRegions(ctx context.Context, store *room.Store, roomID string, regi
 	for _, r := range current {
 		known[r.N] = struct{}{}
 	}
-	out := make([]room.MediaRegion, 0, len(regions))
+	sent := make(map[int]struct{}, len(regions))
+	out := make([]room.MediaRegion, 0, len(regions)+len(current))
 	for _, r := range regions {
+		sent[r.N] = struct{}{}
 		name := "r" + strconv.Itoa(r.N) + "_master.m3u8"
 		if _, ok := rendered[name]; ok {
 			out = append(out, r)
@@ -637,6 +644,15 @@ func renderedRegions(ctx context.Context, store *room.Store, roomID string, regi
 			out = append(out, r)
 		}
 	}
+	for _, r := range current {
+		if _, named := sent[r.N]; !named {
+			// A region an abandoned run left growing would read as live
+			// forever; the newcomer's map is the sign that run is gone.
+			r.Growing = false
+			out = append(out, r)
+		}
+	}
+	slices.SortFunc(out, func(a, b room.MediaRegion) int { return a.N - b.N })
 	return out
 }
 
