@@ -479,8 +479,16 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 	switch report.State {
 	case remux.RunCompleted:
 		// The worker's complete publish released the claim already; the
-		// record stays as the receipt until the room moves on.
+		// record stays as the receipt until the room moves on. A run that
+		// began at zero covered the whole timeline: the bucket is the copy
+		// now, so the torrent goes at once instead of idling until the
+		// sweep — the worker reaps the file and the disk comes back.
 		_ = o.saveRun(ctx, current)
+		if current.StartMs == 0 {
+			if job, err := o.Service.Registry.LoadJob(ctx, current.JobID); err == nil && job != nil {
+				o.Service.release(ctx, job)
+			}
+		}
 	case remux.RunFailed:
 		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error)
 		_ = o.Store.ReleaseUpload(ctx, run.RoomID, current.Claim)
