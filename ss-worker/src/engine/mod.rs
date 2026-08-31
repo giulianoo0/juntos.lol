@@ -514,14 +514,13 @@ impl Engine {
             if !only.contains(&file_index) {
                 return Err(Rejection::NoSuchFile);
             }
-            // Deselecting a file does not delete what it already downloaded,
-            // so the reservation covers every file ever selected here.
             let mut ever = previously;
             ever.extend(only.iter().copied());
-            // A torrent already holding a fill keeps promising the whole of
-            // its files: re-selecting it must not shrink the reservation
-            // under bytes that are really on the disk.
-            let reserve: u64 = ever
+            // The reservation covers what THIS selection can take: the file
+            // and its sidecars, whole if a fill is running. Bytes an earlier
+            // selection left behind are punched when its lease goes, so a
+            // batch of fifty episodes never promises fifty episodes of disk.
+            let reserve: u64 = only
                 .iter()
                 .filter_map(|i| meta.file_infos.get(*i))
                 .map(|f| if filling { f.len } else { window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN) })
@@ -560,14 +559,59 @@ impl Engine {
     }
 
     /// Releases a lease. The torrent stays hot for a grace period: a page
-    /// reload or a failover comes back to warm pieces.
+    /// reload or a failover comes back to warm pieces. The LAST lease going
+    /// is different: nobody is coming back — the bucket holds the copy — so
+    /// the fill stops and everything outside the pins is given back at once
+    /// instead of downloading a batch nobody watches until the reaper.
     pub async fn release(&self, infohash: &str, lease_id: &str) {
         let infohash = infohash.to_ascii_lowercase();
-        let mut map = self.torrents.lock();
-        if let Some(entry) = map.get_mut(&infohash) {
+        let drop_fill = {
+            let mut map = self.torrents.lock();
+            let Some(entry) = map.get_mut(&infohash) else { return };
             entry.leases.remove(lease_id);
             entry.touch();
+            if entry.leases.is_empty() && entry.fill != Fill::Off {
+                entry.fill = Fill::Off;
+                true
+            } else {
+                entry.leases.is_empty()
+            }
+        };
+        if drop_fill {
+            self.drop_to_pins(&infohash);
         }
+    }
+
+    /// Narrows the selection to the pinned head and tail and releases every
+    /// other piece: the shape of a torrent nobody holds a lease on.
+    fn drop_to_pins(&self, infohash: &str) {
+        let Some(handle) = self.handle(infohash) else { return };
+        let index = {
+            let map = self.torrents.lock();
+            match map.get(infohash).and_then(|e| e.selected_file) {
+                Some(index) => index,
+                None => return,
+            }
+        };
+        let guard = handle.metadata.load();
+        let Some(meta) = guard.as_ref() else { return };
+        let Some(info) = meta.file_infos.get(index) else { return };
+        let lengths = meta.lengths();
+        let piece_len = lengths.default_piece_length() as u64;
+        let ranges = window::needed_ranges_for(info.len, &[], window::PIN);
+        let pieces = window::pieces_for_ranges(info.offset_in_torrent, piece_len, lengths.total_pieces(), &ranges);
+        if pieces.is_empty() {
+            return;
+        }
+        if handle.update_selected_pieces(&pieces).is_err() {
+            return;
+        }
+        self.release_behind_window(infohash, &handle, info, &pieces, piece_len);
+        self.disk.reserve_unchecked(
+            infohash,
+            window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN),
+        );
+        tracing::info!(infohash, "last lease gone; dropped to pins");
     }
 
     pub fn file_size(&self, infohash: &str, index: usize) -> anyhow::Result<u64> {
@@ -920,7 +964,7 @@ impl Engine {
     /// The sweep's look at whether the swarm should be filling the file
     /// behind the readers, and the bookkeeping when the answer changes.
     fn sweep_fill(&self, infohash: &str, handle: &Handle) {
-        let (index, now, playhead, quiet, ever) = {
+        let (index, now, playhead, quiet) = {
             let map = self.torrents.lock();
             let Some(entry) = map.get(infohash) else { return };
             let Some(index) = entry.selected_file else { return };
@@ -931,19 +975,17 @@ impl Engine {
                 Some(slot) => slot.since_moved() >= fill::QUIET && slot.idle_for() >= fill::QUIET,
                 None => entry.last_active.elapsed() >= fill::QUIET,
             };
-            (index, entry.fill, playhead, quiet, entry.ever_selected.clone())
+            (index, entry.fill, playhead, quiet)
         };
         let guard = handle.metadata.load();
         let Some(meta) = guard.as_ref() else { return };
         let Some(info) = meta.file_infos.get(index) else { return };
         let lengths = meta.lengths();
         let piece_len = lengths.default_piece_length() as u64;
-        let (full, footprint) = ever
-            .iter()
-            .filter_map(|i| meta.file_infos.get(*i))
-            .fold((0u64, 0u64), |(full, fp), f| {
-                (full + f.len, fp + window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN))
-            });
+        // The fill covers the selected file and nothing else: on a batch of
+        // fifty episodes, one room's idle bandwidth must not pull the batch.
+        let full = info.len;
+        let footprint = window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN);
         let window_have = match &playhead {
             None => true,
             Some(slot) => {
@@ -1013,12 +1055,11 @@ impl Engine {
             let (full, footprint) = {
                 let guard = handle.metadata.load();
                 let Some(meta) = guard.as_ref() else { return };
-                let ever = self.torrents.lock().get(&id).map(|e| e.ever_selected.clone()).unwrap_or_default();
-                ever.iter()
-                    .filter_map(|i| meta.file_infos.get(*i))
-                    .fold((0u64, 0u64), |(full, fp), f| {
-                        (full + f.len, fp + window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN))
-                    })
+                let index = self.torrents.lock().get(&id).and_then(|e| e.selected_file);
+                match index.and_then(|i| meta.file_infos.get(i)) {
+                    Some(f) => (f.len, window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN)),
+                    None => (0, 0),
+                }
             };
             self.set_fill(&id, Fill::Off, full, footprint);
             self.apply_window_with(&id, true);
