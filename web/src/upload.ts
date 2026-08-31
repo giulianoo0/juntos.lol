@@ -8,7 +8,7 @@
  */
 import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
 import { mockCreateRoom, mocksEnabled } from './mocks'
-import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
+import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from './torrent'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // From the leaf module, never from remuxJob: a value import of remuxJob here
 // pulls mediabunny and its WASM decoders into the chunk the browser parses
@@ -369,15 +369,68 @@ export function startTorrentUpload(
 // its video, which the fleet is producing.
 function startSubtitleScan(job: RemuxJob): void {
   if (typeof Worker === 'undefined' || !jobIsCloneable(job)) return
+  scanningRooms.add(job.roomID)
   const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
+  const over = () => { scanningRooms.delete(job.roomID); worker.terminate() }
   worker.onmessage = (event: MessageEvent<{ type: string; detail?: string }>) => {
     const message = event.data
     if (message.type === 'trouble') console.error('[subtitle-scan]', message.detail)
-    else if (message.type === 'failed') { console.error('[subtitle-scan]', message.detail); worker.terminate() }
-    else if (message.type === 'done' || message.type === 'moved-on') worker.terminate()
+    else if (message.type === 'failed') { console.error('[subtitle-scan]', message.detail); over() }
+    else if (message.type === 'done') { markSubsDone(job.roomID, job.mediaGeneration); over() }
+    else if (message.type === 'moved-on') over()
   }
-  worker.onerror = (event) => { console.error('[subtitle-scan]', event.message); worker.terminate() }
+  worker.onerror = (event) => { console.error('[subtitle-scan]', event.message); over() }
   worker.postMessage({ type: 'start', job })
+}
+
+// The scan lives in this tab, so a reload of the host's page kills it while
+// the fleet keeps producing the video: the room ends up with subtitles for
+// the first minutes and nothing after. Completion is remembered per
+// generation so a finished scan is never walked twice.
+const scanningRooms = new Set<string>()
+const subsDoneKey = (roomID: string, generation: number) => `ss.subs-done.${roomID}.g${generation}`
+
+function markSubsDone(roomID: string, generation: number): void {
+  try { localStorage.setItem(subsDoneKey(roomID, generation), '1') } catch { /* best effort */ }
+}
+
+/**
+ * Restarts the subtitle scan of a remote production this browser sourced.
+ *
+ * Called by the room page whenever a producer heartbeat is alive and no
+ * pipeline runs here: only the ex-host has a resumable source saved, so for
+ * everyone else this is a no-op. Publishing is idempotent — tracks keep
+ * their digests and viewers refetch only what grew.
+ */
+export async function resumeSubtitleScan(roomID: string, mediaGeneration: number): Promise<void> {
+  if (scanningRooms.has(roomID) || uploadActive(roomID) || remuxHandleFor(roomID)) return
+  try { if (localStorage.getItem(subsDoneKey(roomID, mediaGeneration))) return } catch { /* fall through */ }
+  const saved = resumableSourceFor(roomID)
+  if (!saved || saved.kind !== 'torrent' || !saved.magnet) return
+  scanningRooms.add(roomID)
+  try {
+    const session = await openTorrent(saved.magnet)
+    const file = session.files.find((candidate) => candidate.path === saved.filePath) ?? session.files[0]
+    if (!file) { session.destroy(); scanningRooms.delete(roomID); return }
+    await session.select(file.path)
+    const source: RemuxSource = file.worker
+      ? { kind: 'worker', grant: file.worker }
+      : { kind: 'torrentFile', file }
+    const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
+      name: side.name,
+      path: side.path,
+      size: side.size,
+      ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
+        : side.streamUrl ? { url: side.streamUrl }
+          : { read: () => side.read() }),
+    }))
+    remoteProductions.add(roomID)
+    startSubtitleScan({ roomID, mediaGeneration, source, sideFiles, subtitlesOnly: true })
+    session.detach?.()
+  } catch (error) {
+    scanningRooms.delete(roomID)
+    console.error('[subtitle-scan] resume failed', error)
+  }
 }
 
 // Asks the server to run this room's production on the job's own worker.

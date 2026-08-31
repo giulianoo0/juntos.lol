@@ -60,6 +60,7 @@ import {
   torrentStatsFor,
   uploadActive,
   resumableSourceFor,
+  resumeSubtitleScan,
   clearResumableSource,
   sourceOriginFor,
 } from '../upload'
@@ -309,6 +310,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       || (resumeWanted !== null && liveRegions.length > 0
         && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
         && !liveRegions.some((region) => regionHolds(region, resumeWanted))))
+  // The fleet keeps producing across the host's reload, but the subtitle
+  // scan lived in the tab that died. While a producer heartbeat is alive and
+  // nothing runs here, the ex-host quietly restarts it; everyone else has no
+  // resumable source and this is a no-op.
+  useEffect(() => {
+    if (!producing || room.sourceKind !== 'upload') return
+    void resumeSubtitleScan(room.id, liveRoom.mediaGeneration)
+  }, [producing, room.sourceKind, room.id, liveRoom.mediaGeneration])
   const resumeTried = useRef(false)
   useEffect(() => {
     if (resumeTried.current || !sync.memberId || !sync.capability) return

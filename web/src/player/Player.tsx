@@ -22,6 +22,7 @@ import { WaitLabel } from './WaitLabel'
 import { bufferAhead, holdsForBuffer } from './bufferAhead'
 import { gateSecondsFor } from './gate'
 import { bundledLoader, fetchBundle, prefetchInitSegments } from './bundle'
+import { prefetchingLoader } from './prefetch'
 import { createSeekTracer, formatSeekTrace } from '../pipeline/seekTrace'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { lastUploadFailureDetail } from '../upload'
@@ -578,9 +579,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         // Progressive uploads are EVENT playlists. Native HLS commonly joins
         // those at the live edge and waits for the next uploaded segment;
         // hls.js lets an episode reliably start at its beginning instead.
-        const config: Partial<HlsConfig> = { startPosition }
+        const config: Partial<HlsConfig> = {
+          startPosition,
+          // The defaults (30s, 60MB) were sized for 1080p: a 20Mbit 4K
+          // episode hits the byte cap at ~24 seconds of buffer, and every
+          // stall is one slow bucket round trip away.
+          maxBufferLength: 60,
+          maxBufferSize: 160 * 1000 * 1000,
+        }
         const bundled = bundledLoader(HlsClass.DefaultConfig.loader as Parameters<typeof bundledLoader>[0], bundle)
         config.pLoader = stripCodecs ? codecStrippingLoader(bundled as HlsModule['default']['DefaultConfig']['loader']) : bundled
+        config.fLoader = prefetchingLoader(HlsClass.DefaultConfig.loader as Parameters<typeof prefetchingLoader>[0])
         const hls = new HlsClass(config)
         hlsRef.current = hls
         // MEDIA_ATTACHED fires again on every recoverMediaError re-attach, and
