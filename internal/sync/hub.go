@@ -1029,7 +1029,13 @@ func (h *Hub) reclaimIdle(id string) bool {
 	// leaving it for the bucket's own rule only pays for storage nobody can
 	// watch. Removed before the room record, which is the only thing that
 	// still names these objects.
-	mediaErr := h.removeMedia(ctx, id)
+	// The store's few-second timeout is not enough to delete hundreds of
+	// segments: a big room's cleanup died halfway and left a zombie — a
+	// "ready" record over gutted media that a returning member could rejoin.
+	// The bucket work gets its own clock.
+	mediaCtx, cancelMedia := context.WithTimeout(h.ctx, 2*time.Minute)
+	mediaErr := h.removeMedia(mediaCtx, id)
+	cancelMedia()
 	if mediaErr != nil {
 		slog.ErrorContext(ctx, "idle room media cleanup failed", "room_id", id, "error", mediaErr)
 		return false
