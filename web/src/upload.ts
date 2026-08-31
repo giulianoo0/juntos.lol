@@ -96,6 +96,15 @@ const torrentSessions = new Map<string, TorrentSession>()
 // What this tab's pipeline for each room feeds from, announced to the room so
 // everyone can see whose browser the video depends on.
 const origins = new Map<string, SourceOrigin>()
+
+// Rooms whose media is produced by the fleet's own FFmpeg, not this browser.
+// Only the host learns this (the 202 is theirs); viewers have neither mode.
+const remoteProductions = new Set<string>()
+
+/** Whether this room's preparo was handed to the fleet ("R" in the chip). */
+export function isRemoteProduction(roomID: string): boolean {
+  return remoteProductions.has(roomID)
+}
 export type SourceOrigin = 'file' | 'torrent' | 'url'
 
 /** What this tab's pipeline for the room feeds from, when this tab runs one. */
@@ -344,6 +353,7 @@ export function startTorrentUpload(
   void tryRemoteRemux(roomID, mediaGeneration, session).then((remote) => {
     if (!remote) { startLocal(); return }
     origins.set(roomID, 'torrent')
+    remoteProductions.add(roomID)
     // The fleet's FFmpeg produces the media but never extracts subtitles:
     // this browser still walks the source for them, and only for them.
     startSubtitleScan({ roomID, mediaGeneration, source, sideFiles, subtitlesOnly: true })
@@ -431,6 +441,8 @@ export function startRoomUpload(
   // on mount, and deferring the entry behind the worker spawn would show no
   // progress at all.
   const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
+  // This browser is producing now, whatever an earlier generation did.
+  remoteProductions.delete(roomID)
   origins.set(roomID, source.kind === 'file' ? 'file' : source.kind === 'url' ? 'url' : 'torrent')
   const size = sourceSize(source)
   const entry = createEntry(size)

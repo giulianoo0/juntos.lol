@@ -52,6 +52,7 @@ import {
   subscribeUploadDone,
   subscribeUploadProgress,
   startFileUpload,
+  isRemoteProduction,
   startTorrentUpload,
   startUrlUpload,
   type RoomUploadProgress,
@@ -717,7 +718,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               cold seek wants to see the source arriving and their own
               buffer just as much. */}
           {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
-            ? <PipelineChip swarm={swarmStats} progress={uploadProgress} videoRef={videoRef} t={t} />
+            ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />

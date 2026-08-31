@@ -16,11 +16,14 @@ import type { Translator } from '../i18n/useT'
  * follows the other half of the pipeline instead: the segments going up to
  * the bucket, which is what the room is still waiting on.
  */
-export function PipelineChip({ swarm, progress, videoRef, t }: {
+export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
   swarm: TorrentStats | null
   /** The host's own pipeline. A viewer has none: their chip reads the swarm
    *  the host reported through the room, and their own buffer. */
   progress: RoomUploadProgress | null
+  /** The fleet's FFmpeg is producing this room ("R"); a local pipeline shows
+   *  "L"; a viewer, who has neither, shows no letter. */
+  remote?: boolean
   videoRef: MutableRefObject<HTMLVideoElement | null>
   t: Translator
 }) {
@@ -62,6 +65,16 @@ export function PipelineChip({ swarm, progress, videoRef, t }: {
   const arriving = swarm !== null && (swarm.downloadSpeed > 0 || swarm.progress < 1)
   return (
     <span className="upload-chip pipeline-chip">
+      {remote || progress !== null ? (
+        <span
+          className="pipeline-metric"
+          title={remote ? t('room.pipelineRemote') : t('room.pipelineLocal')}
+          style={{ fontWeight: 700, opacity: 0.8 }}
+        >
+          {remote ? 'R' : 'L'}
+        </span>
+      ) : null}
+      {remote || progress !== null ? <span className="pipeline-dot" aria-hidden="true">·</span> : null}
       {arriving ? (
         <span className="pipeline-metric" title={t('home.swarmSpeed')}>
           <ArrowDown size={11} aria-hidden="true" />

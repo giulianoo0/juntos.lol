@@ -113,6 +113,8 @@ export const en: Record<string, string> = {
   'room.changeFailed': 'Could not change what is playing. Try again.',
   'room.resuming': 'Resuming the video preparation…',
   'room.uploadSpeed': 'Uploading the parts already built',
+  'room.pipelineRemote': 'Remote preparo: the server produces the video',
+  'room.pipelineLocal': 'Local preparo: this browser produces the video',
   'room.bufferAhead': 'Buffer ahead of playback',
   'room.bufferAheadShort': 'buffer',
   'room.preparingPart': 'Preparing this part of the video…',

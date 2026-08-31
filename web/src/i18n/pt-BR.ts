@@ -113,6 +113,8 @@ export const ptBR: Record<string, string> = {
   'room.changeFailed': 'Não foi possível trocar o que está tocando. Tente de novo.',
   'room.resuming': 'Retomando o preparo do vídeo…',
   'room.uploadSpeed': 'Enviando os trechos já prontos',
+  'room.pipelineRemote': 'Preparo remoto: o servidor produz o vídeo',
+  'room.pipelineLocal': 'Preparo local: este navegador produz o vídeo',
   'room.bufferAhead': 'Buffer à frente da reprodução',
   'room.bufferAheadShort': 'buffer',
   'room.preparingPart': 'Preparando essa parte do vídeo…',

@@ -141,7 +141,7 @@ export async function runSubtitleJob(job: RemuxJob): Promise<void> {
   input.warm()
   input.tap?.close()
   try {
-    await publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
+    await publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration, true)
   } finally {
     input.dispose()
   }
@@ -176,6 +176,7 @@ async function publishSubtitles(
   sideFiles: RemuxSideFile[],
   roomID: string,
   mediaGeneration: number,
+  solo = false,
 ): Promise<void> {
   const collector = createSubtitleCollector(roomID, mediaGeneration)
   const external = sideFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
@@ -189,7 +190,7 @@ async function publishSubtitles(
   if (external.length === 0 && !embedded) return
   await Promise.all([
     external.length > 0 ? loadExternalSubtitles(external, collector, input) : Promise.resolve(),
-    embedded ? extractEmbeddedSubtitles(input, collector, roomID, mediaGeneration) : Promise.resolve(),
+    embedded ? extractEmbeddedSubtitles(input, collector, roomID, mediaGeneration, solo) : Promise.resolve(),
   ])
 }
 
@@ -202,18 +203,45 @@ async function publishSubtitles(
 // the same slice again, however many seeks it takes — its position has
 // nothing to do with the seek. Only the input closing for good ends it.
 async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: SubtitleCollector,
-  roomID: string, mediaGeneration: number): Promise<void> {
+  roomID: string, mediaGeneration: number, solo = false): Promise<void> {
   // Fonts the container attached for its ASS tracks, sent as they are seen.
   const sentFonts = new Set<string>()
   try {
     const stream = await createMatroskaSubtitleStream()
     const tap = input.tap
     let lastSnapshotAt = Date.now()
+    let published = false
     let lastProgressAt = Date.now()
     let offset = 0
+    // With the scan alone on the origin (the fleet produces the media), the
+    // next slice is fetched while this one parses: the wire never sits idle
+    // between round trips, which is what made subtitles crawl.
+    let ahead: { at: number; read: Promise<Uint8Array> } | null = null
+    const readAt = (at: number): Promise<Uint8Array> =>
+      input.read(at, Math.min(at + SUBTITLE_SLICE_BYTES, input.size), { prio: 'scan' })
     while (offset < input.size) {
-      let slice = tap ? await tap.pull() : null
-      if (!slice) {
+      let slice: Uint8Array | null = null
+      if (solo) {
+        try {
+          slice = ahead && ahead.at === offset ? await ahead.read : await readAt(offset)
+        } catch (error) {
+          ahead = null
+          if (!(error instanceof ReadAbortedError) || error.closed) throw error
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          continue
+        }
+        ahead = null
+        const nextAt: number = offset + slice.length
+        if (slice.length > 0 && nextAt < input.size) {
+          const read = readAt(nextAt)
+          // The loop may end (error, close) before this is awaited.
+          read.catch(() => undefined)
+          ahead = { at: nextAt, read }
+        }
+      } else {
+        slice = tap ? await tap.pull() : null
+      }
+      if (!slice && !solo) {
         // Nothing to ride: the remux is elsewhere. While that elsewhere is a
         // region with nothing published yet, it is the only thing that
         // matters, and the scan waits before asking the origin for its own.
@@ -242,12 +270,16 @@ async function extractEmbeddedSubtitles(input: ColdAwareInput, collector: Subtit
         // one the remux must not hand over again.
         tap?.fill(slice)
       }
+      if (!slice) continue
       if (slice.length === 0) break
       offset += slice.length
       lastProgressAt = Date.now()
       stream.write(slice)
-      if (Date.now() - lastSnapshotAt >= SUBTITLE_SNAPSHOT_MS) {
+      // The first tracks show up fast — a viewer opening the menu on an empty
+      // list reads it as broken — and after that the usual cadence holds.
+      if (Date.now() - lastSnapshotAt >= (published ? SUBTITLE_SNAPSHOT_MS : 2_000)) {
         lastSnapshotAt = Date.now()
+        published = true
         collector.publish('embedded', stream.snapshot(), false)
         void postSubtitleFonts(roomID, mediaGeneration, stream.fonts(), sentFonts)
       }
