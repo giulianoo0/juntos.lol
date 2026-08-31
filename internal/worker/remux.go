@@ -486,10 +486,9 @@ const maxRunRestarts = 2
 // false hands the failure back to the ordinary path. Caller holds the room
 // lock.
 func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRun) bool {
-	// Not the caller's clock: the heartbeat that noticed the loss carries ten
-	// seconds, and a worker fresh from a crash needs to re-add the torrent —
-	// swarm metadata included — before it can even acknowledge the start.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 90*time.Second)
+	// Not the caller's clock: a worker fresh from a crash re-adds the torrent
+	// from the swarm — metadata included — before anything can start.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Minute)
 	defer cancel()
 	storedRoom, err := o.Store.Get(ctx, lost.RoomID)
 	if err != nil || !storedRoom.ExpiresAt.After(time.Now()) ||
@@ -511,6 +510,24 @@ func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRu
 			replaced.StartMs = region.StartMs + region.ProducedMs
 			break
 		}
+	}
+	// The worker that lost the run lost its disk with it: nothing says the
+	// torrent is still there. Re-lease and re-select before the start — on a
+	// worker that still holds them, both answers are instant.
+	if result, err := o.Service.Hub.Dispatch(ctx, Job{
+		Kind: "lease", JobID: "rl_" + randomID(6), WorkerID: lost.WorkerID,
+		Infohash: lost.Infohash, LeaseID: lost.LeaseID,
+	}, 3*time.Minute); err != nil || !result.OK {
+		slog.Warn("lost run re-lease failed", "room_id", lost.RoomID, "error", err)
+		return false
+	}
+	index := lost.FileIndex
+	if result, err := o.Service.Hub.Dispatch(ctx, Job{
+		Kind: "select", JobID: "rs_" + randomID(6), WorkerID: lost.WorkerID,
+		Infohash: lost.Infohash, FileIndex: &index, RoomID: lost.RoomID,
+	}, 60*time.Second); err != nil || !result.OK {
+		slog.Warn("lost run re-select failed", "room_id", lost.RoomID, "error", err)
+		return false
 	}
 	if err := o.Store.SetProducerRun(ctx, lost.RoomID, replaced.RunID); err != nil {
 		return false
@@ -592,10 +609,23 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		// A run the worker lost — it crashed and came back empty-handed — is
 		// the system's own failure, not the source's: redispatch from the
 		// produced edge instead of bricking the room until someone reloads.
+		// Never from here: this runs inside the control link's read loop, and
+		// the dispatch waits on a reply only that same loop can deliver.
 		if report.Error == runLostError && current.Restarts < maxRunRestarts {
-			if o.restartLostRun(ctx, current) {
-				return
-			}
+			_ = o.saveRun(ctx, current)
+			restart := *current
+			go func() {
+				lock := o.roomLock(restart.RoomID)
+				lock.Lock()
+				defer lock.Unlock()
+				bg := context.Background()
+				latest, err := o.LoadRun(bg, restart.RoomID)
+				if err != nil || latest == nil || latest.RunID != restart.RunID {
+					return
+				}
+				o.restartLostRun(bg, &restart)
+			}()
+			return
 		}
 		_ = o.Store.ReleaseUpload(ctx, run.RoomID, current.Claim)
 		if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == "uploading" {
