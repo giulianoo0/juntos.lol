@@ -199,11 +199,17 @@ pub fn ffmpeg_args(
         args.extend(["-map".into(), format!("0:a:{}", audio.input_index)]);
         match &audio.action {
             AudioAction::Copy => args.extend([format!("-c:a:{out_index}"), "copy".into()]),
+            // E-AC-3 and DTS decode to side-channel layouts (5.1(side)), and
+            // FFmpeg's AAC encoder writes those as channelConfiguration 0 with
+            // an in-band PCE — which Chrome's MSE refuses to even init. Pinning
+            // the layout to a standard one keeps the config in 1..7.
             AudioAction::ConvertAac { bitrate } => args.extend([
                 format!("-c:a:{out_index}"),
                 "aac".into(),
                 format!("-b:a:{out_index}"),
                 bitrate.to_string(),
+                format!("-filter:a:{out_index}"),
+                "aformat=channel_layouts=7.1|5.1|stereo|mono".into(),
             ]),
         }
         var_map.push(format!(
