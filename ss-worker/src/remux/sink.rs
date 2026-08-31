@@ -126,9 +126,13 @@ impl Sink {
         Ok(())
     }
 
-    /// Streams one media object body into the spool. Waits for budget before
-    /// consuming — the transport not being read is what stalls FFmpeg — and
-    /// admits the object as closed only after the body ended cleanly.
+    /// Streams one media object body into the spool. The muxer keeps several
+    /// output bodies open at once (every variant's init plus the growing
+    /// segments), so budget is reserved in slabs as each body grows — never
+    /// the whole object ceiling up front, which once handed the entire spool
+    /// to two open inits and deadlocked FFmpeg against its own segment.
+    /// Backpressure still lands where it should: a body that outgrows the
+    /// free budget stops being read until an upload returns bytes.
     pub async fn store_media<S, B, E>(&self, name: &str, mut body: S) -> anyhow::Result<()>
     where
         S: futures::Stream<Item = Result<B, E>> + Unpin,
@@ -140,13 +144,14 @@ impl Sink {
             // Idempotent retry: only the same bytes may land on a closed name.
             return self.verify_retry(&held, &mut body).await;
         }
-        self.reserve(self.object_cap).await?;
+        let slab = self.object_cap.min(16 * 1024 * 1024);
+        let mut reserved: u64 = 0;
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         let tmp = self.dir.join(format!("part_{serial}.tmp"));
-        let result = self.consume(name, &tmp, &mut body).await;
+        let result = self.consume(name, &tmp, &mut body, slab, &mut reserved).await;
         match result {
             Ok(object) => {
-                self.release(self.object_cap - object.size);
+                self.release(reserved - object.size);
                 let final_path = object.path.clone();
                 tokio::fs::rename(&tmp, &final_path).await?;
                 self.closed.lock().insert(name.to_string(), object.clone());
@@ -155,19 +160,21 @@ impl Sink {
             }
             Err(e) => {
                 let _ = tokio::fs::remove_file(&tmp).await;
-                self.release(self.object_cap);
+                self.release(reserved);
                 Err(e)
             }
         }
     }
 
-    async fn consume<S, B, E>(&self, name: &str, tmp: &PathBuf, body: &mut S) -> anyhow::Result<ClosedObject>
+    async fn consume<S, B, E>(&self, name: &str, tmp: &PathBuf, body: &mut S, slab: u64, reserved: &mut u64) -> anyhow::Result<ClosedObject>
     where
         S: futures::Stream<Item = Result<B, E>> + Unpin,
         B: AsRef<[u8]>,
         E: std::fmt::Display,
     {
         use futures::StreamExt;
+        self.reserve(slab).await?;
+        *reserved = slab;
         let mut file = tokio::fs::File::create(tmp).await?;
         let mut hasher = Sha256::new();
         let mut size: u64 = 0;
@@ -183,6 +190,11 @@ impl Sink {
             size += bytes.len() as u64;
             if size > self.object_cap {
                 bail!("object over the {} byte ceiling", self.object_cap);
+            }
+            while size > *reserved {
+                let step = slab.min(self.object_cap - *reserved);
+                self.reserve(step).await?;
+                *reserved += step;
             }
             hasher.update(bytes);
             file.write_all(bytes).await?;
