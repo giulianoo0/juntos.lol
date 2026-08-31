@@ -106,55 +106,79 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
     };
     let ranged = headers.get(header::RANGE).is_some();
     let total = end - start + 1;
-    let mut reader = match target
-        .engine
-        .open(&target.infohash, &target.reader, target.file_index, start, Prio::Playhead)
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "remux input open failed");
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-    };
+    tracing::info!(reader = %target.reader, start, end, "remux input request");
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(4);
     let chunk = target.engine.read_chunk_size();
+    // The piece window only follows the reader through open(): the browser
+    // path reopens every 16 MiB and the window walks with it, while one
+    // reader held across gigabytes parks the window at its birthplace and
+    // the read blocks forever on pieces nobody asks for. So the body is
+    // served in the same strides, reopening the pooled slot each step.
+    const STRIDE: u64 = 16 * 1024 * 1024;
     tokio::spawn(async move {
-        let mut left = total;
+        let mut position = start;
+        let mut sent: u64 = 0;
+        let mut logged: u64 = 0;
         let mut buf = vec![0u8; chunk];
-        while left > 0 {
-            let want = (left as usize).min(buf.len());
-            // A read that parks forever wedges FFmpeg with it; a timed-out
-            // connection dies loudly and the supervisor's retry reopens a
-            // fresh reader over whatever has downloaded meanwhile.
-            let read = tokio::time::timeout(std::time::Duration::from_secs(60), reader.read(&mut buf[..want])).await;
-            let read = match read {
+        let deliver_err = |tx: &tokio::sync::mpsc::Sender<Result<bytes::Bytes, std::io::Error>>, why: String| {
+            let tx = tx.clone();
+            async move { let _ = tx.send(Err(std::io::Error::other(why))).await; }
+        };
+        while position <= end {
+            let stride_end = (position + STRIDE - 1).min(end);
+            let mut reader = match target
+                .engine
+                .open(&target.infohash, &target.reader, target.file_index, position, Prio::Playhead)
+                .await
+            {
                 Ok(r) => r,
-                Err(_) => {
-                    let _ = tx.send(Err(std::io::Error::other("input read stalled"))).await;
+                Err(e) => {
+                    tracing::warn!(reader = %target.reader, sent, error = %e, "remux input reopen failed");
+                    deliver_err(&tx, e.to_string()).await;
                     return;
                 }
             };
-            match read {
-                Ok(0) => {
-                    // Short read of a range whose length was promised: the
-                    // connection dies so FFmpeg sees an error, never a clean
-                    // EOF with bytes missing.
-                    let _ = tx.send(Err(std::io::Error::other("input ended early"))).await;
-                    return;
-                }
-                Ok(n) => {
-                    left -= n as u64;
-                    if tx.send(Ok(bytes::Bytes::copy_from_slice(&buf[..n]))).await.is_err() {
+            let mut left = stride_end - position + 1;
+            while left > 0 {
+                let want = (left as usize).min(buf.len());
+                let read = tokio::time::timeout(std::time::Duration::from_secs(60), reader.read(&mut buf[..want])).await;
+                let read = match read {
+                    Ok(r) => r,
+                    Err(_) => {
+                        tracing::warn!(reader = %target.reader, sent, "remux input read stalled");
+                        deliver_err(&tx, "input read stalled".into()).await;
+                        return;
+                    }
+                };
+                match read {
+                    Ok(0) => {
+                        // Short read of a promised range: the connection dies
+                        // so FFmpeg sees an error, never a clean EOF with
+                        // bytes missing.
+                        deliver_err(&tx, "input ended early".into()).await;
+                        return;
+                    }
+                    Ok(n) => {
+                        left -= n as u64;
+                        position += n as u64;
+                        sent += n as u64;
+                        if sent - logged >= 64 * 1024 * 1024 {
+                            logged = sent;
+                            tracing::info!(reader = %target.reader, sent, "remux input flowing");
+                        }
+                        if tx.send(Ok(bytes::Bytes::copy_from_slice(&buf[..n]))).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(reader = %target.reader, sent, error = %e, "remux input read failed");
+                        deliver_err(&tx, e.to_string()).await;
                         return;
                     }
                 }
-                Err(e) => {
-                    let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
-                    return;
-                }
             }
         }
+        tracing::info!(reader = %target.reader, sent, "remux input range served");
     });
     let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
     let mut response = Response::builder()
