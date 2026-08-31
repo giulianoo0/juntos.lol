@@ -42,6 +42,9 @@ export interface RemuxJob {
   mediaGeneration: number
   source: RemuxSource
   sideFiles: RemuxSideFile[]
+  /** The media is produced elsewhere (the fleet's FFmpeg); this browser only
+   * walks the source for its subtitles and fonts. */
+  subtitlesOnly?: boolean
 }
 
 /** Whether the source is plain data, or holds functions only this page has. */

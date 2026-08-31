@@ -130,6 +130,23 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace
   void subtitles.finally(() => input.dispose())
 }
 
+/**
+ * Walks the source for subtitles and fonts, publishing as it goes, without
+ * producing any media: the room's video comes from the fleet's own FFmpeg,
+ * which does not extract subtitles. The scan owns the origin, so it never
+ * waits on a remux that is not here.
+ */
+export async function runSubtitleJob(job: RemuxJob): Promise<void> {
+  const input = coldAware(buildInput(job.source, job.roomID))
+  input.warm()
+  input.tap?.close()
+  try {
+    await publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
+  } finally {
+    input.dispose()
+  }
+}
+
 /** An input that knows whether the origin is busy with a fresh region. */
 interface ColdAwareInput extends MediaInput {
   /** Whether the region being produced has nothing in the bucket yet — a

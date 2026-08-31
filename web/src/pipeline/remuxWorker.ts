@@ -4,7 +4,7 @@
  * playhead; everything heavy — demux, mux, uploads, subtitle extraction —
  * happens here, and the page's main thread stays with the player.
  */
-import { PlanFailedError, runRemuxJob, UnsupportedMediaError, type RemuxJob } from './remuxJob'
+import { PlanFailedError, runRemuxJob, runSubtitleJob, UnsupportedMediaError, type RemuxJob } from './remuxJob'
 import { RoomMovedOnError, type ClientRemuxHandle } from './clientMedia'
 import { SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, readFailureCode } from '../uploadErrors'
 import { ReadAbortedError } from './rangeRead'
@@ -57,6 +57,15 @@ self.onmessage = (event: MessageEvent<PageToWorker>) => {
     return
   }
   if (message.type !== 'start') return
+  if (message.job.subtitlesOnly) {
+    void runSubtitleJob(message.job)
+      .then(() => post({ type: 'done' }))
+      .catch((error: unknown) => {
+        console.error('subtitle scan failed', error)
+        post({ type: 'failed', code: classify(error, message.job.source.kind), detail: describe(error) })
+      })
+    return
+  }
   void runRemuxJob(message.job, {
     onProgress: (pct) => post({ type: 'progress', pct }),
     onTrace: (trace) => post({ type: 'trace', trace }),

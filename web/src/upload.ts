@@ -313,20 +313,20 @@ export function startTorrentUpload(
   if (session.magnet) {
     saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
   }
+  // With a worker grant the job is plain data and runs in the remux worker;
+  // a session without one (mocks, tests) pins the job to this thread.
+  const source: RemuxSource = file.worker
+    ? { kind: 'worker', grant: file.worker }
+    : { kind: 'torrentFile', file }
+  const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
+    name: side.name,
+    path: side.path,
+    size: side.size,
+    ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
+      : side.streamUrl ? { url: side.streamUrl }
+        : { read: () => side.read() }),
+  }))
   const startLocal = () => {
-    // With a worker grant the job is plain data and runs in the remux worker;
-    // a session without one (mocks, tests) pins the job to this thread.
-    const source: RemuxSource = file.worker
-      ? { kind: 'worker', grant: file.worker }
-      : { kind: 'torrentFile', file }
-    const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
-      name: side.name,
-      path: side.path,
-      size: side.size,
-      ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
-        : side.streamUrl ? { url: side.streamUrl }
-          : { read: () => side.read() }),
-    }))
     startRoomUpload(roomID, mediaGeneration, source, sideFiles, {
       onProgress,
       cleanup: () => {
@@ -344,11 +344,30 @@ export function startTorrentUpload(
   void tryRemoteRemux(roomID, mediaGeneration, session).then((remote) => {
     if (!remote) { startLocal(); return }
     origins.set(roomID, 'torrent')
+    // The fleet's FFmpeg produces the media but never extracts subtitles:
+    // this browser still walks the source for them, and only for them.
+    startSubtitleScan({ roomID, mediaGeneration, source, sideFiles, subtitlesOnly: true })
     // Polling and readers stop; the job itself stays alive for the worker.
     // Progress and readiness now arrive through the room like any guest's.
     if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
     session.detach?.()
   })
+}
+
+// Walks the source for subtitles in a worker of its own — no media, no
+// progress entry, best-effort: a failure costs the room its subtitles, never
+// its video, which the fleet is producing.
+function startSubtitleScan(job: RemuxJob): void {
+  if (typeof Worker === 'undefined' || !jobIsCloneable(job)) return
+  const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
+  worker.onmessage = (event: MessageEvent<{ type: string; detail?: string }>) => {
+    const message = event.data
+    if (message.type === 'trouble') console.error('[subtitle-scan]', message.detail)
+    else if (message.type === 'failed') { console.error('[subtitle-scan]', message.detail); worker.terminate() }
+    else if (message.type === 'done' || message.type === 'moved-on') worker.terminate()
+  }
+  worker.onerror = (event) => { console.error('[subtitle-scan]', event.message); worker.terminate() }
+  worker.postMessage({ type: 'start', job })
 }
 
 // Asks the server to run this room's production on the job's own worker.
