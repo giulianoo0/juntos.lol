@@ -510,6 +510,15 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 				_ = o.Store.SetSwarm(ctx, run.RoomID, room.SwarmStats{
 					HaveBytes: size, SelectedBytes: size,
 				})
+				// The covering run walked the whole source, so what it produced
+				// is all the video there will ever be. A container that promises
+				// more — an audio stream running past the video's end — leaves
+				// every player waiting at a tail no run can produce.
+				if current.ProducedMs > 0 && current.ProducedMs < storedRoom.DurationMs {
+					slog.Info("covering run ended short of the container duration; clamping",
+						"room_id", run.RoomID, "produced_ms", current.ProducedMs, "duration_ms", storedRoom.DurationMs)
+					_ = o.Store.SetMediaDuration(ctx, run.RoomID, current.ProducedMs)
+				}
 				if o.Notify != nil {
 					o.Notify(run.RoomID)
 				}
