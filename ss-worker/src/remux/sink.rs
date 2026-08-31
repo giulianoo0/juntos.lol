@@ -48,6 +48,25 @@ fn digits(s: &str, max: usize) -> bool {
     !s.is_empty() && s.len() <= max && s.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Spool budget and temp file held by one in-flight body, given back on any
+/// exit — including the future being dropped by a dying connection.
+struct SpoolHold<'a> {
+    sink: &'a Sink,
+    amount: u64,
+    tmp: Option<std::path::PathBuf>,
+}
+
+impl Drop for SpoolHold<'_> {
+    fn drop(&mut self) {
+        if self.amount > 0 {
+            self.sink.release(self.amount);
+        }
+        if let Some(tmp) = self.tmp.take() {
+            let _ = std::fs::remove_file(tmp);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ClosedObject {
     pub name: String,
@@ -145,25 +164,22 @@ impl Sink {
             return self.verify_retry(&held, &mut body).await;
         }
         let slab = self.object_cap.min(16 * 1024 * 1024);
-        let mut reserved: u64 = 0;
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         let tmp = self.dir.join(format!("part_{serial}.tmp"));
-        let result = self.consume(name, &tmp, &mut body, slab, &mut reserved).await;
-        match result {
-            Ok(object) => {
-                self.release(reserved - object.size);
-                let final_path = object.path.clone();
-                tokio::fs::rename(&tmp, &final_path).await?;
-                self.closed.lock().insert(name.to_string(), object.clone());
-                if let Some(tx) = self.closed_tx.lock().as_ref() { let _ = tx.send(object); }
-                Ok(())
-            }
-            Err(e) => {
-                let _ = tokio::fs::remove_file(&tmp).await;
-                self.release(reserved);
-                Err(e)
-            }
-        }
+        // The producer may vanish mid-body — hyper drops the handler future
+        // when FFmpeg's side of the connection dies — and a plain counter
+        // then leaks its slabs until the spool runs dry. The hold gives the
+        // budget and the temp file back however this future ends.
+        let mut hold = SpoolHold { sink: self, amount: 0, tmp: Some(tmp.clone()) };
+        let object = self.consume(name, &tmp, &mut body, slab, &mut hold.amount).await?;
+        tokio::fs::rename(&tmp, &object.path).await?;
+        hold.tmp = None;
+        let over = hold.amount - object.size;
+        hold.amount = 0;
+        self.release(over);
+        self.closed.lock().insert(name.to_string(), object.clone());
+        if let Some(tx) = self.closed_tx.lock().as_ref() { let _ = tx.send(object); }
+        Ok(())
     }
 
     async fn consume<S, B, E>(&self, name: &str, tmp: &PathBuf, body: &mut S, slab: u64, reserved: &mut u64) -> anyhow::Result<ClosedObject>
@@ -178,7 +194,17 @@ impl Sink {
         let mut file = tokio::fs::File::create(tmp).await?;
         let mut hasher = Sha256::new();
         let mut size: u64 = 0;
-        while let Some(chunk) = body.next().await {
+        loop {
+            // A body that goes quiet is telling on its producer: hyper polled
+            // but the socket gave nothing. Distinguishes that from this very
+            // future never being polled, which logs nothing at all.
+            let next = loop {
+                match tokio::time::timeout(std::time::Duration::from_secs(30), body.next()).await {
+                    Ok(item) => break item,
+                    Err(_) => tracing::warn!(name, size, "media body quiet for 30s"),
+                }
+            };
+            let Some(chunk) = next else { break };
             if self.cancelled() {
                 bail!("run cancelled");
             }
@@ -203,6 +229,7 @@ impl Sink {
         if size == 0 {
             bail!("empty object");
         }
+        tracing::info!(name, size, "media object closed");
         Ok(ClosedObject {
             name: name.to_string(),
             path: self.dir.join(name),
@@ -238,11 +265,22 @@ impl Sink {
         Ok(())
     }
 
+    pub fn free_bytes(&self) -> u64 {
+        *self.free.lock()
+    }
+
     async fn reserve(&self, need: u64) -> anyhow::Result<()> {
         loop {
             if self.cancelled() {
                 bail!("run cancelled");
             }
+            // The waiter registers BEFORE the budget check: a release that
+            // lands in between is kept, not lost. Checking first parked a
+            // body forever on a wakeup that had already fired, and every
+            // later body queued behind its dead reservation.
+            let notified = self.freed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             {
                 let mut free = self.free.lock();
                 if *free >= need {
@@ -250,7 +288,7 @@ impl Sink {
                     return Ok(());
                 }
             }
-            self.freed.notified().await;
+            notified.await;
         }
     }
 

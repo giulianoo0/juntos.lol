@@ -227,8 +227,12 @@ pub fn ffmpeg_args(
         var_map.join(" "),
         "-method".into(),
         "PUT".into(),
+        // Persistent connections are load-bearing, not an optimisation: with
+        // 0, FFmpeg closes each PUT right after the body and hyper drops the
+        // handler mid-store — the object never closes and its spool slab
+        // leaks. With 1, FFmpeg reads the response first: real backpressure.
         "-http_persistent".into(),
-        "0".into(),
+        "1".into(),
         format!("{sink_base}/{prefix}client_stream_%v.m3u8"),
     ]);
     args
