@@ -61,6 +61,8 @@ type RemuxOrchestrator struct {
 	Service *Service
 	Store   *room.Store
 	Cfg     config.Config
+	// Notify tells a room's members it changed; the hub supplies it.
+	Notify func(roomID string)
 
 	mu      sync.Mutex
 	byRoom  map[string]*sync.Mutex
@@ -499,6 +501,18 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		if current.StartMs == 0 {
 			if job, err := o.Service.Registry.LoadJob(ctx, current.JobID); err == nil && job != nil {
 				o.Service.release(ctx, job)
+			}
+			// The job's heartbeats die with it, so the room's last swarm
+			// numbers would freeze mid-download forever: settle them at
+			// "everything arrived, nothing moving" and tell the members.
+			if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil {
+				size := storedRoom.Preparation.SourceBytes
+				_ = o.Store.SetSwarm(ctx, run.RoomID, room.SwarmStats{
+					HaveBytes: size, SelectedBytes: size,
+				})
+				if o.Notify != nil {
+					o.Notify(run.RoomID)
+				}
 			}
 		}
 	case remux.RunFailed:

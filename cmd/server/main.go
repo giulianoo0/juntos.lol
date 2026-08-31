@@ -115,6 +115,7 @@ func main() {
 	// and nothing called it, so the fleet kept seeding for rooms that had
 	// already been deleted and the status page and the worker disagreed.
 	remuxOrch := worker.NewRemuxOrchestrator(torrents, store, cfg)
+	remuxOrch.Notify = hub.NotifyRoomUpdated
 	// A reclaimed or re-pointed room takes its torrent and its remote
 	// production with it.
 	hub.OnRoomReclaimed(func(roomID string) {
