@@ -485,7 +485,12 @@ const maxRunRestarts = 2
 // produced edge of the run's own region. True when the new run was accepted;
 // false hands the failure back to the ordinary path. Caller holds the room
 // lock.
-func (o *RemuxOrchestrator) restartLostRun(ctx context.Context, lost *RemuxRun) bool {
+func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRun) bool {
+	// Not the caller's clock: the heartbeat that noticed the loss carries ten
+	// seconds, and a worker fresh from a crash needs to re-add the torrent —
+	// swarm metadata included — before it can even acknowledge the start.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 90*time.Second)
+	defer cancel()
 	storedRoom, err := o.Store.Get(ctx, lost.RoomID)
 	if err != nil || !storedRoom.ExpiresAt.After(time.Now()) ||
 		storedRoom.MediaGeneration != lost.MediaGeneration {
