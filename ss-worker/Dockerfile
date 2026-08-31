@@ -6,10 +6,12 @@ COPY vendor vendor
 COPY src src
 RUN cargo build --release
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
-# ffmpeg/ffprobe drive the remote remux; the version is Debian bookworm's
-# pinned 5.1 line, recorded at boot and announced in the heartbeat.
+# ffmpeg/ffprobe drive the remote remux. Trixie's 7.x line matters beyond
+# freshness: since 6.0 every decoder/filter/encoder runs on its own thread,
+# so a run converting two 5.1 audio tracks no longer serializes the whole
+# remux onto one core.
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates ffmpeg \
 	&& rm -rf /var/lib/apt/lists/*
