@@ -525,9 +525,15 @@ func (s *Service) StartSweeper(ctx context.Context, interval, idle time.Duration
 			return
 		case <-ticker.C:
 			s.Sweep(ctx, idle)
+			s.Registry.Cull(ctx, time.Now(), ghostWorkerAge)
 		}
 	}
 }
+
+// How long a linkless worker may stay silent before the registry forgets it.
+// Long enough for a reboot or an image pull, short enough that the status
+// page is not a graveyard of identities the cleanup scripts retired.
+const ghostWorkerAge = time.Hour
 
 // RelayTarget resolves a relayed worker's real address for the relay
 // handler. Only workers that asked to be relayed are reachable this way:

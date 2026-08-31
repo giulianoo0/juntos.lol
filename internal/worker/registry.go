@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"strconv"
 	"sync"
@@ -191,6 +192,28 @@ func (r *Registry) Observe(ctx context.Context, id string, l *link, hb Heartbeat
 		r.rdb.HSet(ctx, workerKey(id), "certNotAfter", strconv.FormatInt(*hb.Cert.NotAfter, 10))
 	}
 	return true
+}
+
+// Cull forgets workers that have been silent for maxAge with no live link.
+// A worker whose identity file is wiped enrolls the same machine under a
+// fresh id, and the old one would otherwise sit on the status page as a
+// silent ghost until the next server restart. A culled worker that comes
+// back simply enrolls again.
+func (r *Registry) Cull(ctx context.Context, now time.Time, maxAge time.Duration) {
+	r.mu.Lock()
+	var stale []string
+	for id, w := range r.workers {
+		if w.link == nil && now.Sub(w.LastSeen) > maxAge {
+			delete(r.workers, id)
+			stale = append(stale, id)
+		}
+	}
+	r.mu.Unlock()
+	for _, id := range stale {
+		r.rdb.Del(ctx, workerKey(id))
+		r.rdb.ZRem(ctx, workersBySeen, id)
+		log.Printf("worker %s silent for over %s; forgotten", id, maxAge)
+	}
 }
 
 // ChargeMark remembers how many bytes of an infohash on a worker were
