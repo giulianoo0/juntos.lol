@@ -188,6 +188,12 @@ pub fn ffmpeg_args(
         "-c:v".into(),
         "copy".into(),
     ]);
+    // Copied HEVC lands in fMP4 as hev1 by default, and browser MSE only
+    // accepts hvc1 (parameter sets out of band): without the tag every x265
+    // source plays nowhere.
+    if plan.video_codec == "hevc" {
+        args.extend(["-tag:v".into(), "hvc1".into()]);
+    }
     let mut var_map = vec!["v:0,agroup:aud".to_string()];
     for (out_index, audio) in plan.audios.iter().enumerate() {
         args.extend(["-map".into(), format!("0:a:{}", audio.input_index)]);
