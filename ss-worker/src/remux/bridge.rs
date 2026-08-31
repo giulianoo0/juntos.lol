@@ -115,6 +115,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
     // the read blocks forever on pieces nobody asks for. So the body is
     // served in the same strides, reopening the pooled slot each step.
     const STRIDE: u64 = 16 * 1024 * 1024;
+    let trace_tag = format!("{} start={start}", target.reader);
     tokio::spawn(async move {
         let mut position = start;
         let mut sent: u64 = 0;
@@ -126,12 +127,26 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
         };
         while position <= end {
             let stride_end = (position + STRIDE - 1).min(end);
-            let mut reader = match target
-                .engine
-                .open(&target.infohash, &target.reader, target.file_index, position, Prio::Playhead)
-                .await
-            {
+            let opened = tokio::time::timeout(
+                std::time::Duration::from_secs(40),
+                target.engine.open(&target.infohash, &target.reader, target.file_index, position, Prio::Playhead),
+            )
+            .await;
+            let opened = match opened {
                 Ok(r) => r,
+                Err(_) => {
+                    tracing::warn!(reader = %target.reader, position, "remux input open timed out");
+                    deliver_err(&tx, "input open timed out".into()).await;
+                    return;
+                }
+            };
+            let mut reader = match opened {
+                Ok(r) => {
+                    if sent == 0 {
+                        tracing::info!(reader = %target.reader, position, "remux input open ok");
+                    }
+                    r
+                }
                 Err(e) => {
                     tracing::warn!(reader = %target.reader, sent, error = %e, "remux input reopen failed");
                     deliver_err(&tx, e.to_string()).await;
@@ -162,12 +177,26 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                         left -= n as u64;
                         position += n as u64;
                         sent += n as u64;
-                        if sent - logged >= 64 * 1024 * 1024 {
+                        if logged == 0 || sent - logged >= 64 * 1024 * 1024 {
                             logged = sent;
-                            tracing::info!(reader = %target.reader, sent, "remux input flowing");
+                            tracing::info!(reader = %target.reader, start, sent, "remux input flowing");
                         }
-                        if tx.send(Ok(bytes::Bytes::copy_from_slice(&buf[..n]))).await.is_err() {
-                            return;
+                        // A consumer that seeked away leaves this connection
+                        // behind without closing it; the send would park here
+                        // forever with the pooled slot in hand. Bounded, the
+                        // task dies and the slot goes back to the pool.
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(180),
+                            tx.send(Ok(bytes::Bytes::copy_from_slice(&buf[..n]))),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(_)) => return,
+                            Err(_) => {
+                                tracing::info!(reader = %target.reader, start, sent, "remux input consumer idle, closing");
+                                return;
+                            }
                         }
                     }
                     Err(e) => {
@@ -180,16 +209,61 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
         }
         tracing::info!(reader = %target.reader, sent, "remux input range served");
     });
-    let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
+    let body = Body::from_stream(Traced {
+        inner: tokio_stream::wrappers::ReceiverStream::new(rx),
+        tag: trace_tag,
+        polled: false,
+        yielded: 0,
+    });
     let mut response = Response::builder()
         .status(if ranged { StatusCode::PARTIAL_CONTENT } else { StatusCode::OK })
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, total.to_string())
-        .header(header::CONTENT_TYPE, "application/octet-stream");
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        // FFmpeg reuses a kept-alive connection whose previous response it
+        // abandoned mid-body; hyper never parses the new request on it and
+        // FFmpeg polls that socket forever. One connection per request.
+        .header(header::CONNECTION, "close");
     if ranged {
         response = response.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));
     }
     response.body(body).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// Says whether hyper ever pulls the response body: distinguishes a consumer
+/// that never reads from a connection task that never writes.
+struct Traced<S> {
+    inner: S,
+    tag: String,
+    polled: bool,
+    yielded: u64,
+}
+
+impl<S, E> tokio_stream::Stream for Traced<S>
+where
+    S: tokio_stream::Stream<Item = Result<bytes::Bytes, E>> + Unpin,
+{
+    type Item = Result<bytes::Bytes, E>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<<Self as tokio_stream::Stream>::Item>> {
+        if !self.polled {
+            self.polled = true;
+            tracing::info!(tag = %self.tag, "remux input body first poll");
+        }
+        let poll = std::pin::Pin::new(&mut self.inner).poll_next(cx);
+        if let std::task::Poll::Ready(Some(Ok(chunk))) = &poll {
+            if self.yielded == 0 {
+                tracing::info!(tag = %self.tag, len = chunk.len(), "remux input body first chunk to hyper");
+            }
+            self.yielded += chunk.len() as u64;
+        }
+        if let std::task::Poll::Ready(None) = &poll {
+            tracing::info!(tag = %self.tag, yielded = self.yielded, "remux input body done");
+        }
+        poll
+    }
 }
 
 async fn write_output(
@@ -197,6 +271,7 @@ async fn write_output(
     Path((cap, name)): Path<(String, String)>,
     request: Request,
 ) -> Response {
+    tracing::info!(name = %name, "remux output request");
     let Some(sink) = state.outputs.lock().get(&cap).cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };

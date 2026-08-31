@@ -381,13 +381,14 @@ impl Remux {
                     if let Some(process) = process.as_mut() {
                         process.kill().await;
                     }
+                    let tail: String = stderr_tail.lock().chars().take(600).collect();
                     if closed == 0 && attempts < 3 {
-                        tracing::warn!(run = %spec.run_id, attempt = attempts, "ffmpeg made no progress; respawning");
+                        tracing::warn!(run = %spec.run_id, attempt = attempts, stderr = %tail, "ffmpeg made no progress; respawning");
                         continue 'attempts;
                     }
                     cleanup(&bridge);
                     run_sink.destroy().await;
-                    bail!("ffmpeg stalled mid-run (attempt {attempts})");
+                    bail!("ffmpeg stalled mid-run (attempt {attempts}): {tail}");
                 }
             }
         };
