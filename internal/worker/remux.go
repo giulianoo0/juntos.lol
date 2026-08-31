@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -346,8 +347,19 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 		return
 	}
 	o.dispatchCancel(run)
-	if err := o.dispatchStart(ctx, &replaced); err != nil {
-		slog.Warn("remux follow dispatch failed", "room_id", roomID, "error", err)
+	// The worker may still be winding the old run down when the new start
+	// lands; a busy slot deserves a couple of beats, not a dead cold seek.
+	startErr := o.dispatchStart(ctx, &replaced)
+	for tries := 0; startErr != nil && strings.Contains(startErr.Error(), "remux_busy") && tries < 3; tries++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+		startErr = o.dispatchStart(ctx, &replaced)
+	}
+	if startErr != nil {
+		slog.Warn("remux follow dispatch failed", "room_id", roomID, "error", startErr)
 		replaced.State = remux.RunFailed
 		replaced.UpdatedAt = time.Now()
 		_ = o.saveRun(ctx, &replaced)

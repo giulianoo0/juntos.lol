@@ -35,6 +35,7 @@ pub struct Remux {
 }
 
 struct RunEntry {
+    room: String,
     status: Mutex<RunStatus>,
     sink: Mutex<Option<Arc<sink::Sink>>>,
     process: Mutex<Option<process::Supervised>>,
@@ -134,11 +135,33 @@ impl Remux {
                 return Ok(());
             }
         }
+        // A follow supersedes the same room's active run: the fence already
+        // moved on the server, so the old run only wastes the slot. Rooms
+        // never queue behind their own past.
+        let stale: Vec<String> = self
+            .runs
+            .lock()
+            .iter()
+            .filter(|(run_id, entry)| {
+                **run_id != spec.run_id
+                    && entry.room == spec.room_id
+                    && !matches!(
+                        entry.status.lock().state,
+                        state::COMPLETED | state::CANCELLED | state::FAILED
+                    )
+            })
+            .map(|(run_id, _)| run_id.clone())
+            .collect();
+        for run_id in stale {
+            tracing::info!(run = %run_id, room = %spec.room_id, "remux run superseded by its room's new start");
+            self.cancel(&run_id).await;
+        }
         if self.active_runs() >= self.cfg.remux_slots {
             bail!("remux_busy");
         }
         let size = self.engine.file_size(infohash, file_index).context("unknown file")?;
         let entry = Arc::new(RunEntry {
+            room: spec.room_id.clone(),
             status: Mutex::new(RunStatus { state: state::ACCEPTED, produced_ms: 0, error: None }),
             sink: Mutex::new(None),
             process: Mutex::new(None),
