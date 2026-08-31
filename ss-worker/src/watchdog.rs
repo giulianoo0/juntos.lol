@@ -56,10 +56,36 @@ pub fn spawn() {
                 }
                 stalled_for += CHECK;
                 if stalled_for >= STALL {
+                    dump_threads();
                     tracing::error!(stalled_for = ?stalled_for, "runtime stopped ticking; aborting so the supervisor restarts the worker");
                     std::process::abort();
                 }
             }
         })
         .expect("watchdog thread");
+}
+
+/// What every thread was doing when the runtime stopped ticking, straight
+/// from /proc: a stall with no lock cycle means the workers are parked in
+/// some syscall — which one, and where in the kernel, is the whole clue.
+fn dump_threads() {
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+        return;
+    };
+    for task in tasks.flatten() {
+        let dir = task.path();
+        let read = |name: &str| {
+            std::fs::read_to_string(dir.join(name)).unwrap_or_default().trim().to_string()
+        };
+        let comm = read("comm");
+        let syscall = read("syscall");
+        let wchan = read("wchan");
+        let state = read("stat").split(' ').nth(2).unwrap_or("?").to_string();
+        tracing::error!(
+            tid = %task.file_name().to_string_lossy(),
+            %comm, %state, %wchan,
+            syscall = %syscall.chars().take(120).collect::<String>(),
+            "stalled thread",
+        );
+    }
 }

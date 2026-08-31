@@ -50,7 +50,10 @@ type RemuxRun struct {
 	StartMs         int64     `json:"startMs"`
 	State           string    `json:"state"`
 	ProducedMs      int64     `json:"producedMs"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	// Restarts counts the times this production was redispatched after a
+	// worker lost it mid-run, so a crash loop stays bounded.
+	Restarts  int       `json:"restarts,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 func remuxRunKey(roomID string) string { return "room:" + roomID + ":remux" }
@@ -461,13 +464,68 @@ func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
 			// and lost is failed, not silently stuck.
 			if !remux.TerminalState(run.State) && time.Since(run.UpdatedAt) > 45*time.Second {
 				o.applyReport(ctx, run, &remux.RunReport{
-					RunID: run.RunID, State: remux.RunFailed, Error: "run lost by the worker",
+					RunID: run.RunID, State: remux.RunFailed, Error: runLostError,
 				})
 			}
 			continue
 		}
 		o.applyReport(ctx, run, report)
 	}
+}
+
+// runLostError marks the one failure that is the fleet's own: the worker
+// restarted and forgot the run. Only this one earns a redispatch.
+const runLostError = "run lost by the worker"
+
+// maxRunRestarts bounds the crash loop: a worker that dies on this exact
+// production twice in a row is telling us something a third try will not fix.
+const maxRunRestarts = 2
+
+// restartLostRun redispatches a production its worker lost, resuming at the
+// produced edge of the run's own region. True when the new run was accepted;
+// false hands the failure back to the ordinary path. Caller holds the room
+// lock.
+func (o *RemuxOrchestrator) restartLostRun(ctx context.Context, lost *RemuxRun) bool {
+	storedRoom, err := o.Store.Get(ctx, lost.RoomID)
+	if err != nil || !storedRoom.ExpiresAt.After(time.Now()) ||
+		storedRoom.MediaGeneration != lost.MediaGeneration {
+		return false
+	}
+	replaced := *lost
+	replaced.RunID = "run_" + randomID(8)
+	replaced.Restarts = lost.Restarts + 1
+	replaced.State = remux.RunStarting
+	replaced.ProducedMs = 0
+	replaced.UpdatedAt = time.Now()
+	// A region that already committed output cannot be rerun under its own
+	// names; the rest of the timeline becomes the next region, starting where
+	// the lost run's region froze. A run that never published reruns as it was.
+	for _, region := range storedRoom.MediaRegions {
+		if region.N == lost.Region && region.ProducedMs > 0 {
+			replaced.Region = highestRegion(storedRoom.MediaRegions, lost.Region) + 1
+			replaced.StartMs = region.StartMs + region.ProducedMs
+			break
+		}
+	}
+	if err := o.Store.SetProducerRun(ctx, lost.RoomID, replaced.RunID); err != nil {
+		return false
+	}
+	if err := o.saveRun(ctx, &replaced); err != nil {
+		return false
+	}
+	if err := o.dispatchStart(ctx, &replaced); err != nil {
+		slog.Warn("lost run redispatch failed", "room_id", lost.RoomID, "error", err)
+		replaced.State = remux.RunFailed
+		replaced.UpdatedAt = time.Now()
+		_ = o.saveRun(ctx, &replaced)
+		return false
+	}
+	slog.Info("lost run redispatched", "room_id", lost.RoomID, "run", replaced.RunID,
+		"region", replaced.Region, "start_ms", replaced.StartMs, "restart", replaced.Restarts)
+	replaced.State = remux.RunAccepted
+	replaced.UpdatedAt = time.Now()
+	_ = o.saveRun(ctx, &replaced)
+	return true
 }
 
 func findRun(runs []remux.RunReport, runID string) *remux.RunReport {
@@ -526,6 +584,14 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		}
 	case remux.RunFailed:
 		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error)
+		// A run the worker lost — it crashed and came back empty-handed — is
+		// the system's own failure, not the source's: redispatch from the
+		// produced edge instead of bricking the room until someone reloads.
+		if report.Error == runLostError && current.Restarts < maxRunRestarts {
+			if o.restartLostRun(ctx, current) {
+				return
+			}
+		}
 		_ = o.Store.ReleaseUpload(ctx, run.RoomID, current.Claim)
 		if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == "uploading" {
 			_ = o.Store.SetError(ctx, run.RoomID, "remote remux failed")
