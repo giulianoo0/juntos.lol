@@ -52,24 +52,40 @@ export function spawnManifestReader(source: string) {
   return start(source, { op: 'manifest' })
 }
 
+/** Where the server performs a plugin's request. See pluginfetch.go. */
+export const HOP_PATH = '/api/plugins/fetch'
+
 /**
- * The page performing what a plugin asked for. Only reached after the policy
- * said yes; `no-store` and `omit` keep this out of the cache and stop any
- * cookie of ours from riding along.
+ * The page asking the server to perform what a plugin asked for. Only
+ * reached after the policy said yes.
+ *
+ * The page does not perform the request itself, and cannot: the browser
+ * stamps every cross-site request with this page's Origin, no script can
+ * remove it, and Torrentio answers 502 to any Origin that is not Stremio's.
+ * The server sends the request the way curl would — no Origin, no cookie of
+ * ours — and hands back the addon's status, its body, and where the answer
+ * landed. Same-origin credentials on purpose: the session cookie is the
+ * hop's budget.
  *
  * `finalUrl` travels back so the runtime can apply the allowlist to where the
  * response came from — following the redirect and then checking is the only
- * order available to a browser, which will not tell us the hops.
+ * order available, since neither the browser nor the hop reports the hops.
+ * An answer with no landing url is the hop failing, not the addon, and is
+ * thrown rather than handed to the plugin as an answer.
  */
 export async function pageFetch(url: URL, signal: AbortSignal): Promise<FetchResult> {
-  const response = await fetch(url.toString(), {
-    credentials: 'omit', cache: 'no-store', redirect: 'follow', signal,
+  const response = await fetch(`${HOP_PATH}?url=${encodeURIComponent(url.toString())}`, {
+    credentials: 'same-origin', cache: 'no-store', signal,
   })
+  const finalUrl = response.headers.get('X-Final-Url')
+  if (!finalUrl) {
+    throw new Error(`hop ${response.status}: ${await readCapped(response, 1 << 10, signal)}`)
+  }
   return {
     ok: response.ok,
     status: response.status,
     text: await readCapped(response, MAX_BODY_BYTES, signal),
-    finalUrl: response.url || url.toString(),
+    finalUrl,
   }
 }
 

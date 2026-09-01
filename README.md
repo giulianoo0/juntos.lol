@@ -257,6 +257,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 | `GET` | `/media/:id/subs/*` | Legendas WebVTT. |
 | `POST` | `/api/rooms/:id/subtitles` | Recebe legendas extraídas pelo navegador. |
 | `POST` | `/api/rooms/:id/screenshare/token` | Emite credencial LiveKit para um membro conectado. |
+| `GET` | `/api/plugins/fetch?url=` | Faz, em nome de um plugin, a requisição que o navegador não consegue fazer sem carimbar a própria origem. Só `https`, só nomes que resolvem para endereço público, corpo limitado, com sessão e cota por hora. |
 
 ## Persistência e segurança
 

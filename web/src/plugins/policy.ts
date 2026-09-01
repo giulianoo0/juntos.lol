@@ -10,9 +10,10 @@ export type FetchDecision =
 // probing or being clever.
 //
 // What this cannot catch is a name that resolves into private space — the
-// browser will not tell us the address it landed on. That limit is written
-// into the spec and into the docs, and it is why the server keeps its own
-// guard for the URLs a plugin hands it.
+// browser will not tell us the address it landed on. The server performs
+// the request (see spawn.ts and pluginfetch.go), resolves the name itself,
+// and refuses to dial anything that is not public; that guard is the other
+// half of this one.
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/
 const PRIVATE_NAMES = new Set(['localhost'])
 
@@ -37,7 +38,8 @@ function isPrivateHostname(host: string): boolean {
 
 /**
  * Decides whether a plugin's request happens. The plugin never performs it —
- * the page does, after this — so this is the whole boundary.
+ * the page asks the server to, after this — so this is the whole boundary on
+ * this side.
  *
  * It is applied twice per request: once to where the request is going, and
  * again to where the response came from. A declared host is free to answer

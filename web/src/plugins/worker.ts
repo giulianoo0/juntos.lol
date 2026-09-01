@@ -15,7 +15,8 @@
  * 2. The scope, below.
  *
  * 3. The page. `api.fetch` is a message, and the page decides — including
- *    where a redirect landed. See runtime.ts.
+ *    where a redirect landed — before asking the server to perform the
+ *    request. See runtime.ts and spawn.ts.
  *
  * The scope is trimmed to an **allowlist**, and that is a deliberate reversal.
  * A denylist of dangerous globals loses to every API the platform ships:

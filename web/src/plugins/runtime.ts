@@ -22,7 +22,7 @@ export interface SpawnOptions {
 }
 
 /**
- * What the page reports back about a request it performed.
+ * What the page reports back about a request it had performed.
  *
  * `finalUrl` is where the response actually came from. It matters because a
  * declared host is free to answer 302 and send the page somewhere else, and a

@@ -25,6 +25,17 @@ type serverOptions struct {
 	clientMediaHooks  ClientMediaHooks
 	torrentAccess     TorrentAccess
 	workerLink        gin.HandlerFunc
+	pluginSessions    *Sessions
+	pluginQuota       *Quota
+}
+
+// WithPluginFetch puts a session and an hourly budget on the plugin hop.
+// Without it the hop still exists, open to whoever reaches the server.
+func WithPluginFetch(sessions *Sessions, quota *Quota) ServerOption {
+	return func(o *serverOptions) {
+		o.pluginSessions = sessions
+		o.pluginQuota = quota
+	}
 }
 
 // WithTorrents mounts the torrent routes over the worker fleet, and the
@@ -127,6 +138,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		r.GET("/ws/worker-link", options.workerLink)
 	}
 	RegisterRelayRoute(r, options.torrentAccess.Service)
+	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
 	registerFrontend(r, cfg.WebDir)
 	return r
 }

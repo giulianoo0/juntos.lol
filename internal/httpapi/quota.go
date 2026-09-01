@@ -21,11 +21,15 @@ type Quota struct {
 	dispatchPerHour int
 	concurrentJobs  int
 	bytesPerDay     int64
+	// pluginFetchPerHour caps the requests one session may send through the
+	// plugin hop. A field rather than a constant so a test can lower it.
+	pluginFetchPerHour int
 }
 
 // NewQuota returns a Quota; a zero limit disables that budget.
 func NewQuota(rdb *redis.Client, dispatchPerHour, concurrentJobs int, bytesPerDay int64) *Quota {
-	return &Quota{rdb: rdb, dispatchPerHour: dispatchPerHour, concurrentJobs: concurrentJobs, bytesPerDay: bytesPerDay}
+	return &Quota{rdb: rdb, dispatchPerHour: dispatchPerHour, concurrentJobs: concurrentJobs, bytesPerDay: bytesPerDay,
+		pluginFetchPerHour: pluginFetchPerHour}
 }
 
 func dispatchKey(sid string) string {
@@ -108,6 +112,53 @@ func (q *Quota) CheckProbes(ctx context.Context, sid string) (bool, error) {
 		q.rdb.Expire(ctx, key, time.Hour)
 	}
 	return n <= probeListPerHour, nil
+}
+
+// pluginFetchPerHour is how many addon requests one session may route
+// through the plugin hop in an hour. A run is capped at 32 requests by the
+// page, and a person browsing a catalog opens a title every few seconds at
+// most; past this the hop is being used as a fetch service, not a plugin.
+const pluginFetchPerHour = 600
+
+func pluginFetchKey(sid string) string {
+	return "quota:" + sid + ":pluginfetch:" + time.Now().UTC().Format("2006010215")
+}
+
+// CheckPluginFetch spends one hop request from the session's hourly budget;
+// false means the budget is gone.
+func (q *Quota) CheckPluginFetch(ctx context.Context, sid string) (bool, error) {
+	key := pluginFetchKey(sid)
+	n, err := q.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return true, err
+	}
+	if n == 1 {
+		q.rdb.Expire(ctx, key, time.Hour)
+	}
+	return n <= int64(q.pluginFetchPerHour), nil
+}
+
+// PluginFetch is the middleware for the plugin hop: it refuses with 429
+// when the session has sent its share for the hour.
+func (q *Quota) PluginFetch() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sid := SessionID(c)
+		if sid == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "no_session"})
+			return
+		}
+		ok, err := q.CheckPluginFetch(c.Request.Context(), sid)
+		if err != nil {
+			slog.ErrorContext(c.Request.Context(), "plugin fetch quota check", "error", err)
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "quota_exceeded", "reason": "plugin_fetch_limit"})
+			return
+		}
+		c.Next()
+	}
 }
 
 // AcquireJob records a running job against the session, refusing when the
