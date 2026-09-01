@@ -469,6 +469,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	}
 	request.client.capability = base64.RawURLEncoding.EncodeToString(capabilityBytes)
 	request.client.member = room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now()}
+	request.client.telemetry.joinedAt = time.Now()
 
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
@@ -608,6 +609,7 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 	delete(r.clients, disconnected.id)
 	metrics.ParticipantsConnected.Dec()
 	metrics.ParticipantLeaves.Inc()
+	r.logSyncSummary(disconnected)
 	// Being ignored is a decision about a person in this room right now. If
 	// they come back — usually after fixing whatever was wrong — they rejoin
 	// as a full member rather than silently still excluded.
@@ -664,6 +666,10 @@ func (r *roomConn) handleInbound(event clientInbound) {
 			stalled:       message.Stalled,
 			received:      true,
 		}
+		now := time.Now().UnixMilli()
+		readyCtx, cancelReady := context.WithTimeout(r.hub.ctx, storeTimeout)
+		defer cancelReady()
+		r.recordSync(readyCtx, event.client, message, now)
 		if r.gate != nil {
 			if !r.evaluateGate() {
 				r.broadcastWaiting()
@@ -672,9 +678,7 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		}
 		// Nobody is waiting yet, so this report is the room's only chance to
 		// notice that someone's playback has run dry mid-episode.
-		stallCtx, cancelStall := context.WithTimeout(r.hub.ctx, storeTimeout)
-		defer cancelStall()
-		r.gateOnStall(stallCtx, time.Now().UnixMilli())
+		r.gateOnStall(readyCtx, now)
 	case "gating":
 		r.handleGatingToggle(event.client, message)
 	case "ignore":

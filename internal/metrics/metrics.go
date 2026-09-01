@@ -148,6 +148,19 @@ var (
 		Name:      "websocket_messages_total",
 		Help:      "WebSocket messages handled, by direction and message type.",
 	}, []string{"direction", "type"})
+
+	// SyncDrift is how far a playing viewer's reported position sat from the
+	// room's authoritative clock when their steady report arrived. The client
+	// corrects itself past 450ms, so mass past that bucket means viewers whose
+	// corrections are not holding.
+	//
+	// PromQL: histogram_quantile(0.9, rate(ss_sync_drift_seconds_bucket[5m]))
+	SyncDrift = promauto.NewHistogram(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "sync_drift_seconds",
+		Help:      "Absolute drift between a viewer's reported position and the room clock.",
+		Buckets:   []float64{0.1, 0.25, 0.45, 1, 2, 5, 10, 30},
+	})
 )
 
 // Outcomes of a join attempt.
