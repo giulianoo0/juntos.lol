@@ -28,6 +28,7 @@ export const ptBR: Record<string, string> = {
   'home.torrentBusy': 'Todos os workers de download estão ocupados. Tente de novo em alguns minutos.',
   'home.torrentQuota': 'Você já abriu todos os torrents que este servidor permite por enquanto. Tente mais tarde.',
   'home.torrentNotVideo': 'Esse torrent não é um release de vídeo, e os workers só carregam vídeo.',
+  'home.torrentNoSeeds': 'O enxame não respondeu: esse torrent parece estar sem seeds. Tente outra release do mesmo conteúdo.',
   'home.torrentRejected': 'Esse torrent não pode ser aberto aqui.',
   'home.peers': 'peers',
   'home.nicknamePlaceholder': 'Um nome de convidado será criado automaticamente',

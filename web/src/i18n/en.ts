@@ -28,6 +28,7 @@ export const en: Record<string, string> = {
   'home.torrentBusy': 'Every download worker is busy. Try again in a few minutes.',
   'home.torrentQuota': 'You have opened as many torrents as this server allows for now. Try again later.',
   'home.torrentNotVideo': 'This torrent is not a video release, and the workers only carry video.',
+  'home.torrentNoSeeds': 'The swarm never answered: this torrent looks dead, with no reachable seeds. Try another release of the same content.',
   'home.torrentRejected': 'This torrent cannot be opened here.',
   'home.peers': 'peers',
   'home.nicknamePlaceholder': 'Guest name is created automatically',

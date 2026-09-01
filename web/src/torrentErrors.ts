@@ -20,6 +20,10 @@ export function torrentErrorKey(error: unknown): string {
   if (error instanceof NoWorkersError) return 'home.torrentNoWorkers'
   if (error instanceof WorkersBusyError) return 'home.torrentBusy'
   if (error instanceof TorrentQuotaError) return 'home.torrentQuota'
-  if (error instanceof TorrentRejectedError) return error.code === 'not_video' ? 'home.torrentNotVideo' : 'home.torrentRejected'
+  if (error instanceof TorrentRejectedError) {
+    if (error.code === 'not_video') return 'home.torrentNotVideo'
+    if (error.code === 'no_metadata') return 'home.torrentNoSeeds'
+    return 'home.torrentRejected'
+  }
   return 'home.torrentFailed'
 }
