@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
@@ -206,12 +206,15 @@ export function Home() {
     setPendingMedia({ kind: 'local', file })
   }
 
-  const openTitle = (open: TitleOpen) => {
+  // Stable on purpose: it is the one prop every poster card receives, and a
+  // fresh function per render re-rendered all two hundred of them each time
+  // this page did — on every keystroke in the nickname dialog, for one.
+  const openTitle = useCallback((open: TitleOpen) => {
     const rect = open.rect
       ? { top: open.rect.top, left: open.rect.left, width: open.rect.width, height: open.rect.height }
       : undefined
     navigate(`/title/${open.meta.type}/${encodeURIComponent(open.meta.id)}`, { state: { meta: open.meta, rect } })
-  }
+  }, [navigate])
 
   const closeTitle = () => {
     navigate('/catalog', { state: null })

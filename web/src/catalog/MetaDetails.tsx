@@ -82,6 +82,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const t = useT()
   const reduceMotion = useReducedMotion()
   const panelRef = useRef<HTMLDivElement>(null)
+  const heroRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const closingRef = useRef(false)
   const [revealed, setRevealed] = useState(false)
@@ -364,6 +365,10 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
         // radius re-rasterizes the whole 300px hero, images and all. One write
         // per frame, quantized to 2px steps, turns a continuous re-raster into
         // nine discrete ones — indistinguishable on a 16px ramp.
+        //
+        // The property lands on the hero itself: custom properties inherit,
+        // and writing it on the panel restyled every descendant — the whole
+        // source list included — for a value only the hero reads.
         onScroll={(event) => {
           const panel = event.currentTarget
           if (blurFrameRef.current) return
@@ -372,11 +377,11 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
             const radius = Math.min(Math.round(panel.scrollTop / 48) * 2, 16)
             if (radius === heroBlurRef.current) return
             heroBlurRef.current = radius
-            panel.style.setProperty('--hero-blur', `${radius}px`)
+            heroRef.current?.style.setProperty('--hero-blur', `${radius}px`)
           })
         }}
       >
-        <div className="details-hero">
+        <div ref={heroRef} className="details-hero">
           {/* O pôster é só o que segura o hero até a arte larga chegar: ele já
               está no cache do card, então não custa nada. Assim que a arte
               termina de decodificar ele sai — antes disso as duas ficavam

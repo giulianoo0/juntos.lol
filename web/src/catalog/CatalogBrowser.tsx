@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Search, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
@@ -40,7 +40,13 @@ interface CatalogBrowserProps {
 
 // The searchable board: a search field over rows of posters. Selecting a
 // title is the parent's business — the browser only reports the pick.
-export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrowserProps) {
+//
+// Memoised: the pages that host it re-render for reasons that are not the
+// board's — every keystroke in the nickname dialog, every upload progress
+// tick, every player state change in a room — and each one used to walk two
+// hundred poster cards and five carousels again. The props are a stable
+// callback and two flags, so the memo holds.
+export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrowserProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const [rows, setRows] = useState<Record<string, RowState>>({})
@@ -318,4 +324,4 @@ export function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrow
       )}
     </div>
   )
-}
+})
