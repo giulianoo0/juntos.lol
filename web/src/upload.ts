@@ -1,21 +1,22 @@
 /**
- * Getting a source into a room. There is exactly one way: this browser
- * remuxes the source itself and publishes the segments straight into the
- * bucket (see pipeline/clientMedia). The server creates the room, signs the
- * bucket writes and accepts the playlists; it never sees the video bytes and
- * never runs ffmpeg. A source this browser cannot remux is a room that does
- * not open, and the host is told why.
+ * Getting a source into a room. A picked file or a url this browser remuxes
+ * itself and publishes straight into the bucket (see pipeline/clientMedia);
+ * the server signs the writes and never sees a video byte. A torrent goes
+ * the other way: the fleet's worker remuxes it, and this browser only walks
+ * the file for subtitles. A source neither can take is a room that does not
+ * open, and the host is told why.
  */
 import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
 import { mockCreateRoom, mocksEnabled } from './mocks'
-import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile } from './torrent'
+import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerGrant } from './torrent'
+import type { SubtitleScanJob } from './pipeline/subtitleScan'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // From the leaf module, never from remuxJob: a value import of remuxJob here
 // pulls mediabunny into the first-paint chunk and defeats the dynamic import.
 import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
-import { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
+import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 
-export { FILE_UNREADABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
+export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
 const REGISTRY_TTL_MS = 30_000
 
@@ -281,64 +282,71 @@ export function startFileUpload(
   startRoomUpload(roomID, mediaGeneration, { kind: 'file', file }, [], { onProgress })
 }
 
+export interface TorrentAuth {
+  memberId: string
+  capability: string
+}
+
+/**
+ * Hands the torrent to the fleet. The worker produces the video or nobody
+ * does: a refusal is reported as the room's failure, never remuxed here.
+ * Progress and readiness then arrive through the room like any guest's.
+ */
 export function startTorrentUpload(
   roomID: string,
   mediaGeneration: number,
   { file, session }: TorrentUploadSource,
   onProgress?: (progress: UploadProgress) => void,
+  auth?: TorrentAuth,
 ): void {
   torrentSessions.set(roomID, session)
   if (session.magnet) {
     saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
   }
-  // With a worker grant the job is plain data and runs in the remux worker;
-  // a session without one (mocks, tests) pins the job to this thread.
-  const source: RemuxSource = file.worker
-    ? { kind: 'worker', grant: file.worker }
-    : { kind: 'torrentFile', file }
-  const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
-    name: side.name,
-    path: side.path,
-    size: side.size,
-    ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
-      : side.streamUrl ? { url: side.streamUrl }
-        : { read: () => side.read() }),
-  }))
-  const startLocal = () => {
-    startRoomUpload(roomID, mediaGeneration, source, sideFiles, {
-      onProgress,
-      cleanup: () => {
-        if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
-        session.destroy()
-      },
-    })
+  remoteProductions.delete(roomID)
+  origins.set(roomID, 'torrent')
+  const entry = createEntry(file.size)
+  uploads.set(roomID, entry)
+  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+  const release = () => {
+    if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
   }
-  // The fleet may take the whole production itself. The server decides; a no
-  // is silent and the local pipeline runs exactly as before.
-  void tryRemoteRemux(roomID, mediaGeneration, session).then((remote) => {
-    if (!remote) { startLocal(); return }
-    origins.set(roomID, 'torrent')
+  void startRemoteRemux(roomID, mediaGeneration, session, auth).then((refusal) => {
+    if (refusal !== null) {
+      lastFailureDetail = refusal
+      finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => { release(); session.destroy() })
+      return
+    }
     remoteProductions.add(roomID)
     // The fleet's FFmpeg never extracts subtitles; this browser still does.
-    startSubtitleScan({ roomID, mediaGeneration, source, sideFiles, subtitlesOnly: true })
-    if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
-    session.detach?.()
+    if (file.worker) startSubtitleScan(scanJob(roomID, mediaGeneration, file.worker, session))
+    lastFailureDetail = null
+    finishEntry(roomID, entry, null, () => { release(); session.detach?.() })
   })
 }
 
-// Subtitles only, in a worker of its own: no media, no progress entry, and a
-// failure costs the room its subtitles but never its video.
-function startSubtitleScan(job: RemuxJob): void {
-  if (typeof Worker === 'undefined' || !jobIsCloneable(job)) return
+function scanJob(roomID: string, mediaGeneration: number, grant: WorkerGrant, session: TorrentSession): SubtitleScanJob {
+  return {
+    roomID,
+    mediaGeneration,
+    grant,
+    sideFiles: session.subtitleFiles.flatMap((side) => side.index === undefined ? []
+      : [{ name: side.name, path: side.path, size: side.size, index: side.index }]),
+  }
+}
+
+// In a worker of its own: no media, no progress entry, and a failure costs
+// the room its subtitles but never its video.
+function startSubtitleScan(job: SubtitleScanJob): void {
+  if (typeof Worker === 'undefined') return
   scanningRooms.add(job.roomID)
-  const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
+  const worker = new Worker(new URL('./pipeline/subtitleWorker.ts', import.meta.url), { type: 'module' })
   const over = () => { scanningRooms.delete(job.roomID); worker.terminate() }
   worker.onmessage = (event: MessageEvent<{ type: string; detail?: string }>) => {
     const message = event.data
     if (message.type === 'trouble') console.error('[subtitle-scan]', message.detail)
     else if (message.type === 'failed') { console.error('[subtitle-scan]', message.detail); over() }
     else if (message.type === 'done') { markSubsDone(job.roomID, job.mediaGeneration); over() }
-    else if (message.type === 'moved-on') over()
   }
   worker.onerror = (event) => { console.error('[subtitle-scan]', event.message); over() }
   worker.postMessage({ type: 'start', job })
@@ -368,19 +376,9 @@ export async function resumeSubtitleScan(roomID: string, mediaGeneration: number
     const file = session.files.find((candidate) => candidate.path === saved.filePath) ?? session.files[0]
     if (!file) { session.destroy(); scanningRooms.delete(roomID); return }
     await session.select(file.path)
-    const source: RemuxSource = file.worker
-      ? { kind: 'worker', grant: file.worker }
-      : { kind: 'torrentFile', file }
-    const sideFiles: RemuxSideFile[] = session.subtitleFiles.map((side) => ({
-      name: side.name,
-      path: side.path,
-      size: side.size,
-      ...(file.worker && side.index !== undefined ? { workerIndex: side.index }
-        : side.streamUrl ? { url: side.streamUrl }
-          : { read: () => side.read() }),
-    }))
+    if (!file.worker) { session.destroy(); scanningRooms.delete(roomID); return }
     remoteProductions.add(roomID)
-    startSubtitleScan({ roomID, mediaGeneration, source, sideFiles, subtitlesOnly: true })
+    startSubtitleScan(scanJob(roomID, mediaGeneration, file.worker, session))
     session.detach?.()
   } catch (error) {
     scanningRooms.delete(roomID)
@@ -388,11 +386,17 @@ export async function resumeSubtitleScan(roomID: string, mediaGeneration: number
   }
 }
 
-// True only on an accepted handoff; anything else keeps the local path.
-async function tryRemoteRemux(roomID: string, mediaGeneration: number, session: TorrentSession): Promise<boolean> {
-  if (!session.jobId || mocksEnabled) return false
+// Resolves null on an accepted handoff, or with the reason the fleet said no.
+async function startRemoteRemux(
+  roomID: string,
+  mediaGeneration: number,
+  session: TorrentSession,
+  auth?: TorrentAuth,
+): Promise<string | null> {
+  if (mocksEnabled) return null
+  if (!session.jobId) return 'torrent session has no fleet job'
   const ownerToken = ownerTokenFor(roomID)
-  if (!ownerToken) return false
+  if (!ownerToken && !auth) return 'no proof of ownership for the room'
   try {
     const response = await fetch(`/api/torrents/${encodeURIComponent(session.jobId)}/remux`, {
       method: 'POST',
@@ -402,14 +406,14 @@ async function tryRemoteRemux(roomID: string, mediaGeneration: number, session: 
         mediaGeneration,
         requestId: crypto.randomUUID(),
         startMs: 0,
-        auth: { ownerToken },
+        auth: ownerToken ? { ownerToken } : auth,
       }),
     })
-    if (response.status !== 202) return false
-    const body = await response.json() as { remote?: boolean }
-    return body.remote === true
-  } catch {
-    return false
+    if (response.status === 202) return null
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    return `remux refused (${response.status}${body.error ? ` ${body.error}` : ''})`
+  } catch (error) {
+    return `remux request failed: ${error instanceof Error ? error.message : String(error)}`
   }
 }
 
@@ -442,7 +446,7 @@ export function startRoomUpload(
 ): void {
   const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
   remoteProductions.delete(roomID)
-  origins.set(roomID, source.kind === 'file' ? 'file' : source.kind === 'url' ? 'url' : 'torrent')
+  origins.set(roomID, source.kind === 'file' ? 'file' : 'url')
   const size = sourceSize(source)
   const entry = createEntry(size)
   uploads.set(roomID, entry)

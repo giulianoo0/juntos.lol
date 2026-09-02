@@ -21,7 +21,6 @@ const file = (index: number, path: string, size = 1_000): TorrentVideoFile => ({
   type: 'application/octet-stream',
   progress: 0,
   downloaded: 0,
-  read: async () => new ArrayBuffer(0),
 })
 
 const pack = [

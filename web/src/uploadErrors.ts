@@ -30,3 +30,5 @@ export function readFailureCode(failure: unknown, kind: string): string | null {
   if (isUnreachableRead(failure)) return kind === 'url' ? SOURCE_UNREACHABLE : WORKER_UNREACHABLE
   return null
 }
+
+export const REMUX_UNAVAILABLE = 'remux-unavailable'

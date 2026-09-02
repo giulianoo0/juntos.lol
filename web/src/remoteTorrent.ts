@@ -8,7 +8,6 @@
  */
 import { isSubtitleFileName } from './subtitleFormats'
 import type { TorrentSession, TorrentSideFile, TorrentStats, TorrentVideoFile, WorkerGrant } from './torrent'
-import { ReadGate, rangeBytes } from './pipeline/rangeRead'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
 const MAX_SIDE_FILE_BYTES = 8 * 1024 * 1024
@@ -328,13 +327,11 @@ export async function openRemoteTorrent(
     body: JSON.stringify({ infoHash: parsed.infoHash, trackers: parsed.trackers, dn: parsed.dn, preferred }),
   })
   const jobId = started.jobId
-  const gate = new ReadGate()
   let statsTimer: ReturnType<typeof setInterval> | null = null
   let destroyed = false
   const destroy = () => {
     if (destroyed) return
     destroyed = true
-    gate.close()
     if (statsTimer !== null) clearInterval(statsTimer)
     void fetch(`/api/torrents/${encodeURIComponent(jobId)}`, { method: 'DELETE', keepalive: true }).catch(() => undefined)
   }
@@ -356,20 +353,6 @@ export async function openRemoteTorrent(
   }
 
   let grant: WorkerGrant | null = null
-  const readOpts = () => {
-    if (!grant) throw new Error('torrent file not selected')
-    return {
-      url: () => `${grant!.readBase}/v1/f/${grant!.ticket}?prio=head`,
-      size: grant.size,
-      gate,
-      refresh: async () => {
-        const next = await api<WorkerGrant>(`/${encodeURIComponent(jobId)}/token`, { method: 'POST' })
-        grant = { ...grant!, ...next }
-        return true
-      },
-    }
-  }
-
   const files = (status.files ?? [])
     .filter((file) => VIDEO_EXTENSION.test(file.name))
     .map((file): TorrentVideoFile => ({
@@ -381,11 +364,6 @@ export async function openRemoteTorrent(
       get progress() { return currentStats.progress },
       get downloaded() { return currentStats.downloaded },
       get worker() { return grant && grant.fileIndex === file.index ? grant : undefined },
-      read: async (start, endInclusive) => {
-        if (destroyed) throw new Error('torrent session closed')
-        const bytes = await rangeBytes(readOpts(), start, endInclusive + 1)
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-      },
     }))
     .sort((a, b) => b.size - a.size)
 
@@ -396,13 +374,6 @@ export async function openRemoteTorrent(
       path: file.path,
       size: file.size,
       index: file.index,
-      get streamUrl() { return grant ? `${grant.readBase}/v1/file/${grant.ticket}/${file.index}` : undefined },
-      read: async () => {
-        if (!grant) throw new Error('torrent file not selected')
-        const response = await fetch(`${grant.readBase}/v1/file/${grant.ticket}/${file.index}`)
-        if (!response.ok) throw new Error(`sidecar read failed (${response.status})`)
-        return await response.arrayBuffer()
-      },
     }))
 
   let currentStats: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
@@ -441,13 +412,11 @@ export async function openRemoteTorrent(
       grant = { ...next, jobId }
       if (statsTimer === null) statsTimer = setInterval(() => { void refreshStats() }, STATS_MS)
     },
-    abortReads: () => gate.abort(),
     destroy,
     detach: () => {
       // No DELETE: the job now feeds the worker's own remux.
       if (destroyed) return
       destroyed = true
-      gate.close()
       if (statsTimer !== null) clearInterval(statsTimer)
     },
   }

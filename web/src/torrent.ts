@@ -24,17 +24,14 @@ export interface TorrentVideoFile {
   progress: number
   downloaded: number
   worker?: WorkerGrant
-  read(start: number, endInclusive: number): Promise<ArrayBuffer>
 }
 
-// A small non-video file shipped in the same torrent, read in full.
+// A small non-video file shipped in the same torrent.
 export interface TorrentSideFile {
   name: string
   path: string
   size: number
   index?: number
-  streamUrl?: string
-  read(): Promise<ArrayBuffer>
 }
 
 export interface TorrentStats {
@@ -54,11 +51,9 @@ export interface TorrentSession {
   subtitleFiles: TorrentSideFile[]
   stats(): TorrentStats
   select(path: string): Promise<void>
-  /** Rejects every read in flight; the seek moved on. */
-  abortReads?(): void
   destroy(): void
-  /** Stops this tab's polling and readers without releasing the server-side
-   * job: the room's production moved to the worker and still needs it. */
+  /** Stops this tab's polling without releasing the server-side job: the
+   * room's production runs on the worker and still needs it. */
   detach?(): void
 }
 

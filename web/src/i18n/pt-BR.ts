@@ -172,6 +172,7 @@ export const ptBR: Record<string, string> = {
   'error.unsupportedMedia': 'Esse vídeo não dá para preparar neste navegador: o codec ou o formato não é suportado aqui. Tente outro navegador ou outra versão do arquivo.',
   'error.sourceUnreachable': 'Essa fonte não deixa o navegador ler o arquivo direto. Escolha outro stream.',
   'error.workerUnreachable': 'A origem do torrent parou de responder, ou recusou esse arquivo. Abra o torrent de novo para tentar outra vez.',
+  'error.remuxUnavailable': 'A frota não conseguiu assumir o preparo desse torrent agora. Tente de novo daqui a pouco, ou escolha outra release.',
   'catalog.tab': 'Catálogo',
   'catalog.search': 'Buscar filmes e séries',
   'catalog.searchPlaceholder': 'Busque um filme ou série…',

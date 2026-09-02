@@ -14,9 +14,9 @@ export default defineConfig({
     // server does not match, and the worker loads with no policy at all.
     rolldownOptions: {
       output: {
-        // The remux worker must be able to fetch, so its entry lives on a
-        // path the plugin-worker CSP does not cover.
-        entryFileNames: (chunk) => chunk.name === 'remuxWorker'
+        // The remux and subtitle workers must be able to fetch, so their
+        // entries live on a path the plugin-worker CSP does not cover.
+        entryFileNames: (chunk) => chunk.name === 'remuxWorker' || chunk.name === 'subtitleWorker'
           ? 'assets/media-worker/[hash].js'
           : 'assets/plugin-worker/[hash].js',
         chunkFileNames: 'assets/plugin-worker/[hash].js',

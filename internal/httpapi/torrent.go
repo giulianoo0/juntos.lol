@@ -20,7 +20,7 @@ import (
 var infohashRe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 // TorrentAccess is everything the torrent routes hang off. A nil Remux keeps the
-// remux route answering remux_disabled; Authorizer proves a memberId+capability
+// remux route answering remux_unavailable; Authorizer proves a memberId+capability
 // pair names a connected member.
 type TorrentAccess struct {
 	Sessions   *Sessions
@@ -75,7 +75,7 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 func startRemux(access TorrentAccess) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if access.Remux == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "remux_disabled"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "remux_unavailable"})
 			return
 		}
 		var req remux.StartRequest
@@ -102,8 +102,6 @@ func startRemux(access TorrentAccess) gin.HandlerFunc {
 
 func remuxErrorStatus(err error) (int, string) {
 	switch {
-	case errors.Is(err, worker.ErrRemuxDisabled):
-		return http.StatusServiceUnavailable, "remux_disabled"
 	case errors.Is(err, worker.ErrRemuxUnavailable):
 		return http.StatusServiceUnavailable, "remux_unavailable"
 	case errors.Is(err, worker.ErrRemuxConflict):

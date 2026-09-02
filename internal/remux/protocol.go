@@ -43,7 +43,6 @@ type StartAuth struct {
 
 // StartResponse is the 202 body: accepted is not ready, and not running.
 type StartResponse struct {
-	Remote          bool   `json:"remote"`
 	RunID           string `json:"runId"`
 	MediaGeneration int    `json:"mediaGeneration"`
 	State           string `json:"state"`

@@ -46,6 +46,7 @@ import {
   SOURCE_UNREACHABLE,
   UNSUPPORTED_MEDIA,
   WORKER_UNREACHABLE,
+  REMUX_UNAVAILABLE,
   assertReadable,
   changeRoomSource,
   lastUploadFailureDetail,
@@ -179,6 +180,7 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
             {failure === UNSUPPORTED_MEDIA ? <p>{t('error.unsupportedMedia')}</p> : null}
             {failure === SOURCE_UNREACHABLE ? <p>{t('error.sourceUnreachable')}</p> : null}
             {failure === WORKER_UNREACHABLE ? <p>{t('error.workerUnreachable')}</p> : null}
+            {failure === REMUX_UNAVAILABLE ? <p>{t('error.remuxUnavailable')}</p> : null}
             <Link className="primary-button" to="/">{t('room.new')}</Link>
             {room ? <CopyErrorReport room={room} failure={failure ?? null} detail={lastUploadFailureDetail()} t={t} /> : null}
           </div>
@@ -292,7 +294,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         await session.select(file.path)
         try {
           const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
-          startTorrentUpload(room.id, next.mediaGeneration, { file, session })
+          startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
         } catch (error) {
           session.destroy()
           throw error
@@ -398,7 +400,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         session.destroy()
         throw error
       }
-      startTorrentUpload(room.id, next.mediaGeneration, { file, session })
+      startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
     })
   }
 
@@ -421,7 +423,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       const opened = await openCatalogStream(pick.stream, pick.target, undefined, { onProbe: setSwapProbes })
       try {
         const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
-        startTorrentUpload(room.id, next.mediaGeneration, opened)
+        startTorrentUpload(room.id, next.mediaGeneration, opened, undefined, { memberId: sync.memberId, capability: sync.capability })
       } catch (error) {
         opened.session.destroy()
         throw error

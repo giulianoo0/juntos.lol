@@ -6,7 +6,7 @@
 
 ## O que está pronto
 
-- o vídeo é preparado no navegador de quem abre a sala: remux para HLS com [mediabunny](https://mediabunny.dev) e envio dos segmentos direto para o bucket, sem nenhum byte de vídeo e nenhum ffmpeg no servidor;
+- o vídeo de um arquivo local ou de uma url é preparado no navegador de quem abre a sala: remux para HLS com [mediabunny](https://mediabunny.dev) e envio dos segmentos direto para o bucket, sem nenhum byte de vídeo e nenhum ffmpeg no servidor;
 - início progressivo: a sala começa a tocar com os primeiros segmentos publicados, sem esperar o remux inteiro;
 - player responsivo com tela cheia, controles que somem durante a reprodução e suporte a HLS nativo ou `hls.js`;
 - sincronização de play, pause, seek e velocidade por WebSocket;
@@ -38,10 +38,10 @@ flowchart LR
 
 ### Preparação do vídeo, no navegador do host
 
-O servidor não processa vídeo. Tudo que custa CPU acontece na máquina de quem abre a sala:
+O servidor não processa vídeo. Um arquivo local ou uma url custam CPU na máquina de quem abre a sala; um torrent custa CPU no ss-worker que já o baixa (ver abaixo):
 
 1. O navegador cria a sala com `POST /api/rooms` e reivindica o direito de produzir a mídia dela (`/client-media/claim`).
-2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local, torrent via ss-worker ou url de um plugin — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
+2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local ou url de um plugin — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
 3. Cada segmento é enviado por `PUT` direto ao bucket, com uma URL assinada pelo servidor (`/client-media/presign`).
 4. A cada poucos segundos o navegador entrega as playlists (`/client-media/publish`). O servidor confirma no bucket que cada objeto nomeado existe antes de publicar, então um viewer nunca recebe uma URL que dá 404.
 5. A sala passa para `ready` no primeiro segmento confirmado; o remux continua por trás.
@@ -52,13 +52,13 @@ Uma fonte que o navegador não consegue preparar — codec que ele não decodifi
 
 ### Torrents
 
-O servidor não baixa torrent nenhum, e quem abre a sala não instala nada. Um magnet é despachado pelo servidor a um **ss-worker**: um binário Rust (`ss-worker/`) que roda numa VPS própria, entra no swarm e serve os bytes ao navegador do host por HTTPS `Range`, direto, sem passar pelo servidor. O remux continua no navegador; os viewers tocam do bucket e nunca tocam o worker.
+O servidor não baixa torrent nenhum, e quem abre a sala não instala nada. Um magnet é despachado pelo servidor a um **ss-worker**: um binário Rust (`ss-worker/`) que roda numa VPS própria, entra no swarm e remuxa o arquivo escolhido ali mesmo, com FFmpeg, publicando os segmentos direto no bucket. O navegador do host só lê os bytes por HTTPS `Range` para extrair legendas; os viewers tocam do bucket e nunca tocam o worker. Não existe remux de torrent no navegador: se a frota recusar o preparo, a sala diz isso e não há fallback.
 
 1. O navegador registra o infohash em `POST /api/torrents` (com uma sessão anônima e uma cota por sessão). O servidor escolhe um worker — de preferência um que já tenha o torrent — e assina o job com Ed25519.
 2. O worker resolve os metadados no swarm e devolve a lista de arquivos; o navegador faz poll em `GET /api/torrents/{jobId}` até ela chegar.
-3. `POST /api/torrents/{jobId}/select` escolhe o arquivo; o worker reserva o disco e prioriza as peças, e o servidor devolve um `readBase` e um ticket assinado, com validade curta e renovado por `POST /api/torrents/{jobId}/token` enquanto o remux durar.
-4. O navegador lê `GET {readBase}/v1/f/{ticket}` com `Range`; o worker responde 206 à medida que as peças chegam, com cap por resposta e `Content-Range` honesto, e o leitor retoma de onde parou. O offset de leitura do remux vai ao worker como hint para o swarm buscar à frente dele.
-5. As legendas que acompanham o vídeo são lidas do mesmo worker (`/v1/file/{ticket}/{índice}`) e publicadas junto.
+3. `POST /api/torrents/{jobId}/select` escolhe o arquivo; o worker reserva o disco e prioriza as peças, e o servidor devolve um `readBase` e um ticket assinado, com validade curta e renovado por `POST /api/torrents/{jobId}/token` enquanto a leitura de legendas durar.
+4. O navegador pede o preparo em `POST /api/torrents/{jobId}/remux`; o servidor assina a corrida e o worker roda o FFmpeg sobre os próprios bytes, seguindo a posição da sala para o seek. Progresso e `ready` chegam pela sala, como para qualquer viewer.
+5. As legendas embutidas no MKV e os arquivos que acompanham o vídeo são lidos do worker pelo navegador do host (`GET {readBase}/v1/f/{ticket}` com `Range` e `/v1/file/{ticket}/{índice}`) e publicados junto.
 
 Os workers discam o servidor por WSS (`/ws/worker-link`), se registram uma vez com `WORKER_ENROLLMENT_SECRET` e depois provam a própria chave; reportam disco, leases e peers a cada dez segundos. Um worker sem cert válido, cheio ou drenando não recebe job. Certificados vêm do Let's Encrypt por ACME, para o IP da VPS ou um nome, sem DNS obrigatório. Sem worker conectado, o caminho de magnet se declara indisponível (`GET /api/torrents/capacity`) e a página diz isso; não há fallback no servidor nem no navegador.
 
@@ -73,7 +73,7 @@ O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacida
 ### Áudio e legendas
 
 - Texto: ASS/SSA, SubRip, WebVTT e `mov_text` são convertidos para WebVTT.
-- MKV: o navegador extrai as legendas de texto numa passagem sequencial sobre a fonte, em paralelo ao remux.
+- MKV: o navegador extrai as legendas de texto numa passagem sequencial sobre a fonte, em paralelo ao remux (ou ao preparo do worker, no caso de torrent).
 - Torrent: os arquivos `.srt`, `.ass`, `.ssa` e `.vtt` que acompanham o vídeo são lidos do worker, convertidos para WebVTT no navegador e publicados quase imediatamente, sem esperar o vídeo. O idioma vem do nome do arquivo.
 - O servidor só recebe WebVTT pronto (`POST /api/rooms/:id/subtitles`) e o repassa ao bucket.
 - Imagem: PGS e VobSub são detectadas, mas não são exibidas; a interface informa quantas foram ignoradas.

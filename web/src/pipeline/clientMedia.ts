@@ -558,9 +558,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       dropQueued()
       file.abortReads()
       trace.mark('readsAborted')
-      if (plan.durationSeconds > 0) {
-        file.prefetchAt?.(Math.round((absoluteMs / (plan.durationSeconds * 1000)) * file.size))
-      }
       await conversion?.cancel().catch(() => {})
       console.log('[remux-worker] old region canceled')
       trace.mark('canceled')

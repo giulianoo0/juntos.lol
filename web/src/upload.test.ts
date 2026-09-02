@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   FILE_UNREADABLE,
+  REMUX_UNAVAILABLE,
   SOURCE_UNREACHABLE,
   UNSUPPORTED_MEDIA,
   createRoomAndUpload,
@@ -230,28 +231,32 @@ describe('upload registry', () => {
 })
 
 describe('torrent upload', () => {
-  const bytes = new TextEncoder().encode('torrent bytes')
+  const grant = { jobId: 'j1', readBase: 'https://w.test', ticket: 'T1', expiresAt: new Date(Date.now() + 60_000).toISOString(), name: 'episode.mkv', size: 4_000, fileIndex: 0 }
   const file = {
-    name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: bytes.byteLength,
-    type: 'video/x-matroska', progress: 0, downloaded: 0,
-    read: vi.fn(async (start: number, end: number) => bytes.slice(start, end + 1).buffer),
+    name: 'episode.mkv', path: 'show/episode.mkv', index: 0, size: 4_000,
+    type: 'video/x-matroska', progress: 0, downloaded: 0, worker: grant,
   }
   const makeSession = () => ({
-    name: 'show', files: [file],
-    subtitleFiles: [{
-      name: 'episode.srt', path: 'show/episode.srt', size: 30,
-      read: vi.fn(async () => new TextEncoder().encode('1\n00:00:01,000 --> 00:00:02,000\nHi\n').buffer),
-    }],
+    name: 'show', jobId: 'j1', files: [file],
+    subtitleFiles: [{ name: 'episode.srt', path: 'show/episode.srt', size: 30, index: 1 }],
     stats: () => ({ peers: 1, downloadSpeed: 10, downloaded: 0, progress: 0 }),
-    select: vi.fn(), destroy: vi.fn(),
+    select: vi.fn(), destroy: vi.fn(), detach: vi.fn(),
   })
+  const stubFetch = (remux: { status: number; body: unknown }) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/rooms') return { ok: true, status: 200, json: async () => ({ id: 'room1', nickname: 'giuli', ownerToken: 'own' }) }
+      if (url === '/api/torrents/j1/remux') return { ok: remux.status < 300, status: remux.status, json: async () => remux.body }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
 
   beforeEach(() => {
     subtitleFakes.reset()
-    file.read.mockClear()
     clientPipeline.planClientRemux.mockResolvedValue(plan)
     clientPipeline.runClientRemux.mockResolvedValue(undefined)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'room1', nickname: 'giuli' }) }))
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -259,29 +264,32 @@ describe('torrent upload', () => {
     vi.clearAllMocks()
   })
 
-  it('remuxes the torrent from the helper, and publishes both kinds of subtitle', async () => {
+  it('hands the torrent to the fleet and never remuxes it here', async () => {
+    const fetchMock = stubFetch({ status: 202, body: { runId: 'run1', state: 'queued' } })
     const session = makeSession()
     const result = await createRoomAndUploadTorrent({ file, session }, 'giuli')
     const done = vi.fn()
     subscribeUploadDone(result.roomID, done)
     await vi.waitFor(() => expect(done).toHaveBeenCalledWith(null))
 
-    const input = clientPipeline.runClientRemux.mock.calls[0][0].file as { name: string; size: number }
-    expect(input).toMatchObject({ name: 'episode.mkv', size: bytes.byteLength })
-    await vi.waitFor(() => expect(subtitleFakes.published.some((entry) => entry.source === 'embedded' && entry.complete)).toBe(true))
-    expect(new TextDecoder().decode(subtitleFakes.written[0])).toBe('torrent bytes')
-    expect(subtitleFakes.published.some((entry) => entry.source === 'external' && entry.complete)).toBe(true)
-    expect(session.destroy).toHaveBeenCalled()
+    const remux = fetchMock.mock.calls.find(([url]) => String(url) === '/api/torrents/j1/remux')
+    expect(remux).toBeDefined()
+    expect(JSON.parse(String(remux![1]?.body))).toMatchObject({ roomId: 'room1', mediaGeneration: 0, auth: { ownerToken: 'own' } })
+    expect(clientPipeline.planClientRemux).not.toHaveBeenCalled()
+    expect(clientPipeline.runClientRemux).not.toHaveBeenCalled()
+    expect(session.detach).toHaveBeenCalled()
+    expect(session.destroy).not.toHaveBeenCalled()
   })
 
-  it('tears the helper session down when the remux fails too', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    clientPipeline.runClientRemux.mockRejectedValueOnce(new Error('boom'))
+  it('reports the fleet saying no as the room failing, and releases the session', async () => {
+    stubFetch({ status: 503, body: { error: 'remux_unavailable' } })
     const session = makeSession()
     const result = await createRoomAndUploadTorrent({ file, session }, 'giuli')
     const done = vi.fn()
     subscribeUploadDone(result.roomID, done)
-    await vi.waitFor(() => expect(done).toHaveBeenCalledWith('boom'))
+    await vi.waitFor(() => expect(done).toHaveBeenCalledWith(REMUX_UNAVAILABLE))
+    expect(lastUploadFailureDetail()).toContain('remux_unavailable')
+    expect(clientPipeline.runClientRemux).not.toHaveBeenCalled()
     expect(session.destroy).toHaveBeenCalled()
   })
 })

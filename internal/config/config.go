@@ -46,7 +46,6 @@ type Config struct {
 	BehindCloudflare       bool
 	WorkerRelayBase        string
 
-	RemoteRemuxEnabled bool
 	RemoteRemuxAPIBase string
 
 	// PluginFetchProxy is a proxy the plugin hop sends its requests through
@@ -145,7 +144,6 @@ func Load() (Config, error) {
 	cfg.PublicOrigin = strings.TrimSuffix(os.Getenv("PUBLIC_ORIGIN"), "/")
 	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
 	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
-	cfg.RemoteRemuxEnabled = os.Getenv("REMOTE_REMUX") == "1"
 	cfg.RemoteRemuxAPIBase = strings.TrimSuffix(os.Getenv("REMOTE_REMUX_API_BASE"), "/")
 	cfg.PluginFetchProxy = strings.TrimSpace(os.Getenv("PLUGIN_FETCH_PROXY"))
 	if cfg.PluginFetchProxy != "" {

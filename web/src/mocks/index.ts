@@ -35,7 +35,6 @@ function mockVideoFile({ name, size }: { name: string; size: number }, index = 0
     type: 'video/x-matroska',
     progress: 0,
     downloaded: 0,
-    read: () => Promise.resolve(new ArrayBuffer(0)),
   }
 }
 

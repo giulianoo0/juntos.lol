@@ -25,7 +25,6 @@ import (
 // authoritative position; heartbeats carry run state back.
 
 var (
-	ErrRemuxDisabled    = errors.New("remux_disabled")
 	ErrRemuxUnavailable = errors.New("remux_unavailable")
 	ErrRemuxConflict    = errors.New("remux_conflict")
 	ErrRemuxDenied      = errors.New("remux_denied")
@@ -134,9 +133,6 @@ func (o *RemuxOrchestrator) capableWorker(workerID string) bool {
 // controller's capability; both require the session owning the torrent job.
 func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, req remux.StartRequest,
 	authorizeMember func(memberID, capability string) bool) (*remux.StartResponse, error) {
-	if !o.Cfg.RemoteRemuxEnabled {
-		return nil, ErrRemuxDisabled
-	}
 	job, err := o.Service.Get(ctx, sessionID, jobID)
 	if err != nil {
 		return nil, err
@@ -176,13 +172,13 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 
 	if existing, err := o.LoadRun(ctx, req.RoomID); err == nil && existing != nil {
 		if existing.MediaGeneration == req.MediaGeneration && !remux.TerminalState(existing.State) {
-			return &remux.StartResponse{Remote: true, RunID: existing.RunID,
+			return &remux.StartResponse{RunID: existing.RunID,
 				MediaGeneration: existing.MediaGeneration, State: existing.State}, nil
 		}
 		if existing.MediaGeneration != req.MediaGeneration {
 			o.deleteRun(ctx, req.RoomID)
 		} else if existing.RequestID == req.RequestID {
-			return &remux.StartResponse{Remote: true, RunID: existing.RunID,
+			return &remux.StartResponse{RunID: existing.RunID,
 				MediaGeneration: existing.MediaGeneration, State: existing.State}, nil
 		}
 	}
@@ -235,7 +231,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	run.State = remux.RunAccepted
 	run.UpdatedAt = time.Now()
 	_ = o.saveRun(ctx, run)
-	return &remux.StartResponse{Remote: true, RunID: run.RunID,
+	return &remux.StartResponse{RunID: run.RunID,
 		MediaGeneration: run.MediaGeneration, State: run.State}, nil
 }
 
@@ -291,7 +287,7 @@ const followDebounce = 3 * time.Second
 // nothing; an uncovered one replaces the run at the target. Buffer reports
 // never reach here — only controller state changes do.
 func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
-	if !o.Cfg.RemoteRemuxEnabled || positionMs < 0 {
+	if positionMs < 0 {
 		return
 	}
 	o.mu.Lock()

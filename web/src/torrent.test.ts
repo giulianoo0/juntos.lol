@@ -95,11 +95,8 @@ describe('openTorrent', () => {
 
     await session.select('show/episode.mkv')
     expect(session.files[0].worker).toMatchObject({ jobId: 'j1', readBase: 'https://w.test', ticket: 'T1', fileIndex: 1 })
-    expect(session.subtitleFiles[0].streamUrl).toBe('https://w.test/v1/file/T1/2')
-    await expect(session.files[0].read(0, 1)).resolves.toHaveProperty('byteLength', 2)
-    const read = calls.find((call) => call.url.startsWith('https://w.test/v1/f/T1'))
-    expect(read?.url).toBe('https://w.test/v1/f/T1?prio=head')
-    expect((read!.init!.headers as Record<string, string>).Range).toBe('bytes=0-1')
+    expect(session.subtitleFiles[0].index).toBe(2)
+    expect(calls.some((call) => call.url.startsWith('https://w.test/v1/f/'))).toBe(false)
     expect(calls.filter((call) => call.url.startsWith('/api')).every((call) => !call.url.includes('/v1/'))).toBe(true)
 
     session.destroy()
