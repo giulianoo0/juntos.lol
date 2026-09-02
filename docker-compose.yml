@@ -38,6 +38,7 @@ services:
       WORKER_RELAY_BASE: ${WORKER_RELAY_BASE:-}
       REMOTE_REMUX: ${REMOTE_REMUX:-}
       REMOTE_REMUX_API_BASE: ${REMOTE_REMUX_API_BASE:-}
+      PLUGIN_FETCH_PROXY: ${PLUGIN_FETCH_PROXY:-}
     volumes:
       - ss-data:/data
       # The documentation is built from its own repository and rsynced here,

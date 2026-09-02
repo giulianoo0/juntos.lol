@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -86,6 +87,12 @@ type Config struct {
 	// publish, metadata). It comes from configuration, never from a client.
 	// Empty falls back to PublicOrigin.
 	RemoteRemuxAPIBase string
+
+	// PluginFetchProxy is a proxy the plugin hop sends its requests through
+	// (http, https or socks5 url). Set when the instance's own address is
+	// one an addon refuses: the hop then leaves from wherever the proxy is.
+	// Empty means the hop dials addons itself.
+	PluginFetchProxy string
 }
 
 func Load() (Config, error) {
@@ -189,6 +196,15 @@ func Load() (Config, error) {
 	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
 	cfg.RemoteRemuxEnabled = os.Getenv("REMOTE_REMUX") == "1"
 	cfg.RemoteRemuxAPIBase = strings.TrimSuffix(os.Getenv("REMOTE_REMUX_API_BASE"), "/")
+	cfg.PluginFetchProxy = strings.TrimSpace(os.Getenv("PLUGIN_FETCH_PROXY"))
+	if cfg.PluginFetchProxy != "" {
+		// A proxy that does not parse must stop the boot, not silently
+		// leave the hop dialing from the address the proxy exists to avoid.
+		u, err := url.Parse(cfg.PluginFetchProxy)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") {
+			return Config{}, fmt.Errorf("PLUGIN_FETCH_PROXY must be an http, https or socks5 url")
+		}
+	}
 	if cfg.RemoteRemuxAPIBase == "" {
 		cfg.RemoteRemuxAPIBase = cfg.PublicOrigin
 	}

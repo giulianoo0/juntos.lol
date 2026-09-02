@@ -87,14 +87,26 @@ func NewPluginFetcher(cfg config.Config) *PluginFetcher {
 		f.selfHost = normalizeHost(origin.Hostname())
 	}
 	f.transport = &http.Transport{
-		// No Proxy: an HTTP_PROXY in the environment would carry the request
-		// past the dialer below, and the dialer is the guard.
+		// No Proxy from the environment: an HTTP_PROXY would carry the
+		// request past the dialer below, and the dialer is the guard.
 		Proxy:                 nil,
 		DialContext:           f.dial,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: pluginFetchTimeout,
 		MaxIdleConns:          32,
 		IdleConnTimeout:       30 * time.Second,
+	}
+	if cfg.PluginFetchProxy != "" {
+		// A configured proxy is the one exception, and it is deliberate:
+		// torrentio refuses the instance's own address, so the hop leaves
+		// from wherever the proxy is. The name is then resolved there, out
+		// of this dialer's sight, so the address guard moves with it — the
+		// proxy's network is what a private name would reach. What stays is
+		// checkTarget: https, a name, never this server, on every redirect.
+		// config.Load has already refused a proxy url that does not parse.
+		proxy, _ := url.Parse(cfg.PluginFetchProxy)
+		f.transport.Proxy = http.ProxyURL(proxy)
+		f.transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 	}
 	f.client = &http.Client{
 		Transport: f.transport,

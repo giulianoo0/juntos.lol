@@ -191,6 +191,65 @@ func TestPluginFetchDoesNotWaitOnAnAddressThatNeverAnswers(t *testing.T) {
 	require.Less(t, time.Since(started), 3*time.Second)
 }
 
+// connectProxy is the smallest CONNECT proxy: it tunnels to whatever host
+// the client names, and records what it was asked for.
+func connectProxy(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	asked := &[]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "connect only", http.StatusMethodNotAllowed)
+			return
+		}
+		*asked = append(*asked, r.Host)
+		// The proxy is what resolves the name; here every name is loopback.
+		_, port, _ := net.SplitHostPort(r.Host)
+		upstream, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", port))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		client, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			upstream.Close()
+			return
+		}
+		go func() { defer client.Close(); _, _ = io.Copy(client, upstream) }()
+		go func() { defer upstream.Close(); _, _ = io.Copy(upstream, client) }()
+	}))
+	t.Cleanup(server.Close)
+	return server, asked
+}
+
+func TestPluginFetchLeavesThroughTheConfiguredProxy(t *testing.T) {
+	upstream := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "via proxy")
+	})
+	proxy, asked := connectProxy(t)
+	// The production guard stays: the proxy is on loopback and the addon
+	// resolves to loopback, and neither is this fetcher's to refuse — the
+	// dial goes to the proxy, the name goes with the CONNECT.
+	fetcher := NewPluginFetcher(config.Config{PublicOrigin: "https://ss.test", PluginFetchProxy: proxy.URL})
+	fetcher.tlsInsecureForTests(upstream.server.Client())
+	r := gin.New()
+	RegisterPluginFetchRoute(r.Group("/api"), fetcher, nil, nil)
+
+	w := hop(r, "https://addon.test:"+upstream.port()+"/x")
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "via proxy", w.Body.String())
+	require.Equal(t, []string{"addon.test:" + upstream.port()}, *asked)
+	require.Len(t, upstream.hits, 1)
+	require.Empty(t, upstream.hits[0].Header.Get("Origin"))
+
+	// The url policy does not move with the guard.
+	for _, target := range []string{"http://addon.test/x", "https://localhost/x", "https://ss.test/api", "https://127.0.0.1/x"} {
+		require.Equal(t, http.StatusBadRequest, hop(r, target).Code, target)
+	}
+	require.Len(t, *asked, 1)
+}
+
 func TestPluginFetchCapsTheBody(t *testing.T) {
 	upstream := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, strings.Repeat("x", 100))
