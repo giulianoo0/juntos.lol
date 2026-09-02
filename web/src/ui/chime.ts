@@ -15,15 +15,12 @@ function audio(): AudioContext | null {
   return context
 }
 
-const NOTES = [659.25, 987.77] // E5 into B5, an open-sounding rise.
+const NOTES = [659.25, 987.77]
 const NOTE_MS = 90
 const PEAK = 0.05
 
 export function playJoinChime(): void {
   const ctx = audio()
-  // Autoplay policy keeps the context suspended until the page has been
-  // interacted with. Nothing to do about it, and nothing worth reporting: a
-  // missed blip is not a failure anyone needs to hear about.
   if (!ctx || ctx.state !== 'running') { void ctx?.resume().catch(() => undefined); return }
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
 
@@ -34,8 +31,6 @@ export function playJoinChime(): void {
     const gain = ctx.createGain()
     oscillator.type = 'sine'
     oscillator.frequency.value = frequency
-    // Ramped rather than switched: a gain that jumps produces a click at both
-    // ends, which is louder than the note itself.
     gain.gain.setValueAtTime(0, startsAt)
     gain.gain.linearRampToValueAtTime(PEAK, startsAt + 0.012)
     gain.gain.exponentialRampToValueAtTime(0.0001, endsAt)

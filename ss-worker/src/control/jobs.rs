@@ -97,8 +97,6 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
             }
         }
         "setLimits" => {
-            // Session-wide caps are what librqbit exposes at runtime; the
-            // per-torrent upload cap is fixed at add time.
             err("unsupported", "runtime limits are not adjustable yet".into())
         }
         other => err("bad_job", format!("unknown kind {other}")),

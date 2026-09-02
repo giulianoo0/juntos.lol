@@ -71,7 +71,6 @@ pub async fn get(
     let end = end.min(start + state.engine.cfg.response_cap - 1);
     let len = end - start + 1;
     let prio = Prio::parse(query.prio.as_deref());
-    // A request that names no generation is never superseded by a hint.
     let gen = query.gen.unwrap_or(u64::MAX);
     state.metrics.range_requests.fetch_add(1, Ordering::Relaxed);
 
@@ -91,8 +90,6 @@ pub async fn get(
     let tag = RangeTag { infohash: ticket.infohash.clone(), room: ticket.room_id.clone(), prio, gen, start, len };
     tokio::spawn(pump(reader, tag, chunk, first_byte, stall, tx, metrics, throttle));
 
-    // Headers wait for the first chunk: a piece nobody has yet is a 504 the
-    // client waits out on its own budget, not a silent open body.
     let first = match tokio::time::timeout(state.engine.cfg.first_byte_deadline, rx.recv()).await {
         Ok(Some(chunk)) => chunk,
         Ok(None) => return fail(StatusCode::SERVICE_UNAVAILABLE, &aud, "read ended before first byte"),
@@ -118,13 +115,6 @@ pub async fn get(
     response
 }
 
-// Reads `len` bytes into the channel. A chunk that takes longer than the
-// deadline (first-byte for the first, stall for the rest) ends the body
-// early — the client resumes from wherever it got to; so does a reader
-// superseded by a hint. A receiver that went away — the browser aborted,
-// or the handler gave up waiting for the first byte — cancels the read in
-// progress, so the slot and the permit go back at once.
-/// What one range was, for the line it leaves behind.
 struct RangeTag {
     infohash: String,
     room: String,
@@ -192,9 +182,6 @@ async fn pump(
             break "receiver gone";
         }
     };
-    // One line per range: with these the shape of a seek can be read off
-    // the log — how long the first byte took, whether the body ran to its
-    // end, and what cut it short — per room, class and generation.
     tracing::info!(
         infohash = %tag.infohash,
         room = %tag.room,

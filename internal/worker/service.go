@@ -17,17 +17,10 @@ type Service struct {
 	Hub       *Hub
 	Signer    *Signer
 	Blocklist *Blocklist
-	// Quota charges sessions; nil-safe.
-	Quota QuotaCharger
-	// TicketTTL bounds a data-plane ticket.
+	Quota     QuotaCharger
 	TicketTTL time.Duration
-	// JobTTL bounds a job record that nobody touches.
-	JobTTL time.Duration
-	// OnSwarm is told, on every heartbeat, what a room's torrent looks like
-	// now; nil-safe.
-	OnSwarm func(roomID string, stats SwarmStats)
-	// RelayBase is the public address browsers reach relayed workers
-	// through (the fleet's front door). Empty means no relaying.
+	JobTTL    time.Duration
+	OnSwarm   func(roomID string, stats SwarmStats)
 	RelayBase string
 }
 
@@ -38,7 +31,6 @@ type QuotaCharger interface {
 	AddBytes(ctx context.Context, sid string, n int64) error
 }
 
-// Errors the HTTP layer maps to codes.
 var (
 	ErrBlocked     = errors.New("blocked")
 	ErrQuotaJobs   = errors.New("concurrent_jobs")
@@ -91,8 +83,8 @@ type ProbeTarget struct {
 }
 
 // ProbeList hands the page every healthy worker with a short-lived probe
-// ticket each, so it can measure reachability and speed itself — a server
-// in one datacenter cannot know which worker is fast from THIS browser.
+// ticket each, so it can measure reachability itself: the server cannot know
+// which worker is fast from THIS browser.
 func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
 	now := time.Now()
 	var out []ProbeTarget
@@ -118,10 +110,8 @@ func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
 }
 
 // Start registers an infohash for a session: blocklist, quota, placement,
-// then the lease job in the background. Returns as soon as the job is
-// placed; the listing arrives through Get. `preferred` is the page's own
-// ranking from its probes; the first of them that passes the hard filters
-// wins, because the page measured a path the server cannot see.
+// then the lease job in the background; the listing arrives through Get.
+// `preferred` is the page's own ranking from its probes and wins when it fits.
 func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, trackers, preferred []string) (*JobRecord, error) {
 	if s.Blocklist.Rejects(infohash, name) {
 		return nil, ErrBlocked
@@ -187,8 +177,6 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 	}
 	switch {
 	case err != nil:
-		// The worker may well have finished the lease and be holding the
-		// torrent; nothing here will read it, so it is released.
 		current.State, current.Error = JobFailed, mapDispatchError(err)
 		_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
 	case !result.OK:
@@ -197,7 +185,6 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 			slog.Info("worker refused lease", "job", job.ID, "code", result.Error, "detail", result.Detail)
 		}
 	default:
-		// The name is only known now; the blocklist gets its second look.
 		if s.Blocklist.Rejects(current.Infohash, result.Name) {
 			current.State, current.Error = JobFailed, ErrBlocked.Error()
 			_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
@@ -244,14 +231,12 @@ func (s *Service) Get(ctx context.Context, sessionID, jobID string) (*JobRecord,
 
 // SwarmStats is the slice of a heartbeat a viewer cares about.
 type SwarmStats struct {
-	Peers         int64 `json:"peers"`
-	DownSpeed     int64 `json:"downSpeed"`
-	HaveBytes     int64 `json:"haveBytes"`
-	SelectedBytes int64 `json:"selectedBytes"`
-	// DiskBytes is the storage the torrent is really costing, after the window
-	// has given back everything the reader has passed.
-	DiskBytes int64  `json:"diskBytes"`
-	Phase     string `json:"phase,omitempty"`
+	Peers         int64  `json:"peers"`
+	DownSpeed     int64  `json:"downSpeed"`
+	HaveBytes     int64  `json:"haveBytes"`
+	SelectedBytes int64  `json:"selectedBytes"`
+	DiskBytes     int64  `json:"diskBytes"`
+	Phase         string `json:"phase,omitempty"`
 }
 
 // Swarm answers the job's torrent as its worker last reported it.
@@ -301,8 +286,6 @@ func (s *Service) Select(ctx context.Context, sessionID, jobID string, fileIndex
 		FileIndex: &fileIndex,
 		RoomID:    roomID,
 	}, 60*time.Second)
-	// A select that did not land leaves the job listed: the lease is alive,
-	// the worker may hold the file, and the next select costs no dispatch.
 	if err != nil {
 		job.State, job.Error = JobListed, mapDispatchError(err)
 		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
@@ -338,11 +321,9 @@ func (s *Service) grant(job *JobRecord, file *FileEntry) (*Grant, error) {
 	return &Grant{ReadBase: worker.EffectiveBase(s.RelayBase), Ticket: ticket, ExpiresAt: exp, Name: file.Name, Size: file.Size, FileIndex: file.Index}, nil
 }
 
-// Token renews the ticket of a serving job and tells the worker the lease
-// is still wanted. A remux of a big file outlives any single ticket. The
-// first renewal also names the room the job feeds, which is what lets a
-// source swap or the room's end release it — after the room exists, so
-// the swap that created it cannot cancel it.
+// Token renews the ticket of a serving job and tells the worker the lease is
+// still wanted. The first renewal also names the room the job feeds, which is
+// what lets a source swap or the room's end release it.
 func (s *Service) Token(ctx context.Context, sessionID, jobID, roomID string) (*Grant, error) {
 	job, err := s.Get(ctx, sessionID, jobID)
 	if err != nil {
@@ -387,8 +368,8 @@ func (s *Service) release(ctx context.Context, job *JobRecord) {
 	_ = s.Registry.DeleteJob(ctx, job)
 }
 
-// CancelRoom releases every job a room holds: the source was swapped or
-// the room died, and nothing should keep a worker holding 50 GB for it.
+// CancelRoom releases every job a room holds: the source was swapped or the
+// room died.
 func (s *Service) CancelRoom(roomID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -437,12 +418,9 @@ func (s *Service) Sweep(ctx context.Context, idle time.Duration) {
 	}
 }
 
-// Charge accounts a heartbeat's per-torrent growth to the session whose
-// job sits on that torrent. It is the only byte signal there is: the
-// browser never reports, and the worker's number is trusted as far as the
-// fleet is. The damage a wrong number can do is bounded: growth is charged
-// once per torrent per worker, never past the selected file's size, and a
-// reset restarts the count instead of charging the re-download.
+// Charge accounts a heartbeat's per-torrent growth to the session whose job
+// sits on that torrent — the only byte signal there is. Growth is charged once
+// per torrent per worker, never past the selected file's size.
 func (s *Service) Charge(workerID string, hb Heartbeat) {
 	if s.Quota == nil && s.OnSwarm == nil {
 		return
@@ -515,7 +493,6 @@ func selectedSize(job *JobRecord) int64 {
 	return 0
 }
 
-// StartSweeper runs Sweep on an interval until ctx ends.
 func (s *Service) StartSweeper(ctx context.Context, interval, idle time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -530,9 +507,6 @@ func (s *Service) StartSweeper(ctx context.Context, interval, idle time.Duration
 	}
 }
 
-// How long a linkless worker may stay silent before the registry forgets it.
-// Long enough for a reboot or an image pull, short enough that the status
-// page is not a graveyard of identities the cleanup scripts retired.
 const ghostWorkerAge = time.Hour
 
 // RelayTarget resolves a relayed worker's real address for the relay

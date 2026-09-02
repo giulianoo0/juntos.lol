@@ -10,8 +10,6 @@ describe('languageLabel', () => {
   })
 
   it('names both halves of a doubled ISO 639-2 code the same way', () => {
-    // The same dub arrives as "ger" from one release and "deu" from the next,
-    // and a menu that names one and not the other looks broken.
     expect(languageLabel('ger', 'en')).toBe(languageLabel('deu', 'en'))
     expect(languageLabel('fre', 'en')).toBe(languageLabel('fra', 'en'))
     expect(languageLabel('deu', 'pt-BR')).toBe('Alemão')
@@ -31,8 +29,6 @@ describe('languageLabel', () => {
 
 describe('audioTrackLabel', () => {
   it('drops ffmpeg placeholder names in favour of the language', () => {
-    // What the pipeline actually publishes: var_stream_map cannot carry a name
-    // with spaces, so ffmpeg numbers the renditions itself.
     expect(audioTrackLabel({ name: 'audio_6', lang: 'por' }, 'pt-BR', 6)).toBe('Português')
     expect(audioTrackLabel({ name: 'audio_0', lang: 'jpn' }, 'pt-BR', 0)).toBe('Japonês')
   })

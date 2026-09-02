@@ -16,10 +16,9 @@ use crate::http::range::parse_range;
 
 use super::sink::{object_kind, ObjectKind, Sink};
 
-/// The loopback bridge: FFmpeg's whole world. One listener on 127.0.0.1, an
-/// ephemeral port, and per-run random capabilities on both sides — reading
-/// the verified torrent bytes in, and writing HLS objects out. Loopback is
-/// where it listens, the capability is what authorizes; neither alone.
+/// The loopback bridge: FFmpeg's whole world. One listener on 127.0.0.1,
+/// an ephemeral port, and per-run random capabilities on both sides —
+/// torrent bytes in, HLS objects out.
 pub struct Bridge {
     pub addr: SocketAddr,
     inputs: Arc<Mutex<HashMap<String, Arc<InputTarget>>>>,
@@ -109,11 +108,6 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
     tracing::info!(reader = %target.reader, start, end, "remux input request");
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(4);
     let chunk = target.engine.read_chunk_size();
-    // The piece window only follows the reader through open(): the browser
-    // path reopens every 16 MiB and the window walks with it, while one
-    // reader held across gigabytes parks the window at its birthplace and
-    // the read blocks forever on pieces nobody asks for. So the body is
-    // served in the same strides, reopening the pooled slot each step.
     const STRIDE: u64 = 16 * 1024 * 1024;
     let trace_tag = format!("{} start={start}", target.reader);
     tokio::spawn(async move {
@@ -167,9 +161,6 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                 };
                 match read {
                     Ok(0) => {
-                        // Short read of a promised range: the connection dies
-                        // so FFmpeg sees an error, never a clean EOF with
-                        // bytes missing.
                         deliver_err(&tx, "input ended early".into()).await;
                         return;
                     }
@@ -181,10 +172,6 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                             logged = sent;
                             tracing::info!(reader = %target.reader, start, sent, "remux input flowing");
                         }
-                        // A consumer that seeked away leaves this connection
-                        // behind without closing it; the send would park here
-                        // forever with the pooled slot in hand. Bounded, the
-                        // task dies and the slot goes back to the pool.
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(180),
                             tx.send(Ok(bytes::Bytes::copy_from_slice(&buf[..n]))),
@@ -220,9 +207,6 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, total.to_string())
         .header(header::CONTENT_TYPE, "application/octet-stream")
-        // FFmpeg reuses a kept-alive connection whose previous response it
-        // abandoned mid-body; hyper never parses the new request on it and
-        // FFmpeg polls that socket forever. One connection per request.
         .header(header::CONNECTION, "close");
     if ranged {
         response = response.header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{size}"));

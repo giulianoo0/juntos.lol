@@ -10,9 +10,8 @@ import (
 	"strings"
 )
 
-// Blocklist is what the instance refuses to dispatch, applied at signing
-// time so a refused infohash is never stored anywhere: not in a job, not
-// in a worker's disk, not in a log line richer than "refused".
+// Blocklist is what the instance refuses to dispatch, applied at signing time
+// so a refused infohash is never stored anywhere.
 type Blocklist struct {
 	hashes   map[string]struct{}
 	keywords []string
@@ -60,9 +59,8 @@ func isInfohash(s string) bool {
 	return err == nil
 }
 
-// Rejects answers whether a torrent may not be dispatched. name may be
-// empty when only the hash is known yet; the check runs again once the
-// worker resolved the metadata.
+// Rejects answers whether a torrent may not be dispatched. name may be empty
+// when only the hash is known; the check runs again once metadata resolves.
 func (b *Blocklist) Rejects(infohash, name string) bool {
 	if b == nil {
 		return false
@@ -82,7 +80,6 @@ func (b *Blocklist) Rejects(infohash, name string) bool {
 	return false
 }
 
-// Len is how many entries the list carries.
 func (b *Blocklist) Len() int {
 	if b == nil {
 		return 0

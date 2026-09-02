@@ -80,7 +80,6 @@ describe('upload registry', () => {
     vi.clearAllMocks()
   })
 
-  // Holds the remux open so progress and completion can be driven by hand.
   const startUpload = async (file = new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })) => {
     let finishRun: () => void = () => {}
     let failRun: (error: unknown) => void = () => {}
@@ -98,7 +97,6 @@ describe('upload registry', () => {
     const { result } = await startUpload()
     expect(result.roomID).toBe('room1')
     expect(roomBodies).toEqual([{ fileName: 'movie.mkv', nickname: 'giuli' }])
-    // The one fetch is the room creation. No upload endpoint was asked for.
     expect(vi.mocked(fetch)).toHaveBeenCalledOnce()
     expect(clientPipeline.runClientRemux.mock.calls[0][0]).toMatchObject({ roomID: 'room1', mediaGeneration: 0 })
   })
@@ -110,8 +108,6 @@ describe('upload registry', () => {
     subscribeUploadDone(result.roomID, done)
     await vi.waitFor(() => expect(done).toHaveBeenCalledWith(UNSUPPORTED_MEDIA))
     expect(clientPipeline.runClientRemux).not.toHaveBeenCalled()
-    // "Unsupported" is a verdict; the reason is the only part a person can
-    // act on, and it has to survive the trip to the failure screen.
     expect(lastUploadFailureDetail()).toBe('no video track')
   })
 
@@ -129,7 +125,6 @@ describe('upload registry', () => {
     subscribeUploadDone(result.roomID, done)
     failRun(new clientPipeline.RoomMovedOnError('swapped'))
     await tick()
-    // Another source owns the room: this one neither failed nor finished.
     expect(done).not.toHaveBeenCalled()
   })
 
@@ -271,14 +266,11 @@ describe('torrent upload', () => {
     subscribeUploadDone(result.roomID, done)
     await vi.waitFor(() => expect(done).toHaveBeenCalledWith(null))
 
-    // The remux got an input over the helper's ranged reads, not a File.
     const input = clientPipeline.runClientRemux.mock.calls[0][0].file as { name: string; size: number }
     expect(input).toMatchObject({ name: 'episode.mkv', size: bytes.byteLength })
-    // The subtitle pass read the torrent through the same ranged reads.
     await vi.waitFor(() => expect(subtitleFakes.published.some((entry) => entry.source === 'embedded' && entry.complete)).toBe(true))
     expect(new TextDecoder().decode(subtitleFakes.written[0])).toBe('torrent bytes')
     expect(subtitleFakes.published.some((entry) => entry.source === 'external' && entry.complete)).toBe(true)
-    // The helper stops downloading once the transfer is over.
     expect(session.destroy).toHaveBeenCalled()
   })
 

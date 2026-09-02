@@ -5,40 +5,28 @@ import (
 	"time"
 )
 
-// FleetMember is one worker as a person looking at the status page sees it:
-// how loaded it is, what it still has room for, and how long ago it spoke.
-// Deliberately no address — the page ranks the fleet, it does not dial it,
-// and a worker's hostname is nobody's business but the fleet's.
+// FleetMember is one worker as the status page sees it. Deliberately no
+// address: the page ranks the fleet, it does not dial it.
 type FleetMember struct {
-	ID      string `json:"id"`
-	Version string `json:"version,omitempty"`
-	// Availability is the one word that decides the order: "available" takes
-	// work now, "busy" is healthy but full, "draining" is on its way out,
-	// "offline" stopped reporting.
-	Availability string `json:"availability"`
-	// Load is lease and disk pressure as one number in 0..1, the same one
-	// placement sorts by. Only meaningful while the worker is reporting.
-	Load        float64 `json:"load"`
-	Leases      int     `json:"leases"`
-	MaxLeases   int     `json:"maxLeases,omitempty"`
-	Torrents    int     `json:"torrents"`
-	MaxTorrents int     `json:"maxTorrents,omitempty"`
-	DiskUsed    int64   `json:"diskUsed"`
-	// DiskReal is what the volume actually carries, which is what the fleet
-	// page shows: DiskUsed is a promise about windows not yet downloaded.
-	DiskReal  int64 `json:"diskReal"`
-	DiskQuota int64 `json:"diskQuota,omitempty"`
-	// TransferUsedBps and TransferCapBps are the serving pipe: a worker close
-	// to its ceiling is full even with disk and leases to spare.
-	TransferUsedBps int64 `json:"transferUsedBps"`
-	TransferCapBps  int64 `json:"transferCapBps,omitempty"`
-	UptimeSecs      int64 `json:"uptimeSecs,omitempty"`
-	LastSeenSecs    int64 `json:"lastSeenSecs"`
+	ID              string  `json:"id"`
+	Version         string  `json:"version,omitempty"`
+	Availability    string  `json:"availability"`
+	Load            float64 `json:"load"`
+	Leases          int     `json:"leases"`
+	MaxLeases       int     `json:"maxLeases,omitempty"`
+	Torrents        int     `json:"torrents"`
+	MaxTorrents     int     `json:"maxTorrents,omitempty"`
+	DiskUsed        int64   `json:"diskUsed"`
+	DiskReal        int64   `json:"diskReal"`
+	DiskQuota       int64   `json:"diskQuota,omitempty"`
+	TransferUsedBps int64   `json:"transferUsedBps"`
+	TransferCapBps  int64   `json:"transferCapBps,omitempty"`
+	UptimeSecs      int64   `json:"uptimeSecs,omitempty"`
+	LastSeenSecs    int64   `json:"lastSeenSecs"`
 }
 
 // availabilityRank orders the categories the way a person would want to be
-// served: something that takes work now, then something that might soon,
-// then what is leaving, then what is gone.
+// served: takes work now, might soon, is leaving, is gone.
 func availabilityRank(availability string) int {
 	switch availability {
 	case "available":
@@ -53,10 +41,8 @@ func availabilityRank(availability string) int {
 }
 
 // Fleet reports every worker this instance knows, best for a viewer first.
-//
-// The order is not cosmetic: it is the same one Place uses to choose, so the
-// top of the list is genuinely where the next room would land — anything
-// else would be a status page that disagrees with the system it describes.
+// The order is the same one Place uses, so the top of the list is genuinely
+// where the next room would land.
 func (r *Registry) Fleet(now time.Time) []FleetMember {
 	snapshot := r.Snapshot()
 	out := make([]FleetMember, 0, len(snapshot))

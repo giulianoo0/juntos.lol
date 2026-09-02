@@ -12,13 +12,9 @@
  * is a map write.
  */
 export interface SeekTrace {
-  /** Which seek this is, counting from one within the tracer's life. */
   seq: number
-  /** Where the seek was going, in media milliseconds. */
   targetMs: number
-  /** Milliseconds since the seek was issued, by mark name, in order. */
   marks: Record<string, number>
-  /** Free-form facts a mark wants to leave beside its time. */
   notes: Record<string, number | string>
 }
 
@@ -27,11 +23,8 @@ export interface SeekTracer {
   begin(targetMs: number): SeekTrace
   /** Stamps the open trace, if any. A name stamped twice keeps the first. */
   mark(name: string, note?: number | string): void
-  /** Whether a trace is open. */
   open(): boolean
-  /** Whether the open trace already carries this mark. */
   has(name: string): boolean
-  /** Closes the open trace and hands it to the sink. */
   end(): SeekTrace | null
 }
 
@@ -69,7 +62,6 @@ export function createSeekTracer(
   }
 }
 
-/** The one line a trace becomes in a console. */
 export function formatSeekTrace(side: string, trace: SeekTrace): string {
   const marks = Object.entries(trace.marks).map(([name, ms]) => {
     const note = trace.notes[name]

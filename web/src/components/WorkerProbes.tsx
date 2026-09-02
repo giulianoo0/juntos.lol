@@ -1,13 +1,10 @@
-import type { Translator } from '../i18n/useT'
-import type { WorkerProbe } from '../torrent'
-
 // The fleet, as measured from this browser, wherever a torrent is being
 // opened: one pill per worker, the chosen one lit. The measurement is the
 // user's own connection speaking — it deserves to be seen.
 
-// A worker the browser could not reach at an address that looks like a
-// private network is usually the browser refusing, not the worker missing:
-// Chrome gates public sites off local addresses behind a permission.
+import type { Translator } from '../i18n/useT'
+import type { WorkerProbe } from '../torrent'
+
 function looksLocal(readBase: string): boolean {
   try {
     const host = new URL(readBase).hostname

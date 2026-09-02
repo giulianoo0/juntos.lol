@@ -13,7 +13,6 @@ import type { FocusEvent } from 'react'
 
 export function caretToEndOnFocus(event: FocusEvent<HTMLInputElement>): void {
   const input = event.currentTarget
-  // After the browser has applied its own selection for this focus.
   requestAnimationFrame(() => {
     if (document.activeElement !== input) return
     const length = input.value.length

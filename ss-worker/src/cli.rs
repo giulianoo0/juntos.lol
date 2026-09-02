@@ -1,7 +1,5 @@
 use std::io::Write;
 
-/// The setup wizard: a handful of questions, an env file, done. No GUI —
-/// the worker is a service; what it needs is a good first five minutes.
 pub fn setup() -> anyhow::Result<()> {
     println!("\nss-worker setup — answers are written to ss-worker.env; Enter keeps the default.\n");
     let mut out = String::from("# ss-worker — written by `ss-worker setup`\n");

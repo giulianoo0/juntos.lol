@@ -13,14 +13,9 @@ interface CarouselProps {
   nextLabel: string
 }
 
-// The catalog's horizontal strip: Embla drives the scrolling (drag, snap
-// containment, and the sideways wheel through the listener below — bare
-// Embla ignores wheel events, and the viewport's overflow:hidden leaves no
-// native fallback) and a pair of floating round buttons ride the edges, each
-// appearing only while there is somewhere left to go.
+// The catalog's horizontal strip: Embla drives drag, snap and wheel, and a pair
+// of floating arrows appear only while there is somewhere left to go.
 export function Carousel({ children, className, prevLabel, nextLabel }: CarouselProps) {
-  // slidesToScroll 'auto' makes the arrows page by whole views instead of
-  // nudging one card at a time.
   const [viewportRef, embla] = useEmblaCarousel(
     { align: 'start', dragFree: true, containScroll: 'trimSnaps', slidesToScroll: 'auto' },
   )
@@ -87,8 +82,6 @@ export function Carousel({ children, className, prevLabel, nextLabel }: Carousel
       <div className="carousel-viewport" ref={viewportRef}>
         <div className="carousel-track">{children}</div>
       </div>
-      {/* preventDefault on mousedown: a focused arrow inside a scrollable
-          panel would make the browser scroll it into view — the "teleport". */}
       {canPrev ? (
         <button
           type="button"

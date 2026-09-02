@@ -9,19 +9,12 @@ export interface VttTrack {
   language: string
   title: string
   vtt: string
-  /**
-   * The full ASS document, present for ass/ssa sources. It rides beside the
-   * VTT conversion: the server stores both, and the player renders the ASS
-   * with libass — styles, karaoke, signs and all — falling back to the VTT
-   * only where the renderer cannot run.
-   */
   ass?: string
 }
 
 const SUBTITLE_EXTENSION = /\.(srt|ass|ssa|vtt|sub)$/i
 
-// ISO 639-2 is what the mkv tracks use, so external files are normalized to
-// the same vocabulary and the player labels both alike.
+// ISO 639-2, the same vocabulary the mkv tracks use.
 const LANGUAGE_NAMES: Record<string, string> = {
   arabic: 'ara',
   chinese: 'chi',
@@ -57,8 +50,6 @@ const LANGUAGE_NAMES: Record<string, string> = {
 
 const LANGUAGE_CODES = new Set(Object.values(LANGUAGE_NAMES))
 
-// Two-letter codes that appear in release file names, mapped to the same
-// three-letter vocabulary.
 const SHORT_CODES: Record<string, string> = {
   ar: 'ara', cs: 'cze', da: 'dan', de: 'ger', el: 'gre', en: 'eng', es: 'spa',
   fi: 'fin', fr: 'fre', he: 'heb', hi: 'hin', hr: 'hrv', hu: 'hun', id: 'ind',
@@ -71,20 +62,15 @@ export function isSubtitleFileName(name: string): boolean {
   return SUBTITLE_EXTENSION.test(name)
 }
 
-// Reads the language and a human label out of a file name. Releases label
-// subtitles in the name and nowhere else, so this is the only signal there is.
 export function subtitleIdentity(path: string): { language: string; title: string } {
   const fileName = path.split('/').pop() ?? path
   const base = fileName.replace(SUBTITLE_EXTENSION, '')
-  // Hyphens are kept while a token still looks like a region-qualified tag
-  // (pt-BR), and split otherwise, so a hyphenated title still tokenizes.
   const tokens = base.split(/[._\s()[\]]+/).filter(Boolean).flatMap((token) => (
     /^[a-z]{2}-[a-z]{2}$/i.test(token) ? [token] : token.split('-').filter(Boolean)
   ))
 
   let language = 'und'
-  // Later tokens win: "Movie.2019.1080p.eng.srt" names the language last,
-  // while an early token is far more likely to be part of the title.
+  // Later tokens win: an early one is far more likely part of the title.
   for (const token of tokens) {
     const lower = token.toLowerCase()
     if (LANGUAGE_NAMES[lower]) language = LANGUAGE_NAMES[lower]
@@ -97,9 +83,7 @@ export function subtitleIdentity(path: string): { language: string; title: strin
   return { language, title: title || 'Subtitle' }
 }
 
-// Decodes bytes that claim no encoding. Subtitle files are usually UTF-8 but
-// older releases are Windows-1252; a replacement character means the strict
-// UTF-8 pass failed, so fall back rather than render mojibake.
+// UTF-8, falling back to Windows-1252 when the strict pass fails.
 export function decodeSubtitleText(data: ArrayBuffer): string {
   const bytes = new Uint8Array(data)
   try {
@@ -113,8 +97,7 @@ function stripBOM(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
 }
 
-// Converts one subtitle file to WebVTT, or returns null when the format is
-// unsupported (bitmap VobSub .sub) or the file holds no usable cue.
+// Null when the format is unsupported (bitmap VobSub .sub) or holds no cue.
 export function convertSubtitleFile(path: string, data: ArrayBuffer): VttTrack | null {
   const text = decodeSubtitleText(data)
   const extension = (path.split('.').pop() ?? '').toLowerCase()
@@ -125,7 +108,6 @@ export function convertSubtitleFile(path: string, data: ArrayBuffer): VttTrack |
   else if (extension === 'sub') vtt = text.includes('-->') ? srtToWebVTT(text) : null
   if (!vtt) return null
   const track: VttTrack = { ...subtitleIdentity(path), vtt: positionDialogueCues(vtt) }
-  // A sidecar ASS file already is the document; it travels verbatim.
   if (extension === 'ass' || extension === 'ssa') track.ass = normalizeAssSidecar(text)
   return track
 }
@@ -136,8 +118,6 @@ function normalizeWebVTT(text: string): string {
   return `WEBVTT\n\n${body}\n`
 }
 
-// SubRip differs from WebVTT in the decimal separator and the numeric cue
-// counters, which WebVTT accepts as cue identifiers.
 export function srtToWebVTT(text: string): string {
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   const output: string[] = []
@@ -149,10 +129,8 @@ export function srtToWebVTT(text: string): string {
       output.push(timing)
       continue
     }
-    // A lone number opening a cue block is the SubRip counter. Keeping it
-    // would render as a cue identifier, which is harmless, but dropping it
-    // keeps the output comparable to the muxed tracks. The first cue has no
-    // preceding blank line, so an empty output counts as a block boundary too.
+    // A lone number opening a cue block is the SubRip counter, dropped so the
+    // output matches the muxed tracks.
     if (/^\d+$/.test(line.trim()) && (output.length === 0 || output[output.length - 1] === '')) continue
     output.push(line)
   }
@@ -172,19 +150,14 @@ function normalizeSrtStamp(stamp: string): string {
   return `${hours.padStart(2, '0')}:${minutes}:${seconds}.${fraction.padEnd(3, '0').slice(0, 3)}`
 }
 
-// The server validates ASS documents by their leading section header, so a
-// file that opens with comments or blank lines is trimmed up to it. One that
-// carries no [Script Info] at all is left as-is and the server refuses it —
-// which is right, because libass would have nothing to style with either.
+// The server validates ASS by its leading section header, so anything before
+// [Script Info] is trimmed; a file without one is left for it to refuse.
 function normalizeAssSidecar(text: string): string {
   const normalized = text.replace(/\r\n?/g, '\n')
   const at = normalized.search(/^\[script info\]/im)
   return at > 0 ? normalized.slice(at) : normalized
 }
 
-// Converts an ASS/SSA script. Placement, italics, bold and quantized colors
-// survive as WebVTT cue settings and tags; the styling VTT cannot carry is
-// dropped.
 export function assToWebVTT(text: string): string {
   const normalized = text.replace(/\r\n?/g, '\n')
   const info = parseAssHeader(normalized)
@@ -205,7 +178,6 @@ export function assToWebVTT(text: string): string {
     }
     if (!/^dialogue\s*:/i.test(trimmed)) continue
 
-    // Without a Format line the script is malformed; assume the standard order.
     const order = fields ?? ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text']
     const values = splitAssFields(trimmed.slice(trimmed.indexOf(':') + 1), order.length)
     const start = values[order.indexOf('start')]
@@ -220,8 +192,8 @@ export function assToWebVTT(text: string): string {
   return `WEBVTT\n\n${cues.join('\n')}`
 }
 
-// The Text field is last and may itself contain commas, so only the leading
-// fields are split off.
+// The Text field is last and may contain commas, so only the leading fields
+// are split off.
 function splitAssFields(value: string, count: number): string[] {
   const parts: string[] = []
   let rest = value
@@ -239,7 +211,6 @@ function normalizeAssStamp(stamp: string): string {
   const match = /^(\d{1,2}):(\d{1,2}):(\d{1,2})(?:[.,](\d{1,3}))?$/.exec(stamp.trim())
   if (!match) return '00:00:00.000'
   const [, hours, minutes, seconds, fraction = '0'] = match
-  // ASS centiseconds are two digits; WebVTT wants milliseconds.
   return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}.${fraction.padEnd(3, '0').slice(0, 3)}`
 }
 

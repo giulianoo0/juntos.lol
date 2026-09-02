@@ -1,7 +1,3 @@
-/* The first thing anyone sees, so it borrows the vocabulary the rest of the
-   app already uses: the same dialog surface, the same morph panel, the same
-   pill-shaped primary button. Nothing here is a second design. */
-
 .onboard-backdrop {
   position: fixed;
   inset: 0;
@@ -26,9 +22,9 @@
   overflow: hidden;
 }
 
-/* Both steps occupy this one cell, so the outgoing and incoming ones overlap
-   rather than queue. The panel then travels between their heights instead of
-   collapsing to nothing for a frame while neither is in flow. */
+/* Both steps occupy this one grid cell (grid-area: 1 / 1), so the outgoing
+   and incoming ones overlap rather than queue, and the panel travels between
+   their heights instead of collapsing to nothing for a frame. */
 .onboard-stage { display: grid; }
 .onboard-stage > * { grid-area: 1 / 1; }
 
@@ -36,8 +32,6 @@
 .onboard-step h2 { margin: 0 0 8px; font-size: 25px; font-weight: 700; letter-spacing: -.035em; }
 .onboard-step p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.6; }
 .onboard-aside { margin-top: 12px !important; padding-left: 12px; border-left: 2px solid var(--primary); }
-
-/* --- the drawings ------------------------------------------------------- */
 
 .onboard-art { width: 100%; height: auto; margin-bottom: 22px; }
 .art-screen { fill: rgba(255, 255, 255, .05); stroke: rgba(255, 255, 255, .14); stroke-width: 1.5; }
@@ -48,8 +42,6 @@
 .art-tie { fill: none; stroke: var(--primary); stroke-width: 1.8; stroke-linecap: round; }
 .art-accent { fill: var(--primary); stroke: var(--primary); stroke-width: 1.8; stroke-linecap: round; }
 .art-accent-fill { fill: var(--primary-soft); stroke: var(--primary); stroke-width: 1.5; }
-
-/* --- controls ----------------------------------------------------------- */
 
 .onboard-controls {
   margin-top: 26px;

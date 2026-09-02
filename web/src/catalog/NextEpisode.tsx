@@ -12,8 +12,6 @@ interface NextEpisodeCardProps {
   onDismiss: () => void
 }
 
-// The floating bottom-right card. It lives inside the player wrap, so it is
-// still there in fullscreen.
 export function NextEpisodeCard({ video, poster, seconds, onPlayNow, onDismiss }: NextEpisodeCardProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()

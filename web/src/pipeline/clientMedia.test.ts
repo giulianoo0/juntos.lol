@@ -1,7 +1,3 @@
-// Drives the region machinery of the client pipeline with a scripted muxer:
-// a cold seek must cancel the running conversion, restart it at the snapped
-// keyframe, publish under region-prefixed names, and carry the new offset in
-// the publish timeline.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocked = vi.hoisted(() => {
@@ -35,7 +31,6 @@ const mocked = vi.hoisted(() => {
 
     constructor(opts: FakeConversionOpts) {
       this.opts = opts
-      // A pending rejection that nobody awaited yet must not kill the run.
       this.done.catch(() => undefined)
     }
 
@@ -87,16 +82,9 @@ vi.mock('./mkvChapters', () => ({ readMkvChapters: () => chaptersMock.read() }))
 
 import { endPlaylist, runClientRemux, segmentDurations, type ClientRemuxHandle } from './clientMedia'
 
-// Fake timers so the publish ticker can be driven on purpose: a region's
-// span is what the server confirmed, and confirmation only happens on a
-// publish round.
 const flush = async () => { await vi.advanceTimersByTimeAsync(1) }
-/** One turn of the publish ticker, which confirms what has been uploaded. */
 const publishRound = async () => { await vi.advanceTimersByTimeAsync(2_000) }
 
-// Emits one finished file the way mediabunny does now: the PathedTarget
-// hands out a BufferTarget whose awaited onFinalize is the admission gate,
-// and segments additionally notify onSegment for the ledger.
 const emit = (conversion: (typeof conversions)[number], path: string, info?: { playlist: { n: number }; n: number }): Promise<unknown> => {
   const target = conversion.opts.output.opts.target.getTarget({ path })
   const buffer = new ArrayBuffer(4)
@@ -109,8 +97,6 @@ const emit = (conversion: (typeof conversions)[number], path: string, info?: { p
 
 interface Recorded { url: string; body?: Record<string, unknown> }
 
-// Segment PUTs the fixture is holding until the test lets them land; an
-// aborted one rejects the way a real fetch does.
 const heldUploads: (() => void)[] = []
 function releaseUploads(): void {
   for (const release of heldUploads.splice(0)) release()
@@ -140,13 +126,9 @@ function mockServer({ holdUploads = false } = {}): Recorded[] {
       return { ok: true, json: async () => ({ objects }) }
     }
     if (url.endsWith('/client-media/publish')) {
-      // A working bucket vouches for what it was handed. Regions span what
-      // the server confirmed, so a fixture that confirms nothing would
-      // describe a room with nothing playable in it.
       const confirmed = (record.body!.confirm as string[] | undefined) ?? []
       return { ok: true, json: async () => ({ confirmed, ready: true }) }
     }
-    // Segment PUTs and the claim release.
     return { ok: true, json: async () => ({}), text: async () => '' }
   }))
   return calls
@@ -183,22 +165,17 @@ describe('client remux regions', () => {
     expect(conversions[0].opts.trim).toBeUndefined()
     expect(handle).not.toBeNull()
 
-    // The muxer emits region zero's first files under the legacy names.
     const first = conversions[0].opts.output.opts.format.options
     void emit(conversions[0], 'cinit_0.mp4')
     void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     void first
     await flush()
-    // The bucket confirms region zero's segment: only now does it span
-    // anything a player could seek into.
     await publishRound()
 
-    // Eighteen minutes in is far past the produced edge: a cold seek.
     handle!.follow(1_080_000)
     await flush()
     await flush()
     expect(conversions).toHaveLength(2)
-    // Snapped back to the keyframe the fake sink reports, two seconds early.
     expect(conversions[1].opts.trim?.start).toBe(1078)
 
     const second = conversions[1].opts.output.opts.format.options
@@ -208,30 +185,20 @@ describe('client remux regions', () => {
     await flush()
     await publishRound()
 
-    // Region 1 hits the end of the file: everything between region zero's
-    // four seconds and 18:00 is still unproduced, so the pipeline goes and
-    // fills it — a region from the keyframe before the gap, ending a segment
-    // past where region 1 begins.
     conversions[1].finish()
     await publishRound()
     await flush()
     expect(conversions).toHaveLength(3)
     expect(conversions[2].opts.trim).toEqual({ start: 2, end: 1_082 })
-    // Seeking back into region zero's produced stretch is covered: the
-    // player switches to that region on its own, nothing restarts.
     handle!.follow(500)
     await flush()
     await flush()
     expect(conversions).toHaveLength(3)
-    // Just past its end is covered too: the fill region is about to be
-    // there, so nothing restarts either.
     handle!.follow(4_500)
     await flush()
     await flush()
     expect(conversions).toHaveLength(3)
 
-    // The fill region produces the whole gap; together the regions cover
-    // the timeline and the run completes.
     const third = conversions[2].opts.output.opts.format.options
     for (let n = 1; n <= 270; n += 1) {
       void emit(conversions[2], `r2_cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
@@ -284,19 +251,12 @@ describe('client remux regions', () => {
     })
     await flush()
 
-    // The muxer runs far ahead of the uplink — stream-copying a local file
-    // outruns a home connection many times over — so twenty segments exist
-    // in the queue while the bucket still holds none of them.
     void emit(conversions[0], 'cinit_0.mp4')
     for (let n = 1; n <= 20; n += 1) {
       void emit(conversions[0], `cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
     }
     await flush()
 
-    // A minute in sits well inside the eighty seconds the muxer emitted, so
-    // counting emissions would call this covered and leave the player
-    // waiting on segments no playlist can reach. Counting what the bucket
-    // confirmed sends the pipeline to fetch it.
     handle!.follow(60_000)
     await flush()
     await flush()
@@ -325,14 +285,10 @@ describe('client remux regions', () => {
       void emit(conversions[0], `cs_0_${n}.m4s`, { playlist: { n: 0 }, n })
     }
     ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
-    // The whole file is produced; only the tail of the uploads is left.
     conversions[0].finish()
     await flush()
     await flush()
 
-    // A seek now has nowhere to restart. Restarting anyway aborted the
-    // uploads still in flight, which left the region's producedMs short of
-    // the end and the seek's target uncovered for good.
     handle!.follow(503_000)
     await flush()
     releaseUploads()
@@ -355,8 +311,6 @@ describe('client remux regions', () => {
       audioTracks: [],
       durationSeconds: 1440,
     }
-    // Never awaited on purpose: the run only completes once every gap is
-    // filled, and this test stops well before that.
     void runClientRemux({
       roomID: 'r1',
       mediaGeneration: 0,
@@ -366,7 +320,6 @@ describe('client remux regions', () => {
     })
     await flush()
 
-    // Straight to the middle: region 1 starts at the snapped keyframe.
     handle!.follow(1_080_000)
     await flush()
     await flush()
@@ -376,9 +329,6 @@ describe('client remux regions', () => {
     ;(second.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
 
-    // The region runs to the end of the file. Everything before 18:00 is
-    // still unproduced, so the run must not complete — it goes and fills
-    // the head, bounded a segment past where region 1 begins.
     conversions[1].finish()
     await publishRound()
     await flush()
@@ -388,8 +338,6 @@ describe('client remux regions', () => {
     expect(conversions).toHaveLength(3)
     expect(conversions[2].opts.trim).toEqual({ end: 1_082 })
 
-    // A cold seek during the fill is a seek like any other: the fill region
-    // dies and the new one starts at the target.
     handle!.follow(200_000)
     await flush()
     await flush()
@@ -397,8 +345,6 @@ describe('client remux regions', () => {
     expect(conversions[3].opts.trim).toEqual({ start: 198 })
     void emit(conversions[3], 'r3_cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     await flush()
-    // Region 3 runs to EOF; the head is still missing, so the next fill goes
-    // back for it — this time up to where region 3 starts.
     conversions[3].finish()
     await publishRound()
     await flush()
@@ -430,15 +376,12 @@ describe('publish on demand', () => {
     await flush()
     const before = calls.filter((call) => call.url.endsWith('/client-media/publish')).length
     expect(before).toBe(0)
-    // Well inside the two-second ticker: the upload itself kicked the round.
     await vi.advanceTimersByTimeAsync(300)
     const publishes = calls.filter((call) => call.url.endsWith('/client-media/publish'))
     expect(publishes).toHaveLength(1)
     expect(publishes[0].body!.confirm).toEqual(expect.arrayContaining(['cinit_0.mp4', 'cs_0_1.m4s']))
-    // The ticker is still the floor for what nobody kicks.
     await vi.advanceTimersByTimeAsync(2_000)
     expect(calls.filter((call) => call.url.endsWith('/client-media/publish')).length).toBeGreaterThan(1)
-    // The region spans the ten seconds the playlist declares, not four.
     const last = calls.filter((call) => call.url.endsWith('/client-media/publish')).at(-1)!.body!
     expect((last.timeline as { regions: { producedMs: number }[] }).regions[0].producedMs).toBe(10_000)
     conversions[0].finish()
@@ -466,7 +409,6 @@ describe('region warm signal', () => {
     void emit(conversions[0], 'cinit_0.mp4')
     await flush()
     await vi.advanceTimersByTimeAsync(300)
-    // The init alone is not a warm region.
     expect(warm).not.toHaveBeenCalled()
     void emit(conversions[0], 'cs_0_1.m4s', { playlist: { n: 0 }, n: 1 })
     ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
@@ -498,8 +440,6 @@ describe('admission and drain', () => {
       plan: plan() as never,
     })
     await flush()
-    // Forty finished files land at once — the reproduction that used to put
-    // 1,024 objects in flight.
     const first = conversions[0].opts.output.opts.format.options
     void emit(conversions[0], 'cinit_0.mp4')
     for (let n = 1; n <= 40; n += 1) {
@@ -511,8 +451,6 @@ describe('admission and drain', () => {
     const inFlight = calls.filter((call) => call.url.startsWith('https://bucket/')).length
     expect(inFlight).toBeGreaterThan(0)
     expect(inFlight).toBeLessThanOrEqual(8)
-    // The run must not leak into the next test: everything is released and
-    // the run driven to its end.
     conversions[0].finish()
     for (let round = 0; round < 12; round += 1) {
       releaseUploads()
@@ -538,8 +476,6 @@ describe('admission and drain', () => {
     conversions[0].finish()
     await flush()
     await publishRound()
-    // The producer is done, but the tail is still uploading: complete must
-    // not have gone out.
     const completes = () => calls.filter((call) =>
       call.url.endsWith('/client-media/publish') && call.body?.complete === true)
     expect(completes()).toHaveLength(0)
@@ -549,8 +485,6 @@ describe('admission and drain', () => {
     await flush()
     await run
     expect(completes()).toHaveLength(1)
-    // And when it went, nothing was pending: every uploaded name had been
-    // offered for confirmation before or at the complete pass.
     const puts = calls.filter((call) => call.url.startsWith('https://bucket/')).length
     const confirmed = calls
       .filter((call) => call.url.endsWith('/client-media/publish'))
@@ -575,17 +509,14 @@ describe('admission and drain', () => {
     ;(first.onMaster as (c: string) => void)('#EXTM3U\n')
     await flush()
     await publishRound()
-    // Chapters are still stuck in a cold read; the media published anyway.
     expect(calls.filter((call) => call.url.endsWith('/client-media/publish')).length).toBeGreaterThan(0)
     conversions[0].finish()
     await publishRound()
     await flush()
-    // Complete does not wait for them either.
     await run
     expect(calls.filter((call) => call.url.endsWith('/client-media/publish') && call.body?.complete === true)).toHaveLength(1)
     expect(calls.some((call) => call.url.endsWith('/client-media/metadata'))).toBe(false)
 
-    // They surface after the claim died — and still land, through the token.
     releaseChapters([{ startMs: 0, endMs: 90_000, title: 'Opening' }])
     await flush()
     await flush()
@@ -621,15 +552,11 @@ describe('endPlaylist', () => {
   ].join('\n')
 
   it('ends the playlist at what the bucket vouches for', () => {
-    // A region a seek abandoned names segments whose upload was dropped
-    // mid-queue. Sent whole, the server cuts at the first it cannot reach and
-    // throws the end marker away with the tail.
     const out = endPlaylist(body, 2)
     expect(out).not.toBeNull()
     expect(out).toContain('r1_cs_0_2.m4s')
     expect(out).not.toContain('r1_cs_0_3.m4s')
     expect(out?.endsWith('#EXT-X-ENDLIST\n')).toBe(true)
-    // The header survives, and the tags of the segment that was cut do not.
     expect(out).toContain('#EXT-X-MAP:URI="r1_cinit_0.mp4"')
     expect((out?.match(/#EXTINF/g) ?? []).length).toBe(2)
   })
@@ -641,8 +568,6 @@ describe('endPlaylist', () => {
   })
 
   it('is nothing at all when no segment landed', () => {
-    // Not a finished region — an empty one, and an empty playlist ending is
-    // a viewer told the region is over before it began.
     expect(endPlaylist(body, 0)).toBeNull()
   })
 })

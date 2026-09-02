@@ -12,16 +12,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ErrNotFound is returned when a room does not exist (or has expired).
 var ErrNotFound = errors.New("room not found")
 
-// ErrUploadReserved indicates that a room already has an active tus upload.
 var ErrUploadReserved = errors.New("upload already reserved")
 
-// ErrUploadNotAllowed indicates that a room is missing, expired, or not uploading.
 var ErrUploadNotAllowed = errors.New("upload not allowed")
 
-// chatCap is the maximum number of chat messages kept per room.
 const chatCap = 200
 
 // Store persists rooms in Redis. Every key carries the room TTL.
@@ -30,7 +26,6 @@ type Store struct {
 	ttl time.Duration
 }
 
-// NewStore returns a Store writing to rdb with the given room TTL.
 func NewStore(rdb *redis.Client, ttl time.Duration) *Store {
 	return &Store{rdb: rdb, ttl: ttl}
 }
@@ -41,9 +36,6 @@ func chatKey(id string) string    { return "room:" + id + ":chat" }
 func membersKey(id string) string { return "room:" + id + ":members" }
 func uploadKey(id string) string  { return "room:" + id + ":upload" }
 
-// Media playlists and the set of objects already in the bucket live in Redis
-// rather than on the encoding machine's disk. That is what lets any instance
-// serve a room another instance encoded.
 func playlistsKey(id string) string { return "room:" + id + ":playlists" }
 func publishedKey(id string) string { return "room:" + id + ":published" }
 
@@ -163,7 +155,6 @@ return 1
 	}
 }
 
-// UploadID returns the reserved tus upload ID for roomID, if present.
 func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
 	id, err := s.rdb.Get(ctx, uploadKey(roomID)).Result()
 	if errors.Is(err, redis.Nil) {
@@ -190,7 +181,6 @@ return 1
 	return nil
 }
 
-// Get loads a room by id. Returns ErrNotFound if the room is missing.
 func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	fields, err := s.rdb.HGetAll(ctx, roomKey(id)).Result()
 	if err != nil {
@@ -335,10 +325,9 @@ func (s *Store) SetIngestProgress(ctx context.Context, id string, received, tota
 		"source_bytes", strconv.FormatInt(total, 10))
 }
 
-// SetPreviewPhase records which stage of preparation the source is in, and how
+// SetPreviewPhase records which stage of preparation the source is in and how
 // many bytes the preview is expected to need. A targetBytes of 0 leaves the
-// stored estimate untouched, because the phase can advance before the bitrate
-// is known.
+// stored estimate untouched.
 func (s *Store) SetPreviewPhase(ctx context.Context, id, phase string, targetBytes int64) error {
 	fields := []any{"preview_phase", phase}
 	if targetBytes > 0 {
@@ -358,7 +347,6 @@ func (s *Store) SetMediaRegions(ctx context.Context, id string, regions []MediaR
 	return s.mutateRoom(ctx, id, false, "media_regions", string(raw))
 }
 
-// SetSwarm records what the worker fetching this room's torrent reports.
 func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error {
 	return s.mutateRoom(ctx, id, false,
 		"swarm_peers", strconv.FormatInt(swarm.Peers, 10),
@@ -369,12 +357,10 @@ func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error
 	)
 }
 
-// SetStatus updates the room status.
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 	return s.mutateRoom(ctx, id, status != "error", "status", status)
 }
 
-// SetController updates the room member currently allowed to control playback.
 func (s *Store) SetController(ctx context.Context, id, controllerID string) error {
 	return s.mutateRoom(ctx, id, false, "controller_id", controllerID)
 }
@@ -413,14 +399,9 @@ func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInf
 }
 
 // AddClientMediaBytes charges delta bytes against the room's client-upload
-// budget and returns the new total. The budget is what stands in for the tus
-// size limit on presigned uploads the server never relays: every presign is
-// charged for its declared size before the URL is handed out.
-//
-// The charge only lands on a room that still holds a client claim and has not
-// expired: without that guard a sweep landing between the authorization and
-// the HIncrBy would recreate the room hash as a TTL-less key that no longer
-// sits in rooms:by_expiry and is never swept again.
+// budget and returns the new total. It only lands on a room that still holds
+// a client claim and has not expired, so a sweep cannot be raced into
+// recreating a TTL-less hash.
 func (s *Store) AddClientMediaBytes(ctx context.Context, id string, delta int64) (int64, error) {
 	result, err := s.rdb.Eval(ctx, `
 if not redis.call('EXISTS', KEYS[1]) or not redis.call('HGET', KEYS[1], 'upload_id') then return false end
@@ -428,7 +409,6 @@ redis.call('HSET', KEYS[1], 'client_media_touched', ARGV[2])
 return redis.call('HINCRBY', KEYS[1], 'client_media_bytes', ARGV[1])
 `, []string{roomKey(id)}, delta, strconv.FormatInt(time.Now().UnixMilli(), 10)).Result()
 	if errors.Is(err, redis.Nil) {
-		// The Lua returned false — no room, or no claim held.
 		return 0, ErrNotFound
 	}
 	if err != nil {
@@ -449,9 +429,8 @@ func (s *Store) TouchClientClaim(ctx context.Context, id string) error {
 }
 
 // ReclaimStaleClientClaims releases the claim on every room whose client
-// media heartbeat is older than idleFor, and reports how many it freed. A
-// client claim leaves no file behind the way a tus upload does, so the file
-// sweep cannot reach it; this is its reclaim, run on the same tick.
+// media heartbeat is older than idleFor, and reports how many it freed: a
+// client claim leaves no file behind, so the file sweep cannot reach it.
 func (s *Store) ReclaimStaleClientClaims(ctx context.Context, idleFor time.Duration) (int, error) {
 	cutoff := time.Now().Add(-idleFor).UnixMilli()
 	freed := 0
@@ -463,7 +442,7 @@ func (s *Store) ReclaimStaleClientClaims(ctx context.Context, idleFor time.Durat
 		}
 		for _, key := range keys {
 			if strings.Count(key, ":") != 1 {
-				continue // room:{id}:members and friends, not the room hash
+				continue
 			}
 			fields, err := s.rdb.HMGet(ctx, key, "upload_id", "client_media_touched").Result()
 			if err != nil || len(fields) != 2 {
@@ -491,11 +470,9 @@ func (s *Store) ReclaimStaleClientClaims(ctx context.Context, idleFor time.Durat
 	return freed, nil
 }
 
-// AddSubtitleFont appends one attached font to the room, deduplicated by its
-// stored file name and capped, bumping subs_version so viewers refresh. The
-// read-append-write is not atomic; fonts arrive from the one extraction that
-// owns the source, so the worst concurrent case is a duplicate the dedup in
-// the handler already caught. Returns the list as stored.
+// AddSubtitleFont appends one attached font, deduplicated by stored file name
+// and capped, bumping subs_version so viewers refresh. The read-append-write
+// is not atomic. Returns the list as stored.
 func (s *Store) AddSubtitleFont(ctx context.Context, id string, font SubtitleFont, limit int) ([]SubtitleFont, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
@@ -520,7 +497,6 @@ func (s *Store) AddSubtitleFont(ctx context.Context, id string, font SubtitleFon
 	return fonts, nil
 }
 
-// SetChapters stores the source's authored chapter spans.
 func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) error {
 	c, err := json.Marshal(chapters)
 	if err != nil {
@@ -535,18 +511,13 @@ func (s *Store) BumpMediaVersion(ctx context.Context, id string) error {
 	return s.mutateRoomBump(ctx, id, false, "media_version")
 }
 
-// SetMediaDuration stores the source's full duration as measured by the
-// pipeline that read it.
 func (s *Store) SetMediaDuration(ctx context.Context, id string, durationMs int64) error {
 	return s.mutateRoom(ctx, id, false, "duration_ms", strconv.FormatInt(durationMs, 10))
 }
 
 // SetMediaOffset stores where the current region's media timeline begins and
 // bumps the media version in the same atomic step, so a player never reloads
-// into an offset whose playlists are not the ones behind the URL. The compare
-// happens inside the script: two publishes racing the same offset — the
-// ticker and the drain loop overlap — must produce one bump, not two reload
-// storms.
+// into an offset whose playlists are not the ones behind the URL.
 func (s *Store) SetMediaOffset(ctx context.Context, id string, offsetMs int64) error {
 	result, err := s.rdb.Eval(ctx, `
 local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
@@ -586,10 +557,9 @@ func (s *Store) SetAudioTracks(ctx context.Context, id string, audio []TrackInfo
 	)
 }
 
-// SetClientSubtitles stores browser-extracted WebVTT subtitle tracks. Only a
-// complete extraction marks the room so the media pipeline skips embedded
-// subtitle extraction; a partial one is published for immediate playback while
-// the authoritative ffmpeg pass stays scheduled.
+// SetClientSubtitles stores browser-extracted WebVTT tracks. Only a complete
+// extraction marks the room so the media pipeline skips embedded subtitle
+// extraction; a partial one is published but the ffmpeg pass stays scheduled.
 func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackInfo, complete bool) error {
 	b, err := json.Marshal(subs)
 	if err != nil {
@@ -603,17 +573,10 @@ func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackI
 	return s.mutateRoomBump(ctx, id, false, "subs_version", fields...)
 }
 
-// SwapSource repoints a live room at a new source without disturbing its
-// members, chat or controller. Everything describing the previous media is
-// cleared in one step: the tracks, the error, the browser-subtitle flag, the
-// upload reservation, the playback position, and the published media of the
-// source being replaced — its playlists and the record of what reached the
-// bucket, which would otherwise make the next encode think its own segments
-// had already been uploaded. It returns the upload id that
-// was reserved before the swap, if any, so the caller can reclaim the bytes of
-// an upload that is still in flight, plus the new media generation.
-//
-// A room that is gone or expired reports ErrNotFound rather than resurrecting.
+// SwapSource repoints a live room at a new source, keeping its members, chat
+// and controller and clearing everything describing the previous media —
+// tracks, error, upload reservation, position, playlists and published set.
+// Returns the upload id reserved before the swap and the new generation.
 func (s *Store) SwapSource(ctx context.Context, id, kind, fileName, status string, now time.Time) (previousUpload string, generation int, err error) {
 	result, err := s.rdb.Eval(ctx, `
 local status = redis.call('HGET', KEYS[1], 'status')
@@ -665,7 +628,6 @@ return {1, previous, generation}
 	return previousUpload, int(newGeneration), nil
 }
 
-// HasClientSubs reports whether the room received browser-extracted subs.
 func (s *Store) HasClientSubs(ctx context.Context, id string) (bool, error) {
 	v, err := s.rdb.HGet(ctx, roomKey(id), "client_subs").Result()
 	if errors.Is(err, redis.Nil) {
@@ -720,7 +682,6 @@ return 1
 	return nil
 }
 
-// SetState stores the shared playback state.
 func (s *Store) SetState(ctx context.Context, id string, st PlayState) error {
 	key := stateKey(id)
 	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
@@ -774,12 +735,10 @@ func (s *Store) AddMember(ctx context.Context, id string, m Member) error {
 	return err
 }
 
-// RemoveMember removes a member from the room.
 func (s *Store) RemoveMember(ctx context.Context, id, memberID string) error {
 	return s.rdb.HDel(ctx, membersKey(id), memberID).Err()
 }
 
-// Members returns all members of the room.
 func (s *Store) Members(ctx context.Context, id string) ([]Member, error) {
 	vals, err := s.rdb.HVals(ctx, membersKey(id)).Result()
 	if err != nil {
@@ -848,12 +807,9 @@ func (s *Store) ExpiredIDs(ctx context.Context, now time.Time) ([]string, error)
 	}).Result()
 }
 
-// SetPlaylists publishes rendered HLS playlists for a room.
-//
-// Every playlist in one call lands in a single transaction. The final remux
-// replaces the master and its variants together, and a viewer who fetched the
-// new master while the variants were still the preview's would be asking for
-// a rendition ladder that the variant playlists do not describe.
+// SetPlaylists publishes rendered HLS playlists for a room. Every playlist in
+// one call lands in a single transaction: a master and its variants must never
+// be visible out of step with each other.
 func (s *Store) SetPlaylists(ctx context.Context, id string, playlists map[string]string) error {
 	if len(playlists) == 0 {
 		return nil
@@ -883,7 +839,6 @@ func (s *Store) Playlist(ctx context.Context, id, name string) (string, error) {
 	return body, nil
 }
 
-// HasPlaylist reports whether a room has published the named playlist.
 func (s *Store) HasPlaylist(ctx context.Context, id, name string) (bool, error) {
 	return s.rdb.HExists(ctx, playlistsKey(id), name).Result()
 }
@@ -907,7 +862,6 @@ func (s *Store) MarkPublished(ctx context.Context, id string, names ...string) e
 	return err
 }
 
-// Published returns the set of object names already in the bucket.
 func (s *Store) Published(ctx context.Context, id string) (map[string]struct{}, error) {
 	names, err := s.rdb.SMembers(ctx, publishedKey(id)).Result()
 	if err != nil {

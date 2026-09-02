@@ -8,19 +8,12 @@ import (
 	"time"
 )
 
-// blockingReloadMax bounds how long a playlist request may hang waiting for
-// the next publish. The spec allows three target durations; the host now
-// publishes the moment a segment lands, so the wait is normally a fraction
-// of that, and the bound only matters for a host that went quiet.
+// blockingReloadMax bounds how long a playlist request may hang waiting for the
+// next publish; it only matters for a host that went quiet.
 const blockingReloadMax = 10 * time.Second
 
-// playlistWaiter lets a playlist request wait for the publish that grows it.
-//
-// hls.js polls a live playlist every target duration and learns of a new
-// segment, on average, half of one late — two to three seconds of buffer
-// that the host had already published. With CAN-BLOCK-RELOAD the player
-// asks for the sequence number it does not have yet and the request is held
-// until a publish provides it. One process on one machine: a channel per
+// playlistWaiter holds a CAN-BLOCK-RELOAD request until the publish that grows
+// the playlist to the sequence number the player asked for: one channel per
 // room, closed and replaced on every publish.
 type playlistWaiter struct {
 	mu    sync.Mutex
@@ -62,10 +55,8 @@ func (w *playlistWaiter) Notify(roomID string) {
 	}
 }
 
-// wait blocks until the channel closes — a publish — the deadline passes,
-// or the request goes away. Reports whether a publish arrived. The channel
-// is taken before the playlist is read, so a publish that lands between the
-// read and the wait is not missed.
+// wait reports whether a publish (the channel closing) arrived before the deadline
+// or the request went away.
 func (w *playlistWaiter) wait(ctx context.Context, ch <-chan struct{}, deadline time.Time) bool {
 	if w == nil || ch == nil {
 		return false
@@ -86,9 +77,8 @@ func (w *playlistWaiter) wait(ctx context.Context, ch <-chan struct{}, deadline 
 	}
 }
 
-// requestedSequence reads the _HLS_msn delivery directive: the media
-// sequence number the player wants the playlist to reach. Parts are not
-// produced here, so _HLS_part is ignored.
+// requestedSequence reads the _HLS_msn directive: the media sequence number the
+// player wants the playlist to reach.
 func requestedSequence(query string) (int64, bool) {
 	for _, pair := range strings.Split(query, "&") {
 		key, value, found := strings.Cut(pair, "=")
@@ -104,9 +94,8 @@ func requestedSequence(query string) (int64, bool) {
 	return 0, false
 }
 
-// playlistReach describes how far a media playlist goes: the sequence number
-// of its last segment, and whether it has ended. A master, or a playlist
-// with no segment, reaches -1.
+// playlistReach returns the sequence number of the playlist's last segment and
+// whether it ended; a master, or a playlist with no segment, reaches -1.
 func playlistReach(playlist string) (lastSequence int64, ended bool) {
 	var first int64
 	var segments int64
@@ -124,9 +113,8 @@ func playlistReach(playlist string) (lastSequence int64, ended bool) {
 	return first + segments - 1, ended
 }
 
-// withBlockingReload tells the player a live media playlist can be asked
-// for by sequence number. Injected here, never accepted from the host: the
-// tag describes this server, not the media.
+// withBlockingReload injects the CAN-BLOCK-RELOAD tag; it describes this server,
+// so it is never accepted from the host.
 func withBlockingReload(playlist string) string {
 	if !strings.Contains(playlist, "#EXTINF:") || strings.Contains(playlist, "#EXT-X-ENDLIST") ||
 		strings.Contains(playlist, "#EXT-X-SERVER-CONTROL") {

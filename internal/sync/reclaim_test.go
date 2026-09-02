@@ -12,9 +12,6 @@ import (
 )
 
 func TestUnfinishedWorkProtectsAPreparingRoom(t *testing.T) {
-	// The host's remux flips the room to ready seconds in and keeps
-	// publishing for minutes after, so an empty room mid-preparo is work in
-	// progress, not an abandoned one.
 	now := time.Now()
 	r := &room.Room{Status: "uploading", CreatedAt: now.Add(-2 * time.Minute)}
 
@@ -22,9 +19,6 @@ func TestUnfinishedWorkProtectsAPreparingRoom(t *testing.T) {
 }
 
 func TestUnfinishedWorkGivesUpOnARoomStuckPreparing(t *testing.T) {
-	// Protected is not protected forever: a source that has not become
-	// playable in ten minutes with nobody watching is holding a worker and a
-	// torrent open for a room that is never going to be watched.
 	now := time.Now()
 	r := &room.Room{Status: "uploading", CreatedAt: now.Add(-11 * time.Minute)}
 
@@ -32,7 +26,6 @@ func TestUnfinishedWorkGivesUpOnARoomStuckPreparing(t *testing.T) {
 }
 
 func TestUnfinishedWorkReclaimsAFailedRoomAtOnce(t *testing.T) {
-	// A failure has nothing left to protect, whatever stage it stopped in.
 	now := time.Now()
 	for _, r := range []*room.Room{
 		{Status: "error", CreatedAt: now},
@@ -65,8 +58,6 @@ func TestUnfinishedWorkReleasesAFinishedRoom(t *testing.T) {
 }
 
 func TestAbandonedSweepReclaimsAnEmptyRoomNobodyIsWatching(t *testing.T) {
-	// The idle timer fires once per goroutine; a room it spared, or one whose
-	// goroutine died with the process, has to be picked up by the sweep.
 	hub, store, _ := newHubTestServer(t, config.Config{})
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
@@ -101,7 +92,6 @@ func TestHubTransferHandsTheControlsToTheTarget(t *testing.T) {
 	helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
-	// A guest asking is refused; the host asking is honoured for everyone.
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))
 	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
 	require.NoError(t, host.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))

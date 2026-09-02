@@ -78,7 +78,6 @@ func TestQuotaDispatchMiddleware(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 	require.Contains(t, w.Body.String(), "dispatch_limit")
 
-	// No session, no dispatch.
 	r2 := gin.New()
 	r2.POST("/t", q.Dispatch(), func(c *gin.Context) { c.Status(http.StatusAccepted) })
 	w = httptest.NewRecorder()

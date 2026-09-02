@@ -4,14 +4,12 @@ import { ChevronDown } from 'lucide-react'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { MORPH_EASE, OPEN_DURATION } from '../ui/morphTokens'
 
-/** ≤40ms stagger for the first rows; the rest arrive with the panel. */
 const STAGGER_STEP = 0.04
 const STAGGERED_ITEMS = 8
 
 export interface DropdownOption {
   value: string
   label: ReactNode
-  // Rendered right-aligned, opposite the label (e.g. how many sources match).
   detail?: ReactNode
 }
 
@@ -20,8 +18,6 @@ interface DropdownProps {
   value: string
   options: DropdownOption[]
   onChange: (value: string) => void
-  // 'end' anchors the panel to the trigger's right edge, for dropdowns that
-  // sit near the panel's right side and would otherwise get clipped.
   align?: 'start' | 'end'
 }
 

@@ -1,11 +1,6 @@
-// The invite, handed in by the image build the way the commit is. Empty is a
-// deployment that has no server to point at, and the header simply carries
-// nothing rather than a link that goes nowhere.
 const INVITE = (import.meta.env.VITE_DISCORD_URL as string | undefined)?.trim() ?? ''
 
-// Only a real Discord invite is rendered. The value travels from a .env file
-// through a build arg, and a header that would open whatever ended up in that
-// variable is worth one check.
+
 function isInvite(url: string): boolean {
   try {
     const parsed = new URL(url)
@@ -18,8 +13,6 @@ function isInvite(url: string): boolean {
   }
 }
 
-// Brand marks were dropped from lucide, and the header already inlines
-// GitHub's for the same reason. This is Discord's own mark.
 function DiscordMark() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 12" fill="currentColor" aria-hidden="true">
@@ -28,7 +21,6 @@ function DiscordMark() {
   )
 }
 
-/** Where the people watching together actually talk. */
 export function DiscordLink({ label }: { label: string }) {
   if (!isInvite(INVITE)) return null
   return (

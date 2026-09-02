@@ -1,16 +1,11 @@
 const REPOSITORY = 'https://github.com/giulianoo0/ss'
 
-// The commit the running bundle was built from, handed in by the image build.
-// "dev" is what a local `npm run dev` gets, and it links nowhere: a hash that
-// does not exist upstream would be a broken promise, not a version.
 const COMMIT = (import.meta.env.VITE_GIT_SHA as string | undefined) ?? 'dev'
 
 function shortCommit(sha: string): string {
   return sha.slice(0, 7)
 }
 
-// Brand marks were dropped from lucide, and pulling a second icon package for
-// one glyph is not worth it. This is GitHub's own mark, inlined.
 function GithubMark() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -19,8 +14,6 @@ function GithubMark() {
   )
 }
 
-// Links the deployment back to the code it came from. Useful in a room where
-// something looks wrong: the header says exactly which build is talking.
 export function BuildInfo({ label }: { label: string }) {
   const known = COMMIT !== 'dev' && /^[0-9a-f]{7,40}$/i.test(COMMIT)
   return (

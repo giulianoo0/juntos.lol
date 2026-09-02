@@ -42,7 +42,5 @@ COPY --from=web-build --chown=app:app /src/web/dist /web
 
 ENV WEB_DIR=/web
 USER app
-# 8080 is the site; 9090 is the Prometheus endpoint, which the Compose file
-# keeps on the internal network and never publishes to the host.
-EXPOSE 8080 9090
+EXPOSE 8080
 ENTRYPOINT ["/bin/server"]

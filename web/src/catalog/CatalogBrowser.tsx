@@ -16,8 +16,6 @@ interface RowSpec {
   genre?: string
 }
 
-// The board is a fixed set of Cinemeta "top" catalogs; rows render as each
-// one arrives instead of waiting for the slowest.
 const ROWS: RowSpec[] = [
   { key: 'movies', labelKey: 'catalog.popularMovies', type: 'movie' },
   { key: 'series', labelKey: 'catalog.popularSeries', type: 'series' },
@@ -30,11 +28,7 @@ type RowState = { status: 'loading' } | { status: 'error' } | { status: 'ready';
 
 interface CatalogBrowserProps {
   onOpenTitle: (open: TitleOpen) => void
-  // The room overlay renders the browser inside a smaller frame; rows shrink
-  // a little so a full row still fits.
   compact?: boolean
-  // While the details panel is up the floating search hides; it only comes
-  // back once the close morph has finished (the parent flips this after).
   hideSearch?: boolean
 }
 
@@ -55,30 +49,20 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
   const [results, setResults] = useState<CatalogMeta[] | null>(null)
   const [searching, setSearching] = useState(false)
   const searchSeqRef = useRef(0)
-  // The floating search: an expanded pill by default on desktop, compressing
-  // into a round icon button while scrolling down. On mobile it starts as the
-  // round button and is driven by focus and content, never by scroll.
   const [searchCompact, setSearchCompact] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 620px)').matches)
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const focusedRef = useRef(false)
-  // Read inside the scroll listener, which is bound once.
   const queryRef = useRef('')
 
   const isMobile = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 620px)').matches
 
-  // On mobile the expanded search covers the row that holds the view tabs, so
-  // the tabs step aside while it is open (see the CSS). Harmless on desktop,
-  // where that rule does not apply.
   useEffect(() => {
     document.body.classList.toggle('catalog-search-open', !searchCompact)
     return () => document.body.classList.remove('catalog-search-open')
   }, [searchCompact])
 
-  // The details panel is loaded on demand, and every route to it starts on
-  // this board. Warming it once the browser is idle keeps it off the first
-  // paint without ever making a click on a poster wait for the network.
   useEffect(() => {
     const idle = window.requestIdleCallback
     if (typeof idle === 'function') {
@@ -90,8 +74,6 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
   }, [])
 
   useEffect(() => {
-    // The board scrolls on the page at home and on the overlay's own body in
-    // a room; listen to whichever scrollable ancestor this instance lives in.
     let target: HTMLElement | Window = window
     for (let node = rootRef.current?.parentElement; node; node = node.parentElement) {
       const overflow = window.getComputedStyle(node).overflowY
@@ -100,18 +82,13 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
         break
       }
     }
-    // Built once: matchMedia parses the query and allocates a list object,
-    // and this runs on every scroll tick.
     const mobileQuery = window.matchMedia('(max-width: 620px)')
     let lastY = target instanceof Window ? target.scrollY : target.scrollTop
     const onScroll = () => {
       const y = target instanceof Window ? target.scrollY : target.scrollTop
       const delta = y - lastY
       lastY = y
-      // Mobile drives the search by focus and content, not scroll.
       if (mobileQuery.matches) return
-      // A field being typed in, or already holding a query, never collapses
-      // out from under the cursor — scrolling the results is part of using it.
       if (focusedRef.current || queryRef.current.trim() !== '') return
       if (delta > 4 && y > 40) setSearchCompact(true)
       else if (delta < -4 || y <= 40) setSearchCompact(false)
@@ -122,7 +99,6 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
 
   const expandSearch = () => {
     setSearchCompact(false)
-    // Focus once the input exists again, after this render commits.
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
@@ -194,8 +170,6 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
         onClick={searchCompact ? expandSearch : undefined}
         role={searchCompact ? 'button' : undefined}
         aria-label={searchCompact ? t('catalog.search') : undefined}
-        // The input this replaced was focusable; its stand-in must be too,
-        // or scrolling the board locks keyboard users out of search.
         tabIndex={searchCompact ? 0 : undefined}
         onKeyDown={searchCompact ? (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -204,14 +178,9 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
           }
         } : undefined}
       >
-        {/* A layout child of a layout parent gets counter-scaled while the
-            pill travels, so the glyph glides instead of stretching with it. */}
         <motion.span layout={!reduceMotion} className="catalog-search-icon" aria-hidden="true">
           <Search size={17} />
         </motion.span>
-        {/* popLayout lifts the leaving field out of the pill's layout, so the
-            shell starts shrinking at once and the text only fades — instead of
-            being squeezed along for the ride. */}
         <AnimatePresence mode="popLayout" initial={false}>
           {!searchCompact ? (
             <motion.div
@@ -231,8 +200,6 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
                 onFocus={() => { focusedRef.current = true }}
                 onBlur={() => {
                   focusedRef.current = false
-                  // On mobile an empty field folds back to the button on blur;
-                  // one with a query stays open.
                   if (isMobile() && queryRef.current.trim() === '') setSearchCompact(true)
                 }}
                 onChange={(event) => setQuery(event.target.value)}
@@ -247,9 +214,6 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
         </AnimatePresence>
       </motion.div>
 
-      {/* The first keystroke swaps the board for the shape of an answer:
-          waiting on the debounce and the request with the rows still up reads
-          as the search having done nothing. */}
       {typing && results === null ? (
         ['catalog.movies', 'catalog.series'].map((labelKey) => (
           <section key={labelKey} className="catalog-row" aria-hidden="true">
@@ -261,8 +225,6 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
         ))
       ) : results !== null ? (
         results.length > 0 ? (
-          // Results keep the board's own shape: one Filmes row, one Séries
-          // row, each on the same carousel as everywhere else.
           [
             { key: 'movie' as const, labelKey: 'catalog.movies' },
             { key: 'series' as const, labelKey: 'catalog.series' },

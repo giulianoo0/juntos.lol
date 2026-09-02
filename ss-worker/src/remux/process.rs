@@ -7,11 +7,9 @@ use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// FFmpeg under supervision: structured argv (no shell), minimal
-/// environment, stderr consumed continuously into a bounded tail, progress
-/// consumed off stdout, and a kill that always lands.
+/// FFmpeg under supervision: structured argv (no shell), a minimal
+/// environment, a bounded stderr tail and a kill that always lands.
 pub struct Supervised {
-    // progress_ms feeds the ahead-of-playhead throttle of a later phase.
     child: Child,
     pub stderr_tail: Arc<Mutex<String>>,
     #[allow(dead_code)]

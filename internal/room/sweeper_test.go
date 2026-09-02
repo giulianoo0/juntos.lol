@@ -33,16 +33,12 @@ func TestPurgeDataStripsARoomButKeepsItsRecord(t *testing.T) {
 
 	require.NoError(t, PurgeData(t.Context(), s, dir, bucket, "bad"))
 
-	// Every byte is gone — working directory, published media — but never a
-	// neighbour's.
 	_, err := os.Stat(filepath.Join(dir, "rooms", "bad"))
 	require.True(t, os.IsNotExist(err))
 	require.Equal(t, []string{"rooms/live/g0/hls/seg.m4s"}, bucket.Keys())
-	// The record survives, so whoever is in the room still reads why it died.
 	got, err := s.Get(t.Context(), "bad")
 	require.NoError(t, err)
 	require.Equal(t, "uploading", got.Status)
-	// And the claim went with the bytes, so a retry can start clean.
 	claim, err := s.UploadID(t.Context(), "bad")
 	require.NoError(t, err)
 	require.Empty(t, claim)
@@ -56,7 +52,7 @@ func TestSweeperRemovesExpiredRoom(t *testing.T) {
 	require.NoError(t, s.Create(context.Background(), r))
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "rooms", "old"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "rooms", "old", "f"), []byte("x"), 0o644))
-	sweepOnce(context.Background(), s, dir) // extracted tick body, exported for tests as package-private
+	sweepOnce(context.Background(), s, dir)
 	_, err := os.Stat(filepath.Join(dir, "rooms", "old"))
 	require.True(t, os.IsNotExist(err))
 	_, err = s.Get(context.Background(), "old")
@@ -64,10 +60,6 @@ func TestSweeperRemovesExpiredRoom(t *testing.T) {
 }
 
 func TestSweeperReclaimsTheExpiredRoomsMedia(t *testing.T) {
-	// The bucket's lifecycle rule is a backstop measured from when each object
-	// was written, so media the sweeper leaves behind outlives the room that
-	// owned it by most of a lifecycle window. Nothing can reach it by then:
-	// the playlists pointing at it went with the room.
 	mr := miniredis.RunT(t)
 	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
 	dir := t.TempDir()
@@ -90,9 +82,6 @@ func TestSweeperReclaimsTheExpiredRoomsMedia(t *testing.T) {
 }
 
 func TestSweeperKeepsTheRoomWhenItsMediaCannotBeReclaimed(t *testing.T) {
-	// Dropping the room first would strand its objects with nothing left
-	// naming them, and the only record that they need reclaiming is the room
-	// itself. Better to keep both and retry on the next tick.
 	mr := miniredis.RunT(t)
 	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
 	dir := t.TempDir()

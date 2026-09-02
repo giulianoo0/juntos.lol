@@ -143,11 +143,6 @@ impl Publisher {
     pub async fn round(&mut self, sink: &Arc<Sink>, growing: bool, complete: bool) -> anyhow::Result<bool> {
         let confirm: Vec<ClosedObject> = self.pending.drain(..self.pending.len().min(128)).collect();
         let mut playlists = sink.manifests();
-        // FFmpeg's own master is not trusted: 5.x writes it once, early, and
-        // omits EXT-X-STREAM-INF entirely when stream-copying without
-        // bitrate metadata. The master is synthesized here from what is
-        // actually known — the variant playlists and the bytes uploaded —
-        // and BANDWIDTH is a live estimate, refined every round.
         playlists.remove(&format!("{}master.m3u8", self.prefix));
         let produced = self.produced_ms(sink);
         if playlists.contains_key(&format!("{}client_stream_0.m3u8", self.prefix)) {
@@ -185,7 +180,6 @@ impl Publisher {
             let revoked = ["claim_mismatch", "stale_generation", "stale_run", "room_not_found"]
                 .iter()
                 .any(|code| text.contains(code));
-            // Whatever this round carried goes back for the next attempt.
             self.pending.splice(0..0, confirm);
             if revoked {
                 return Err(Revoked(text.chars().take(200).collect()).into());
@@ -247,7 +241,6 @@ mod tests {
         manifests.insert("master.m3u8".to_string(), "#EXT-X-STREAM-INF\n".to_string());
         let confirmed: HashSet<String> =
             ["cs_0_0.m4s", "cs_0_1.m4s", "cs_1_0.m4s"].iter().map(|s| s.to_string()).collect();
-        // Video confirmed 8s, audio confirmed 4s: the region spans 4s.
         assert_eq!(confirmed_span_ms(&manifests, &confirmed), 4_000);
     }
 

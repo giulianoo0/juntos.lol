@@ -7,11 +7,7 @@ export function isTorrentError(error: unknown): boolean {
     || error instanceof TorrentRejectedError || error instanceof TorrentQuotaError
 }
 
-/**
- * Whether the same magnet is worth trying again later, unchanged. Only a
- * torrent the fleet refused for good is not; a missing fleet, a full one,
- * a spent quota, a slow swarm or a dropped connection all are.
- */
+/** Only a torrent the fleet refused for good is not worth retrying. */
 export function torrentErrorRetryable(error: unknown): boolean {
   return !(error instanceof TorrentRejectedError)
 }

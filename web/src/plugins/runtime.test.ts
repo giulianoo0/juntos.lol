@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PluginRunError, runPlugin, type SpawnOptions, type WorkerReply, type WorkerRequest } from './runtime'
 
-/** A stand-in worker: the test drives it by calling `emit`. */
 function fakeWorker() {
   let onMessage: ((message: WorkerRequest) => void) | null = null
   const replies: WorkerReply[] = []
@@ -63,8 +62,6 @@ describe('runPlugin', () => {
   })
 
   it('counts a denied request against the ceiling too', async () => {
-    // Otherwise a plugin gets an unlimited budget for requests the policy
-    // refuses, which is a free loop that keeps the tab busy.
     const worker = fakeWorker()
     const promise = runPlugin({ ...base, spawn: worker.spawn, fetchUrl: vi.fn(), maxRequests: 2 })
     worker.emit({ kind: 'fetch', id: 1, url: 'https://evil.com/1' })
@@ -112,8 +109,6 @@ describe('runPlugin', () => {
   })
 
   it('answers a request that arrived before spawn returned', async () => {
-    // A spawn that drives onMessage synchronously used to post into a null
-    // handle and lose the reply for ever.
     const replies: WorkerReply[] = []
     const driver: { emit(message: WorkerRequest): void } = { emit: () => undefined }
     const spawn = (options: SpawnOptions) => {

@@ -5,8 +5,6 @@ import { FadeImg } from './FadeImg'
 
 export interface TitleOpen {
   meta: CatalogMeta
-  // The poster's on-screen rect at click time, so the details panel can morph
-  // out of it. Absent for keyboard/deep-link opens, which fade instead.
   rect?: DOMRect
 }
 
@@ -15,14 +13,10 @@ interface PosterCardProps {
   onOpen: (open: TitleOpen) => void
 }
 
-// One poster in a row or grid. Motion here is CSS-only: a hover this frequent
-// earns a near-imperceptible lift, not an animation.
 export const PosterCard = memo(function PosterCard({ meta, onOpen }: PosterCardProps) {
   const artRef = useRef<HTMLSpanElement>(null)
 
   const open = (event: MouseEvent | KeyboardEvent) => {
-    // Keyboard "clicks" report no coordinates; a morph from an unseen origin
-    // reads as noise, so those open with a fade.
     const pointer = 'detail' in event && event.detail > 0
     onOpen({ meta, rect: pointer ? artRef.current?.getBoundingClientRect() : undefined })
   }

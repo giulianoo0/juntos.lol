@@ -16,7 +16,7 @@ import (
 )
 
 func TestCreateRoom(t *testing.T) {
-	s := newTestStore(t) // helper: miniredis + NewStore
+	s := newTestStore(t)
 	e := gin.New()
 	cfg := testCfg(t)
 	RegisterRoomRoutes(e.Group("/api"), s, cfg)
@@ -152,10 +152,6 @@ func TestGetRoom(t *testing.T) {
 	require.Equal(t, 1, resp.MemberCount)
 }
 
-// The room response is a hand-listed map, so a field can exist on the struct,
-// be stored, be read back — and still never reach the browser. That is exactly
-// how the cold-seek guard shipped inert: the client saw no heartbeat, decided
-// nothing was producing, and went back to treating a seek as a dead room.
 func TestGetRoomCarriesTheProducerHeartbeat(t *testing.T) {
 	s := newTestStore(t)
 	e := gin.New()

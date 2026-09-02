@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { roomCodeFrom } from './roomCode'
 
-// What people actually paste: the link as sent, the link after a chat client
-// has eaten the scheme, and the code alone read off someone's screen.
 describe('roomCodeFrom', () => {
   it('reads the code out of a full room link', () => {
     expect(roomCodeFrom('https://juntos.lol/room/ABCD1234')).toBe('ABCD1234')

@@ -17,13 +17,6 @@ use crate::config::WorkerConfig;
 
 /// Certificates without a domain: Let's Encrypt issues for IP addresses on
 /// the short-lived profile, validated over http-01 on port 80. Renewals go
-/// through ARI, which is exempt from the rate limits, so the only budget a
-/// worker spends is its first issuance.
-///
-/// Everything lives under data_dir/tls: the account, the current cert and
-/// key, and the identifier of the cert the next order must say it replaces
-/// — persisted so a restart never asks to replace the same predecessor
-/// twice, which the CA refuses.
 pub struct Acme {
     cfg: WorkerConfig,
     slot: Arc<CertSlot>,
@@ -33,10 +26,7 @@ pub struct Acme {
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct State {
-    /// The ARI identifier of the certificate currently installed, as its
-    /// two base64url parts.
     cert_id: Option<(String, String)>,
-    /// Whether an order already named `cert_id` as its predecessor.
     replaced: bool,
 }
 
@@ -138,8 +128,6 @@ impl Acme {
         }
         let mut order = match account.new_order(&order_req).await {
             Ok(o) => o,
-            // A CA that rejects the replaces hint still issues without it;
-            // the hint is a rate-limit exemption, not a requirement.
             Err(e) if replaces.is_some() => {
                 tracing::warn!(error = %e, "order with replaces refused; retrying without");
                 account.new_order(&NewOrder::new(&identifiers).profile(&self.cfg.acme_profile)).await?

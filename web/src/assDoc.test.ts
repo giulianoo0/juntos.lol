@@ -36,7 +36,6 @@ describe('buildAssDocument', () => {
     expect(dialogues).toHaveLength(2)
     expect(dialogues[0]).toBe('Dialogue: 1,0:00:01.00,0:00:04.00,Default,,0,0,0,Karaoke,first {\\k20}ka{\\k30}ra')
     expect(dialogues[1]).toBe('Dialogue: 0,0:00:05.00,0:00:07.00,Default,,0,0,0,,second')
-    // Format line comes from the header, not duplicated.
     expect(doc.match(/^Format: Layer/gm)).toHaveLength(1)
   })
 

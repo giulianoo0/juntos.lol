@@ -17,7 +17,6 @@ interface Candidate {
   source: string
   manifest: PluginManifest
   origin: PluginOrigin
-  /** What storing this would overwrite, if anything. */
   replaces: InstalledPlugin | null
 }
 
@@ -30,9 +29,6 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  // `shown` is the step one beat behind, so the outgoing content dissolves
-  // before the next mounts. Rendering from `step` and using only `morphing`
-  // would defeat the hook.
   const view: Step | 'confirm' = candidate ? 'confirm' : step
   const { shown, morphing } = useMorphingStep(view)
 
@@ -60,8 +56,6 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
     setBusy(true)
     setError(null)
     try {
-      // Canonical, not what was pasted: the id is a hash of this, and the
-      // locked origin is compared against it on every update.
       const address = canonicalRepoUrl(repoUrl.trim())
       const { source, commit } = await fetchGitPlugin(address)
       await read(source, { kind: 'git', updateUrl: address, commit })
@@ -88,17 +82,11 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
 
   const onDrop = (event: DragEvent) => {
     event.preventDefault()
-    // React propagates synthetic events up its own tree, and this panel is a
-    // child of a page that also accepts dropped files. Without this, a
-    // dropped plugin is read here AND handed to the page as media to upload.
     event.stopPropagation()
     const file = event.dataTransfer.files[0]
     if (file) void fromFile(file)
   }
 
-  // Escape closes, and the page behind stops scrolling — both are what
-  // MetaDetails does and what the Radix dialog on the manual upload gives
-  // for free.
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -114,9 +102,6 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
   if (!open) return null
 
   return (
-    // The backdrop closes only when the backdrop itself is clicked. A plain
-    // onClick here also fires for clicks on the MorphPanel's own frame, which
-    // sits outside the panel's stopPropagation.
     <div
       className="plugins-backdrop"
       role="dialog"
@@ -140,15 +125,9 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
                 <ul className="plugins-hosts">
                   {candidate.manifest.hosts.map((host) => <li key={host}>{host}</li>)}
                 </ul>
-                {/* A file that fetches code from an address you did not type
-                    is worth saying out loud. */}
                 {candidate.manifest.updateUrl ? (
                   <p className="plugins-note">{t('plugins.updatesFrom')} {candidate.manifest.updateUrl}</p>
                 ) : null}
-                {/* Every repository publishes a file called plugin.js, so a
-                    collision between two dropped files is the common case.
-                    The record it would land on carries somebody else's
-                    approved hosts and update channel. */}
                 {candidate.replaces ? (
                   <p className="plugins-note plugins-replaces">
                     {t('plugins.replaces')} {candidate.replaces.manifest.name} {candidate.replaces.manifest.version}

@@ -40,11 +40,8 @@ describe('CopyErrorReport', () => {
 
     expect(copied).toContain('video codec hevc cannot be copied')
     expect(copied).toContain('unsupported_media')
-    // The state that decided it: the file, how far the swarm got, and what
-    // this browser will actually decode.
     expect(copied).toContain('movie.mkv')
     expect(copied).toContain('5 peers')
-    // No WebCodecs here, which is itself the answer a report should carry.
     expect(copied).toContain('not available in this browser')
     expect(await screen.findByText('room.copyReportDone')).toBeTruthy()
   })
@@ -66,7 +63,6 @@ describe('CopyErrorReport', () => {
     expect(asked).toContain('avc1.640028')
     expect(copied).toContain('H.264 (avc1.640028): decodes')
     expect(copied).toContain('HEVC (hvc1.1.6.L93.B0): no')
-    // The line that decides whether a file with non-AAC audio can be prepared.
     expect(copied).toContain('AAC encode (required for every non-AAC track): no')
     vi.unstubAllGlobals()
   })

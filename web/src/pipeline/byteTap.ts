@@ -14,13 +14,8 @@
  * resynchronise.
  */
 
-/** Held for the scan while the remux runs ahead of it. */
 const DEFAULT_BUFFER_BYTES = 64 * 1024 * 1024
-/** How long a pull waits on the remux before handing the decision back to
- * the caller. Longer than a range takes to arrive while the swarm is still
- * fetching it, or the tap gives up in the middle of every delivery. */
 const DEFAULT_IDLE_MS = 10_000
-/** Most one pull hands over, so the parser gets bytes rather than a backlog. */
 const MAX_PULL_BYTES = 8 * 1024 * 1024
 
 export class ByteTap {
@@ -30,10 +25,6 @@ export class ByteTap {
   private waiter: ((woken: boolean) => void) | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private done = false
-  // The furthest byte the remux has been seen reading. When it is far beyond
-  // the cursor there is nothing to wait for — the scan is behind a gap it has
-  // to cross on its own — and when the cursor catches back up, riding along
-  // resumes by itself.
   private furthest = 0
 
   private readonly bufferBytes: number
@@ -49,11 +40,8 @@ export class ByteTap {
     return this.at
   }
 
-  /**
-   * Whether the remux is reading within reach of the cursor: what it reads
-   * next is what the scan wants next, and fetching it separately would be
-   * the same bytes over the wire twice. False across a gap, and once closed.
-   */
+  /** Reading within reach of the cursor, so the scan can ride along instead
+   * of fetching the same bytes. False across a gap, and once closed. */
   get riding(): boolean {
     return !this.done && this.furthest <= this.at + this.bufferBytes
   }
@@ -67,15 +55,7 @@ export class ByteTap {
       bytes = bytes.subarray(this.at - offset)
       offset = this.at
     }
-    // Beyond what the budget could hold anyway. The remux reads the container's
-    // index at the end of the file, and after a seek it reads a region the scan
-    // will not reach for gigabytes; buffering either would squat the budget
-    // against bytes the scan wants next.
     if (offset > this.at + this.bufferBytes) return
-    // Every reason to refuse is weighed before anything is let go: dropping
-    // what is held for a replacement that is then refused would leave a hole
-    // where buffered bytes used to be, and the scan would go and fetch them
-    // from the origin again.
     const held = this.pending.get(offset)
     if (held && held.length >= bytes.length) return
     if (offset !== this.at && this.buffered - (held?.length ?? 0) + bytes.length > this.bufferBytes) return
@@ -83,26 +63,18 @@ export class ByteTap {
       this.buffered -= held.length
       this.pending.delete(offset)
     }
-    // The caller keeps writing into its own buffer, and the chunk may sit
-    // here across many reads, so what is held has to be ours.
     this.pending.set(offset, bytes.slice())
     this.buffered += bytes.length
     if (offset === this.at) this.wake(true)
   }
 
-  /**
-   * Contiguous bytes at the cursor, or null when the caller should fetch the
-   * next slice itself — the remux is elsewhere, or through.
-   */
+  /** Contiguous bytes at the cursor, or null when the caller should fetch
+   * the next slice itself — the remux is elsewhere, or through. */
   async pull(): Promise<Uint8Array | null> {
     for (;;) {
       const out = this.drain()
       if (out) return out
       if (this.done) return null
-      // The remux is somewhere the cursor will not reach for a while: this is
-      // a gap, and waiting for it to be filled by someone who has moved past
-      // costs three seconds per slice and fills none of it. Cross it, and the
-      // moment the cursor is back within reach the wait is worth taking again.
       if (this.furthest > this.at + this.bufferBytes) return null
       if (!(await this.idle())) return null
     }
@@ -114,7 +86,6 @@ export class ByteTap {
     this.prune()
   }
 
-  /** No further offers will come; every pull from now on returns null. */
   close(): void {
     this.done = true
     this.pending.clear()
@@ -122,7 +93,6 @@ export class ByteTap {
     this.wake(false)
   }
 
-  // Everything buffered from the cursor forward, up to one pull's worth.
   private drain(): Uint8Array | null {
     const parts: Uint8Array[] = []
     let total = 0
@@ -145,8 +115,6 @@ export class ByteTap {
     return joined
   }
 
-  // The buffered bytes starting at `pos`. Usually an exact hit; a chunk that
-  // straddles `pos` because an earlier read overlapped it is worth the scan.
   private takeAt(pos: number): Uint8Array | null {
     const exact = this.pending.get(pos)
     if (exact) {
@@ -173,8 +141,7 @@ export class ByteTap {
     }
   }
 
-  // Resolves true when a chunk landed on the cursor, false when the wait ran
-  // out or the tap closed.
+  // Resolves true when a chunk landed on the cursor, false on timeout or close.
   private idle(): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       this.waiter = resolve
@@ -205,11 +172,6 @@ export function teeInto(
 ): ReadableStream<Uint8Array> {
   let offset = start
   const reader = stream.getReader()
-  // Read and re-enqueue by hand rather than pipeThrough: piping keeps a
-  // promise of its own that nobody awaits, and a seek — which rejects every
-  // read in flight — would surface as an unhandled rejection on the page.
-  // Here the only path an error takes is the one the consumer is already
-  // reading.
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const { done, value } = await reader.read()

@@ -7,8 +7,6 @@ describe('gateSecondsFor', () => {
     expect(gateSecondsFor({ producedEdgeSec: null, currentTime: 0, ...later })).toBe(GATE_BASE_SEC)
   })
   it('never waits for media the host has not published', () => {
-    // The region has 6 s produced past the playhead: waiting for 10 would be
-    // waiting for the uplink.
     expect(gateSecondsFor({ producedEdgeSec: 106, currentTime: 100, ...later })).toBe(5.5)
     expect(gateSecondsFor({ producedEdgeSec: 130, currentTime: 100, ...later })).toBe(GATE_BASE_SEC)
   })

@@ -9,7 +9,6 @@
 export interface Stroke {
   id: string
   d: string
-  /** emenda no traço anterior: mesma letra, a caneta não levanta */
   joined?: boolean
 }
 
@@ -32,17 +31,14 @@ export const WORDMARK_STROKES: Stroke[] = [
   { id: 'l2', d: 'M 418 -68 L 418 -6', joined: true },
 ]
 
-/** O pingo do j. Não é traço: a caneta toca e fecha o ponto. */
 export const WORDMARK_DOT = { cx: 12, cy: -58, r: 6.5 }
 
-/** O ponto de `juntos.lol` é o play, e é a única cor do wordmark. */
 export const WORDMARK_PLAY = 'M 299 -33 L 313 -24 L 299 -15 Z'
 
 export const WORDMARK_VIEWBOX = '-8 -80 440 108'
 
 export const CORAL = '#FF7A45'
 
-/** A marca curta: o j com o play no lugar do pingo. Ver logos/juntos-mark.svg. */
 export const MARK_STEM = 'M 300 176 L 300 306 A 96 96 0 0 1 204 402'
 export const MARK_PLAY = 'M 282 58 L 324 81 L 282 104 Z'
 export const MARK_VIEWBOX = '150 40 220 424'

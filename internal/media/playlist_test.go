@@ -8,8 +8,6 @@ import (
 )
 
 func TestNormalizeEventPlaylistStartsAGrowingEpisodeAtItsBeginning(t *testing.T) {
-	// Without EXT-X-START a native player joins a growing event playlist at
-	// its live edge, which for a preview means partway into the episode.
 	out := string(normalizeEventPlaylist([]byte(
 		"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:2.000000,\nsegment.m4s\n")))
 
@@ -17,8 +15,6 @@ func TestNormalizeEventPlaylistStartsAGrowingEpisodeAtItsBeginning(t *testing.T)
 }
 
 func TestNormalizeEventPlaylistRaisesATooSmallTargetDuration(t *testing.T) {
-	// ffmpeg occasionally declares a target shorter than a segment that ran a
-	// few milliseconds over, which players reject as a malformed playlist.
 	out := string(normalizeEventPlaylist([]byte(
 		"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:2.005333,\nsegment.m4s\n")))
 

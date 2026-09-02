@@ -16,8 +16,6 @@ const plugin = (id: string, enabled = true): InstalledPlugin => ({
 
 const target = { type: 'movie' as const, id: 'tt0111161' }
 
-// What a plugin returns is the bare array; the wrapping into `{ streams }`
-// that parseStreams wants happens inside resolveStreams.
 const torrent = (hash: string) => [{ name: 'X\n1080p', title: 'R', infoHash: hash }]
 
 describe('resolveStreams', () => {
@@ -77,9 +75,6 @@ describe('resolveStreams', () => {
   })
 
   it('runs each plugin against its approved hosts, not the ones its manifest now claims', async () => {
-    // A held update leaves manifest.hosts wider than approvedHosts. Running
-    // against the manifest would grant the capability the hold exists to
-    // withhold.
     const held = {
       ...plugin('a'),
       manifest: { id: 'a', name: 'A', version: '1', hosts: ['a.com', 'evil.com'], updateUrl: null },

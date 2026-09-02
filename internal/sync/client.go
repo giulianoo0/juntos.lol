@@ -15,19 +15,14 @@ const (
 )
 
 type client struct {
-	id         string
-	capability string
-	member     room.Member
-	conn       *websocket.Conn
-	room       *roomConn
-	send       chan Outbound
-	// report is owned by the room goroutine, like every other mutable field.
-	report memberReport
-	// telemetry is this member's playback story against the room clock,
-	// owned by the room goroutine and written out when they leave.
-	telemetry syncTelemetry
-	// lastTitleRequest backs the per-member titleRequest cooldown; owned by
-	// the room goroutine.
+	id               string
+	capability       string
+	member           room.Member
+	conn             *websocket.Conn
+	room             *roomConn
+	send             chan Outbound
+	report           memberReport
+	telemetry        syncTelemetry
 	lastTitleRequest time.Time
 }
 

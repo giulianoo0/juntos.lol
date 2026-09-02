@@ -7,8 +7,6 @@ use anyhow::{bail, Context};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TlsMode {
     Acme,
-    /// Certificate and key from files someone else renews (tailscale cert,
-    /// an existing proxy's PKI). Re-read periodically so renewals land.
     File,
     SelfSigned,
     Off,
@@ -29,7 +27,6 @@ pub struct WorkerConfig {
     pub acme_directory: String,
     pub acme_contact: Option<String>,
     pub acme_profile: String,
-    /// TLS=file: the PEM pair to serve, re-read hourly.
     pub tls_cert_file: Option<std::path::PathBuf>,
     pub tls_key_file: Option<std::path::PathBuf>,
     pub disk_quota_bytes: u64,
@@ -39,24 +36,17 @@ pub struct WorkerConfig {
     pub per_torrent_peer_limit: usize,
     pub upload_bps: u32,
     pub download_bps: u32,
-    /// Ceiling on the data plane's egress to browsers, bytes per second.
-    /// 0 is uncapped. A worker near this ceiling reports itself full.
     pub transfer_bps: u64,
     pub idle_grace: Duration,
     pub reap_ttl: Duration,
     pub runtime_worker_threads: usize,
-    /// This worker asks to be reached through the fleet's relay instead of
-    /// directly: its address is private and stays that way.
     pub relayed: bool,
-    /// Where this worker forwards /relay/* to (the site's app), making it
-    /// the fleet's front door for relayed siblings. Empty disables.
     pub relay_upstream: Option<String>,
     pub response_cap: u64,
     pub first_byte_deadline: Duration,
     pub stall_deadline: Duration,
     pub drain_deadline: Duration,
 
-    /// Remote remux. 0 slots disables the capability entirely.
     pub remux_slots: usize,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
@@ -64,8 +54,6 @@ pub struct WorkerConfig {
     pub remux_object_bytes: u64,
     pub remux_put_concurrency: usize,
     pub remux_put_global: usize,
-    /// How far past the room's playhead a run produces at full speed before
-    /// throttling to share the box, in milliseconds.
     #[allow(dead_code)]
     pub remux_ahead_ms: u64,
 }
@@ -89,13 +77,9 @@ fn env_secs(name: &str, default: u64) -> anyhow::Result<Duration> {
 }
 
 const GB: u64 = 1024 * 1024 * 1024;
-/// Used only when the filesystem will not say how big it is.
 const QUOTA_FALLBACK_GB: u64 = 120;
-/// Share of the filesystem the torrents may claim when nobody said. The rest
-/// is for the certificates, the logs and whatever else lives on the volume.
 const QUOTA_SHARE_PCT: u64 = 80;
 
-/// Bytes on the filesystem holding `dir`, as the kernel reports it.
 #[cfg(unix)]
 fn filesystem_bytes(dir: &std::path::Path) -> Option<u64> {
     use std::ffi::CString;
@@ -114,10 +98,6 @@ fn filesystem_bytes(_dir: &std::path::Path) -> Option<u64> {
     None
 }
 
-/// A quota larger than the disk is not a quota: the accountant keeps admitting
-/// torrents until the filesystem answers ENOSPC, which librqbit turns into a
-/// torrent in Error and a rescan of everything it had. So the default follows
-/// the filesystem, and a configured one is held to it.
 fn disk_quota_bytes(data_dir: &std::path::Path) -> anyhow::Result<u64> {
     let _ = std::fs::create_dir_all(data_dir);
     let ceiling = filesystem_bytes(data_dir).map(|total| total / 100 * QUOTA_SHARE_PCT);
@@ -141,8 +121,7 @@ fn disk_quota_bytes(data_dir: &std::path::Path) -> anyhow::Result<u64> {
     })
 }
 
-/// Loads KEY=VALUE lines into the environment, real env winning. The setup
-/// wizard writes this file so a bare `ss-worker` starts configured.
+/// Loads KEY=VALUE lines into the environment, real env winning.
 pub fn load_env_file(path: &std::path::Path) -> anyhow::Result<usize> {
     let raw = std::fs::read_to_string(path)?;
     let mut loaded = 0;
@@ -198,11 +177,6 @@ impl WorkerConfig {
             disk_high_water_pct: env_parse("SS_WORKER_DISK_HIGH_WATER_PCT", 90)?,
             max_torrents: env_parse("SS_WORKER_MAX_TORRENTS", 12)?,
             max_leases: env_parse("SS_WORKER_MAX_LEASES", 8)?,
-            // Held down on purpose. When the window moves, librqbit does not
-            // send Cancel for requests already out — cancel_inflight_requests_for_piece
-            // only fires when a piece is stolen — so every peer keeps
-            // delivering blocks of the window we just left. Fewer peers is a
-            // smaller overshoot to store before it can be released.
             per_torrent_peer_limit: env_parse("SS_WORKER_PEER_LIMIT", 40)?,
             upload_bps: env_parse::<u32>("SS_WORKER_UPLOAD_MBIT", 3)? * 125_000,
             download_bps: env_parse::<u32>("SS_WORKER_DOWNLOAD_MBIT", 0)? * 125_000,
@@ -237,9 +211,6 @@ impl WorkerConfig {
         Ok(cfg)
     }
 
-    // Every FileStream and every add_torrent holds one of librqbit's blocking
-    // permits; the pool is sized for the leases this worker admits plus the
-    // transient streams and inits around them.
     pub fn blocking_threads(&self) -> usize {
         if self.runtime_worker_threads > 0 {
             return self.runtime_worker_threads;
@@ -251,7 +222,6 @@ impl WorkerConfig {
         self.disk_quota_bytes / 100 * self.disk_high_water_pct as u64
     }
 
-    // What browsers are told to fetch from: the address the certificate names.
     pub fn public_base(&self) -> String {
         let scheme = if self.tls == TlsMode::Off {
             "http"

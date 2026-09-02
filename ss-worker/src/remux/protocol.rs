@@ -2,9 +2,8 @@ use serde::Deserialize;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// The remux block of a signed `remuxStart` job. The envelope's signature,
-/// nonce, expiry and workerId still apply; this is only the payload the
-/// supervisor consumes. No Debug derive: `claim` must never reach a log.
+/// The remux block of a signed `remuxStart` job. No Debug derive: `claim`
+/// must never reach a log.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Spec {
@@ -38,9 +37,8 @@ impl std::fmt::Debug for Spec {
     }
 }
 
-/// Server-signed ceilings. The worker clamps each to its own configuration:
-/// a signed limit can lower a local ceiling, never raise it. Zero means the
-/// local value stands.
+/// Server-signed ceilings: a signed limit can lower a local ceiling, never
+/// raise it. Zero means the local value stands.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Limits {

@@ -252,7 +252,7 @@ export const en: Record<string, string> = {
   'onboard.own.aside': 'This is the tab that opens by default. Everything here works with nothing installed.',
   'onboard.catalogue.title': 'Catalogue: search by name',
   'onboard.catalogue.body': 'Search for a film or series and open the title. The catalogue shows covers but does not know where the files are: plugins do that, and you install them under Plugins, at the top.',
-  'onboard.catalogue.aside': 'Torrentio is the plugin that does it today. With none installed, the catalogue lists everything and opens nothing.',
+  'onboard.catalogue.aside': 'A streams plugin does that. With none installed, the catalogue lists everything and opens nothing.',
 
   'home.tabCatalog': 'Catalogue',
   'home.tabOwn': 'Room',

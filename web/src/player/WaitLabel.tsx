@@ -3,14 +3,9 @@ import type { Translator } from '../i18n/useT'
 import { SlotText } from '../ui/SlotText'
 
 /**
- * The one line the wait overlay says, and how it changes.
- *
- * A wait passes through two different facts: there is no media here yet, and
- * then there is media and the buffer is being built from it. The line
- * travels from one to the other (see SlotText), and the second one shimmers
- * for as long as the buffer is filling — the seconds inside it roll rather
- * than cut, so a number counting down never looks like the text being
- * replaced again on every tick.
+ * The one line the wait overlay says: it travels from "no media here yet" to
+ * "the buffer is filling" (see SlotText), shimmering while it fills, with
+ * rolling seconds so a countdown never reads as the text being replaced.
  */
 export function WaitLabel({ secondsLeft, t }: { secondsLeft: number | null; t: Translator }) {
   const phase = secondsLeft === null ? 'preparing' : 'buffering'

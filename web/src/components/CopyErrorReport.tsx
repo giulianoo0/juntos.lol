@@ -27,8 +27,6 @@ export function CopyErrorReport({ room, failure, detail, t }: {
       await navigator.clipboard.writeText(report)
       setState('done')
     } catch {
-      // No clipboard permission, or an insecure context. The report is still
-      // worth having, so it goes somewhere it can be read and selected.
       console.error(report)
       setState('failed')
     }

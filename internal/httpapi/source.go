@@ -16,14 +16,11 @@ import (
 
 const maxSourceBodyBytes = 4 << 10
 
-// SourceHooks lets a room change what it is playing without httpapi taking a
-// dependency on the media pipeline. Both are nil-safe.
+// SourceHooks lets a room change what it is playing without httpapi depending on
+// the media pipeline. Both are nil-safe, and CancelMedia runs before the old files
+// are removed so ffmpeg is not left writing into a directory being deleted.
 type SourceHooks struct {
-	// CancelMedia stops any preview job still feeding the previous source.
-	// It runs before the old files are removed, so ffmpeg is not left writing
-	// into a directory that is being deleted underneath it.
-	CancelMedia func(roomID string)
-	// NotifyStatus tells connected clients the room's media changed.
+	CancelMedia  func(roomID string)
 	NotifyStatus func(roomID, status string)
 }
 
@@ -34,9 +31,8 @@ type changeSourceRequest struct {
 	FileName   string `json:"fileName"`
 }
 
-// RegisterSourceRoute mounts the endpoint that repoints a live room at a new
-// source. Only the controller may call it, and everyone stays in the room:
-// members, chat and the controller itself all survive the swap.
+// RegisterSourceRoute mounts the controller-only endpoint that repoints a live room
+// at a new source; members, chat and the controller all survive the swap.
 func RegisterSourceRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
 	authorizer memberAuthorizer, hooks SourceHooks) {
 	rg.POST("/rooms/:id/source", changeSource(store, cfg, authorizer, hooks))
@@ -75,9 +71,6 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
-		// The capability proves the caller is a connected member; the
-		// controller check proves they are the one driving this room. Both are
-		// required, so a member cannot swap the source out from under everyone.
 		if authorizer == nil || !authorizer.AuthorizeMember(roomID, req.MemberID, req.Capability) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
 			return
@@ -90,8 +83,6 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 		if hooks.CancelMedia != nil {
 			hooks.CancelMedia(roomID)
 		}
-		// Everything under the room directory belongs to the source being
-		// replaced: the subtitles the previous remux published.
 		if err := os.RemoveAll(filepath.Join(cfg.DataDir, "rooms", roomID)); err != nil {
 			slog.ErrorContext(c.Request.Context(), "remove previous room media", "room_id", roomID, "error", err)
 			c.Status(http.StatusInternalServerError)
@@ -122,9 +113,8 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 	}
 }
 
-// sourceTarget validates the requested source and reports the status the room
-// should land in. An upload has to be prepared before it can play; a shared
-// screen is live the moment the controller starts publishing it.
+// sourceTarget validates the requested source and reports the status the room should
+// land in: an upload must be prepared first, a shared screen is live immediately.
 func sourceTarget(req changeSourceRequest) (status, fileName string, ok bool) {
 	switch req.Kind {
 	case room.SourceUpload:
@@ -133,7 +123,6 @@ func sourceTarget(req changeSourceRequest) (status, fileName string, ok bool) {
 		}
 		return "uploading", req.FileName, true
 	case room.SourceScreen:
-		// A shared screen has no file behind it; the client names it.
 		return "ready", "", true
 	default:
 		return "", "", false

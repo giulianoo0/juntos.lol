@@ -13,8 +13,6 @@ const location = (over: Partial<TorrentLocation> = {}): TorrentLocation => ({
   ...over,
 })
 
-// The picker only reads name, path, index and size; the rest of the file is
-// the reading machinery it never touches.
 const file = (index: number, path: string, size = 1_000): TorrentVideoFile => ({
   name: path.split('/').pop() ?? path,
   path,
@@ -26,7 +24,6 @@ const file = (index: number, path: string, size = 1_000): TorrentVideoFile => ({
   read: async () => new ArrayBuffer(0),
 })
 
-// A five-season pack, sorted largest-first the way a session hands them over.
 const pack = [
   file(245, 'Season 1/Show (2008) - S01E01 - Pilot (1080p BluRay).mkv', 9_000),
   file(246, 'Season 1/Show (2008) - S01E02 - Cat in the Bag (1080p BluRay).mkv', 8_000),

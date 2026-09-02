@@ -20,8 +20,7 @@
 - compartilhamento de tela com LiveKit;
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
-- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [juntos.lol/docs](https://juntos.lol/docs);
-- métricas Prometheus enviadas para o Grafana Cloud, com painéis e alertas versionados no repositório.
+- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [juntos.lol/docs](https://juntos.lol/docs).
 
 ## Como funciona
 
@@ -99,8 +98,7 @@ Acesse [http://localhost:8099](http://localhost:8099). O Compose inicia:
 
 - `app`: frontend compilado, API Go e WebSocket;
 - `redis`: salas, participantes e estado sincronizado;
-- `livekit`: servidor WebRTC em modo de desenvolvimento;
-- `alloy`: coletor que raspa as métricas da aplicação e as envia ao Grafana Cloud.
+- `livekit`: servidor WebRTC em modo de desenvolvimento.
 
 Para encerrar:
 
@@ -155,17 +153,10 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
 | `ROOM_IDLE_SECONDS` | `90` | Tempo sem participantes até a sala ser recolhida: registro no Redis, diretório em disco e mídia no bucket. |
 | `UPLOAD_IDLE_MINUTES` | `10` | Tempo sem atividade até o claim de um remux ser devolvido. |
-| `METRICS_PORT` | `9090` | Porta do endpoint Prometheus, em um listener separado do da aplicação. `0` desliga o endpoint. |
 | `LIVEKIT_URL` | vazio | URL WebSocket entregue aos navegadores, normalmente `wss://...`. |
 | `LIVEKIT_API_KEY` | vazio | Chave para emitir tokens LiveKit. |
 | `LIVEKIT_API_SECRET` | vazio | Segredo para emitir tokens LiveKit. |
 | `LIVEKIT_ARGS` | `--dev` no Compose | Argumentos do servidor LiveKit. |
-| `ALLOY_BIND` | `127.0.0.1:12345` | Bind da interface de diagnóstico do coletor. |
-| `GRAFANA_CLOUD_PROM_URL` | vazio | Endpoint de `remote_write` da instância de métricas do Grafana Cloud. |
-| `GRAFANA_CLOUD_PROM_USER` | vazio | ID numérico dessa instância, usado como usuário do basic auth. |
-| `GRAFANA_CLOUD_PROM_TOKEN` | vazio | Token da política de acesso, com escopo `metrics:write`. |
-| `SS_INSTANCE` | `juntos.lol` | Rótulo `instance` das séries enviadas. |
-| `SS_ENV` | `production` | Rótulo `env` das séries enviadas. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 
@@ -183,9 +174,6 @@ LIVEKIT_URL=wss://livekit.example.com
 LIVEKIT_API_KEY=uma-chave-forte
 LIVEKIT_API_SECRET=um-segredo-forte
 LIVEKIT_ARGS=--config /etc/livekit.yaml
-GRAFANA_CLOUD_PROM_URL=https://prometheus-<regiao>.grafana.net/api/prom/push
-GRAFANA_CLOUD_PROM_USER=id-numerico-da-instancia
-GRAFANA_CLOUD_PROM_TOKEN=token-da-politica-de-acesso
 ```
 
 O arquivo de configuração do LiveKit e segredos deve ser montado com um override do Compose mantido fora do repositório.
@@ -202,48 +190,6 @@ ssh usuario@servidor 'cd /opt/ss \
   && docker compose up -d app \
   && docker compose ps'
 ```
-
-## Observabilidade
-
-As métricas saem da aplicação em formato Prometheus e são enviadas para uma instância do Grafana Cloud. Não existe Prometheus nem Grafana no Compose: o armazenamento das séries e os painéis já estão do outro lado, e uma segunda cópia dos dois aqui gastaria memória para responder o que a instância já responde.
-
-O endpoint fica em um listener próprio, na porta `METRICS_PORT`, publicado apenas na rede do Compose. O container `app` continua exposto só em loopback atrás do proxy TLS, e nada do que está em `/metrics` atravessa esse proxy. Não há segredo nas séries, mas elas dizem quantas pessoas estão assistindo e quanto a máquina está gastando, o que é assunto de quem opera e de mais ninguém. Uma porta igual à da aplicação impede a inicialização, em vez de publicar o endpoint junto com o site.
-
-O `alloy` raspa esse endpoint a cada 15 segundos e faz `remote_write` para o Grafana Cloud. Ele é o sucessor do Grafana Agent, que chegou ao fim da vida em novembro de 2025 e não recebe mais correção de segurança. A configuração está em `observability/alloy/config.alloy`, é versionada e lê toda credencial do ambiente.
-
-Banda vem de contadores. A aplicação conta bytes e nunca calcula taxa: quem transforma isso em bytes por segundo é o `rate()` no painel, na janela que quem está olhando escolher.
-
-### O que é medido
-
-- salas criadas, ativas, por estado e recolhidas, com o motivo — sala vazia ou fim do TTL;
-- participantes conectados, entradas e saídas, conexões e mensagens WebSocket;
-- bytes assinados para o pipeline do cliente e objetos confirmados no bucket;
-- requisições HTTP por rota, status e duração, e os bytes que entram e saem em cada uma;
-- operações no R2 por tipo e por classe de cobrança, com duração e erros.
-
-Nenhum rótulo carrega ID de sala, apelido ou caminho de arquivo. Um rótulo sem limite é uma série nova por sala, e é assim que um endpoint de métricas vira a parte cara do servidor.
-
-A classe de cada operação é o que a Cloudflare cobra por ela: Class A são escritas, listagens e cada parte de um multipart; Class B são leituras e metadados; `DeleteObject` e `AbortMultipartUpload` não são cobrados. A contagem é feita no transporte HTTP do cliente S3, e não em volta de `Put` e `RemovePrefix`, porque uma chamada dessas não é uma operação: um objeto acima do limite de parte única vira um multipart com uma escrita cobrada por parte, e remover um prefixo é uma listagem cobrada a cada mil chaves. Como segmentos e legendas são entregues pelo edge do bucket e não passam por esta máquina, as operações Class B são o que existe no lugar de uma medida de saída de mídia.
-
-### Painéis e alertas
-
-Os painéis ficam em `observability/dashboards/` e as regras de alerta em `observability/alerts/`, em JSON. O repositório é a fonte da verdade: o que for editado pela interface do Grafana é sobrescrito no envio seguinte.
-
-```bash
-set -a; . ./.env; set +a
-./observability/grafana-sync.sh
-```
-
-O script cria a pasta, envia os painéis, cria ou atualiza as regras de alerta e, no fim, faz uma consulta instantânea no Grafana Cloud para conferir que as séries chegaram — um painel vazio não distingue "nada aconteceu" de "nada está sendo enviado".
-
-São duas credenciais diferentes, e uma não serve para o trabalho da outra:
-
-| Variável | Onde criar | Para quê |
-| --- | --- | --- |
-| `GRAFANA_CLOUD_PROM_TOKEN` | na instância, em **Administration → Cloud access policies**, com o escopo `metrics:write` | Envio das métricas. Não é aceito pela API do Grafana. |
-| `GRAFANA_SA_TOKEN` | na instância, em **Administration → Users and access → Service accounts**, com o papel Editor | Pasta, painéis e regras de alerta. Não serve para enviar métricas. |
-
-`GRAFANA_URL` é o endereço da instância, `https://<stack>.grafana.net`. As chaves de API do Grafana foram descontinuadas e migradas para contas de serviço, então é essa a forma atual. Nenhuma dessas variáveis entra no repositório: o `.gitignore` já exclui `.env`, e tanto o Compose quanto o script leem tudo do ambiente.
 
 ## API HTTP
 
@@ -285,11 +231,9 @@ cmd/server/          entrada do servidor Go
 internal/config/     configuração por ambiente
 internal/httpapi/    rotas HTTP, mídia, legendas e LiveKit
 internal/media/      o lado servidor do pipeline do cliente: validação e render de playlists, publicação de legendas
-internal/metrics/    séries Prometheus expostas pelo servidor
-internal/objectstore/ bucket R2 e a contagem das operações cobradas
+internal/objectstore/ bucket R2
 internal/room/       modelo, Redis e expiração
 internal/sync/       WebSocket, presença, chat e relógio
-observability/       coletor, painéis, alertas e o script que os envia
 web/src/             aplicação React/TypeScript
 ```
 

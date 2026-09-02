@@ -117,7 +117,6 @@ describe('decodeSubtitleText', () => {
   })
 
   it('falls back to windows-1252 for older releases', () => {
-    // 0xE1 is a lone continuation byte in UTF-8 but "á" in windows-1252.
     const legacy = new Uint8Array([0x4f, 0x6c, 0xe1])
     expect(decodeSubtitleText(legacy.buffer as ArrayBuffer)).toBe('Olá')
   })

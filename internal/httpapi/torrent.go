@@ -17,36 +17,26 @@ import (
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
-// The torrent routes: the debrid state machine, verbatim. Register an
-// infohash, poll for the listing (metadata resolves in the swarm, seconds
-// to a minute), select the file, and receive where to read it from. The
-// browser never learns a worker's address before the server has decided
-// it may read there.
-
 var infohashRe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
-// TorrentAccess is everything the torrent routes hang off.
+// TorrentAccess is everything the torrent routes hang off. A nil Remux keeps the
+// remux route answering remux_disabled; Authorizer proves a memberId+capability
+// pair names a connected member.
 type TorrentAccess struct {
-	Sessions *Sessions
-	Quota    *Quota
-	Service  *worker.Service
-	// Remux orchestrates remote production; nil (or the flag off) keeps the
-	// route answering remux_disabled so clients stay on the legacy path.
-	Remux *worker.RemuxOrchestrator
-	// Authorizer proves a memberId+capability pair names a connected member,
-	// for the controller mode of the remux start.
+	Sessions   *Sessions
+	Quota      *Quota
+	Service    *worker.Service
+	Remux      *worker.RemuxOrchestrator
 	Authorizer func(roomID, memberID, capability string) bool
 }
 
-// RegisterTorrentRoutes mounts /api/torrents. Capacity is public; the rest
-// carries a session and the dispatch budget.
+// RegisterTorrentRoutes mounts /api/torrents. Capacity and fleet are public; the
+// rest carries a session and the dispatch budget.
 func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access TorrentAccess) {
 	if access.Service == nil {
 		rg.GET("/torrents/capacity", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"capacity": "disabled"})
 		})
-		// A build with no fleet still answers, so the status page can say so
-		// instead of failing to load.
 		rg.GET("/fleet", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"capacity": "disabled", "workers": []worker.FleetMember{}})
 		})
@@ -55,8 +45,6 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	rg.GET("/torrents/capacity", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"capacity": access.Service.Capacity()})
 	})
-	// Public, like capacity: it says how busy the fleet is, never where it
-	// lives, and everyone about to start a room is entitled to know.
 	rg.GET("/fleet", func(c *gin.Context) {
 		fleet := access.Service.Fleet()
 		if fleet == nil {
@@ -82,8 +70,8 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	group.DELETE("/:jobId", releaseTorrent(access.Service))
 }
 
-// startRemux hands the room's production to the job's worker. 202 accepted
-// is neither ready nor running; progress arrives through the room.
+// startRemux hands the room's production to the job's worker; 202 is neither ready
+// nor running, and progress arrives through the room.
 func startRemux(access TorrentAccess) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if access.Remux == nil {
@@ -130,19 +118,15 @@ func remuxErrorStatus(err error) (int, string) {
 }
 
 type startRequest struct {
-	InfoHash string   `json:"infoHash"`
-	Trackers []string `json:"trackers"`
-	DN       string   `json:"dn"`
-	// The page's own worker ranking, best first, from its probes.
+	InfoHash  string   `json:"infoHash"`
+	Trackers  []string `json:"trackers"`
+	DN        string   `json:"dn"`
 	Preferred []string `json:"preferred"`
 }
 
-// cleanTrackers keeps only trackers a worker may announce to: udp, http or
-// https — anything else librqbit drops anyway — and never an IP literal in
-// a non-public range. The worker trusts the signed job and would announce
-// to cloud metadata, internal services or a victim's host on the word of
-// whoever pasted the magnet. Hostnames pass as written: DNS is resolved on
-// the worker, where a rebind check cannot follow from here.
+// cleanTrackers keeps only udp/http/https trackers and never an IP literal in a
+// non-public range, since the worker announces to whatever the signed job names.
+// Hostnames pass as written: DNS resolves on the worker, out of reach from here.
 func cleanTrackers(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for _, raw := range in {
@@ -170,8 +154,8 @@ func cleanTrackers(in []string) ([]string, error) {
 	return out, nil
 }
 
-// listWorkers hands the page what it needs to measure the fleet before a
-// dispatch: every healthy worker, its read base, and a probe ticket.
+// listWorkers hands the page what it needs to measure the fleet before a dispatch:
+// every healthy worker, its read base, and a probe ticket.
 func listWorkers(service *worker.Service, cfg config.Config, quota *Quota) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if quota != nil {
@@ -235,9 +219,6 @@ func getTorrent(service *worker.Service) gin.HandlerFunc {
 		if job.Error != "" {
 			body["error"] = job.Error
 		}
-		// The stats poll runs every couple of seconds for as long as the
-		// download does and only ever reads the swarm; the listing is the
-		// same few kilobytes of paths every time it asks.
 		if c.Query("only") != "swarm" {
 			if job.Name != "" {
 				body["name"] = job.Name
@@ -258,8 +239,8 @@ type selectRequest struct {
 	RoomID    string `json:"roomId"`
 }
 
-// audience is the origin the ticket is scoped to: the configured public
-// origin, else the browser's own Origin header (dev, single box).
+// audience is the origin the ticket is scoped to: the configured public origin,
+// else the browser's own Origin header (dev, single box).
 func audience(c *gin.Context, cfg config.Config) string {
 	if cfg.PublicOrigin != "" {
 		return cfg.PublicOrigin

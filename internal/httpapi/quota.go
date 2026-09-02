@@ -10,12 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// What one session may ask of the worker fleet. Three budgets, each with a
-// different clock: dispatches per hour (the magnet paste), jobs at once
-// (workers' disk), and bytes per day (workers' uplink, counted from what
-// the workers report having served — the browser never says).
-
-// Quota enforces per-session torrent budgets.
+// Quota enforces three per-session torrent budgets, each on its own clock:
+// dispatches per hour, jobs at once, and bytes per day.
 type Quota struct {
 	rdb             *redis.Client
 	dispatchPerHour int
@@ -50,10 +46,8 @@ const (
 	QuotaBytesLimit     QuotaVerdict = "bytes_limit"
 )
 
-// CheckDispatch spends one dispatch from the session's hourly budget and
-// verifies the other two budgets have room. It counts the dispatch even
-// when refusing on another budget, so hammering a refused endpoint is not
-// free.
+// CheckDispatch spends one dispatch from the session's hourly budget and verifies
+// the other two have room. The dispatch is counted even when another budget refuses.
 func (q *Quota) CheckDispatch(ctx context.Context, sid string) (QuotaVerdict, error) {
 	if q.dispatchPerHour > 0 {
 		key := dispatchKey(sid)
@@ -89,10 +83,8 @@ func (q *Quota) CheckDispatch(ctx context.Context, sid string) (QuotaVerdict, er
 	return QuotaOK, nil
 }
 
-// probeListPerHour caps how many fleet listings (each minting a fresh probe
-// ticket per worker) one session may pull. The page lists once per room it
-// opens and caches the ranking; past this the probe endpoint is being
-// farmed for free egress, not measuring anything.
+// probeListPerHour caps fleet listings per session-hour; each one mints a fresh
+// probe ticket per worker.
 const probeListPerHour = 60
 
 func probesKey(sid string) string {
@@ -100,8 +92,7 @@ func probesKey(sid string) string {
 }
 
 // CheckProbes spends one fleet listing from the session's hourly budget;
-// false means the budget is gone. The probe bytes themselves are capped
-// per ticket on the worker; this caps how often new tickets are minted.
+// false means the budget is gone.
 func (q *Quota) CheckProbes(ctx context.Context, sid string) (bool, error) {
 	key := probesKey(sid)
 	n, err := q.rdb.Incr(ctx, key).Result()
@@ -114,10 +105,6 @@ func (q *Quota) CheckProbes(ctx context.Context, sid string) (bool, error) {
 	return n <= probeListPerHour, nil
 }
 
-// pluginFetchPerHour is how many addon requests one session may route
-// through the plugin hop in an hour. A run is capped at 32 requests by the
-// page, and a person browsing a catalog opens a title every few seconds at
-// most; past this the hop is being used as a fetch service, not a plugin.
 const pluginFetchPerHour = 600
 
 func pluginFetchKey(sid string) string {
@@ -138,8 +125,7 @@ func (q *Quota) CheckPluginFetch(ctx context.Context, sid string) (bool, error) 
 	return n <= int64(q.pluginFetchPerHour), nil
 }
 
-// PluginFetch is the middleware for the plugin hop: it refuses with 429
-// when the session has sent its share for the hour.
+// PluginFetch is the plugin hop's middleware: 429 once the session spent its hour.
 func (q *Quota) PluginFetch() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sid := SessionID(c)
@@ -161,14 +147,10 @@ func (q *Quota) PluginFetch() gin.HandlerFunc {
 	}
 }
 
-// AcquireJob records a running job against the session, refusing when the
-// concurrent budget is already full. ttl bounds a job whose release never
-// comes (a worker that vanished with the job).
+// AcquireJob records a running job against the session, refusing when the concurrent
+// budget is full. ttl bounds a job whose release never comes.
 func (q *Quota) AcquireJob(ctx context.Context, sid, jobID string, ttl time.Duration) (bool, error) {
 	key := jobsKey(sid)
-	// SADD then check: two racing acquires may both land, but the set is
-	// bounded by the dispatch budget anyway, and the placement step refuses
-	// on the worker's side too. Simple beats a Lua script here.
 	if err := q.rdb.SAdd(ctx, key, jobID).Err(); err != nil {
 		return false, err
 	}
@@ -187,12 +169,10 @@ func (q *Quota) AcquireJob(ctx context.Context, sid, jobID string, ttl time.Dura
 	return true, nil
 }
 
-// ReleaseJob forgets a job.
 func (q *Quota) ReleaseJob(ctx context.Context, sid, jobID string) error {
 	return q.rdb.SRem(ctx, jobsKey(sid), jobID).Err()
 }
 
-// AddBytes charges bytes a worker reported serving for this session's job.
 func (q *Quota) AddBytes(ctx context.Context, sid string, n int64) error {
 	if n <= 0 {
 		return nil
@@ -208,8 +188,7 @@ func (q *Quota) AddBytes(ctx context.Context, sid string, n int64) error {
 	return nil
 }
 
-// Dispatch is the middleware for the route that starts a job: it refuses
-// with 429 and the budget's name when the session is over.
+// Dispatch is the middleware for job-starting routes: 429 with the budget's name.
 func (q *Quota) Dispatch() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sid := SessionID(c)

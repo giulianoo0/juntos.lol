@@ -18,7 +18,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// newTestStore returns a Store backed by an in-memory miniredis instance.
 func newTestStore(t *testing.T) *room.Store {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -27,14 +26,11 @@ func newTestStore(t *testing.T) *room.Store {
 	return room.NewStore(rdb, 5*time.Hour)
 }
 
-// testCfg returns a Config with an isolated data dir for handler tests.
 func testCfg(t *testing.T) config.Config {
 	t.Helper()
 	return config.Config{DataDir: t.TempDir(), MaxUploadMB: 100, RoomTTLHours: 5}
 }
 
-// newRedis returns a miniredis and a client on it, for tests that need the
-// client itself rather than a Store.
 func newRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 	mr := miniredis.RunT(t)

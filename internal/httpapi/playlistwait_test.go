@@ -51,13 +51,11 @@ func TestServePlaylistHoldsForTheSequenceItDoesNotHaveYet(t *testing.T) {
 	e := gin.New()
 	RegisterMediaRoutes(e, store, waiter)
 
-	// The sequence it already has answers at once.
 	w := httptest.NewRecorder()
 	e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/hls/client_stream_1.m3u8?_HLS_msn=1", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Contains(t, w.Body.String(), "CAN-BLOCK-RELOAD=YES")
 
-	// The next one holds until a publish provides it.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	held := httptest.NewRecorder()
@@ -106,7 +104,6 @@ func TestPublishWakesPlaylistWaiters(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("waiter never woke")
 	}
-	// A room nobody waits on is a no-op, and so is a nil waiter.
 	waiter.Notify("nobody")
 	var none *playlistWaiter
 	none.Notify("r1")
@@ -133,7 +130,6 @@ func TestServeBundleCarriesTheMasterAndItsPlaylists(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Equal(t, master, got.Master)
-	// The audio playlist is not stored yet: left out, not an error.
 	require.Len(t, got.Playlists, 1)
 	require.Contains(t, got.Playlists["r2_client_stream_1.m3u8"], "CAN-BLOCK-RELOAD=YES")
 	require.Contains(t, got.Playlists["r2_client_stream_1.m3u8"], "cs_1_2.m4s")

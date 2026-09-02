@@ -21,9 +21,8 @@ import (
 )
 
 // The remote-remux orchestrator: one intention per room, one run at a time,
-// the claim held by the backend on the room's behalf. The browser asks to
-// start and then may leave; seeks follow the room's authoritative position;
-// heartbeats carry run state back and renew what a live run needs.
+// the claim held by the backend on the room's behalf. Seeks follow the room's
+// authoritative position; heartbeats carry run state back.
 
 var (
 	ErrRemuxDisabled    = errors.New("remux_disabled")
@@ -50,10 +49,8 @@ type RemuxRun struct {
 	StartMs         int64     `json:"startMs"`
 	State           string    `json:"state"`
 	ProducedMs      int64     `json:"producedMs"`
-	// Restarts counts the times this production was redispatched after a
-	// worker lost it mid-run, so a crash loop stays bounded.
-	Restarts  int       `json:"restarts,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Restarts        int       `json:"restarts,omitempty"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 func remuxRunKey(roomID string) string { return "room:" + roomID + ":remux" }
@@ -64,8 +61,7 @@ type RemuxOrchestrator struct {
 	Service *Service
 	Store   *room.Store
 	Cfg     config.Config
-	// Notify tells a room's members it changed; the hub supplies it.
-	Notify func(roomID string)
+	Notify  func(roomID string)
 
 	mu      sync.Mutex
 	byRoom  map[string]*sync.Mutex
@@ -134,10 +130,8 @@ func (o *RemuxOrchestrator) capableWorker(workerID string) bool {
 }
 
 // Start reserves the room's producer claim and dispatches the first run.
-// Authorization is one of two modes: the room's ownerToken (bootstrap,
-// before the host's socket exists) or a connected controller's capability,
-// verified by the authorize callback the HTTP layer supplies. Both require
-// the session that owns the torrent job.
+// Authorization is the room's ownerToken (bootstrap) or a connected
+// controller's capability; both require the session owning the torrent job.
 func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, req remux.StartRequest,
 	authorizeMember func(memberID, capability string) bool) (*remux.StartResponse, error) {
 	if !o.Cfg.RemoteRemuxEnabled {
@@ -181,9 +175,6 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	defer lock.Unlock()
 
 	if existing, err := o.LoadRun(ctx, req.RoomID); err == nil && existing != nil {
-		// One production per room and generation: the same request replays
-		// its receipt, a different one while a run lives is deduplicated
-		// onto it rather than doubling FFmpeg.
 		if existing.MediaGeneration == req.MediaGeneration && !remux.TerminalState(existing.State) {
 			return &remux.StartResponse{Remote: true, RunID: existing.RunID,
 				MediaGeneration: existing.MediaGeneration, State: existing.State}, nil
@@ -229,14 +220,10 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		State:           remux.RunStarting,
 		UpdatedAt:       time.Now(),
 	}
-	// Intention before dispatch: a crash between the two leaves a record to
-	// reconcile, never a process nobody owns.
 	if err := o.saveRun(ctx, run); err != nil {
 		_ = o.Store.ReleaseUpload(ctx, req.RoomID, claim)
 		return nil, err
 	}
-	// The fence is set here, not by the first publish: a claim minted for
-	// this run must not be usable by anything else.
 	if err := o.Store.SetProducerRun(ctx, req.RoomID, run.RunID); err != nil {
 		slog.WarnContext(ctx, "set producer run failed", "room_id", req.RoomID, "error", err)
 	}
@@ -296,8 +283,6 @@ func (o *RemuxOrchestrator) dispatchCancel(run *RemuxRun) {
 	})
 }
 
-// followSlack is how far past a region's produced edge a position may point
-// and still count as covered: production is heading there.
 const followAheadMs = 45_000
 const followBehindMs = 1_500
 const followDebounce = 3 * time.Second
@@ -342,9 +327,6 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	replaced.StartMs = positionMs
 	replaced.State = remux.RunStarting
 	replaced.UpdatedAt = time.Now()
-	// Reserve the new run and revoke the old atomically enough: the fence
-	// moves first, so the old committer's next publish is refused before
-	// the old process is even told to stop.
 	if err := o.Store.SetProducerRun(ctx, roomID, replaced.RunID); err != nil {
 		return
 	}
@@ -352,8 +334,6 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 		return
 	}
 	o.dispatchCancel(run)
-	// The worker may still be winding the old run down when the new start
-	// lands; a busy slot deserves a couple of beats, not a dead cold seek.
 	startErr := o.dispatchStart(ctx, &replaced)
 	for tries := 0; startErr != nil && strings.Contains(startErr.Error(), "remux_busy") && tries < 3; tries++ {
 		select {
@@ -386,7 +366,6 @@ func coveredByRegions(regions []room.MediaRegion, run *RemuxRun, positionMs int6
 			return true
 		}
 	}
-	// A run that has not confirmed anything yet still covers its own aim.
 	if len(regions) == 0 || run.State == remux.RunStarting || run.State == remux.RunAccepted {
 		aim := run.StartMs
 		if positionMs >= aim-followBehindMs && positionMs <= aim+run.ProducedMs+followAheadMs {
@@ -458,10 +437,6 @@ func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
 		}
 		report := findRun(hb.Remux.Runs, run.RunID)
 		if report == nil {
-			// The worker no longer knows this run — it restarted, or pruned a
-			// terminal run before a heartbeat carried it. A short grace covers
-			// the dispatch-to-first-heartbeat window; past it the run is lost,
-			// and lost is failed, not silently stuck.
 			if !remux.TerminalState(run.State) && time.Since(run.UpdatedAt) > 45*time.Second {
 				o.applyReport(ctx, run, &remux.RunReport{
 					RunID: run.RunID, State: remux.RunFailed, Error: runLostError,
@@ -473,21 +448,14 @@ func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
 	}
 }
 
-// runLostError marks the one failure that is the fleet's own: the worker
-// restarted and forgot the run. Only this one earns a redispatch.
 const runLostError = "run lost by the worker"
 
-// maxRunRestarts bounds the crash loop: a worker that dies on this exact
-// production twice in a row is telling us something a third try will not fix.
 const maxRunRestarts = 2
 
 // restartLostRun redispatches a production its worker lost, resuming at the
-// produced edge of the run's own region. True when the new run was accepted;
-// false hands the failure back to the ordinary path. Caller holds the room
-// lock.
+// produced edge of the run's own region. False hands the failure back to the
+// ordinary path. Caller holds the room lock.
 func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRun) bool {
-	// Not the caller's clock: a worker fresh from a crash re-adds the torrent
-	// from the swarm — metadata included — before anything can start.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Minute)
 	defer cancel()
 	storedRoom, err := o.Store.Get(ctx, lost.RoomID)
@@ -501,9 +469,6 @@ func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRu
 	replaced.State = remux.RunStarting
 	replaced.ProducedMs = 0
 	replaced.UpdatedAt = time.Now()
-	// A region that already committed output cannot be rerun under its own
-	// names; the rest of the timeline becomes the next region, starting where
-	// the lost run's region froze. A run that never published reruns as it was.
 	for _, region := range storedRoom.MediaRegions {
 		if region.N == lost.Region && region.ProducedMs > 0 {
 			replaced.Region = highestRegion(storedRoom.MediaRegions, lost.Region) + 1
@@ -511,9 +476,6 @@ func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRu
 			break
 		}
 	}
-	// The worker that lost the run lost its disk with it: nothing says the
-	// torrent is still there. Re-lease and re-select before the start — on a
-	// worker that still holds them, both answers are instant.
 	if result, err := o.Service.Hub.Dispatch(ctx, Job{
 		Kind: "lease", JobID: "rl_" + randomID(6), WorkerID: lost.WorkerID,
 		Infohash: lost.Infohash, LeaseID: lost.LeaseID,
@@ -572,28 +534,16 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 	current.UpdatedAt = time.Now()
 	switch report.State {
 	case remux.RunCompleted:
-		// The worker's complete publish released the claim already; the
-		// record stays as the receipt until the room moves on. A run that
-		// began at zero covered the whole timeline: the bucket is the copy
-		// now, so the torrent goes at once instead of idling until the
-		// sweep — the worker reaps the file and the disk comes back.
 		_ = o.saveRun(ctx, current)
 		if current.StartMs == 0 {
 			if job, err := o.Service.Registry.LoadJob(ctx, current.JobID); err == nil && job != nil {
 				o.Service.release(ctx, job)
 			}
-			// The job's heartbeats die with it, so the room's last swarm
-			// numbers would freeze mid-download forever: settle them at
-			// "everything arrived, nothing moving" and tell the members.
 			if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil {
 				size := storedRoom.Preparation.SourceBytes
 				_ = o.Store.SetSwarm(ctx, run.RoomID, room.SwarmStats{
 					HaveBytes: size, SelectedBytes: size,
 				})
-				// The covering run walked the whole source, so what it produced
-				// is all the video there will ever be. A container that promises
-				// more — an audio stream running past the video's end — leaves
-				// every player waiting at a tail no run can produce.
 				if current.ProducedMs > 0 && current.ProducedMs < storedRoom.DurationMs {
 					slog.Info("covering run ended short of the container duration; clamping",
 						"room_id", run.RoomID, "produced_ms", current.ProducedMs, "duration_ms", storedRoom.DurationMs)
@@ -606,11 +556,6 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		}
 	case remux.RunFailed:
 		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error)
-		// A run the worker lost — it crashed and came back empty-handed — is
-		// the system's own failure, not the source's: redispatch from the
-		// produced edge instead of bricking the room until someone reloads.
-		// Never from here: this runs inside the control link's read loop, and
-		// the dispatch waits on a reply only that same loop can deliver.
 		if report.Error == runLostError && current.Restarts < maxRunRestarts {
 			_ = o.saveRun(ctx, current)
 			restart := *current
@@ -634,8 +579,6 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		_ = o.saveRun(ctx, current)
 	default:
 		_ = o.saveRun(ctx, current)
-		// A live run is its own heartbeat: the claim and the lease stay
-		// renewed for as long as the worker keeps reporting it.
 		_ = o.Store.TouchClientClaim(ctx, run.RoomID)
 		if job, err := o.Service.Registry.LoadJob(ctx, run.JobID); err == nil && job != nil {
 			job.LastSeenAt = time.Now()

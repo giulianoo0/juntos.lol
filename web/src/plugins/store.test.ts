@@ -26,21 +26,19 @@ describe('the plugin registry', () => {
   })
 
   it('stores and reads a plugin back whole', async () => {
-    await putPlugin(sample('torrentio'))
-    expect(await getPlugin('torrentio')).toEqual(sample('torrentio'))
+    await putPlugin(sample('acme'))
+    expect(await getPlugin('acme')).toEqual(sample('acme'))
   })
 
   it('replaces a plugin when the same record is put again', async () => {
-    await putPlugin(sample('torrentio'))
-    await putPlugin(sample('torrentio', false))
+    await putPlugin(sample('acme'))
+    await putPlugin(sample('acme', false))
     expect(await listPlugins()).toHaveLength(1)
-    expect((await getPlugin('torrentio'))?.enabled).toBe(false)
+    expect((await getPlugin('acme'))?.enabled).toBe(false)
   })
 
   it('keeps two origins apart even when they claim the same manifest id', async () => {
-    // The whole reason the record is keyed by origin: a repo that declares
-    // `id: 'torrentio'` must not land on top of the installed Torrentio.
-    const mine = { kind: 'git' as const, updateUrl: 'https://github.com/me/ss-plugin-torrentio', commit: 'a' }
+    const mine = { kind: 'git' as const, updateUrl: 'https://github.com/me/ss-plugin-acme', commit: 'a' }
     const theirs = { kind: 'git' as const, updateUrl: 'https://github.com/someone/evil', commit: 'b' }
     expect(originKey(mine)).not.toBe(originKey(theirs))
     await putPlugin({ ...sample('x'), id: await originId(mine), origin: mine })
@@ -71,9 +69,6 @@ describe('originKey', () => {
   })
 
   it('ignores an updateUrl a file later learned about, so the id never moves', () => {
-    // buildInstall fills origin.updateUrl in from the manifest. If that were
-    // part of the key, installing would produce one id and the first update
-    // another, and the plugin would clone itself.
     expect(originKey({ kind: 'file', fileName: 'p.js', updateUrl: null }))
       .toBe(originKey({ kind: 'file', fileName: 'p.js', updateUrl: 'https://github.com/u/r' }))
   })

@@ -1,20 +1,10 @@
 import { useEffect, useState } from 'react'
 
-/**
- * How long the outgoing step is given to dissolve before the next one is
- * mounted in its place. Short enough that a click still feels answered
- * immediately, long enough that the two states are never on screen together.
- * It has to outlast the dissolve it waits on, which is why the two are quoted
- * against each other: the fade is 90ms, and this is the beat after it.
- */
 export const MORPH_OUT_MS = 70
 
 /**
- * Holds the rendered step one beat behind the requested one.
- *
- * The swap has to wait for the outgoing content to dissolve; mounting the next
- * one in the same commit would cut between two sharp states, which is the one
- * thing a morph must not do. `morphing` is what the blur hangs off.
+ * Holds the rendered step one beat behind the requested one, so the outgoing
+ * content has time to dissolve. `morphing` is what the blur hangs off.
  */
 export function useMorphingStep<T>(step: T): { shown: T; morphing: boolean } {
   const [shown, setShown] = useState(step)

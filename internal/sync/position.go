@@ -7,7 +7,6 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-// DriftThresholdMs is the maximum tolerated difference before a client seeks.
 const DriftThresholdMs int64 = 450
 
 // ExpectedPositionMs projects the shared position to nowServerMs.

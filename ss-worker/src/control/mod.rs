@@ -20,14 +20,6 @@ use identity::Identity;
 /// The outbound control link. The worker dials the server (no inbound
 /// port needed), introduces itself, and from then on sends a heartbeat
 /// every ten seconds and runs whatever signed jobs come back.
-///
-/// Wire format, JSON text frames:
-///   → {type:"hello", workerId, pubkey, version, publicBase, ts, sig, enrollmentToken?}
-///     sig = Ed25519 over "hello|{workerId}|{pubkey}|{publicBase}|{ts}"; ts within ±2 min
-///   ← {type:"welcome", workerId, serverPubkey} | {type:"reject", error}
-///   → {type:"heartbeat", ...engine snapshot, cert, ready}
-///   ← {type:"job", payload, sig}          (payload: base64url JSON Job)
-///   → {type:"result", jobId, kind, ok, ...}
 pub struct Control {
     cfg: WorkerConfig,
     engine: Arc<Engine>,
@@ -38,32 +30,18 @@ pub struct Control {
     nonces: NonceStore,
     drain: Arc<Notify>,
     started: Instant,
-    // Identities minted since the last link the server kept alive.
     reenrolls: std::sync::atomic::AtomicU32,
-    // For the egress figure in the heartbeat: bytes at the last beat.
     egress_mark: parking_lot::Mutex<(u64, Instant)>,
 }
 
 const HEARTBEAT: Duration = Duration::from_secs(10);
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
-// The server answers every heartbeat; this many beats without any frame
-// from it means the link is dead even if the socket says otherwise.
 const SILENCE_LIMIT: Duration = Duration::from_secs(45);
 const RECONNECT_MIN: Duration = Duration::from_secs(1);
 const RECONNECT_MAX: Duration = Duration::from_secs(60);
-// A link that stood this long was welcomed and did some work, so both the
-// backoff and the enrollment budget below can be treated as spent well.
 const SESSION_HEALTHY: Duration = Duration::from_secs(60);
-// Losing the server-side registry should not need a human, but a worker
-// that mints an identity on every reconnect would bury that registry in
-// orphans. A few tries buy back a worker the registry forgot; past that
-// the fault is not a forgotten identity and a new one will not mend it.
 const REENROLL_BUDGET: u32 = 3;
 
-/// The single reason the server gives when the key it has on file is not
-/// the one saying hello, or when it has no file for this worker at all:
-/// see `admit` in internal/worker/hub.go. Everything else it refuses a
-/// hello with is about this attempt, not about the identity behind it.
 const UNKNOWN_WORKER: &str = "unknown_worker";
 
 /// A hello the server turned away, carrying the reason verbatim so the
@@ -82,13 +60,9 @@ impl std::error::Error for Rejected {}
 /// What a rejected hello leaves the worker to do.
 #[derive(Debug, PartialEq, Eq)]
 enum AfterReject {
-    /// Say hello again as the same worker; the reason may not outlast the retry.
     Retry,
-    /// The key on disk will never be admitted: throw it away and enroll again.
     Reenroll,
-    /// The key is dead but there is no token to trade for a live one.
     NoToken,
-    /// Enrolling again is not helping either, so stop asking for new ids.
     Exhausted,
 }
 
@@ -299,10 +273,8 @@ impl Control {
         });
     }
 
-    /// A rejected hello is the server's last word on the identity that sent
-    /// it, so retrying that identity unchanged is what once kept a whole
-    /// fleet down after the registry was cleared. Only the one reason that
-    /// says the key itself is unknown earns a new identity.
+    /// A rejected hello is the server's last word on that identity: only the
+    /// one reason that says the key itself is unknown earns a new one.
     fn on_reject(&self, reason: &str) {
         let spent = self.reenrolls.load(std::sync::atomic::Ordering::Relaxed);
         match after_reject(reason, self.cfg.enrollment_token.is_some(), spent) {
@@ -314,8 +286,6 @@ impl Control {
                 tracing::warn!(reason, reenrolls = spent, "server does not know this worker even after enrolling afresh; retrying as is");
             }
             AfterReject::Reenroll => {
-                // The ACME material next to it belongs to the address, not
-                // to the worker, and stays where it is.
                 let path = self.cfg.data_dir.join("identity.json");
                 match Identity::fresh(&path) {
                     Ok(fresh) => {
@@ -366,8 +336,6 @@ mod tests {
     #[test]
     fn only_an_unknown_key_is_worth_a_new_identity() {
         assert_eq!(after_reject(UNKNOWN_WORKER, true, 0), AfterReject::Reenroll);
-        // Every other refusal the server can send about a hello, plus the
-        // shapes a garbled one could take.
         for reason in ["hello_incomplete", "hello_clock_skew", "hello_signature", "enrollment_refused", "revoked", "draining", "version_refused", "", "unknown_worker "] {
             assert_eq!(after_reject(reason, true, 0), AfterReject::Retry, "{reason}");
         }
@@ -379,7 +347,6 @@ mod tests {
         assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET - 1), AfterReject::Reenroll);
         assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET), AfterReject::Exhausted);
         assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET + 9), AfterReject::Exhausted);
-        // A budget spent on tries that got nowhere is not refilled by them.
         assert_eq!(after_reject("hello_signature", true, REENROLL_BUDGET), AfterReject::Retry);
     }
 }

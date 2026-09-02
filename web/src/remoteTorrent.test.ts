@@ -8,7 +8,6 @@ describe('parseMagnet', () => {
   })
 
   it('converts a base32 hash', () => {
-    // 20 bytes of 0x00..0x13, base32.
     const bytes = Uint8Array.from({ length: 20 }, (_, i) => i)
     const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'

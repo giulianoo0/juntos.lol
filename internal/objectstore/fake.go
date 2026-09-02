@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// FakeObject is one stored object as the fake recorded it.
 type FakeObject struct {
 	Body         []byte
 	ContentType  string
@@ -24,9 +23,7 @@ type Fake struct {
 	mu      sync.Mutex
 	objects map[string]FakeObject
 	puts    map[string]int
-	// FailOn makes Put fail for keys it reports true for, which is how the
-	// no-fallback contract gets tested: a failed upload must fail the job.
-	FailOn func(key string) bool
+	FailOn  func(key string) bool
 }
 
 func NewFake() *Fake {
@@ -92,16 +89,13 @@ func (f *Fake) RemovePrefix(_ context.Context, prefix string) error {
 	return nil
 }
 
-// Puts reports how many times a key was written. Every write is one billed
-// operation against the real bucket, so a test can hold the pipeline to
-// uploading only what changed.
 func (f *Fake) Puts(key string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.puts[key]
 }
 
-// SetFailOn changes the refusal predicate. It exists so a test can flip the
+// SetFailOn changes the refusal predicate under lock, so a test can flip the
 // bucket's behaviour while a publisher goroutine is reading it.
 func (f *Fake) SetFailOn(failOn func(key string) bool) {
 	f.mu.Lock()
@@ -109,7 +103,6 @@ func (f *Fake) SetFailOn(failOn func(key string) bool) {
 	f.FailOn = failOn
 }
 
-// Get returns a stored object and whether it exists.
 func (f *Fake) Get(key string) (FakeObject, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

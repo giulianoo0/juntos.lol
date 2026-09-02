@@ -13,7 +13,6 @@
  */
 import type { RoomInfo } from './types'
 
-/** Codecs worth asking about: what the app copies, and what it must encode. */
 const VIDEO_PROBES: { label: string; config: VideoDecoderConfig }[] = [
   { label: 'H.264 (avc1.640028)', config: { codec: 'avc1.640028', codedWidth: 1920, codedHeight: 1080 } },
   { label: 'HEVC (hvc1.1.6.L93.B0)', config: { codec: 'hvc1.1.6.L93.B0', codedWidth: 1920, codedHeight: 1080 } },
@@ -51,8 +50,6 @@ async function audioSupport(): Promise<string[]> {
       return `${label}: no (${error instanceof Error ? error.message : String(error)})`
     }
   }))
-  // Every audio track is converted to AAC, so this one line decides whether a
-  // file with any non-AAC audio can be prepared at all.
   try {
     const { supported } = await AudioEncoder.isConfigSupported({ codec: 'mp4a.40.2', sampleRate: 48000, numberOfChannels: 2, bitrate: 192_000 })
     rows.push(`AAC encode (required for every non-AAC track): ${supported ? 'yes' : 'no'}`)
@@ -98,13 +95,10 @@ function browserLines(): string[] {
 
 export interface DiagnosticsInput {
   room: RoomInfo
-  /** The failure code the screen is rendering. */
   failure: string | null
-  /** What the pipeline said went wrong, if it said anything. */
   detail: string | null
 }
 
-/** The whole report, ready to paste. */
 export async function buildDiagnostics({ room, failure, detail }: DiagnosticsInput): Promise<string> {
   const [video, audio] = await Promise.all([videoSupport(), audioSupport()])
   const section = (title: string, lines: string[]) => [`## ${title}`, ...lines, ''].join('\n')

@@ -9,15 +9,12 @@ vi.mock('./install', async () => {
   return {
     ...actual,
     readManifestFromSource: vi.fn(async () => ({
-      id: 'torrentio', name: 'Torrentio', version: '1.0.0', hosts: ['torrentio.strem.fun'], updateUrl: null,
+      id: 'acme', name: 'Acme', version: '1.0.0', hosts: ['streams.example.com'], updateUrl: null,
     })),
     fetchGitPlugin: vi.fn(async () => ({ source: 'export const manifest = {}', commit: 'abc' })),
   }
 })
 
-// There is no I18nProvider in this repository: `useT` is a per-component hook
-// that reads localStorage['ss.language'] and falls back to pt-BR. Nothing to
-// wrap, and the Portuguese assertions below work with no setup.
 const show = () => render(<PluginsPanel open onClose={() => undefined} />)
 
 const existing: InstalledPlugin = {
@@ -51,7 +48,7 @@ describe('PluginsPanel', () => {
     await userEvent.click(await screen.findByRole('button', { name: /adicionar/i }))
     await userEvent.type(await screen.findByLabelText(/endereço do repositório/i), 'https://github.com/u/r')
     await userEvent.click(screen.getByRole('button', { name: /buscar/i }))
-    expect(await screen.findByText('torrentio.strem.fun')).toBeInTheDocument()
+    expect(await screen.findByText('streams.example.com')).toBeInTheDocument()
     expect(await listPlugins()).toHaveLength(0)
   })
 
@@ -65,25 +62,15 @@ describe('PluginsPanel', () => {
   })
 
   it('says what an install would replace instead of overwriting in silence', async () => {
-    // Every repository publishes a file called plugin.js, so a dropped file
-    // colliding with another dropped file is the common case, not the exotic
-    // one — and the record it lands on carries the other plugin's approved
-    // hosts and update channel.
     const { originId } = await import('./store')
     await putPlugin({ ...existing, id: await originId({ kind: 'file', fileName: 'plugin.js', updateUrl: null }) })
     show()
     await userEvent.click(await screen.findByRole('button', { name: /adicionar/i }))
-    // The step is held one beat behind so the previous one can dissolve;
-    // waiting for the repository field is waiting for the step to mount.
     await screen.findByLabelText(/endereço do repositório/i)
-    // The input is hidden by design — the drop area is what people see — so
-    // it is reached the way the click handler reaches it, not by label.
     const input = document.querySelector('input[type="file"]')
     if (!input) throw new Error('no file input')
     const file = new File(['export const manifest = {}'], 'plugin.js', { type: 'text/javascript' })
     await userEvent.upload(input as HTMLInputElement, file)
-    // Named, so the person can tell whether this is the plugin they meant to
-    // replace. And the action button says "replace", not "install".
     expect(await screen.findByText(/isto substitui o plugin instalado/i)).toBeInTheDocument()
     expect(screen.getByText(/Mirrors 2\.1\.0/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^substituir$/i })).toBeInTheDocument()

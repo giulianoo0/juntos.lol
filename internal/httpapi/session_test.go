@@ -40,7 +40,6 @@ func TestSessionMintedOnFirstSightAndRecognisedAfter(t *testing.T) {
 	require.Equal(t, c.Value, w.Body.String())
 	require.True(t, mr.Exists("sess:"+c.Value))
 
-	// Presenting the cookie: same id, no new cookie.
 	w = httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/t", nil)
 	req.AddCookie(c)
@@ -76,8 +75,6 @@ func TestNoEdgeHeaderIsIgnoredAndLoopbackIsUncapped(t *testing.T) {
 	sessions := NewSessions(rdb, time.Hour, 1, false)
 	r := gin.New()
 	r.GET("/t", sessions.Middleware(), func(c *gin.Context) { c.Status(http.StatusOK) })
-	// The header means nothing without the edge, and a loopback peer is a
-	// proxy: no cap, or one proxy would exhaust it for everyone.
 	for i := 0; i < 3; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/t", nil)
@@ -104,7 +101,6 @@ func TestSessionMintingIsCappedPerClientAddress(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, w.Code)
 	require.Contains(t, w.Body.String(), "too_many_sessions")
 
-	// Another address is unaffected.
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/t", nil)
 	req.Header.Set(clientIPHeader, "203.0.113.8")

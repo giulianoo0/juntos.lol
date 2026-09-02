@@ -16,7 +16,6 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<main>ss</main>"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "assets", "app.js"), []byte("ready"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "oembed.json"), []byte(`{"type":"link"}`), 0o644))
-	// A root file nothing hard-codes: the SPA fallback must not swallow it.
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "matroska-subtitles.min.js"), []byte("parser"), 0o644))
 
 	cfg := testCfg(t)
@@ -90,12 +89,9 @@ func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
 	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/plugin-worker/abc.js", nil))
 	policy := rec.Header().Get("Content-Security-Policy")
 	require.Contains(t, policy, "default-src 'none'")
-	// blob: is what lets the plugin's own module be imported at all; without
-	// it the sandbox does not run. https must not be there.
 	require.Contains(t, policy, "script-src blob:")
 	require.NotContains(t, policy, "https:")
 
-	// And the app itself must not inherit it, or nothing would reach /api.
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil))
 	require.Empty(t, rec.Header().Get("Content-Security-Policy"))

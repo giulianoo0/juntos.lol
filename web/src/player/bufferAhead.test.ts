@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { bufferAhead, holdsForBuffer } from './bufferAhead'
 
-// Playing on the first segment that lands is what makes a room stutter through
-// its opening seconds: segments are four seconds long, so one of them is not a
-// buffer. Play waits for ten seconds of media it can actually run through.
 describe('bufferAhead', () => {
   it('measures from the playhead, not from the start of the range', () => {
     expect(bufferAhead([{ start: 0, end: 30 }], 12)).toBe(18)
   })
 
   it('stops at a gap, because a gap is where playback would stop', () => {
-    // Twenty seconds are held in total and only four of them are reachable.
     expect(bufferAhead([{ start: 0, end: 4 }, { start: 40, end: 56 }], 0)).toBe(4)
   })
 
@@ -36,8 +32,6 @@ describe('holdsForBuffer', () => {
   })
 
   it('never holds something already playing', () => {
-    // A thin buffer mid-playback belongs to the stall logic. Pausing into the
-    // gate here would be the room stopping itself.
     expect(holdsForBuffer({ ...base, aheadSec: 1, playing: true })).toBe(false)
   })
 
@@ -46,7 +40,6 @@ describe('holdsForBuffer', () => {
   })
 
   it('waits for media to exist before judging it thin', () => {
-    // Before the element knows its duration there is nothing to be short of.
     expect(holdsForBuffer({ ...base, aheadSec: 0, ready: false })).toBe(false)
   })
 })

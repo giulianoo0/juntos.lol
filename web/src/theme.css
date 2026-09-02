@@ -12,10 +12,9 @@
    the root stacking context paints under body's own background — an opaque
    body would hide the glow entirely. The page's ground is :root's canvas. */
 body { margin: 0; min-width: 320px; min-height: 100vh; background: transparent; }
-/* The glow lives on its own fixed layer rather than as a fixed-attachment
-   background: once anything on the page composites (the header's backdrop
-   blur does), Chrome repaints an attachment-fixed background per scroll frame
-   and tears it — scrolled far enough, the glow simply fell off the page. */
+/* The glow lives on its own fixed layer rather than a fixed-attachment
+   background: compositing (the header's backdrop blur) makes Chrome
+   repaint an attachment-fixed background every scroll frame and tear it. */
 body::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(to bottom, #17100E 0%, #120C0C 34%, var(--canvas) 78%); }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { border: 1px solid var(--border); border-radius: var(--r-control); background: rgba(255,255,255,.045); padding: 9px 13px; cursor: pointer; transition: color var(--t-close) var(--ease), border-color var(--t-close) var(--ease), background var(--t-close) var(--ease), transform var(--t-close) var(--ease); }
@@ -34,12 +33,9 @@ h1, h2, p { margin-top: 0; }
 .home-shell { min-height: 100dvh; padding: 96px 32px 32px; display: grid; place-items: center; }
 .home-header { position: fixed; inset: 0 0 auto; z-index: 20; height: 78px; padding: 0 clamp(18px, 4vw, 54px); display: flex; align-items: center; justify-content: space-between; background: linear-gradient(to bottom, rgba(10,11,16,.92), rgba(10,11,16,0)); }.home-wordmark { font-size: 15px; font-weight: 450; letter-spacing: 0; }.home-header button { padding: 8px 10px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; color: var(--text-dim); background: transparent; }.home-header .header-language { color: var(--text); }
 .home-stage { width: min(760px, 100%); }
-/* Collapsed by its own grid row rather than by a guessed max-height: 1fr to
-   0fr interpolates against the real content, so it neither races ahead of the
-   text nor stalls at the end with nothing left to close.
-   Whatever collapses must space itself with margin, never padding: a grid item
-   squeezed to a zero track still cannot go below its own padding, and the
-   leftover band sits there looking like a bug. */
+/* Collapsed via grid-template-rows 1fr -> 0fr rather than a guessed
+   max-height, so it tracks the real content. Whatever collapses must use
+   margin, not padding: a zero-height grid track still can't shrink below its own padding. */
 .collapse-slot { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--t-morph) var(--ease-move); }
 .home-stage:not([data-step='drop']) .collapse-slot { grid-template-rows: 0fr; }
 .collapse-slot > * { min-height: 0; overflow: hidden; }
@@ -65,18 +61,9 @@ h1, h2, p { margin-top: 0; }
 .dialog-close { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; color: var(--text-dim); background: rgba(255,255,255,.05); }.dialog-close:hover { color: var(--text); background: rgba(255,255,255,.1); }
 
 .source-options { display: grid; gap: 8px; }.source-options button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-field); background: rgba(255,255,255,.03); text-align: left; }.source-options button:hover { background: var(--card-hover); }.source-options button span { color: #FFB794; font-size: 15px; }
-/* The code goes in beside the button that uses it: one line, because what
-   is being asked for is one short thing someone already has on a clipboard. */
-/* The field and the button are one control read left to right, so they share
-   a height and a corner: the button's own pill shape reads as a different
-   kind of thing sitting next to the input rather than the end of it. The
-   field is given only the width the longest thing anyone pastes needs, which
-   leaves the pair centred instead of stretched across the panel. */
 .join-room-form { display: flex; align-items: stretch; gap: 10px; margin-top: 20px; }
 .join-room-form .text-field { flex: 1 1 auto; min-width: 0; max-width: 268px; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .join-room-form .primary-button { flex: 0 0 auto; align-items: center; padding: 13px 22px; border-radius: 14px; }
-/* The countdown is the whole message, so it is the size of one, and the
-   button under it is the only thing to do about it. */
 .still-there-dialog { width: min(400px, calc(100% - 32px)); text-align: center; }
 .still-there-count { margin: 6px 0 20px; color: var(--text); font-size: 40px; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
 .still-there-dialog .primary-button { width: 100%; }
@@ -85,25 +72,18 @@ h1, h2, p { margin-top: 0; }
 .screen-stage { display: grid; place-items: center; background: #05060a; }.screen-surface { position: absolute; inset: 0; display: grid; place-items: center; }.screen-surface:empty { display: none; }.screen-surface video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .screen-overlay { position: relative; z-index: 2; display: grid; justify-items: center; gap: 14px; padding: 24px; text-align: center; }.screen-overlay p { margin: 0; color: var(--text-dim); font-size: 14px; }.screen-overlay .primary-button { min-width: 220px; }
 .center-state { min-height: 100vh; display: grid; place-items: center; padding: 24px; }.state-card { width: min(520px, 100%); padding: 38px; background: var(--glass); border: 1px solid rgba(255,255,255,.1); border-radius: var(--r-surface); text-align: center; backdrop-filter: blur(12px) saturate(130%); }.state-card p { color: var(--text-dim); }
-/* Every state the room waits in shares this one surface, so the wait reads as
-   one thing changing what it says rather than a run of screens. The width is
-   the panel's; the states inside only say how tall they are. */
 .gate-panel { width: min(480px, calc(100vw - 32px)); padding: 34px; border: 1px solid rgba(255,255,255,.1); border-radius: var(--r-surface); background: var(--glass); text-align: center; }
 .gate-panel p { color: var(--text-dim); }
 .gate-panel h1 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.035em; }
 .gate-centered { display: grid; justify-items: center; gap: 16px; }
 .gate-centered p { margin: 0; font-size: 14px; }
 .gate-bad h1 { color: #FFC9CC; }
-/* Under the way out, not beside it: the report is for the person who wants to
-   say what happened, and it must not compete with the button that moves on. */
 .copy-report { display: grid; justify-items: center; gap: 6px; margin-top: -4px; }
 .copy-report button { padding: 7px 14px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-dim); font-size: 13px; font-weight: 600; }
 .copy-report button:hover:not(:disabled) { border-color: var(--text-dim); color: var(--text); }
 .copy-report small { max-width: 34ch; color: var(--text-dim); font-size: 11.5px; line-height: 1.45; text-align: center; }
 .join-card { text-align: left; }.join-card h1 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.035em; }.join-card p { margin: 0 0 22px; font-size: 14px; }.join-card label { display: block; margin-bottom: 7px; color: var(--text-dim); font-size: 12px; }.join-card input { width: 100%; padding: 13px 14px; border-radius: var(--r-field); }.join-card .primary-button { width: 100%; margin-top: 18px; }
 .availability-card { text-align: center; }.availability-card h1 { margin-bottom: 12px; }.availability-meter { margin-top: 26px; text-align: left; }.availability-meter strong { color: var(--text); font-variant-numeric: tabular-nums; }.availability-detail { display: flex; justify-content: space-between; margin-top: 9px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
-/* Calm preparing bar: a shimmer that never sits still, so a slow start reads as
-   "working" rather than "stuck", and no scary total size anywhere. */
 .prep-bar { position: relative; height: 8px; border-radius: 99px; background: var(--well); overflow: hidden; }
 .prep-bar > span { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.22,.61,.36,1); background: linear-gradient(90deg, var(--primary), #FF9366, var(--primary)); background-size: 200% 100%; animation: prep-flow 2.2s linear infinite; }
 .prep-bar.is-indeterminate::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 38%; border-radius: 99px; background: linear-gradient(90deg, transparent, rgba(142,148,255,.6), transparent); animation: prep-drift 1.7s ease-in-out infinite; will-change: transform; }
@@ -114,8 +94,6 @@ h1, h2, p { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .prep-bar > span, .prep-bar.is-indeterminate::after { animation: none; } }
 .room-shell { height: 100dvh; padding: 12px; overflow: hidden; }.room-header { height: 56px; width: 100%; padding: 0 14px 0 18px; border: 0; background: transparent; position: relative; z-index: 20; }
 .room-heading { min-width: 0; flex: 1; }.room-header > div, .header-actions { display: flex; align-items: center; gap: 8px; }.room-file { color: var(--text-dim); max-width: min(52vw, 720px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.header-actions { flex: 0 0 auto; }.header-actions button:not(.icon-button) { padding: 7px 11px; }.header-actions button { border: 0; border-radius: 999px; background: rgba(255,255,255,.055); }
-/* Change media: the header pill that morphs into the source menu, on the
-   app's one menu surface (.morph-menu-*). Only the menu's rows live here. */
 .media-switch-menu { display: grid; gap: 2px; padding: 4px 6px 6px; }
 .media-switch-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 11px; border: 0; border-radius: 10px; background: transparent; text-align: left; font-size: 12.5px; white-space: nowrap; }
 .media-switch-menu button:hover { background: rgba(255,255,255,.06); }
@@ -124,23 +102,16 @@ h1, h2, p { margin-top: 0; }
 .upload-chip { padding: 5px 10px; border: 1px solid var(--border); border-radius: 99px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }.upload-chip.is-error { border-color: rgba(239,107,115,.35); background: rgba(239,107,115,.1); color: #FFC9CC; }
 .room-layout { height: calc(100dvh - 80px); min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 320px; }.media-column { min-width: 0; min-height: 0; padding: 12px 0 0; display: grid; grid-template-rows: minmax(0,1fr) auto; gap: 10px; }.player-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; border: 0; border-radius: 30px; background: #030407; box-shadow: none; contain: layout paint; }.video { width: 100%; height: 100%; object-fit: contain; display: block; }
 .player-wrap:fullscreen { width: 100vw; height: 100vh; border: 0; border-radius: 0; aspect-ratio: auto; background: #000; }
-/* Subtitle cues, drawn by SubtitleLayer rather than by the browser. These were
-   ::cue rules until Chrome was found to render a native track in the operating
-   system's caption style and ignore the page: the black slab stayed put through
-   background:transparent, background:none !important and the -webkit backdrop
-   alike, and its tight line box clipped every descender.
-
-   WebVTT carries only <i>/<b> out of the original ASS styling, so the look here
-   is the house style standing in for it: Lato Italic on a bare frame, kept
-   readable over bright scenes by an angled shadow instead of a box. */
+/* Cues are drawn by SubtitleLayer, not ::cue: Chrome renders a native
+   track in the OS caption style and ignores page overrides (background,
+   -webkit backdrop alike), and its cue box clips descenders. */
 .subtitle-layer { position: absolute; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; text-wrap: balance; pointer-events: none; font-family: "Lato", Inter, ui-sans-serif, system-ui, sans-serif; font-style: italic; font-weight: 400; line-height: 1.35; color: #fff; text-shadow: 1.5px 2.5px 2px rgba(0,0,0,.95), 3px 5px 10px rgba(0,0,0,.55); }
 /* Room for the descenders the browser's own cue box used to clip. */
 .subtitle-line { padding: 0 .12em .08em; max-width: 92%; }
 .subtitle-layer b { font-weight: 700; }
 .subtitle-layer i { font-style: italic; }
-/* The extraction quantizes original subtitle colors to the standard WebVTT
-   color classes. Tuned here to stay readable over video instead of the pure
-   UA defaults; black gets a light halo since it anchors on bright scenes. */
+/* Quantizes original subtitle colors onto WebVTT's standard color classes;
+   tuned for readability over video rather than pure UA defaults. */
 .subtitle-layer .yellow { color: #ffe14d; }
 .subtitle-layer .cyan { color: #57e3f7; }
 .subtitle-layer .red { color: #ff6b6b; }
@@ -148,22 +119,11 @@ h1, h2, p { margin-top: 0; }
 .subtitle-layer .magenta { color: #f57af5; }
 .subtitle-layer .blue { color: #FFA36E; }
 .subtitle-layer .black { color: #191618; text-shadow: 1.5px 2.5px 2px rgba(255,255,255,.6), 0 0 8px rgba(255,255,255,.45); }
-/* A dark ground behind the controls, or a white video swallows them whole:
-   every element in the bar is drawn in light tones over whatever the frame
-   happens to be. It fades with the controls, so a clean frame stays clean.
-
-   The band clears the top of the bar by a good margin and its stops trace an
-   S instead of a straight ramp. A straight ramp long enough to reach the
-   scrubber announces where it begins as a seam across a flat bright wall, and
-   one short enough to hide that seam left the whole first row of the bar,
-   scrubber included, standing on nothing. */
+/* The gradient's stops trace an S rather than a straight ramp: a ramp long
+   enough to reach the scrubber shows a seam over a bright flat frame, one
+   short enough to hide it leaves the bar's first row standing on nothing. */
 .player-wrap::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 176px; background: linear-gradient(180deg, rgba(3,4,7,0) 0%, rgba(3,4,7,.02) 14%, rgba(3,4,7,.07) 26%, rgba(3,4,7,.16) 36%, rgba(3,4,7,.27) 46%, rgba(3,4,7,.39) 56%, rgba(3,4,7,.49) 66%, rgba(3,4,7,.58) 76%, rgba(3,4,7,.68) 88%, rgba(3,4,7,.74) 100%); pointer-events: none; opacity: 1; transition: opacity 180ms var(--ease); }
 .controls-hidden::after { opacity: 0; }
-/* The ground carries the bar but not the thinnest light-on-light pieces of
-   it: a five-pixel rail at nine percent white and a hairline glyph dissolve
-   into a pale frame well before the gradient beneath them does. The subtitle
-   layer answers the same problem the same way, with an angled shadow rather
-   than a box, and these are sized to disappear over dark video. */
 .player-controls svg, .player-controls .seek-track { filter: drop-shadow(0 1px 2px rgba(3,4,7,.55)); }
 .timecode, .viewer-note, .live-button { text-shadow: 0 1px 3px rgba(3,4,7,.55); }
 .player-controls { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: calc(100% - 32px); padding: 12px 14px 10px; border: 0; background: transparent; opacity: 1; transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
@@ -171,20 +131,15 @@ h1, h2, p { margin-top: 0; }
 .controls-hidden .player-controls { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
 .controls-hidden:has(.player-controls :focus-visible) { cursor: auto; }
 .controls-hidden:has(.player-controls :focus-visible) .player-controls { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
-/* An open menu outlives the idle timer. Reading a list of dubs means holding
-   the pointer still over it, which is exactly what the timer counts as idle:
-   the bar would fade out from under the hand that opened it. */
+/* The idle timer treats holding the pointer over an open menu as idle;
+   without this the bar would fade out from under the hand that opened it. */
 .controls-hidden:has(.player-controls .volume-control.is-open) { cursor: auto; }
 .controls-hidden:has(.player-controls .volume-control.is-open) .player-controls { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
 .controls-hidden:has(.player-controls [aria-expanded="true"]) { cursor: auto; }
 .controls-hidden:has(.player-controls [aria-expanded="true"]) .player-controls { opacity: 1; transform: translateX(-50%); pointer-events: auto; }
-/* The scrubber spans the bar; the controls that act on it sit underneath. */
 .player-controls .seek-control { width: 100%; }
 .controls-row { display: flex; align-items: center; gap: 4px; }
 .controls-gap { flex: 1 1 auto; }
-/* Ghost by default: in a bar laid over a picture, a filled button for every
-   action is more chrome than the picture can carry. They earn a background
-   only under the pointer. */
 .control-button { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: 0 0 auto; padding: 0; border: 0; border-radius: 50%; color: var(--text); background: transparent; }
 .control-button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
 .control-button.is-play { width: 38px; height: 38px; }
@@ -197,14 +152,12 @@ h1, h2, p { margin-top: 0; }
 
 .player-feedback { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 92px; padding: 16px 20px; border-radius: 20px; background: rgba(9,8,10,.72); backdrop-filter: blur(14px) saturate(130%); box-shadow: 0 18px 50px rgba(0,0,0,.5); color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; animation: feedback-pop 700ms var(--ease) both; }
 @keyframes feedback-pop { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.86); } 18% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%,-50%) scale(1.04); } }
-/* Above the seek row: the panel and the invisible bridge up to it both hang
-   over the scrubber, and without this the scrubber wins the hit test in that
-   band — the pointer reaching for the slider lands on the seek bar instead,
-   which is what made the volume unusable. */
+/* z-index above the seek row: the volume panel floats over the scrubber, and
+   without it the pointer reaching for the panel hits the seek bar's hit-test
+   region instead. */
 .volume-control { position: relative; z-index: 3; display: flex; align-items: center; flex: 0 0 auto; }
-/* The panel floats clear of the button, and that gap would drop :hover the
-   moment the pointer travelled up into it. This bridges it so the slider can
-   actually be reached. */
+/* Bridges the gap between button and panel: without it, moving the pointer
+   up into the gap drops :hover before the slider can be reached. */
 .volume-control::after { content: ''; position: absolute; bottom: 100%; left: -6px; right: -6px; height: 16px; }
 .volume-panel { position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%) scale(.96); transform-origin: bottom center; display: grid; place-items: center; padding: 14px 10px; border-radius: 999px; background: rgba(16,18,24,.94); box-shadow: 0 14px 40px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); backdrop-filter: blur(18px) saturate(135%); opacity: 0; pointer-events: none; transition: opacity 150ms var(--ease), transform 150ms var(--ease); }
 .volume-control.is-open .volume-panel, .volume-control:focus-within .volume-panel { opacity: 1; pointer-events: auto; transform: translateX(-50%) scale(1); }
@@ -214,18 +167,14 @@ h1, h2, p { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .volume-panel { transition: none; } }
 @media (prefers-reduced-motion: reduce) { .player-feedback { animation: none; } .volume-range { transition: none; } }
 .player-unplayable { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 6; width: min(420px, calc(100% - 48px)); padding: 18px 20px; border: 1px solid rgba(239,107,115,.35); border-radius: 18px; background: rgba(9,8,10,.9); backdrop-filter: blur(16px); color: #FFC9CC; font-size: 14px; text-align: center; }
-/* It says what happened and offers the report in one place, so a person who
-   hits this has something to hand over rather than a sentence to retype. */
 .player-unplayable p { margin: 0 0 12px; }
 .player-unplayable .copy-report { justify-content: center; }
 .notice-chip { position: absolute; top: 14px; left: 14px; padding: 7px 10px; border-radius: 99px; background: rgba(9,8,10,.78); backdrop-filter: blur(14px); color: #f6cf65; font-size: 12px; }.presence-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }.member-chip { padding: 7px 11px; border-radius: 999px; color: var(--text-dim); background: rgba(255,255,255,.025); }.member-holds-file { display: inline-flex; color: var(--text-faint); }.member-chip.is-controller .member-holds-file { color: inherit; }.member-chip.is-controller { color: #FFC4A3; border-color: rgba(255,122,69,.45); background: rgba(255,122,69,.09); }
 .chat-message.is-system { background: transparent; padding: 4px 12px; }.chat-message.is-system p { margin: 0; color: var(--text-faint); font-size: 12px; }
 .screen-tile:empty { display: none; }.screen-tile { position: fixed; right: 340px; bottom: 24px; width: min(420px, 38vw); z-index: 15; border: 1px solid var(--border); border-radius: var(--r-surface); overflow: hidden; background: #000; box-shadow: 0 22px 80px #000; }.screen-tile video { width: 100%; display: block; }
 .chat-panel { margin: 12px 0 0 12px; background: rgba(25,23,27,.78); border: 0; border-radius: 26px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; backdrop-filter: blur(24px) saturate(130%); box-shadow: inset 0 1px rgba(255,255,255,.06), 0 20px 55px rgba(0,0,0,.24); transition: transform var(--t-open) var(--ease), opacity var(--t-open) var(--ease); }
-/* No rule under the header and none over the composer. A message list that
-   simply stops at a hard line looks cut; one that fades out reads as
-   continuing past the edge, which is what it is doing. The mask is stepped
-   rather than linear so the fade eases instead of banding. */
+/* Mask is stepped rather than linear so the fade eases instead of banding,
+   reading as content continuing past the edge rather than a hard cut. */
 .chat-panel header { display: flex; align-items: center; justify-content: space-between; padding: 16px 17px 10px; }
 .chat-panel h2 { margin: 0; font-size: 14px; }
 .chat-messages { flex: 1; overflow: auto; padding: 6px 14px 14px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 10px, #000 26px, #000 calc(100% - 26px), rgba(0,0,0,.35) calc(100% - 10px), transparent 100%); mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 10px, #000 26px, #000 calc(100% - 26px), rgba(0,0,0,.35) calc(100% - 10px), transparent 100%); }
@@ -233,7 +182,6 @@ h1, h2, p { margin-top: 0; }
 .chat-message strong { font-size: 12px; color: #FFB794; }
 .chat-message p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty-copy { color: var(--text-faint); font-size: 13px; }
-/* The composer is a pane of the same glass rather than a well set into it. */
 .chat-composer { display: flex; align-items: center; gap: 4px; margin: 4px 12px 12px; padding: 2px 4px 2px 2px; border: 1px solid rgba(255,255,255,.08); border-radius: 999px; background: rgba(255,255,255,.03); backdrop-filter: blur(18px) saturate(130%); transition: border-color var(--t-close) var(--ease), background var(--t-close) var(--ease); }
 .chat-composer:focus-within { border-color: rgba(255,122,69,.5); background: rgba(255,255,255,.05); }
 .chat-composer input { min-width: 0; flex: 1; padding: 11px 14px; background: transparent; border: 0; outline: 0; }
@@ -246,12 +194,9 @@ h1, h2, p { margin-top: 0; }
 .status-live { color: #4ade80; }
 .status-buffering { color: #fb923c; }
 .status-processing { color: #FF8A57; }
-/* A wait has no progress to draw, so the word carries the motion itself:
-   the shimmer runs through the letters rather than beside them. */
-/* Two layers, because a single sliding gradient leaves the letters it has
-   travelled past with no paint at all — background-clip: text makes anything
-   the background does not cover simply invisible. A solid amber floor stays
-   under the whole word; only the highlight moves. */
+/* Two layers: a single sliding gradient would leave the letters it has
+   travelled past unpainted, since background-clip: text hides anything the
+   background doesn't cover. A solid floor stays under the word; only the highlight moves. */
 .status-connecting { color: transparent; background-image: linear-gradient(100deg, rgba(255,255,255,0) 34%, #fff0bd 50%, rgba(255,255,255,0) 66%), linear-gradient(#c8991a, #c8991a); background-size: 260% 100%, 100% 100%; background-repeat: no-repeat, no-repeat; background-position: 180% 0, 0 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
 @keyframes shimmer-text { to { background-position: -80% 0, 0 0; } }
 @media (prefers-reduced-motion: reduce) { .status-connecting { animation-duration: 4s !important; } }
@@ -262,30 +207,23 @@ h1, h2, p { margin-top: 0; }
 @media (max-width: 620px) { .home-shell { padding: 80px 12px 20px; align-items: start; }.home-header { height: 68px; padding: 0 12px; }.home-header button { padding: 7px; font-size: 12px; }.home-intro { margin: 18px 0; }.room-shell { padding: 8px; }.room-header { height: 52px; padding: 0 9px 0 12px; }.room-file { display: none; }.header-actions { width: 100%; justify-content: flex-end; gap: 4px; }.header-actions button:not(.icon-button) { padding: 7px 9px; }.header-actions button { font-size: 12px; }.header-actions .sync-toggle, .header-actions .catalog-open { display: none; }.room-layout { height: calc(100dvh - 68px); }.media-column { padding-top: 8px; }.player-wrap { border-radius: 22px; }.player-wrap::after { height: 148px; }.player-controls { bottom: 8px; width: calc(100% - 16px); padding: 10px 10px 8px; }.control-button { width: 32px; height: 32px; }.control-button.is-play { width: 34px; height: 34px; }.timecode { margin: 0 4px; font-size: 11px; }.viewer-note { font-size: 0; }.viewer-note button { font-size: 11px; }.room-header .status-pill { display: none; } }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .room-header, .home-card, .state-card, .player-controls, .chat-panel { background: #1A1719; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }.home-stage { transform: none; }.controls-hidden .player-controls { transform: translateX(-50%); } }
-/* The scrub bar draws what is actually held: played ground, buffer kept
-   behind the playhead, buffer ready ahead of it, and unbuffered remainder.
-   The real range input sits transparent on top so keyboard and pointer
-   interaction — and the disabled state for viewers — stay native. */
+/* Draws played/buffer-kept/buffer-ready/remainder itself; the real range
+   input sits transparent on top so keyboard/pointer interaction and the
+   disabled state stay native. */
 .seek-control { position: relative; display: flex; align-items: center; height: 18px; }
 .seek-track { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 5px; border-radius: 999px; background: rgba(255,255,255,.09); overflow: hidden; pointer-events: none; transition: height 160ms var(--ease); }
-/* The bar thickens under the pointer and stays thick through a drag: the
-   thing being aimed at grows toward the hand. `:has` reaches the input
-   because the visible track is a sibling the range element covers. */
+/* The bar thickens under the pointer and stays thick through a drag. `:has`
+   reaches the input because the visible track is a sibling it covers. */
 .seek-control:hover .seek-track, .seek-control:has(input:active) .seek-track { height: 9px; }
 .seek-played { position: absolute; top: 0; bottom: 0; left: 0; background: rgba(255,122,69,.38); }
 .seek-behind { position: absolute; top: 0; bottom: 0; background: rgba(255,122,69,.85); }
 .seek-ahead { position: absolute; top: 0; bottom: 0; background: rgba(255,255,255,.42); }
-/* Chapter boundaries and the floating annotation over the scrubber. The tick
-   paints the controls' own dark over whatever band is under it, so it reads
-   as a gap cut into the bar rather than another color. */
 .seek-chapter-tick { position: absolute; top: 0; bottom: 0; width: 3px; transform: translateX(-50%); background: rgba(3,4,7,.9); }
 .seek-tooltip { position: absolute; bottom: calc(100% + 10px); z-index: 2; transform: translateX(-50%); padding: 5px 10px; border-radius: 9px; background: rgba(10,11,16,.94); box-shadow: 0 8px 24px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.07); color: var(--text); font-size: 11.5px; white-space: nowrap; pointer-events: none; }
 .timecode-chapter { color: var(--text-faint); }
 button.timecode-chapter { padding: 0; border: 0; background: none; font: inherit; font-variant-numeric: tabular-nums; cursor: pointer; transition: color .2s var(--ease); }
 button.timecode-chapter:hover { color: var(--text); }
 
-/* The chapter list borrows the chat's shell, so the two read as one dock
-   swapping contents. */
 .chapters-list { margin: 0; padding: 4px 8px 12px; list-style: none; overflow-y: auto; min-height: 0; display: grid; gap: 2px; align-content: start; }
 .chapter-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: 12px; background: none; color: var(--text-dim); font-size: 13px; text-align: left; cursor: pointer; transition: background .15s var(--ease), color .15s var(--ease); }
 .chapter-row:hover:not(:disabled) { background: rgba(255,255,255,.06); color: var(--text); }
@@ -314,9 +252,6 @@ button.timecode-chapter:hover { color: var(--text); }
 .waiting-row.is-ready { color: #7ee2a8; }
 .waiting-row span { font-size: 11px; color: inherit; }
 
-/* --- shared controls -------------------------------------------------- */
-/* Button carries the base look from the bare `button` rule above; the
-   variants only say how this one differs. */
 .ui-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .ui-button--primary { border: 0; border-radius: 999px; padding: 10px 17px; background: var(--primary); color: white; font-weight: 700; box-shadow: 0 8px 24px rgba(255,122,69,.22), inset 0 1px rgba(255,255,255,.2); }
 .ui-button--primary:hover:not(:disabled) { border-color: transparent; background: #FF9366; }
@@ -327,9 +262,7 @@ button.timecode-chapter:hover { color: var(--text); }
 .ui-button--icon.ui-button--icon, .ui-button--icon { padding: 0; }
 .ui-button--icon { width: 36px; height: 36px; }
 
-/* --- dialog ------------------------------------------------------------ */
-/* Radix owns focus, Escape and the scroll lock; these rules only dress it,
-   and give the open and close their motion. */
+/* Radix owns focus, Escape and the scroll lock; these rules only dress it. */
 .ui-dialog-overlay { position: fixed; inset: 0; z-index: 57; background: rgba(0,0,0,.74); animation: overlay-in var(--t-open) var(--ease); }
 .ui-dialog { position: fixed; top: 50%; left: 50%; z-index: 58; width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; transform: translate(-50%, -50%); border-radius: 26px; color: var(--text); background: #1A1719; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; animation: dialog-in var(--t-open) var(--ease); }
 .ui-dialog.torrent-dialog { width: min(580px, calc(100vw - 32px)); }
@@ -340,10 +273,7 @@ button.timecode-chapter:hover { color: var(--text); }
 .ui-dialog label { display: block; margin-bottom: 7px; color: var(--text-dim); font-size: 12px; }
 .ui-dialog input { width: 100%; padding: 13px 14px; border-radius: 14px; }
 .ui-dialog[data-state='closed'] { animation: dialog-out var(--t-close) var(--ease); }
-/* On mobile every modal becomes a bottom sheet: it rises from the bottom edge,
-   rounds only its top corners, sizes itself to its content (up to most of the
-   screen, then scrolls), and slides back down to close. No grab handle. Radix
-   already locks the page behind it from scrolling. */
+/* Radix already locks the page behind it from scrolling. */
 @media (max-width: 620px) {
   .ui-dialog {
     top: auto; bottom: 0; left: 0; right: 0; transform: none;
@@ -364,42 +294,28 @@ button.timecode-chapter:hover { color: var(--text); }
 @keyframes dialog-in { from { opacity: 0; transform: translate(-50%, -46%) scale(.96) } }
 @keyframes dialog-out { to { opacity: 0; transform: translate(-50%, -48%) scale(.98) } }
 
-/* --- toast --------------------------------------------------------------- */
-/* One look for every notification, wherever it came from. Sonner owns the
-   stacking, the swipe and the timers; this only says what one looks like. */
+/* Sonner owns the stacking, swipe and timers; this only says what one looks like. */
 .ui-toast { display: flex; align-items: center; width: fit-content; max-width: min(360px, calc(100vw - 40px)); padding: 10px 15px; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; color: var(--text); background: var(--glass); backdrop-filter: blur(24px) saturate(130%); box-shadow: inset 0 1px rgba(255,255,255,.07), 0 14px 40px rgba(0,0,0,.45); font-size: 13px; line-height: 1.35; }
 .ui-toast strong { color: #FFB794; font-weight: 600; }
 .ui-toast .is-leave strong { color: var(--text-dim); }
 
-/* --- room header ------------------------------------------------------- */
-/* The gate is on for every room, so it reads as a setting already applied
-   rather than a question: a checkbox, not a sentence about its state. */
 .sync-toggle { gap: 6px; padding-left: 7px; }
 .sync-toggle-box { display: grid; place-items: center; width: 15px; height: 15px; border: 1px solid rgba(255,255,255,.22); border-radius: 5px; color: white; background: transparent; transition: background var(--t-close) var(--ease), border-color var(--t-close) var(--ease); }
 .sync-toggle.is-on { color: var(--text); }
 .sync-toggle.is-on .sync-toggle-box { border-color: transparent; background: var(--primary); }
 .chat-toggle.is-on { color: var(--text); background: var(--primary-soft); }
-/* The count sits on the icon because the button has no label to carry it. */
 .chat-badge { position: absolute; top: -3px; right: -3px; min-width: 17px; height: 17px; padding: 0 4px; display: grid; place-items: center; border-radius: 999px; background: var(--primary); color: white; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px #19171B; }
 
-/* --- room layout ------------------------------------------------------- */
-/* A shut chat gives its column back rather than leaving a gap: on a wide
-   screen that is most of what makes the video bigger. */
 .room-layout { grid-template-columns: minmax(0,1fr) 0; transition: grid-template-columns var(--t-open) var(--ease); }
 .room-layout.chat-open { grid-template-columns: minmax(0,1fr) 320px; }
 @media (prefers-reduced-motion: reduce) { .room-layout { transition: none; } }
-/* Present for assistive technology, absent on screen: a dialog whose content
-   draws its own heading still needs an accessible name. */
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-/* The chat header has one action, and a filled circle for it competed with
-   the messages. Ghost everywhere it appears. */
 .chat-panel header .ui-button--icon { width: 30px; height: 30px; background: transparent; border-color: transparent; color: var(--text-dim); }
 .chat-panel header .ui-button--icon:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.06); }
 .chat-composer .ui-button--ghost { border-radius: 999px; color: #FFB794; }
 
-/* A player waiting on data is indistinguishable from a broken one without
-   this. It sits over the picture and under the controls, so it never covers
-   what someone is reaching for. */
+/* z-index 1: sits over the picture and under the controls, so it never
+   covers what someone is reaching for. */
 .player-loading { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; align-content: center; gap: 14px; pointer-events: none; }
 .player-preparing { display: grid; justify-items: center; gap: 8px; padding: 10px 16px; border-radius: 14px; background: rgba(9,8,10,.72); color: var(--text-dim); font-size: 13px; }
 /* The two lines occupy the same slot and cross through it, so the box does
@@ -411,52 +327,34 @@ button.timecode-chapter:hover { color: var(--text); }
 .slot-text { position: relative; display: inline-grid; overflow: hidden; vertical-align: bottom; }
 .slot-text.is-block { display: grid; width: 100%; }
 .slot-text > span { grid-area: 1 / 1; }
-/* The room's opening card sits over the player that is building the buffer it
-   reports on — the picture is there behind the glass, arriving — and fades as
-   the panel dissolves. */
 .gate-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(6,5,8,.42); backdrop-filter: blur(26px) saturate(120%); opacity: 1; transition: opacity var(--t-morph) var(--ease); }
 .gate-overlay.is-leaving { opacity: 0; pointer-events: none; }
-/* Solid on purpose: the glass is the ground around it, not the card. */
 .gate-overlay .gate-panel { background: #141216; }
-/* Text the light runs through while something is being built: the sweep is
-   the movement, the letters stay put. Same keyframes as the connecting pill. */
 .text-shimmer { padding: 0 .12em; margin: 0 -.12em; color: transparent; background-image: linear-gradient(100deg, rgba(255,255,255,0) 34%, var(--text) 50%, rgba(255,255,255,0) 66%), linear-gradient(var(--text-dim), var(--text-dim)); background-size: 260% 100%, 100% 100%; background-repeat: no-repeat, no-repeat; background-position: 180% 0, 0 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .text-shimmer { animation-duration: 4s; } }
 .player-preparing .starting-swarm { margin: 0; }
-/* Autoplay refused for want of a gesture. It has to be reachable — unlike the
-   loading veil above it — because the one click is the whole fix. */
 .player-gesture { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; align-content: center; gap: 12px; border: 0; background: rgba(9,8,10,.55); color: var(--text); font: inherit; font-size: 14px; cursor: pointer; }
 
 .player-spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.16); border-top-color: #FFD0B8; border-radius: 50%; animation: torrent-spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .player-spinner { animation-duration: 2s !important; } }
 
-/* Links the running deployment back to the commit it was built from, so a
-   room that misbehaves can be pinned to a version without guessing. */
 .header-end { justify-self: end; display: inline-flex; align-items: center; gap: 10px; }
 .build-info { display: inline-flex; align-items: center; gap: 7px; color: var(--text-faint); font-size: 12px; }
 .build-info a { display: inline-flex; align-items: center; color: var(--text-faint); transition: color var(--t-close) var(--ease); }
 .build-info a:hover { color: var(--text); }
 .build-commit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: -.02em; }
-/* Sits with the source link rather than the tabs: both are about where this
-   thing comes from and who is behind it, neither is a way into a room. */
 .header-discord { display: inline-flex; align-items: center; color: var(--text-faint); transition: color var(--t-close) var(--ease); }
 .header-discord:hover { color: #8b9bf5; }
 @media (max-width: 620px) { .build-commit { display: none; } }
-/* Someone the controller excused: still listed, so the room can see who is
-   watching separately, but visibly not part of what everyone waits for. */
 .waiting-row.is-ignored { opacity: .55; }
 .waiting-state { display: inline-flex; align-items: center; gap: 8px; }
 .waiting-state .ui-button { padding: 3px 8px; font-size: 11px; }
 
-/* --- home entrance ----------------------------------------------------- */
-/* The landing is the one screen a visitor meets cold and rarely twice in a
-   sitting, so it is where the delight budget goes. Everything arrives out of
-   focus and settles: the bloom first, then the words, then the block they act
-   in. `backwards` rather than `both` — the elements have to land on their own
-   styles so the frame's hover lift and the pane's morph still apply after. */
+/* `backwards` rather than `both`: elements must land on their own styles so
+   the frame's hover lift and the pane's morph still apply afterward. */
 @keyframes home-rise { from { opacity: 0; transform: translateY(18px) scale(.98); filter: blur(12px); } }
-/* The same arrival without the blur: a catalog row is the largest surface on
-   the page, and an animated filter re-rasterizes all of it every frame. */
+/* Same arrival without blur: an animated filter re-rasterizes the whole row
+   every frame, and a catalog row is the largest surface on the page. */
 @keyframes row-rise { from { opacity: 0; transform: translateY(18px) scale(.98); } }
 @keyframes home-lift { from { opacity: 0; transform: translateY(10px); } }
 
@@ -464,56 +362,35 @@ button.timecode-chapter:hover { color: var(--text); }
 .home-header { animation: home-rise 560ms var(--ease) 60ms backwards; }
 .home-intro h1 { animation: home-rise 620ms var(--ease) 120ms backwards; }
 .home-intro p { animation: home-rise 620ms var(--ease) 190ms backwards; }
-/* The ways in arrive one after another, left to right, so the row reads as
-   being dealt rather than switched on. */
 .source-row > *:nth-child(1) { animation: home-rise 620ms var(--ease) 280ms backwards; }
 .source-row > *:nth-child(2) { animation: home-rise 620ms var(--ease) 350ms backwards; }
 .source-row > *:nth-child(3) { animation: home-rise 620ms var(--ease) 420ms backwards; }
 .source-hint { animation: home-lift 460ms var(--ease) 520ms backwards; }
 
-/* --- the morphing source picker ---------------------------------------- */
-/* Picking a source never opens a second surface. The button that was clicked
-   is the panel: it widens and deepens into place, and the form it needed is
-   inside it. Its neighbours give up their width so it has room. */
-/* Every part of the row moves on the same clock and the same curve as the box
-   itself. Mismatched timings show up on the way back, where the neighbours
-   would return faster than the panel shrinks, briefly overrun the row and
-   wrap onto a second line before settling. Nothing wraps here for that
-   reason; the narrow layout gets its wrapping back further down. */
+/* Every part of the row moves on the same clock/curve as the box itself:
+   mismatched timing lets the neighbours return faster than the panel
+   shrinks, briefly overrunning the row and wrapping before settling. */
 .source-row { --pill-h: 36px; --morph-w: min(520px, calc(100vw - 32px)); display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 10px; transition: gap var(--t-morph) var(--ease-move); }
 .source-row:not([data-step='drop']) { gap: 0; }
 
-/* One height and one radius across the row, so the three ways in are the same
-   pill — and so the radius never has to be animated. */
+/* One height and radius across the row, so the three pills match and the
+   radius never has to be animated. */
 .source-row > * { height: var(--pill-h); border-radius: calc(var(--pill-h) / 2); }
-/* The row pins every pill to one height, so the label has to be centred in it
-   rather than sitting on the padding it no longer has. */
 .source-side { display: inline-flex; align-items: center; justify-content: center; padding-top: 0; padding-bottom: 0; max-width: 340px; overflow: hidden; white-space: nowrap; transition: max-width var(--t-morph) var(--ease-move), opacity 140ms var(--ease), transform var(--t-morph) var(--ease-move), padding var(--t-morph) var(--ease-move), border-width var(--t-morph) var(--ease-move); }
 .source-row:not([data-step='drop']) .source-side { max-width: 0; padding-left: 0; padding-right: 0; border-width: 0; opacity: 0; transform: scale(.92); pointer-events: none; }
 
-/* This box is the button. Closed it is the torrent pill — its border, radius
-   and background are the pill's — and opening it grows that same box.
-   Only width and height move: the radius is already what it will be, the
-   padding lives on the contents, and the panel is clipped rather than
-   re-laid-out, so nothing inside reflows while the box travels. A radius
-   animated down from a pill value would balloon on the way, because it stays
-   clamped to half the height as the height grows. */
-/* Never let the row squeeze it. Its neighbours still hold their width on the
-   frame the panel's size is measured, and a flex shrink there would be
-   measured as the target — the box would then animate to a size it is not
-   going to keep, and snap the rest of the way when the animation released. */
+/* This box is the button: only width/height animate, since the radius is
+   already its final value. Animating the radius down from a pill value
+   would balloon it, since it stays clamped to half the height as height grows. */
+/* Neighbours must hold their width while the panel's target size is
+   measured: a flex shrink there gets measured as the target, so the box
+   animates to a size it won't keep and snaps at the end. */
 .source-morph { flex: 0 0 auto; position: relative; display: grid; place-items: center; width: max-content; max-width: 100%; padding: 0; overflow: hidden; border: 1px solid var(--border); background: rgba(255,255,255,.03); box-shadow: none; text-align: left; transition: border-color var(--t-open) var(--ease), background var(--t-open) var(--ease), box-shadow var(--t-open) var(--ease), transform var(--t-close) var(--ease), opacity var(--t-open) var(--ease); }
-/* The way out is not the way in run backwards. Opening, the pill grows into
-   the panel; closing, the panel dissolves where it stands and the pill is
-   simply there again — by the time the box could travel back there is nothing
-   left inside it to watch it happen to. That leaves one frame to account for:
-   the box lands on the pill while its own glass is still drawn, and a sheet
-   that size cannot cut to a pill without being seen doing it. So the surface
-   goes out with the contents it was holding, and the size lands underneath a
-   panel that has already gone. */
+/* Closing doesn't reverse the opening morph: the panel dissolves in place
+   and the pill reappears underneath, so the surface fades out with its
+   contents before the size lands — otherwise a sheet-sized box would visibly snap to a pill. */
 .source-row:not([data-step='drop'])[data-next='drop'] .source-morph { opacity: 0; transition-duration: 90ms; }
 .source-row:not([data-step='drop']) .source-morph { width: var(--morph-w); height: auto; border-color: rgba(255,255,255,.1); background: var(--glass); box-shadow: inset 0 1px rgba(255,255,255,.06), 0 26px 70px rgba(0,0,0,.32); }
-/* The hover belongs to the box, since the box is what is being pressed. */
 .source-row[data-step='drop'] .source-morph:hover { border-color: rgba(255,122,69,.45); background: rgba(255,122,69,.08); }
 .source-morph:active { transform: scale(.97); }
 .morph-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: calc(var(--pill-h) - 2px); padding: 0 16px; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); font-size: 13px; white-space: nowrap; }
@@ -521,14 +398,9 @@ button.timecode-chapter:hover { color: var(--text); }
 .morph-trigger .magnet-glyph { color: #FFB794; flex: 0 0 auto; }
 .morph-trigger:hover:not(:disabled), .morph-trigger:active:not(:disabled) { background: transparent; border-color: transparent; transform: none; }
 
-/* The blur is what sells the swap: without it the eye reads two panels
-   trading places, with it one panel reforms. Carried by whatever is doing the
-   swapping, so a step nested inside another one dissolves the same way. */
-/* --- morphing menu ------------------------------------------------------ */
-/* One surface for every floating menu (MorphingMenu): the trigger pill and
-   the portaled panel share a motion layoutId, so these only dress the two
-   ends of the morph. The trigger drops the global button transform
-   transition — CSS transitions would fight motion's layout transforms. */
+/* Trigger and panel share a motion layoutId; the trigger drops the global
+   button transform transition, since CSS transitions would fight motion's
+   layout transforms. */
 .morph-menu-trigger { display: inline-flex; align-items: center; white-space: nowrap; transition: color var(--t-close) var(--ease), border-color var(--t-close) var(--ease), background var(--t-close) var(--ease); }
 .morph-menu-trigger:active:not(:disabled) { transform: none; }
 .morph-menu-trigger-row { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
@@ -542,9 +414,8 @@ button.timecode-chapter:hover { color: var(--text); }
 .morph-fade { opacity: 1; filter: blur(0); transform: none; transition: opacity 180ms var(--ease), filter 180ms var(--ease), transform 180ms var(--ease); }
 .morph-fade[data-morphing='true'] { opacity: 0; filter: blur(8px); transform: scale(1.02); transition-duration: 110ms; }
 .morph-pane { min-width: 0; }
-/* The panel never grows past the window. Everything above the list keeps its
-   height and the list takes what is left, so a season pack scrolls inside the
-   panel instead of running off the bottom of the screen. */
+/* Everything above the list keeps its height and the list takes what's
+   left, so a season pack scrolls inside the panel instead of overflowing the screen. */
 .source-row:not([data-step='drop']) .morph-pane { width: var(--morph-w); padding: 18px; max-height: calc(100dvh - 150px); display: flex; flex-direction: column; min-height: 0; }
 
 .morph-step { width: 100%; min-height: 0; display: flex; flex-direction: column; flex: 1 1 auto; text-align: left; }
@@ -561,54 +432,40 @@ button.timecode-chapter:hover { color: var(--text); }
 .source-hint { margin: 16px 0 0; color: var(--text-faint); font-size: 12px; text-align: center; opacity: 1; transition: opacity 160ms var(--ease), filter var(--t-morph) var(--ease); }
 .home-stage:not([data-step='drop']) .source-hint { opacity: 0; filter: blur(8px); }
 
-/* One way out of every step, in the same place each time, so the panel is
-   never somewhere a user can get stuck. It sits against the step's title
-   rather than above it, which costs the panel no height at all. */
 .morph-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .morph-head .stage-title { margin: 0; min-width: 0; }
 .stage-back { flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; color: var(--text-dim); background: rgba(255,255,255,.05); }
 .stage-back:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.1); }
 
-/* The wait belongs to the control that started it. The button keeps hugging
-   its label — it just takes on a longer one, widening to fit it — and shimmers
-   until the swarm answers. Its width travel is measured in JS: both ends are
-   the button's own content, which CSS has no old value to transition from. */
+/* Width travel is measured in JS, not CSS: both ends are the button's own
+   content, which CSS has no old value to transition from. */
 .torrent-actions { margin-top: 16px; display: flex; justify-content: flex-end; }
-/* The label is clipped, never reflowed. Mid-travel the button is narrower than
-   the word arriving into it, and a wrapping label turns the pill into two
-   lines and back for the length of the animation. */
+/* Label is clipped, never reflowed: mid-travel the button is narrower than
+   the arriving word, and a wrapping label would show two lines for the length of the animation. */
 .torrent-load { flex: 0 0 auto; width: auto; overflow: hidden; white-space: nowrap; transition: background-color var(--t-open) var(--ease), color var(--t-close) var(--ease), opacity var(--t-close) var(--ease), box-shadow var(--t-open) var(--ease); }
 .button-label { display: block; white-space: nowrap; }
 .torrent-load.is-loading { opacity: 1; cursor: progress; color: rgba(255,255,255,.9); background-color: rgba(255,122,69,.3); background-image: linear-gradient(100deg, transparent 24%, rgba(255,255,255,.34) 50%, transparent 76%); background-size: 220% 100%; background-repeat: no-repeat; box-shadow: inset 0 1px rgba(255,255,255,.12); animation: shimmer 1.4s linear infinite; }
 @keyframes shimmer { from { background-position: 210% 0; } to { background-position: -110% 0; } }
-/* The shimmer is the progress indicator here, so it keeps running even when
-   motion is reduced — only slower. */
+/* Kept running (only slowed) under reduced motion: it's this control's only progress indicator. */
 @media (prefers-reduced-motion: reduce) { .torrent-load.is-loading { animation-duration: 3s !important; } }
 
 .torrent-search { flex: 0 0 auto; width: 100%; margin-bottom: 8px; padding: 10px 13px; border-radius: 12px; font-size: 13px; }
-/* In the room's change-source dialog there is no flex column above the list to
-   hand it the leftover height, so it keeps a cap of its own there. */
+/* No flex column above the list here to hand it leftover height, so it
+   keeps its own max-height cap. */
 .ui-dialog .torrent-files { max-height: min(46vh, 360px); }
 .torrent-empty { margin: 10px 0 2px; text-align: center; }
 
-/* A failed magnet arrives into space the panel has just made for it: the box
-   follows its contents, so the height eases open, and the message resolves out
-   of a blur a beat later rather than snapping into the gap. */
 .torrent-error { opacity: 1; filter: blur(0); transform: none; transition: opacity var(--t-open) var(--ease) 80ms, filter var(--t-open) var(--ease) 80ms, transform var(--t-open) var(--ease) 80ms; }
 @starting-style { .torrent-error { opacity: 0; filter: blur(8px); transform: translateY(-6px); } }
 
-/* The waiting panel has already dissolved by the time this mounts — the gate
-   holds the swap for one beat precisely so the two never overlap — so the room
-   resolves into an empty screen rather than over the top of it. */
+/* The gate holds the swap for one beat so the waiting panel and the room
+   enter never overlap. */
 @keyframes room-arrive { from { opacity: 0; filter: blur(14px); transform: scale(.985); } }
 .room-enter { animation: room-arrive 420ms var(--ease) backwards; }
 @media (prefers-reduced-motion: reduce) { .room-enter { animation: none; } }
 
-/* --- icon buttons that name themselves ---------------------------------- */
-/* The label is always in the markup — it is the button's accessible name.
-   What is withheld is its width: a grid track opening from 0fr to 1fr
-   interpolates against the real text, so the reveal neither overshoots a
-   guessed maximum nor stalls with nothing left to open. */
+/* Grid track opens from 0fr to 1fr, interpolating against the real text,
+   so the reveal neither overshoots a guessed max nor stalls short. */
 .icon-button { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0; height: 34px; min-width: 34px; padding: 0 8px; border: 0; border-radius: 999px; color: var(--text-dim); background: transparent; font-size: 12px; white-space: nowrap; }
 .icon-button:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.08); }
 .icon-button-glyph { display: inline-flex; align-items: center; justify-content: center; width: 18px; flex: 0 0 auto; }
@@ -624,26 +481,18 @@ button.timecode-chapter:hover { color: var(--text); }
 .icon-button.is-on { color: var(--text); background: var(--primary-soft); }
 .icon-button .chat-badge { top: -1px; right: -1px; }
 
-/* --- player settings ---------------------------------------------------- */
-/* The box is the control. Closed it is the ghost gear sitting in the bar —
-   transparent, like every other control there — and opening it grows that same
-   box upward and to the left into the panel. It is taken out of the bar's flow
-   and a slot holds its place, so growing costs the other controls no room and
-   shifts nothing. */
+/* The box is absolutely positioned and taken out of flow; a same-sized slot
+   holds its place, so growing it costs the other controls no room. */
 .settings-control { position: relative; flex: 0 0 auto; width: 36px; height: 36px; }
 .settings-slot { display: block; width: 36px; height: 36px; }
 .settings-morph { position: absolute; right: 0; bottom: 0; z-index: 3; width: 36px; height: 36px; overflow: hidden; border-radius: 18px; background: transparent; box-shadow: none; transition: background var(--t-open) var(--ease), box-shadow var(--t-open) var(--ease); }
 .settings-morph.is-open { width: 250px; height: auto; background: rgba(16,18,24,.96); box-shadow: 0 18px 44px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); backdrop-filter: blur(18px) saturate(135%); }
-/* A release with forty subtitle languages made this list taller than the
-   viewport, so it ran off both ends of the player and the controls under it
-   were unreachable. Bounded to the space above the control bar, and it
-   scrolls. The z-index puts it over the playback error rather than under: the
-   menu is what you opened, and a message you cannot read past is worse than a
-   message you cannot see. */
+/* z-index puts this over the playback error rather than under: the menu is
+   what you opened, and a message you can't read past is worse than one you can't see. */
 .settings-morph.is-open { max-height: min(60vh, 420px); z-index: 12; }
 .settings-morph.is-open .settings-pane { max-height: min(60vh, 420px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-/* Fixed once open, so the panel is revealed by the growing box rather than
-   re-wrapping its own rows on every frame of the travel. */
+/* Fixed width once open, so the panel is revealed by the growing box
+   rather than re-wrapping its rows on every frame of the travel. */
 .settings-morph.is-open .settings-pane { width: 250px; }
 .settings-trigger { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; color: var(--text); background: transparent; }
 .settings-trigger:hover:not(:disabled) { background: rgba(255,255,255,.1); }
@@ -655,29 +504,21 @@ button.timecode-chapter:hover { color: var(--text); }
 .settings-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--text); }
 .settings-chevron { flex: 0 0 auto; color: var(--text-faint); transition: transform var(--t-close) var(--ease); }
 .settings-row[aria-expanded='true'] .settings-chevron { transform: rotate(180deg); }
-/* Label against the left edge, tick against the right, whatever the label's
-   length — so the column of ticks reads down the panel instead of wandering. */
 .settings-options { display: grid; gap: 2px; padding: 2px 0 6px; }
 .settings-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text-dim); font-size: 13px; text-align: left; }
 .settings-option:hover:not(:disabled) { color: var(--text); background: rgba(255,255,255,.07); }
 .settings-option.is-current { color: var(--text); }
 .settings-option-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Always present, so choosing an option never shifts the labels around it. */
+/* Opacity toggle, not display: choosing an option must not shift the labels around it. */
 .settings-tick { flex: 0 0 auto; opacity: 0; color: #FFB794; }
 .settings-option.is-current .settings-tick { opacity: 1; }
 
-/* Dropping works anywhere on the page now that no well is drawn to aim at. */
 .home-shell.is-dragging::after { content: ''; position: fixed; inset: 12px; z-index: 40; pointer-events: none; border: 1px dashed var(--primary); border-radius: 26px; background: var(--primary-soft); }
 
-/* Three pills do not fit a phone on one line, and at the drop step there is no
-   morph in flight for the wrapping to disturb. */
 @media (max-width: 620px) {
   .source-row[data-step='drop'] { flex-wrap: wrap; }
   .source-row:not([data-step='drop']) .morph-pane { padding: 14px; }
 }
-/* --- catalog ----------------------------------------------------------- */
-/* The board replaces the centred hero: full width, top-aligned, with the
-   fixed header's height cleared. */
 .catalog-shell { display: block; padding: 104px clamp(16px, 4vw, 54px) 40px; }
 /* The strips take a sideways wheel on a passive listener (see Carousel), so
    nothing in script can stop a trackpad swipe over one from reaching the
@@ -687,12 +528,9 @@ button.timecode-chapter:hover { color: var(--text); }
 html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 
 .catalog-shell .history-panel { margin: 0 auto; }
-/* The chain from the page down to the track has to be allowed to shrink. A
-   flex or grid item defaults to min-width:auto, which is its content's
-   min-content width — and a row of forty fixed-width posters has a very large
-   one. Left alone, the board stayed as wide as its widest row and the whole
-   page scrolled sideways on a narrow window instead of the carousel
-   scrolling inside itself. */
+/* Flex/grid items default to min-width: auto (their min-content width) — a
+   row of fixed-width posters has a large one. Without min-width: 0 here the
+   board matched its widest row and the page scrolled sideways instead. */
 .catalog-stage { max-width: 1240px; margin: 0 auto; width: 100%; min-width: 0; }
 .catalog-browser, .catalog-row, .carousel, .carousel-viewport { min-width: 0; max-width: 100%; }
 .catalog-stage .progress-wrap, .catalog-stage .error-card { max-width: 560px; margin-left: auto; margin-right: auto; }
@@ -724,7 +562,7 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .carousel-arrow:hover:not(:disabled) { background: transparent; border-color: transparent; opacity: 1; transform: translateY(-70%) scale(1.12); }
 .carousel-arrow:active:not(:disabled) { transform: translateY(-70%) scale(1); }
 /* Declared only in the states that use it: a row that fits on screen has no
-   reason to allocate a mask layer to hide nothing. */
+   reason to allocate a mask layer. */
 .carousel[data-can-prev] .carousel-viewport,
 .carousel[data-can-next] .carousel-viewport { mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); -webkit-mask-image: linear-gradient(to right, transparent, black var(--fade-l, 0px), black calc(100% - var(--fade-r, 0px)), transparent); }
 .carousel[data-can-prev] .carousel-viewport { --fade-l: 52px; }
@@ -732,8 +570,8 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .catalog-empty { padding: 18px 2px; }
 .catalog-retry { padding: 2px 8px; border: 0; border-radius: 999px; color: #FFB794; background: rgba(255,122,69,.12); font-size: 12px; }
 
-/* One poster. The hover lift is CSS-only and pointer-gated: this card is
-   seen far too often to earn real animation. */
+/* Hover lift is CSS-only and pointer-gated: this card renders far too often
+   to animate with anything heavier. */
 .poster-card { display: flex; flex-direction: column; gap: 7px; width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
 .poster-art { position: relative; display: grid; place-items: center; aspect-ratio: 2 / 3; width: 100%; overflow: hidden; border-radius: 14px; background: var(--card); color: var(--text-faint); box-shadow: inset 0 1px rgba(255,255,255,.05), 0 8px 26px rgba(0,0,0,.32); transition: transform 150ms var(--ease); }
 .poster-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -746,9 +584,6 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .poster-year { color: var(--text-faint); font-size: 11px; }
 .poster-skeleton { aspect-ratio: 2 / 3; border-radius: 14px; }
 
-/* --- title details ------------------------------------------------------ */
-/* The panel that morphs out of a poster. Its resting geometry lives here in
-   CSS; the morph borrows it, then hands it back. */
 .details-layer { position: fixed; inset: 0; z-index: 55; }
 .details-backdrop { position: absolute; inset: 0; background: rgba(6,5,6,.82); }
 .details-panel { position: absolute; inset: 0; margin: auto; width: 90svw; height: 90svh; overflow: hidden auto; overscroll-behavior-x: contain; border-radius: 26px; background: #17151A; outline: none; contain: layout paint; }
@@ -766,19 +601,17 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .details-cast { margin-bottom: 8px; color: var(--text-faint); font-size: 12px; }
 .details-episodes { margin-top: 18px; }
 .details-season-row { display: flex; align-items: center; gap: 20px; margin-bottom: 22px; }
-/* The scrollport carries 8px of padding pulled back by an equal negative
-   margin: the pill's spring overshoots the first and last tab, and its
-   shadow hangs below every one — without the slack, overflow-x clips both. */
+/* 8px padding pulled back by an equal negative margin: the pill's spring
+   overshoots the first/last tab and its shadow hangs below each one —
+   without the slack, overflow-x clips both. */
 .season-tabs { display: flex; gap: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; padding: 8px; margin: -8px; }
-/* The label colour is timed against the pill, not against the click. The pill
-   is a layout animation of about 450ms; switching the colour instantly left
-   the arriving tab dark on dark, and the leaving one white on white, for the
-   whole flight. Arriving waits for the pill; leaving does not, because the
-   pill is already gone. */
+/* Label color is timed against the pill's ~450ms layout animation, not the
+   click: switching instantly left the arriving tab dark-on-dark and the
+   leaving one white-on-white mid-flight. */
 .season-tabs button { position: relative; flex: 0 0 auto; padding: 12px 26px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font-size: 15px; white-space: nowrap; transition: color 160ms var(--ease); }
-/* :not(.is-active) matters: `button:hover` outweighs `button.is-active`, so
-   without it hovering the selected tab turned its label white on the white
-   pill and the text vanished. */
+/* `:not(.is-active)` matters: `button:hover` outweighs `button.is-active` on
+   specificity, so without it hovering the selected tab turned its label
+   white on the white pill. */
 .season-tabs button:not(.is-active):hover:not(:disabled) { background: transparent; border-color: transparent; color: var(--text); }
 .season-tabs button.is-active { color: #0C0A0B; font-weight: 650; transition-delay: 170ms; }
 .season-pill { position: absolute; inset: 0; border-radius: 999px; background: white; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
@@ -815,20 +648,12 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .stream-langs { letter-spacing: 2px; }
 .stream-source { margin-left: auto; color: var(--text-dim); }
 
-/* --- in-room catalog overlay ------------------------------------------- */
-/* Opaque on purpose. It was 97% over the player, and the 3% of video that
-   came through was never visible — but it kept the surface translucent, so
-   every frame the video painted underneath re-composited the whole overlay
-   and re-blurred the search pill's backdrop with it, at the video's frame
-   rate, for as long as the catalog stayed open. Solid, the compositor can
-   drop what is behind it. */
 .catalog-overlay { position: fixed; inset: 0; z-index: 45; background: #09080A; }
 .catalog-overlay-head { position: absolute; inset: 0 0 auto; z-index: 5; display: flex; align-items: center; justify-content: space-between; padding: 16px clamp(16px, 4vw, 44px) 22px; }
 .catalog-overlay-head h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
 .catalog-overlay-head .dialog-close { position: static; }
 .catalog-overlay-body { height: 100%; overflow: auto; overscroll-behavior-x: contain; padding: 74px clamp(16px, 4vw, 44px) 30px; }
 
-/* A viewer's ask, floating over the player until someone acts on it. */
 .request-stack { position: fixed; left: 20px; bottom: 20px; z-index: 48; display: flex; flex-direction: column; gap: 10px; width: min(340px, calc(100vw - 40px)); }
 .request-card { position: relative; display: flex; gap: 12px; padding: 12px 34px 12px 12px; border-radius: 18px; background: var(--glass); border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(22px) saturate(130%); animation: toast-enter var(--t-open) var(--ease) both; }
 @media (prefers-reduced-motion: reduce) { .request-card { animation: none; } }
@@ -839,15 +664,11 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .request-open { justify-self: start; padding: 5px 11px; border: 0; border-radius: 999px; background: var(--primary); color: white; font-size: 12px; font-weight: 600; }
 .request-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
 
-/* The manual-upload dialog reuses the drop-zone at a size that fits a modal. */
 .upload-dialog { width: min(560px, calc(100vw - 32px)); }
 .dialog-drop { min-height: 260px; padding: 24px; border-radius: 22px; }
 
 @media (max-width: 620px) {
   .catalog-shell { padding: 84px 12px 24px; }
-  /* No celular o painel é uma folha que sobe: presa ao rodapé, 90% de altura,
-     cantos só em cima. O morph a partir do pôster não acontece aqui — um card
-     de 118px virando a tela inteira é um gesto que não lê. */
   .details-panel {
     inset: auto 0 0 0; margin: 0;
     width: 100svw; height: 90svh;
@@ -855,7 +676,7 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
     overscroll-behavior: contain;
   }
   .details-hero { height: 220px; margin-bottom: -160px; }
-  /* A alça: diz que dá para arrastar/fechar, e separa a folha do que ficou atrás. */
+  /* Alça: indica que dá para arrastar/fechar e separa a folha do fundo. */
   .details-panel::before {
     content: ''; position: sticky; top: 8px; z-index: 3;
     display: block; width: 38px; height: 4px; margin: 8px auto -12px;
@@ -865,12 +686,6 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
   .request-stack { left: 12px; bottom: 84px; }
 }
 
-/* --- catalog dropdowns -------------------------------------------------- */
-/* Selects on the morphing-menu surface: the pill is the trigger, the panel
-   comes from .morph-menu-panel; alignment and geometry live in the code. */
-/* No backdrop-filter: behind a 97% background the blur contributed nothing
-   that could be seen, and the two pills scroll with the source list, so it
-   re-blurred what was behind them on every frame of that scroll. */
 .dropdown-pill { justify-content: space-between; gap: 8px; padding: 7px 12px; border: 1px solid var(--border); background: rgba(26,28,40,.97); font-size: 12.5px; }
 .dropdown-pill svg { flex: 0 0 auto; color: var(--text-dim); transition: transform 150ms var(--ease); }
 .dropdown-pill svg.is-open { transform: rotate(180deg); }
@@ -884,15 +699,12 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .dropdown-option-detail { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 @media (max-width: 620px) { .catalog-search { bottom: 14px; } }
 
-/* Pictures never pop in: a colour placeholder fills the slot until the
-   bytes are decoded, then the photo fades over it. */
 .fade-frame { display: block; width: 100%; height: 100%; overflow: hidden; }
 .fade-frame > img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .fade-img { opacity: 0; transition: opacity 300ms var(--ease); }
 .fade-img.is-loaded { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .fade-img { transition-duration: .01ms; } }
 
-/* --- next episode ------------------------------------------------------- */
 /* Floating bottom-right inside the player wrap, so fullscreen keeps it. */
 .next-episode-card { position: absolute; right: 18px; bottom: 84px; z-index: 12; display: flex; gap: 12px; width: min(340px, calc(100% - 36px)); padding: 12px 30px 12px 12px; border-radius: 18px; background: rgba(11,12,18,.62); backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 16px 44px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.08); }
 .next-episode-art { flex: 0 0 auto; width: 96px; height: 58px; border-radius: 10px; overflow: hidden; }
@@ -904,27 +716,21 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .next-episode-play svg { fill: currentColor; }
 .next-episode-dismiss { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; }
 
-/* --- starting overlay --------------------------------------------------- */
 .starting-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(6,7,11,.92); }
 .starting-card { display: grid; justify-items: center; gap: 10px; padding: 24px; text-align: center; }
 .starting-card h2 { margin: 8px 0 0; font-size: 22px; letter-spacing: -.03em; }
 .starting-file { margin: 0; max-width: min(480px, 80vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 .starting-phase { margin: 0; color: var(--text-faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-/* The swarm readout sits under the phase line, quieter than it: it explains
-   how long the wait will be, it is not the wait itself. */
 .starting-swarm { display: flex; gap: 22px; margin: 6px 0 0; padding: 10px 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.02); }
 .starting-swarm > div { display: grid; gap: 2px; justify-items: center; }
 .starting-swarm dt { color: var(--text-faint); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
 .starting-swarm dd { margin: 0; color: var(--text-dim); font-size: 14px; font-variant-numeric: tabular-nums; }
 
-/* --- slow-connection skeletons ------------------------------------------ */
 .details-skeleton { display: grid; gap: 10px; margin-top: 16px; }
 .text-skeleton { height: 13px; border-radius: 7px; }
 .details-skeleton-episodes { display: flex; gap: 12px; margin-top: 10px; overflow: hidden; }
 .episode-skeleton { flex: 0 0 clamp(220px, 26vw, 300px); aspect-ratio: 1 / 1.02; border-radius: 20px; }
 
-/* Phone header: the nav collapses to bare icons and the build link steps
-   aside, so the wordmark and the language never overlap it. */
 @media (max-width: 620px) {
   .catalog-shell .home-header { height: 60px; grid-template-columns: 1fr auto 1fr; gap: 6px; padding: 0 10px; }
   .catalog-shell .home-header nav { min-width: 0; justify-content: center; gap: 2px; }
@@ -938,17 +744,8 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
   .next-episode-card { right: 10px; bottom: 74px; }
 }
 
-/* --- header fade -------------------------------------------------------- */
-/* This was a real progressive blur: five stacked backdrop-filter layers, each
-   snapshotting the strip under the header, running a two-pass gaussian over it
-   and masking the result. Five backdrop roots across the full window width,
-   redone on every scrolled pixel — and, inside a room, on every video frame
-   painted behind the overlay. The read it bought (the board dissolving under
-   the header) is carried by one painted gradient instead: a single quad, no
-   readback. The stops sample an ease-in-out ramp, so the fade has no band and
-   no edge. */
 .catalog-shell .home-header { background: transparent; }
-/* The ramp runs past the header's own box, so it finishes in clear air. */
+/* Extends past the header's own box (-60% bottom inset) so the ramp finishes in clear air. */
 .progressive-blur {
   position: absolute; inset: 0 0 -60% 0; z-index: -1; pointer-events: none;
   background: linear-gradient(to bottom,
@@ -964,26 +761,16 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
     rgba(10, 11, 16, 0)   100%);
 }
 
-/* --- home tabs ---------------------------------------------------------- */
-/* Both ways of starting a room, weighted the same and centred between the two
-   header sides. They borrow the season selector's pill so the app has one
-   idea of what a segmented control is, not two. */
 .home-header .header-tabs { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(255,255,255,.05); box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
 .home-header .header-tabs button { position: relative; padding: 8px 22px; border: 0; border-radius: 999px; background: transparent; color: var(--text-dim); font-size: 14px; white-space: nowrap; transition: color 160ms var(--ease); }
 .home-header .header-tabs button:not(.is-active):hover:not(:disabled) { background: transparent; color: var(--text); }
 .home-header .header-tabs button.is-active { color: #0C0A0B; font-weight: 650; transition-delay: 170ms; }
 
-/* The manual flow used to be a dialog centred in the viewport; as a tab it is
-   page content, so the stage gives it the same middle without the overlay. */
 .manual-stage { min-height: 60vh; display: grid; place-items: center; padding: 24px 0 48px; }
-/* No fixed width: the panel travels to whatever the current step asks for
-   through --step-w, the same as it did inside the dialog. Pinning it wider
-   left every row 400px inside a 560px card, so a full-width option stopped
-   short of the card's edge. */
+/* No fixed width: the panel travels to whatever the current step needs via
+   --step-w. A fixed width left full-width rows stopping short of the card's edge. */
 .manual-stage .upload-morph { max-width: calc(100vw - 32px); }
 
-/* The fleet, as measured from this browser while a magnet is being opened:
-   one pill per worker, the chosen one lit. Lives under the magnet box. */
 .worker-probes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; font-size: 12.5px; color: var(--text-faint); }
 .worker-probes-title { flex-basis: 100%; }
 .worker-probe { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); }
@@ -994,17 +781,11 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .worker-probe.is-down { opacity: .55; }
 .starting-card .worker-probes { justify-content: center; }
 
-/* The fleet as a page rather than as a measurement: one card per worker, in
-   the order the server would place a room. The bar answers the question
-   people actually ask — how busy is it — with whichever budget is closest to
-   refusing the next room, not with an average that reads half-empty while
-   the pipe is already spoken for. */
 .fleet-status { --sheen-cycle: 2.1s; --sheen-ease: cubic-bezier(.37,0,.63,1); width: min(760px, 100%); margin: 0 auto; padding: 8px 0 40px; }
 .fleet-summary h2 { margin: 0 0 6px; font-size: 25px; letter-spacing: -.035em; }
 .fleet-summary p { margin: 0; color: var(--text-dim); font-size: 14px; }
-/* Who is here right now, beside how much fleet there is to hold them. Larger
-   than the worker facts and set in tabular figures: these two tick while the
-   page is open, and digits that shift width would make the row twitch. */
+/* Tabular figures: these two tick while the page is open, and digits that
+   shift width would make the row twitch. */
 .fleet-live { display: flex; gap: 26px; margin: 14px 0 0; }
 .fleet-live > div { display: grid; gap: 3px; }
 .fleet-live dt { color: var(--text-faint); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
@@ -1019,52 +800,28 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .fleet-badge { padding: 3px 9px; border-radius: 999px; font-size: 11.5px; color: var(--text-dim); background: rgba(255,255,255,.06); }
 .fleet-badge.is-available { color: #8ee79a; background: rgba(86,211,100,.14); }
 .fleet-badge.is-busy { color: #f6cf65; background: rgba(246,207,101,.13); }
-/* The one label that is a recommendation rather than a fact, so it is the one
-   thing here that moves. Two layers like .status-connecting: a solid floor
-   under the whole word, and a highlight that travels across it —
-   background-clip: text paints nothing where the gradient does not reach, so
-   a lone sliding band would leave the letters behind it blank.
-
-   The travel is eased on a sine, slow at the edges and quick through the
-   middle, the way light actually crosses a surface; a linear sweep reads
-   mechanical. It sweeps for the first half of the cycle and rests for the
-   second, so the eye is drawn once rather than nagged continuously. */
+/* Two layers, like .status-connecting: a solid floor under the word, and a
+   highlight that travels across it — background-clip: text paints nothing
+   where the gradient doesn't reach, so a single band would leave letters behind it blank. */
 .fleet-best { margin-left: auto; color: transparent; font-size: 12px; font-weight: 550; background-image: linear-gradient(100deg, rgba(255,255,255,0) 36%, #ffffff 50%, rgba(255,255,255,0) 64%), linear-gradient(#FFB794, #FFB794); background-size: 240% 100%, 100% 100%; background-repeat: no-repeat, no-repeat; background-position: 170% 0, 0 0; -webkit-background-clip: text; background-clip: text; animation: fleet-best-sheen var(--sheen-cycle) var(--sheen-ease) infinite; }
-/* Sweep for the first 52% of the cycle and rest for the rest: at a 2.1s
-   cycle that is roughly 1.1s of travel and a 1s beat before the next pass.
-   Long enough to read as deliberate, short enough that the wait never feels
-   like the animation stopped. */
 @keyframes fleet-best-sheen { 0% { background-position: 170% 0, 0 0; } 52%, 100% { background-position: -70% 0, 0 0; } }
-/* Not switched off: the label would lose the colour it is painted in. Slowed
-   until the movement is ambient rather than an animation. */
+/* Not switched off under reduced motion: background-clip: text is the paint
+   source, so turning the animation off would remove the label's colour. */
 @media (prefers-reduced-motion: reduce) { .fleet-best { animation-duration: 9s !important; } }
 .fleet-meter-row { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--text-dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .fleet-meter-track { height: 6px; border-radius: 999px; background: rgba(255,255,255,.07); overflow: hidden; }
 .fleet-meter-fill { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #FF7A45, #FFB794); transition: width .4s cubic-bezier(.23,1,.32,1); }
 @media (prefers-reduced-motion: reduce) { .fleet-meter-fill { transition: none; } }
 .fleet-card.is-busy .fleet-meter-fill { background: linear-gradient(90deg, #d8a93c, #f6cf65); }
-/* A grid rather than a wrapping row, and every card renders every cell: laid
-   out in columns the two cards line up field for field, and a worker with
-   nothing to report for one keeps its place in the row instead of shifting
-   everything after it left. */
 .fleet-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); gap: 13px 20px; margin: 15px 0 0; }
 .fleet-fact { display: grid; gap: 3px; min-width: 0; }
 .fleet-facts dt { color: var(--text-faint); font-size: 11.5px; }
 .fleet-facts dd { margin: 0; color: var(--text-dim); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fleet-facts dd em { margin-left: 5px; color: var(--text-faint); font-style: normal; font-size: 11.5px; }
-/* A value still being worked out says so by moving, on the same sweep as
-   everything else here. */
 .fleet-facts dd.is-pending { color: transparent; background-image: linear-gradient(100deg, rgba(255,255,255,0) 36%, rgba(255,255,255,.92) 50%, rgba(255,255,255,0) 64%), linear-gradient(var(--text-faint), var(--text-faint)); background-size: 240% 100%, 100% 100%; background-repeat: no-repeat, no-repeat; background-position: 170% 0, 0 0; -webkit-background-clip: text; background-clip: text; animation: fleet-best-sheen var(--sheen-cycle) var(--sheen-ease) infinite; }
 @media (prefers-reduced-motion: reduce) { .fleet-facts dd.is-pending { animation-duration: 9s !important; } }
 .fleet-note { margin: 12px 0 0; color: var(--text-faint); font-size: 12px; }
 
-/* The shape of the answer while it is still being fetched. The sweep is on
-   the cards, not on each bone: one light crossing the whole page reads as a
-   surface catching it, where a highlight per block reads as a dozen unrelated
-   things blinking. The bones themselves only hold the resting tint.
-
-   Same sine as the "best" badge, and the second card is a beat behind the
-   first, so the light travels down the list rather than flashing it. */
 .fleet-card.is-skeleton { position: relative; overflow: hidden; border-color: rgba(255,255,255,.06); background: rgba(255,255,255,.02); }
 .fleet-card.is-skeleton::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, rgba(255,255,255,0) 38%, rgba(255,255,255,.055) 50%, rgba(255,255,255,0) 62%); background-size: 220% 100%; background-repeat: no-repeat; animation: fleet-skeleton-sheen var(--sheen-cycle) var(--sheen-ease) infinite; }
 .fleet-card.is-skeleton:nth-child(2)::after { animation-delay: .18s; }
@@ -1078,24 +835,16 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .fleet-bone.is-fact { width: 92px; height: 12px; }
 .fleet-bone.is-fact:nth-child(2) { width: 118px; }
 .fleet-card.is-skeleton .fleet-facts { margin-top: 14px; }
-/* Stopped rather than slowed: a skeleton says "not yet" by being a skeleton,
-   and it has no colour riding on the movement the way the badge does. */
+/* Stopped, not slowed, under reduced motion: unlike the badge, this skeleton carries no colour on the movement. */
 @media (prefers-reduced-motion: reduce) { .fleet-card.is-skeleton::after { animation: none; } }
 .swap-probes { margin: 10px 0 0; }
 
-/* --- plugins ------------------------------------------------------------ */
-/* The header button carries the same weight as the language toggle, not the
-   same as Upload: adding a source is a setting, not the main action. */
 .header-plugins { color: var(--text-dim); }
 .home-header .header-plugins:hover { color: var(--text); background: rgba(255,255,255,.06); }
 
-/* The overlay header lays its children out with space-between, so the button
-   sits next to the title instead of being pushed to the far edge. */
 .catalog-overlay-head .header-plugins { margin-right: auto; margin-left: 16px; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; background: transparent; font-size: 13px; }
 .catalog-overlay-head .header-plugins:hover { color: var(--text); background: rgba(255,255,255,.06); }
 
-/* Same surface vocabulary as the upload dialog: this is the same kind of
-   object, and it should not read as a second design. */
 .plugins-backdrop { position: fixed; inset: 0; z-index: 57; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.74); animation: overlay-in var(--t-open) var(--ease); }
 .plugins-morph { width: min(520px, calc(100vw - 32px)); }
 .plugins-panel { position: relative; padding: 26px; border-radius: 26px; color: var(--text); background: #1A1719; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; }
@@ -1129,13 +878,8 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .plugins-actions { display: flex; align-items: center; gap: 10px; }
 .plugins-actions .primary-button { display: inline-flex; align-items: center; gap: 7px; }
 
-/* --- catalog header ----------------------------------------------------- */
-/* Identity and language on the left, the way in for your own media on the
-   right, hard against the edge. Nothing in the middle: the catalog is the
-   page, and the header should not compete with it. */
-/* Full width so the blur ramp spans the window, but its contents sit on the
-   same 1240px column the board does, so the wordmark lines up with the first
-   poster. */
+/* padding-inline uses max() so the header's content lines up with the
+   1240px board column while the background still spans full width. */
 .catalog-shell .home-header { grid-template-columns: auto 1fr auto; padding-inline: max(clamp(16px, 4vw, 54px), calc((100% - 1240px) / 2)); }
 .header-start { display: inline-flex; align-items: center; gap: 12px; }
 .header-start .header-language { padding: 6px 9px; border-radius: 999px; }
@@ -1143,10 +887,6 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .home-header .header-upload:hover:not(:disabled) { background: #FF9366; color: white; }
 .home-header .header-upload svg { color: currentColor; }
 
-/* --- the catalog arriving ---------------------------------------------- */
-/* Same entrance as the landing it replaced: everything comes in out of focus
-   and settles, dealt top to bottom, so the board reads as arriving rather
-   than being switched on. */
 .catalog-search { animation: home-rise 620ms var(--ease) 320ms backwards; }
 .catalog-row { animation: row-rise 640ms var(--ease) backwards; }
 .catalog-row:nth-of-type(1) { animation-delay: 150ms; }
@@ -1158,11 +898,6 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
   .catalog-search, .catalog-row { animation: none; }
 }
 
-/* --- manual upload panel ------------------------------------------------ */
-/* The dialog is only the scrim and the position; the panel itself is the
-   surface, so it can travel between the sizes its steps need. A modal has no
-   control to grow out of, so it arrives as a fade through blur — and from
-   there every step change is the same box reforming, in both axes. */
 .ui-dialog.upload-dialog { width: auto; background: transparent; box-shadow: none; overflow: visible; animation: modal-bloom var(--t-open) var(--ease); }
 .ui-dialog.upload-dialog[data-state='closed'] { animation: modal-bloom-out var(--t-close) var(--ease); }
 @keyframes modal-bloom { from { opacity: 0; filter: blur(12px); } }
@@ -1171,15 +906,11 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
   .ui-dialog.upload-dialog, .ui-dialog.upload-dialog[data-state='closed'] { animation: none; }
 }
 .upload-dialog .ui-dialog-body { padding: 0; }
-/* Intrinsic width: the box has to be free to size to each step for the morph
-   to have two real numbers to travel between. */
-/* The surface belongs to the box, not to the pane: the pane is what
-   dissolves between steps, and a background on it would take the whole panel
-   with it instead of only its contents. */
+/* Background lives on the box, not the pane: the pane dissolves between
+   steps, and a background on it would fade the whole panel, not just its contents. */
 .upload-morph { width: fit-content; max-width: calc(100vw - 32px); padding: 22px; border-radius: 26px; background: #1A1719; box-shadow: inset 0 1px rgba(255,255,255,.08), 0 30px 90px #000; }
-/* No scrolling here: a scrollbar appearing inside the pane would resize the
-   contents the size hook is watching, and the two would chase each other.
-   Long lists carry their own scroller (see .torrent-files). */
+/* No scrolling here: a scrollbar appearing would resize the contents the
+   size hook is watching, and the two would chase each other. */
 .upload-morph .morph-pane { width: 100%; max-height: calc(100dvh - 150px); display: flex; flex-direction: column; min-height: 0; }
 .upload-morph .morph-step { width: min(var(--step-w), calc(100vw - 76px)); }
 .upload-morph .morph-step[data-step='menu'] { --step-w: 400px; }
@@ -1191,28 +922,20 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .upload-morph .stage-description { margin: 6px 0 0; color: var(--text-dim); font-size: 13.5px; }
 .upload-morph .morph-head { display: flex; align-items: center; gap: 10px; }
 
-/* Bare options: the panel is the surface, so each way in is a line of text
-   with an icon, not a box inside a box. */
 .upload-morph .source-options button { border: 0; background: transparent; padding: 12px 14px; border-radius: var(--r-field); transition: background var(--t-close) var(--ease), transform 160ms var(--ease); }
 .upload-morph .source-options button:hover:not(:disabled) { background: rgba(255,255,255,.05); border-color: transparent; }
-/* Pressing grows the row instead of shrinking it. The global button rule
-   scales down on :active, which reads as the option retreating from the
-   click; here the option is what you are choosing, so it comes forward and
-   holds while the panel morphs to the next step. */
+/* Overrides the global button :active scale-down (which reads as
+   retreating): the option grows instead, since it's what's being chosen. */
 .upload-morph .source-options button:active:not(:disabled) { transform: scale(1.02); background: rgba(255,255,255,.09); }
 
-/* The whole zone is the control: no button inside it competing for the click. */
 .upload-morph .dialog-drop { width: 100%; display: grid; place-items: center; align-content: center; gap: 8px; cursor: pointer; text-align: center; }
 .upload-morph .dialog-drop strong { font-size: 15px; }
 .upload-morph .dialog-drop > span { margin: 0; color: var(--text-faint); font-size: 12px; }
 .upload-morph .dialog-drop .drop-icon { margin: 0; }
 .upload-morph .morph-head { margin-bottom: 4px; }
 
-/* --- skeletons ---------------------------------------------------------- */
-/* A placeholder should read as the shape of the thing arriving, not as a grey
-   box blinking. Each one is a faintly lit surface with a narrow highlight
-   raked across it: the band is a rotated pseudo-element driven by transform,
-   so the sweep composites instead of repainting the fill every frame. */
+/* The highlight band is a rotated pseudo-element driven by transform, so
+   the sweep composites instead of repainting the fill every frame. */
 .poster-skeleton, .episode-skeleton, .stream-skeleton, .text-skeleton {
   position: relative; overflow: hidden; isolation: isolate;
   background: linear-gradient(158deg, rgba(255,255,255,.062), rgba(255,255,255,.022) 62%);
@@ -1220,19 +943,16 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 }
 .poster-skeleton::after, .episode-skeleton::after, .stream-skeleton::after, .text-skeleton::after {
   content: ''; position: absolute; inset: -60% -85%; z-index: 1;
-  /* Soft shoulders on both sides: a hard-edged band reads as a glitch. */
   background: linear-gradient(90deg,
     transparent 0%, rgba(255,255,255,.03) 34%, rgba(255,255,255,.085) 46%,
     rgba(255,255,255,.13) 50%, rgba(255,255,255,.085) 54%, rgba(255,255,255,.03) 66%, transparent 100%);
   animation: skeleton-rake 1.9s cubic-bezier(.45, 0, .25, 1) infinite;
 }
-/* The rake is held off-frame at both ends, so the pause between passes is
-   part of the loop rather than the band sitting parked in view. */
+/* Held off-frame at both ends, so the pause between passes is part of the loop rather than the band parking in view. */
 @keyframes skeleton-rake {
   0% { transform: rotate(14deg) translate3d(-85%, 0, 0); }
   70%, 100% { transform: rotate(14deg) translate3d(85%, 0, 0); }
 }
-/* Dealt across the row, so the highlight travels the strip as one wave. */
 .catalog-strip > .poster-skeleton:nth-child(2)::after, .details-skeleton-episodes > .episode-skeleton:nth-child(2)::after { animation-delay: 90ms; }
 .catalog-strip > .poster-skeleton:nth-child(3)::after, .details-skeleton-episodes > .episode-skeleton:nth-child(3)::after { animation-delay: 180ms; }
 .catalog-strip > .poster-skeleton:nth-child(4)::after, .details-skeleton-episodes > .episode-skeleton:nth-child(4)::after { animation-delay: 270ms; }
@@ -1249,31 +969,23 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
   .poster-skeleton::after, .episode-skeleton::after, .stream-skeleton::after, .text-skeleton::after { animation: none; opacity: .5; }
 }
 
-/* --- mobile: view tabs to the footer, every modal a bottom sheet ---------- */
-/* Placed last on purpose: these override base rules that appear later in the
-   file (the header tabs, the plugins panel), which a media query alone cannot
-   do at equal specificity. */
+/* Placed last on purpose: overriding base rules that appear later in the
+   file needs source order, since a media query alone can't win at equal specificity. */
 @media (max-width: 620px) {
-  /* View tabs leave the top header and sit bottom-left, level with the search
-     button (bottom-right). transform is reset (the desktop rule centres them
-     with translateX, which would push them off the left edge here). An open
-     search covers that row, so they step aside. Same glass as the search pill,
-     and a little taller to match it. */
+  /* transform is reset here — the desktop rule centres these with
+     translateX, which would push them off the left edge at this position. */
   .home-header .header-tabs { position: fixed; left: 14px; bottom: 22px; top: auto; transform: none; width: auto; max-width: calc(100vw - 96px); min-height: 52px; align-items: center; margin: 0; padding: 4px; z-index: 41; background: rgba(11,12,18,.62); backdrop-filter: blur(28px) saturate(140%) brightness(.85); box-shadow: 0 18px 50px rgba(0,0,0,.4), inset 0 1px rgba(255,255,255,.08); transition: opacity .2s var(--ease); }
   .home-header .header-tabs button { padding: 12px 18px; font-size: 14px; }
   .home-header .header-tabs .season-tab-label { font-size: 14px; }
-  /* No transform here (and none in the transition above), so the tabs never
-     animate their position — that flash of them at the top before dropping to
-     the footer was the transform transitioning on the first frame. */
+  /* No transform here: the flash at the top before dropping to the footer
+     was this transform transitioning on the first frame. */
   body.catalog-search-open .home-header .header-tabs { opacity: 0; pointer-events: none; }
 
-  /* Plugins modal -> bottom sheet. useMorphingSize animates its size; the
-     slide is a transform, so the two do not fight. */
+  /* useMorphingSize animates the size; the slide is a transform, so the two don't fight. */
   .plugins-backdrop { place-items: end center; padding: 0; }
   .plugins-morph { width: 100%; animation: drawer-in var(--t-open) cubic-bezier(.22,.61,.36,1); }
   .plugins-panel { border-radius: 22px 22px 0 0; padding-bottom: calc(26px + env(safe-area-inset-bottom)); }
 
-  /* Nickname dialog -> bottom sheet. */
   .name-dialog { inset: auto 0 0 0; width: 100%; margin: 0; border-radius: 22px 22px 0 0; animation: drawer-in var(--t-open) cubic-bezier(.22,.61,.36,1); }
   .name-dialog form { padding-bottom: calc(26px + env(safe-area-inset-bottom)); }
 }
@@ -1281,22 +993,15 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .pipeline-metric { display: inline-flex; align-items: center; gap: 3px; }
 .pipeline-dot { opacity: .45; }
 
-/* ---------------------------------------------------------------------------
-   A marca. O wordmark herda a cor do texto; o play é o único ponto de coral,
-   e ele vem de dentro do SVG. */
 .home-wordmark { display: inline-flex; align-items: center; }
 .wordmark { height: 19px; width: auto; display: block; }
 .mark { height: 22px; width: auto; display: block; }
-/* Onde o nome inteiro não cabe, fica só o j. */
 .home-wordmark .mark { display: none; }
 @media (max-width: 620px) {
   .home-wordmark .wordmark { display: none; }
   .home-wordmark .mark { display: block; }
 }
 
-/* Estado vazio das fontes: a lista tem quatro modos de vir vazia e cada um
-   leva a uma saída diferente, então todos usam a mesma forma — ícone, o que
-   houve, por quê, e o que fazer. */
 .sources-empty {
   display: grid; justify-items: center; gap: 8px;
   padding: 40px 24px 34px; text-align: center;

@@ -14,7 +14,6 @@ const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
 const MAX_SIDE_FILE_BYTES = 8 * 1024 * 1024
 const POLL_MS = 1_500
 const STATS_MS = 2_000
-// Metadata resolves in the swarm: seconds usually, a minute on a quiet one.
 const LISTING_TIMEOUT_MS = 150_000
 
 /** No worker is enrolled, or the instance runs without any. Retryable later. */
@@ -117,7 +116,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await response.json() as { error?: string; reason?: string }
       code = body.error ?? ''
       reason = body.reason ?? ''
-    } catch { /* no body */ }
+    } catch {}
     throw classify(response.status, code, reason)
   }
   if (response.status === 204) return undefined as T
@@ -134,7 +133,7 @@ function classify(status: number, code: string, reason: string): Error {
   return new Error(`torrent api ${code || status}`)
 }
 
-/** What the fleet can take right now: available, busy, no_workers, disabled. */
+/** available, busy, no_workers or disabled. */
 export async function torrentCapacity(): Promise<string> {
   try {
     const response = await fetch('/api/torrents/capacity')
@@ -146,22 +145,19 @@ export async function torrentCapacity(): Promise<string> {
   }
 }
 
-/** One worker as the fleet reports it to the status page. */
 export interface FleetMember {
   id: string
   version?: string
-  /** available takes work now, busy is full, draining is leaving, offline stopped reporting. */
   availability: 'available' | 'busy' | 'draining' | 'offline'
-  /** Lease and disk pressure as one number in 0..1, the same one placement sorts by. */
+  /** Lease and disk pressure as one number in 0..1, the one placement sorts by. */
   load: number
   leases: number
   maxLeases?: number
   torrents: number
   maxTorrents?: number
   diskUsed: number
-  // What the volume actually carries. diskUsed is what admission counts on —
-  // a window's worth reserved per torrent whether or not it has downloaded —
-  // so it is the right number for placement and the wrong one to show.
+  // What the volume actually carries; diskUsed is the reservation admission
+  // counts on, not the bytes on disk.
   diskReal?: number
   diskQuota?: number
   transferUsedBps: number
@@ -172,12 +168,11 @@ export interface FleetMember {
 
 export interface Fleet {
   capacity: string
-  /** Best for this viewer first: the server orders it the way it would place a room. */
+  /** Best for this viewer first, ordered the way the server would place a room. */
   workers: FleetMember[]
 }
 
-/** The whole fleet and how loaded it is. */
-/** Rooms with someone in them, and how many people that is, right now. */
+/** Rooms with someone in them right now. */
 export interface Live {
   rooms: number
   members: number
@@ -199,7 +194,6 @@ export async function fleetStatus(): Promise<Fleet> {
   return { capacity: body.capacity ?? 'disabled', workers: body.workers ?? [] }
 }
 
-/** One worker as the page measured it. */
 export interface WorkerProbe {
   id: string
   readBase: string
@@ -213,20 +207,14 @@ export interface WorkerProbe {
 
 const PROBE_BYTES = 3 * 1024 * 1024
 const PROBE_BUDGET_MS = 6_000
-// Enough of a transfer to rank by. The first megabyte past the first few
-// hundred milliseconds already separates a fast path from a slow one, and the
-// rest is two more megabytes per worker that the person opening the room waits
-// through before anything starts.
+// Enough of a transfer to rank by: past this, the probe only makes the person
+// opening the room wait longer.
 const PROBE_ENOUGH_BYTES = 1024 * 1024
 const PROBE_ENOUGH_MS = 400
-// A ranking is about the path between this browser and each worker, which does
-// not change minute to minute. Reopening a room, or resuming one, reuses it
-// rather than paying the whole measurement again.
 const RANKING_TTL_MS = 3 * 60_000
 
-// Measures one worker from this browser: reachability, first byte, and
-// throughput over up to three megabytes or six seconds, whichever ends
-// first — a slow link still yields an honest number from what arrived.
+// Reachability, first byte and throughput over up to three megabytes or six
+// seconds, whichever ends first.
 async function probeOne(target: { id: string; readBase: string; holds: boolean; probe: string }): Promise<WorkerProbe> {
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), PROBE_BUDGET_MS)
@@ -242,17 +230,13 @@ async function probeOne(target: { id: string; readBase: string; holds: boolean; 
       const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }))
       if (done) break
       received += value?.byteLength ?? 0
-      // Enough to rank by; the rest of the response is the room's opening
-      // seconds spent on bytes nobody reads.
       if (received >= PROBE_ENOUGH_BYTES && performance.now() - firstByteAt >= PROBE_ENOUGH_MS) {
         abort.abort()
         break
       }
     }
-    // From the first byte, not from the request. Round trip is already the
-    // ttfb this returns; charging it to throughput as well would rank a fast
-    // distant path below a slow near one — and the shorter the probe, the
-    // heavier that double count weighs.
+    // From the first byte, not from the request: the round trip is already
+    // the ttfb this returns, and counting it twice punishes a distant path.
     const seconds = (performance.now() - firstByteAt) / 1000
     if (received === 0 || seconds <= 0) throw new Error('empty probe')
     return {
@@ -270,10 +254,8 @@ async function probeOne(target: { id: string; readBase: string; holds: boolean; 
   }
 }
 
-// Reachable beats unreachable, and then the measured speed decides. A
-// worker already holding the pieces gets a bonus — warm disk skips the
-// swarm — but a bonus is all it is: a path six times faster wins even
-// against a warm one.
+// Reachable beats unreachable, then measured speed decides; holding the
+// pieces is only a multiplier, not a veto.
 const HOLDS_BONUS = 1.5
 function rankProbes(probes: WorkerProbe[]): WorkerProbe[] {
   const score = (p: WorkerProbe) => (p.mbit ?? 0) * (p.holds ? HOLDS_BONUS : 1)
@@ -284,16 +266,11 @@ function rankProbes(probes: WorkerProbe[]): WorkerProbe[] {
   return ranked.map((p, i) => ({ ...p, chosen: i === 0 && p.state === 'ok' }))
 }
 
-// What the last measurement said, by infohash. The fleet page asks for a
-// fresh one; opening a room does not, because a ranking already paid for is
-// still the right answer and measuring again is six seconds of nothing
-// happening on screen.
 const rankings = new Map<string, { at: number; probes: WorkerProbe[] }>()
 
 /**
- * Measures every healthy worker from this browser, reporting progressively
- * through `onProbe`. Resolves with the final ranking, best first. A recent
- * ranking is reused unless the caller asks for a fresh measurement.
+ * Reports progressively through `onProbe` and resolves with the ranking, best
+ * first. A recent ranking is reused unless a fresh measurement is asked for.
  */
 export async function probeWorkers(
   infoHash: string,
@@ -329,16 +306,13 @@ export async function probeWorkers(
 }
 
 export interface OpenTorrentOptions {
-  /** Fleet measurements as they land, for the page to show. */
   onProbe?: (probes: WorkerProbe[]) => void
 }
 
 /**
- * Registers a magnet with the server and waits for the worker's listing.
- * The session it returns reads bytes from the worker directly. Before the
- * dispatch, every worker is measured from this browser and the ranking
- * rides along, so the server places the job on the path that is actually
- * fast from here.
+ * Registers a magnet and waits for the worker's listing; the session reads
+ * bytes from the worker directly. Every worker is measured from this browser
+ * first and the ranking rides along with the dispatch.
  */
 export async function openRemoteTorrent(
   magnet: string,
@@ -382,8 +356,6 @@ export async function openRemoteTorrent(
   }
 
   let grant: WorkerGrant | null = null
-  // The url is read at request time, so a ticket renewed by `refresh`
-  // applies to the very next request of the same read.
   const readOpts = () => {
     if (!grant) throw new Error('torrent file not selected')
     return {
@@ -447,7 +419,7 @@ export async function openRemoteTorrent(
         progress: Math.min(next.swarm.haveBytes / total, 1),
       }
       onStats?.(currentStats)
-    } catch { /* stats are best effort */ }
+    } catch {}
   }
   onStats?.(currentStats)
   if (onStats) statsTimer = setInterval(() => { void refreshStats() }, STATS_MS)
@@ -472,8 +444,7 @@ export async function openRemoteTorrent(
     abortReads: () => gate.abort(),
     destroy,
     detach: () => {
-      // Same teardown as destroy, minus the DELETE: the job now feeds the
-      // worker's own remux and must outlive this tab.
+      // No DELETE: the job now feeds the worker's own remux.
       if (destroyed) return
       destroyed = true
       gate.close()

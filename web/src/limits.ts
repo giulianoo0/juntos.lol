@@ -4,5 +4,4 @@
  * on the home's chunk by name, which is most of what route splitting is for.
  */
 
-/** The largest source a room will take. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024

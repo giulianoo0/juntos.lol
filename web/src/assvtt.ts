@@ -11,9 +11,7 @@
 export interface AssStyleInfo {
   italic: boolean
   bold: boolean
-  /** VTT color class, or null when the color is effectively white. */
   color: string | null
-  /** Numpad alignment 1-9, already normalized from the legacy encoding. */
   alignment: number
 }
 
@@ -24,16 +22,12 @@ export interface AssTrackInfo {
 }
 
 export interface ConvertedCue {
-  /** WebVTT cue settings for the timing line, empty for bottom-center. */
   settings: string
-  /** Cue text with tags; empty when nothing of it is renderable. */
   text: string
 }
 
 const DEFAULT_STYLE: AssStyleInfo = { italic: false, bold: false, color: null, alignment: 2 }
 
-// The eight classes the WebVTT spec gives a default color, in a fixed order
-// so quantization ties resolve the same way everywhere.
 const VTT_COLORS = [
   { name: 'white', r: 255, g: 255, b: 255 },
   { name: 'yellow', r: 255, g: 255, b: 0 },
@@ -45,18 +39,11 @@ const VTT_COLORS = [
   { name: 'black', r: 0, g: 0, b: 0 },
 ]
 
-// The overrides this converter understands. Everything else inside a block is
-// ignored. The lookaheads keep short names from swallowing longer ones: \b
-// must not match \bord, \c must not match \clip, \p must not match \pos.
+// Lookaheads keep short names from swallowing longer ones: \b must not match
+// \bord, \c must not match \clip, \p must not match \pos.
 const OVERRIDE_TAG = /\\(pos|move|an|a(?=-?\d)|1?c(?=&|\\|$)|i(?=-?\d)|b(?=-?\d)|p(?=-?\d)|r)([^\\]*)/g
 
-/**
- * Parses the script info and style sections of an ASS/SSA document — the
- * exact content Matroska stores as the track's CodecPrivate, and the top of
- * any sidecar file.
- */
 export function parseAssHeader(header: string): AssTrackInfo {
-  // 384x288 is the resolution libass assumes when a script declares none.
   const info: AssTrackInfo = { playResX: 384, playResY: 288, styles: new Map() }
   let fields: string[] | null = null
   let section = ''
@@ -100,15 +87,12 @@ export function parseAssHeader(header: string): AssTrackInfo {
   return info
 }
 
-/** Converts one dialogue text into VTT cue text plus its settings. */
 export function convertAssCue(info: AssTrackInfo, styleName: string | undefined, raw: string): ConvertedCue {
   const style = (styleName !== undefined && info.styles.get(styleName)) || DEFAULT_STYLE
 
   let alignment = style.alignment
   let pos: { x: number; y: number } | null = null
   let drawing = false
-  // What the overrides ask for, reconciled into tags only when text actually
-  // arrives — so redundant flips collapse and an empty cue emits no tags.
   const desired = { i: style.italic, b: style.bold, c: style.color }
   const open: Array<'i' | 'b' | 'c'> = []
   let openColor: string | null = null
@@ -211,16 +195,13 @@ export function convertAssCue(info: AssTrackInfo, styleName: string | undefined,
   return { settings: text === '' ? '' : cueSettings(alignment, pos, info), text }
 }
 
-// cueSettings maps the anchor grid onto VTT's line/position/align settings.
-// A positioned cue keeps the anchor its alignment row implies: a bottom-row
-// \pos names where the text's bottom edge sits. WebVTT spells that as a line
-// alignment suffix, but Chromium rejects the suffix and drops the whole
-// setting with it, so the anchor is approximated instead by lifting the box's
+// Chromium rejects WebVTT's line-alignment suffix and drops the whole setting
+// with it, so a positioned cue's anchor is approximated by lifting the box's
 // top edge a nominal text height.
 function cueSettings(alignment: number, pos: { x: number; y: number } | null,
   info: AssTrackInfo): string {
   const row = alignment >= 7 ? 'top' : alignment >= 4 ? 'middle' : 'bottom'
-  const column = alignment % 3 // 1 left, 2 center, 0 right
+  const column = alignment % 3
   const parts: string[] = []
   if (pos) {
     const anchor = row === 'bottom' ? 6 : row === 'middle' ? 3 : 0
@@ -300,19 +281,10 @@ function positiveNumber(value: string, fallback: number): number {
   return parsed > 0 ? parsed : fallback
 }
 
-// Dialogue sits two cue lines off the frame's bottom edge — roughly 100px on
-// a 1080p picture, scaling with the player — clearing the control bar. A
-// second simultaneous dialogue goes to the top with the same spacing, the way
-// double-speaker lines are conventionally set. Snap-line units anchor the
-// box's edge, so the spacing holds for one-line and two-line cues alike.
 const BOTTOM_DIALOGUE = 'line:-3'
 const TOP_DIALOGUE = 'line:2'
 
-/**
- * Positions the cues of a finished WebVTT document that carry no settings of
- * their own. Cues a script placed explicitly (signs) are left untouched, so
- * running this twice changes nothing.
- */
+/** Only cues with no settings of their own are moved, so this is idempotent. */
 export function positionDialogueCues(vtt: string): string {
   const lines = vtt.split('\n')
   let lastBottomEnd = -1

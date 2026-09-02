@@ -3,8 +3,8 @@ package worker
 import "time"
 
 // Holders lists the healthy workers whose last heartbeat reported the
-// infohash, warmest first. Derived every time from the heartbeats, so a
-// worker that reaped the torrent drops out within one beat.
+// infohash, warmest first, so a worker that reaped the torrent drops out
+// within one beat.
 func (r *Registry) Holders(infohash string, now time.Time) []Worker {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -11,10 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// How often the cycle check runs and the runtime tick is inspected.
 const CHECK: Duration = Duration::from_secs(10);
-/// How long the runtime may go without a tick before it counts as wedged.
-/// Long enough for any disk sweep; a healthy runtime ticks every second.
 const STALL: Duration = Duration::from_secs(60);
 
 pub fn spawn() {
@@ -65,9 +62,6 @@ pub fn spawn() {
         .expect("watchdog thread");
 }
 
-/// What every thread was doing when the runtime stopped ticking, straight
-/// from /proc: a stall with no lock cycle means the workers are parked in
-/// some syscall — which one, and where in the kernel, is the whole clue.
 fn dump_threads() {
     let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
         return;

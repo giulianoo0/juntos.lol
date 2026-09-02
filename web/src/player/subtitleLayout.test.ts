@@ -9,7 +9,6 @@ describe('videoContentRect', () => {
   })
 
   it('finds the picture between horizontal bars', () => {
-    // A 16:9 picture in a 4:3 box: the width fills, the height leaves bars.
     const rect = videoContentRect({ clientWidth: 800, clientHeight: 600, videoWidth: 1920, videoHeight: 1080 })
     expect(rect.width).toBe(800)
     expect(rect.height).toBe(450)
@@ -26,8 +25,6 @@ describe('videoContentRect', () => {
   })
 
   it('falls back to the element before metadata arrives', () => {
-    // videoWidth is 0 until the first frame is decoded, and dividing by it
-    // would place the overlay at NaN — invisible, with no error to explain it.
     expect(videoContentRect({ clientWidth: 640, clientHeight: 360, videoWidth: 0, videoHeight: 0 }))
       .toEqual({ left: 0, top: 0, width: 640, height: 360 })
   })

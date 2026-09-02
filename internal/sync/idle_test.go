@@ -7,11 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A room with people in it but nothing happening is usually a tab somebody
-// forgot, holding a torrent and a bucket's worth of segments for an audience
-// of nobody. It is asked before it is closed, because the alternative is
-// closing a room on people who were arguing about what to watch next.
-
 func roomAt(quietFor time.Duration, members int) *roomConn {
 	r := &roomConn{
 		id:           "r1",
@@ -36,7 +31,6 @@ func TestTheQuestionIsPutOnlyOnce(t *testing.T) {
 	r := roomAt(idleAsk+time.Second, 1)
 	require.False(t, r.sweepIdle())
 
-	// A second tick a moment later must not ask again.
 	before := len(r.clients["a"].send)
 	require.False(t, r.sweepIdle())
 	require.Equal(t, before, len(r.clients["a"].send))
@@ -50,7 +44,6 @@ func TestABusyRoomIsNeverAsked(t *testing.T) {
 }
 
 func TestAnEmptyRoomIsLeftToTheReclaimTimer(t *testing.T) {
-	// It runs on a much shorter fuse and has nobody to ask.
 	r := roomAt(idleClose+time.Hour, 0)
 
 	require.False(t, r.sweepIdle())
@@ -65,7 +58,6 @@ func TestAnsweringTakesTheQuestionBack(t *testing.T) {
 	r.touch()
 
 	require.False(t, r.asked)
-	// And the room is no longer near its deadline.
 	require.False(t, r.sweepIdle())
 	require.False(t, r.asked)
 }

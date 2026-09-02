@@ -36,10 +36,7 @@ import type { TitleOpen } from '../catalog/PosterCard'
 import { MAX_UPLOAD_BYTES } from '../limits'
 import { Mark, Wordmark, WRITES_ON_LOAD } from '../ui/Brand'
 
-// The three things the header offers: a catalogue, your own file, and how the
-// fleet behind both is doing.
 type HomeView = 'catalog' | 'manual' | 'status'
-// Re-exported so anything already importing it from the page keeps working.
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
@@ -55,14 +52,11 @@ interface RoomHistoryEntry {
 type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
-  // The screen is granted before the room exists, so the pending pick carries
-  // the live stream through the nickname step.
   | { kind: 'screen'; stream: MediaStream }
   // A catalog pick: the torrent only opens after the nickname is confirmed.
   | { kind: 'stream'; pick: TitlePick }
 
-// The morph origin travels through router state, which must be serializable —
-// a live DOMRect is not.
+// Router state must be serializable, so the morph origin travels as numbers.
 interface TitleLocationState {
   meta?: CatalogMeta
   rect?: { top: number; left: number; width: number; height: number }
@@ -77,8 +71,7 @@ function readHistory(): RoomHistoryEntry[] {
       typeof entry.id === 'string' && typeof entry.fileName === 'string' &&
       typeof entry.createdAt === 'number'
     )).map(({ id, fileName, createdAt }) => ({ id, fileName, createdAt })).slice(0, 12)
-    // Migrate old entries that included the nickname. Room history never
-    // needs identity data and links must remain safe to copy.
+    // Migrates old entries that included the nickname.
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history))
     return history
   } catch {
@@ -106,46 +99,35 @@ export function Home() {
   const [draftNickname, setDraftNickname] = useState(nickname)
   const reduceMotion = useReducedMotion()
   const { toast } = useToast()
-  // Read once, at mount: this decides whether the very first paint carries the
-  // explanation, and it must not flip under a re-render.
+  // Read once, at mount: it must not flip under a re-render.
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
   const [joinDraft, setJoinDraft] = useState('')
   const [joinError, setJoinError] = useState('')
-  // Which way in is on screen is the URL's to say, not a piece of local
-  // state: /catalog and /status are places, and an open title is the
-  // catalogue with a panel over it. "/" is the manual side: bringing your own
-  // file is what this was built for, and it is the path that works with no
-  // plugin installed.
+  // The URL says which way in is on screen: an open title is the catalogue
+  // with a panel over it, and "/" is the manual side.
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
     : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
       : 'manual'
 
   const showView = (next: HomeView) => {
     if (next === view) return
-    // The sides scroll independently on the same page, so a catalog scrolled
-    // far down and then swapped for the short manual side would leave the
-    // browser clamping the scroll from where it was to the top — the
-    // background sliding up under the new content. Landing each side at its own
-    // top makes the swap a clean cut instead.
+    // The sides scroll independently, so without this the browser clamps the
+    // scroll on the swap and the background slides up under the new content.
     window.scrollTo({ top: 0 })
     navigate(next === 'manual' ? '/' : `/${next}`, { state: null })
   }
 
-  // Following the route rather than the click, so the browser's own back and
-  // forward land in the same shape a tap on the tab would: the manual side at
-  // its first step, and nothing half-filled waiting behind the others.
+  // Following the route, not the click, so back and forward land in the same
+  // shape a tap on the tab would.
   useEffect(() => {
     setError('')
     setManualOpen(view === 'manual' ? 'menu' : false)
   }, [view])
   const [pluginsOpen, setPluginsOpen] = useState(false)
-  // The panel is held one beat behind the request so the outgoing step can
-  // dissolve before the next one mounts — see useMorphingStep.
   const { shown: shownManual, morphing: morphingManual } = useMorphingStep(manualOpen)
-  // The panel arrives before its contents do: while the modal is still fading
-  // in there is nothing to read anyway, and content sliding in with it reads
-  // as two things happening at once.
+  // The panel arrives before its contents do, so the two do not slide in at
+  // once.
   const [panelFilled, setPanelFilled] = useState(false)
   useEffect(() => {
     if (manualOpen === false) {
@@ -156,18 +138,12 @@ export function Home() {
     const timer = window.setTimeout(() => setPanelFilled(true), 200)
     return () => window.clearTimeout(timer)
   }, [manualOpen, panelFilled])
-  // A magnet that already listed its files: backing out of the nickname hands
-  // the swarm back to the picker instead of dropping it.
   const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const [startingLabel, setStartingLabel] = useState('')
-  // The fleet as measured while a catalog pick's torrent opens: the machine
-  // choice is a stage of starting, and it happens in front of the user.
   const [streamProbes, setStreamProbes] = useState<WorkerProbe[]>([])
 
-  // The details panel is URL-driven: /title/:type/:id renders it over the
-  // board, so every title is deep-linkable. A click also stashes the poster's
-  // rect (and full meta) in router state, which the morph grows out of; a
-  // direct visit has neither and fades in instead.
+  // URL-driven, so every title is deep-linkable; a click also stashes the
+  // poster's rect in router state, which the morph grows out of.
   const state = (location.state ?? {}) as TitleLocationState
   const detailsOpen: TitleOpen | null = isMetaType(params.type) && params.id
     ? {
@@ -176,8 +152,7 @@ export function Home() {
     }
     : null
 
-  // The picker has to open inside this click, and before any room is created:
-  // closing it then leaves nothing behind.
+  // The picker has to open inside this click, and before any room exists.
   const startScreenRoom = () => {
     setManualOpen(false)
     void requestScreenStream().then((stream) => {
@@ -237,8 +212,6 @@ export function Home() {
           : media.file.name,
     )
     try {
-      // Resolves once the room exists and the upload has started; MP4s are
-      // converted to MKV first, which is what the preparing state covers.
       let room
       let fileName = ''
       if (media.kind === 'local') {
@@ -248,25 +221,19 @@ export function Home() {
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
         fileName = media.file.name
       } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
-        // The details panel sits over the whole page; leaving it up would
-        // hide the progress (and any error) that comes next.
         closeTitle()
         const { url } = media.pick.stream.location
-        // A url source has no swarm to open and no file list to pick from.
-        // The size is zero because a stream object rarely carries one, and
-        // zero is how the server is told to ask the origin instead.
+        // Size zero is how the server is told to ask the origin instead.
         room = await createRoomAndUploadUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
         fileName = media.pick.displayName
         const playing = nowPlayingFromPick(media.pick)
         try {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
-        } catch { /* private mode */ }
+        } catch {}
       } else if (media.kind === 'stream') {
-        // The details panel sits over the whole page; leaving it up would
-        // hide the progress (and any error) that comes next.
         closeTitle()
-        // Opening the torrent is part of the start: peers and metadata first,
-        // then the room, so a dead stream never leaves an empty room behind.
+        // The torrent opens before the room, so a dead stream never leaves an
+        // empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
         setStreamProbes([])
         const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
@@ -278,12 +245,10 @@ export function Home() {
           throw error
         }
         fileName = media.pick.displayName
-        // Remember what the fresh room is playing, so the episode's end can
-        // offer the next one.
         const playing = nowPlayingFromPick(media.pick)
         try {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
-        } catch { /* private mode */ }
+        } catch {}
       } else {
         room = await createScreenRoom(draftNickname.trim())
         fileName = t('room.screenLabel')
@@ -300,17 +265,13 @@ export function Home() {
       navigate(`/room/${room.roomID}`)
     } catch (error) {
       discardPending(media)
-      // A file that changed under the picker is not a failed transfer, and
-      // saying "try again" would send someone straight back into it.
       const message = t(
         isUnreadableFile(error) ? 'error.fileChanged'
           : isTorrentError(error) ? torrentErrorKey(error)
             : 'home.failed',
       )
-      // On the catalogue side the error card sits below a full page of
-      // posters, where nobody scrolls to find it. A toast arrives where the
-      // eye already is, and the sound says something happened even if the
-      // click had moved on.
+      // On the catalogue side the error card would sit below a page of
+      // posters, where nobody scrolls to find it.
       if (view === 'catalog') {
         playError()
         toast(message)
@@ -332,15 +293,11 @@ export function Home() {
     selectFile(event.target.files?.[0])
   }
 
-  // The steps of the manual flow, lifted out of the JSX so the stage can
-  // render them where the catalog would be. They kept every animation they
-  // had as a dialog; only the surface around them changed.
+  // Lifted out of the JSX so the stage can render them where the catalog
+  // would be.
   const MANUAL_STEPS = (<>
       {shownManual === 'menu' ? (
         <div className="morph-step" data-step="menu">
-          {/* The tab above already says what this is, so the panel says what
-              it is for. The old wording named the mechanism; this names the
-              thing you are about to have. */}
           <h2 className="stage-title">{t('home.title')}</h2>
           <p className="stage-description">{t('home.guide')}</p>
           <div className="source-options">
@@ -353,10 +310,6 @@ export function Home() {
             <button onClick={startScreenRoom}>
               <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
             </button>
-            {/* The other three make a room; this one goes to somebody else's.
-                It belongs here anyway: this panel is how you get to a room,
-                and a link that was pasted into a chat is not always still
-                clickable by the time it reaches the person it was meant for. */}
             <button onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>
               <LogIn size={18} aria-hidden="true" />{t('home.joinRoom')}
             </button>
@@ -424,8 +377,6 @@ export function Home() {
 
       {shownManual === 'magnet' ? (
         <div className="morph-step" data-step="magnet">
-          {/* The picker draws its own way back, because only it knows
-              whether that means the magnet it listed or leaving. */}
           <TorrentPicker
             maxFileBytes={MAX_UPLOAD_BYTES}
             t={t}
@@ -447,10 +398,7 @@ export function Home() {
     <main className="home-shell catalog-shell">
       <header className="home-header">
         <ProgressiveBlur />
-        {/* The two ways into a room are the two tabs, so the header sides
-            carry only what is neither: who this is, the language, plugins. */}
         <div className="header-start">
-          {/* O nome inteiro onde cabe; só o j no celular. */}
           <a className="home-wordmark" href="/" aria-label="juntos.lol">
             <Wordmark className="wordmark" writing={WRITES_ON_LOAD} />
             <Mark className="mark" />
@@ -459,9 +407,6 @@ export function Home() {
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
         </div>
-        {/* Both ways of starting a room, side by side and weighted the same.
-            As a button beside a whole catalog, bringing your own file read as
-            the lesser path; it is not. */}
         <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
           {(['catalog', 'manual', 'status'] as const).map((value) => (
             <button
@@ -501,9 +446,6 @@ export function Home() {
           <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
         ) : (
           <div className="manual-stage">
-            {/* One surface that changes what it is asking: the menu grows into
-                the drop zone or the magnet picker rather than stacking a
-                second panel over the first. */}
             <MorphPanel className="upload-morph" sizeKey={panelFilled ? shownManual : 'opening'} morphing={morphingManual || !panelFilled}>
               {MANUAL_STEPS}
             </MorphPanel>
@@ -512,8 +454,6 @@ export function Home() {
         {error ? <div className="error-card" role="alert">{error}</div> : null}
       </section>
 
-      {/* The page fades under this and the preparing state fades in over it,
-          instead of the dialog just vanishing as if something broke. */}
       <AnimatePresence>
         {starting ? (
           <motion.div
@@ -558,16 +498,10 @@ export function Home() {
         </Suspense>
       ) : null}
 
-      {/* Shown once, before anything else, because neither tab name explains
-          itself and learning that by clicking around is learning it as a
-          failure. */}
       {onboarding ? <Onboarding onDone={() => setOnboarding(false)} /> : null}
 
       <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
 
-      {/* One surface that changes what it is asking: the menu grows into the
-          drop zone or the magnet picker rather than stacking a second panel
-          over the first. */}
       {/* Outside the panel: the click that opens it must survive the step it
           was made in dissolving. */}
       <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />

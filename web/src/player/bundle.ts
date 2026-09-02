@@ -1,11 +1,7 @@
 /**
- * A region's playlists, fetched together.
- *
- * The server hands a master and the media playlists it names in one
- * response (GET /media/:id/bundle). The loader below answers hls.js's first
- * request for each of them from that response, and the init segments the
- * media playlists name are fetched before hls.js asks — so a region switch
- * costs one round trip before the first segment instead of three.
+ * A region's playlists, fetched together: the server hands the master and the
+ * media playlists it names in one response (GET /media/:id/bundle), so a region
+ * switch costs one round trip before the first segment instead of three.
  */
 import type { HlsConfig, Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 
@@ -37,9 +33,6 @@ export function initSegmentsIn(bundle: PlaylistBundle | null): string[] {
   return [...found]
 }
 
-// How long a playlist request waits for the bundle before going to the
-// network on its own: the bundle is one round trip, and a bundle that takes
-// longer than this is not saving anyone anything.
 const BUNDLE_WAIT_MS = 1500
 
 /** Fetches a region's bundle; a failure is no bundle, never an error. */
@@ -55,7 +48,6 @@ export async function fetchBundle(roomID: string, masterName: string): Promise<P
   }
 }
 
-/** Warms the browser cache with the init segments, which are immutable. */
 export function prefetchInitSegments(bundle: PlaylistBundle | null): void {
   for (const url of initSegmentsIn(bundle)) {
     void fetch(url).then((response) => response.arrayBuffer()).catch(() => undefined)
@@ -65,10 +57,9 @@ export function prefetchInitSegments(bundle: PlaylistBundle | null): void {
 type LoaderClass = new (config: HlsConfig) => Loader<LoaderContext> & { stats: { loading: { start: number; first: number; end: number }; loaded: number; total: number } }
 
 /**
- * A playlist loader that answers the first request for each bundled
- * playlist from the bundle, and everything after from the network: a
- * growing playlist reloads on a timer, and a copy from before the timer
- * would freeze it.
+ * A playlist loader that answers the first request for each bundled playlist
+ * from the bundle and everything after from the network: a growing playlist
+ * reloads on a timer, and a copy from before it would freeze.
  */
 export function bundledLoader(Base: LoaderClass, bundle: Promise<PlaylistBundle | null>): HlsConfig['pLoader'] {
   const served = new Set<string>()

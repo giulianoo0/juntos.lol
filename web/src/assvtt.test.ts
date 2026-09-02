@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { convertAssCue, parseAssHeader, positionDialogueCues } from './assvtt'
 
-// A header the way Matroska CodecPrivate carries it: script info and the
-// style table, no events.
 const HEADER = [
   '[Script Info]',
   'ScriptType: v4.00+',
@@ -36,14 +34,10 @@ describe('convertAssCue', () => {
   })
 
   it('reads a legacy alignment override the SSA way', () => {
-    // \a6 is top-center in the legacy encoding, not middle-right.
     expect(convertAssCue(info, 'Default', '{\\a6}título').settings).toBe('line:5%')
   })
 
   it('turns \\pos into percentages of the script frame', () => {
-    // A bottom-row style anchors the text's bottom edge at the position.
-    // Chromium rejects the spec's line-alignment suffix outright, so the
-    // anchor is approximated by lifting the box's top edge instead.
     expect(convertAssCue(info, 'Default', '{\\pos(480,270)}placa solta').settings)
       .toBe('line:19% position:25%')
   })
@@ -110,7 +104,6 @@ describe('convertAssCue', () => {
       'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, TertiaryColour,'
         + ' BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment,'
         + ' MarginL, MarginR, MarginV, AlphaLevel, Encoding',
-      // Decimal BGR color (yellow) and legacy top-center alignment 6.
       'Style: Top,Arial,20,65535,255,0,0,0,0,1,2,2,6,10,10,10,0,1',
     ].join('\n')
     expect(convertAssCue(parseAssHeader(legacy), 'Top', 'aviso')).toEqual({

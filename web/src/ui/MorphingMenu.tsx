@@ -25,12 +25,7 @@ import { CLOSE_DURATION, MORPH_EASE, OPEN_DURATION } from './morphTokens'
  * `prefers-reduced-motion`.
  */
 
-/**
- * Fraction of the close morph at which the panel content is fully faded out
- * (0.6 × 150ms = 90ms) — the shell shrinks empty for the remaining 60ms.
- */
 const CLOSE_CONTENT_FADE = 0.6
-/** Trigger label fade-in after the retract morph completes. */
 const TRIGGER_REVEAL_DURATION = 0.13
 const VIEWPORT_MARGIN = 8
 const PANEL_MAX_HEIGHT = 320
@@ -38,7 +33,6 @@ const TRIGGER_RADIUS = 18
 const PANEL_RADIUS = 14
 
 type PanelGeometry = {
-  /** One of each pair is set, per the align and open direction; viewport coordinates. */
   left: number | null
   right: number | null
   top: number | null
@@ -53,9 +47,6 @@ function measurePanel(trigger: HTMLElement, align: 'start' | 'end', minWidth: nu
   const viewportWidth = window.innerWidth
   const viewportHeight = window.innerHeight
 
-  // Anchored by whichever edge lines up with the trigger; the width stays
-  // intrinsic (a menu is as wide as its longest row) and the far edge is
-  // held off the viewport by the max-width instead of being computed.
   const wanted = Math.max(rect.width, minWidth)
   const anchor = align === 'start'
     ? Math.min(Math.max(rect.left, VIEWPORT_MARGIN), Math.max(VIEWPORT_MARGIN, viewportWidth - wanted - VIEWPORT_MARGIN))
@@ -64,9 +55,6 @@ function measurePanel(trigger: HTMLElement, align: 'start' | 'end', minWidth: nu
   const spaceBelow = viewportHeight - rect.top - VIEWPORT_MARGIN
   const spaceAbove = rect.bottom - VIEWPORT_MARGIN
   const openUp = spaceBelow < Math.min(PANEL_MAX_HEIGHT, 280) && spaceAbove > spaceBelow
-  // The space clamp wins over the usability floor: a floor larger than the
-  // viewport's leftover space would push the panel's first rows off-screen,
-  // which is worse than a short panel that scrolls.
   const maxHeight = Math.max(96, Math.min(PANEL_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow))
 
   return {
@@ -81,21 +69,15 @@ function measurePanel(trigger: HTMLElement, align: 'start' | 'end', minWidth: nu
 }
 
 interface MorphingMenuProps {
-  /** The shut control's row; told whether the surface is open (for a chevron). */
   trigger: (open: boolean) => ReactNode
-  /** The panel's contents; call `close` after acting on a row. */
   children: (close: (returnFocus?: boolean) => void) => ReactNode
-  /** 'end' anchors the panel to the trigger's right edge. */
   align?: 'start' | 'end'
-  /** The panel never opens narrower than this, whatever the trigger's width. */
   minWidth?: number
   haspopup: 'menu' | 'listbox'
   ariaLabel?: string
   triggerClassName?: string
   panelClassName?: string
-  /** Fired as the panel opens — for state a caller resets per opening. */
   onOpen?: () => void
-  /** 'contextmenu' makes the trigger a right-click target; a click does nothing. */
   openOn?: 'click' | 'contextmenu'
 }
 
@@ -113,8 +95,6 @@ export function MorphingMenu({
 }: MorphingMenuProps) {
   const [open, setOpen] = useState(false)
   const [geometry, setGeometry] = useState<PanelGeometry | null>(null)
-  // Close choreography: panel content out (fast) → empty shell shrinks →
-  // trigger content fades in only after the retract morph completes.
   const [triggerContentVisible, setTriggerContentVisible] = useState(true)
 
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -144,7 +124,6 @@ export function MorphingMenu({
   const openPanel = useCallback(() => {
     const element = triggerRef.current
     if (!element) return
-    // Cancel a pending close reveal if the panel reopens mid-retract.
     closingRef.current = false
     window.clearTimeout(revealTimeoutRef.current)
     setTriggerContentVisible(true)
@@ -159,15 +138,9 @@ export function MorphingMenu({
       closingRef.current = false
       setTriggerContentVisible(true)
     } else {
-      // Hide the trigger's label for the whole retract morph; it is revealed
-      // by onLayoutAnimationComplete (the timeout below is a fallback).
       setTriggerContentVisible(false)
       closingRef.current = true
       window.clearTimeout(revealTimeoutRef.current)
-      // The close is two morphs back to back — the content's exit gates
-      // unmount for CLOSE_DURATION, and only then does the trigger run its
-      // own retract — so the fallback must outlast both, or it re-shows the
-      // label mid-shrink: the exact artifact this choreography prevents.
       revealTimeoutRef.current = window.setTimeout(revealTriggerContent, CLOSE_DURATION * 2 * 1000 + 60)
     }
     if (returnFocus) triggerRef.current?.focus({ preventScroll: true })
@@ -179,8 +152,6 @@ export function MorphingMenu({
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      // Capture-phase intercept so a containing overlay doesn't also close:
-      // the panel absorbs this Escape, the next one reaches the host.
       event.preventDefault()
       event.stopPropagation()
       closePanel(true)
@@ -273,9 +244,6 @@ export function MorphingMenu({
                     reducedMotion
                       ? { opacity: 0, transition: { duration: 0 } }
                       : {
-                          // Fully transparent at 60% (~90ms) of the close, then
-                          // hold: the shell shrinks empty while presence still
-                          // gates unmount for the full 150ms retract morph.
                           opacity: [1, 0, 0],
                           filter: ['blur(0px)', 'blur(2px)', 'blur(2px)'],
                           transition: {

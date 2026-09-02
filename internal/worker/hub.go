@@ -14,10 +14,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// The control plane's server end. Workers dial in over WSS; the first
-// frame is a hello that either enrolls (one-shot secret) or proves the
-// worker's key matches the one enrolled. From then on the link carries
-// heartbeats up and signed jobs down, with results matched to jobs by id.
+// The control plane's server end. Workers dial in over WSS; the first frame
+// is a hello that either enrolls (one-shot secret) or proves the worker's key.
+// From then on the link carries heartbeats up and signed jobs down.
 
 const (
 	helloTimeout  = 15 * time.Second
@@ -39,7 +38,6 @@ type hello struct {
 	EnrollmentToken string `json:"enrollmentToken"`
 }
 
-// Result is a worker's answer to a job.
 type Result struct {
 	Type          string          `json:"type"`
 	JobID         string          `json:"jobId"`
@@ -79,13 +77,11 @@ func NewHub(registry *Registry, signer *Signer, enrollmentSecret string) *Hub {
 		registry: registry,
 		signer:   signer,
 		secret:   enrollmentSecret,
-		// Workers are not browsers: no Origin to check.
 		upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
 	}
 }
 
-// OnHeartbeat registers a callback for every heartbeat after the registry
-// has recorded it.
+// OnHeartbeat registers a callback for every heartbeat the registry recorded.
 func (h *Hub) OnHeartbeat(fn func(workerID string, hb Heartbeat)) {
 	h.onBeat = fn
 }
@@ -154,15 +150,11 @@ func (h *Hub) serve(conn *websocket.Conn) {
 				continue
 			}
 			if !h.registry.Observe(ctx, workerID, l, hb) {
-				// A newer link took this identity over; this one is a zombie
-				// and its numbers must not poison placement.
 				return
 			}
 			if h.onBeat != nil {
 				h.onBeat(workerID, hb)
 			}
-			// The worker treats a silent server as a dead link; every
-			// heartbeat is answered so silence means what it says.
 			select {
 			case l.send <- []byte(`{"type":"ack"}`):
 			default:
@@ -251,7 +243,6 @@ func (l *link) deliver(result Result) {
 	}
 }
 
-// ErrWorkerGone is returned when the target worker is not linked here.
 var ErrWorkerGone = errors.New("worker_gone")
 
 // Dispatch signs a job, sends it, and waits for the result.

@@ -2,9 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { readMkvChapters } from './mkvChapters'
 import { fileInput } from './mediaInput'
 
-// A real ffmpeg-muxed Matroska (base64-inlined), chapters and all. ffmpeg
-// writes Chapters after the clusters with a SeekHead pointing at them, so
-// this exercises the seek-and-fetch path, not just the head scan.
 const FIXTURE_B64 =
   'GkXfo6NChoEBQveBAULygQRC84EIQoKIbWF0cm9za2FCh4EEQoWBAhhTgGcBAAAAAAAIfRFNm3TPv4TuMbs5TbuLU6uEFUmpZlOs' +
   'gaFNu4tTq4QWVK5rU6yB7027jFOrhBBDp3BTrIIB4E27jFOrhBJUw2dTrIICXk27jFOrhBxTu2tTrIIIYewBAAAAAAAARAAAAAAA' +

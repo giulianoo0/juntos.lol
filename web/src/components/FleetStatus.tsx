@@ -3,21 +3,13 @@ import NumberFlow from '@number-flow/react'
 import { fleetStatus, liveNow, probeWorkers, type Fleet, type FleetMember, type Live, type WorkerProbe } from '../remoteTorrent'
 import { useT } from '../i18n/useT'
 
-// The fleet moves on ten-second heartbeats, so anything faster would redraw
-// the same numbers; anything much slower and the page is describing a fleet
-// that has moved on.
 const REFRESH_MS = 10_000
-// People arrive and leave between heartbeats, and this is the one thing on
-// the page that is meant to feel live, so it has its own faster clock.
 const LIVE_REFRESH_MS = 3_000
 
 function gib(bytes: number): string {
   return `${(bytes / 1_073_741_824).toFixed(1)} GB`
 }
 
-// The worker's "bps" fields are bytes per second — capBps is the configured
-// ceiling in bytes, usedBps a delta of bytes_served — so a megabit is 125_000
-// of them, not a million. Dividing by 1e6 printed a 600 Mbit/s pipe as 75.
 function mbit(bytesPerSecond: number): string {
   return `${(bytesPerSecond / 125_000).toFixed(1)} Mbit/s`
 }
@@ -28,22 +20,11 @@ function uptime(seconds: number): string {
   return `${Math.round(seconds / 86_400)}d`
 }
 
-/**
- * The fleet, best for this viewer first.
- *
- * The order is the server's, and deliberately so: it is the same ranking
- * placement uses to choose, so the worker at the top is genuinely where the
- * next room would land. A page that sorted by its own idea of "best" would
- * be describing a system that does not exist.
- */
 export function FleetStatus() {
   const t = useT()
   const [fleet, setFleet] = useState<Fleet | null>(null)
   const [failed, setFailed] = useState(false)
   const [probes, setProbes] = useState<WorkerProbe[]>([])
-  // Measuring can also simply fail — no session, no workers listed — and a
-  // card that says "measuring…" forever is worse than one that admits it
-  // never found out.
   const [probing, setProbing] = useState(true)
   const [live, setLive] = useState<Live | null>(null)
 
@@ -56,8 +37,6 @@ export function FleetStatus() {
         setFleet(next)
         setFailed(false)
       } catch {
-        // The last good picture stays on screen: a blip in the poll is not
-        // news about the fleet, and blanking the page would say it was.
         if (!disposed) setFailed(true)
       }
     }
@@ -69,26 +48,18 @@ export function FleetStatus() {
   useEffect(() => {
     let disposed = false
     const read = async () => {
-      // A blip leaves the last count on screen rather than blanking it: the
-      // numbers are the point, and zero is a claim, not an absence of one.
       try {
         const next = await liveNow()
         if (!disposed) setLive(next)
-      } catch { /* keep the last count */ }
+      } catch {}
     }
     void read()
     const timer = window.setInterval(read, LIVE_REFRESH_MS)
     return () => { disposed = true; window.clearInterval(timer) }
   }, [])
 
-  // Measured once, not on the poll: this downloads a few megabytes from every
-  // worker, and a page that did that every ten seconds would be the heaviest
-  // user of the fleet it is reporting on. Speed is not what changes minute to
-  // minute anyway — load is, and load comes from the poll.
   useEffect(() => {
     let disposed = false
-    // This page exists to show what the fleet measures like right now, so it
-    // never reads the ranking a room open left behind.
     void probeWorkers('', (next) => { if (!disposed) setProbes(next) }, { fresh: true })
       .then((final) => { if (disposed) return; setProbes(final); setProbing(false) })
       .catch(() => { if (!disposed) setProbing(false) })
@@ -112,9 +83,6 @@ export function FleetStatus() {
 
   const available = fleet.workers.filter((w) => w.availability === 'available').length
   const speeds = new Map(probes.map((probe) => [probe.id, probe]))
-  // Held back until every worker has answered: reordering on each result
-  // makes the cards hop under the reader's eyes, and a "best" declared from
-  // half the measurements is a guess wearing a badge.
   const measured = !probing && probes.some((probe) => probe.state === 'ok')
   const workers = measured ? rankBySpeed(fleet.workers, speeds) : fleet.workers
 
@@ -151,29 +119,17 @@ export function FleetStatus() {
               <div className="fleet-card-head">
                 <code>{member.id.replace(/^w_/, '').slice(0, 8)}</code>
                 <span className={`fleet-badge is-${member.availability}`}>{t(`fleet.state.${member.availability}`)}</span>
-                {/* Only worth pointing out where it changes a decision: the
-                    head of a list of one is not news. */}
-                {/* Only once it has been measured, and only where it changes
-                    a decision: the head of a list of one is not news. */}
                 {measured && index === 0 && member.availability === 'available' && workers.length > 1
                   ? <span className="fleet-best">{t('fleet.best')}</span>
                   : null}
               </div>
               <Meter label={t('fleet.busy')} value={busyness(member)} detail={busyDetail(member, t)} />
               <dl className="fleet-facts">
-                {/* Always the same cells in the same places, even when a
-                    worker has nothing to report for one: a field that
-                    disappears makes two cards impossible to read against each
-                    other, and its absence looks like a fault rather than an
-                    unset ceiling. */}
                 <Fact
                   label={t('fleet.speed')}
                   value={speedLabel(speeds.get(member.id), probing, t)}
                   pending={isMeasuring(speeds.get(member.id), probing)}
                 />
-                {/* The blocks on the volume, not the reservation behind them:
-                    a worker holding four windows has a few hundred megabytes,
-                    however many gigabytes of releases it is serving. */}
                 <Fact label={t('fleet.disk')} value={diskLabel(member)} />
                 <Fact
                   label={t('fleet.transfer')}
@@ -199,13 +155,7 @@ export function FleetStatus() {
   )
 }
 
-// Fastest from THIS browser first, because that is what the system itself
-// goes by: a dispatch carries the page's own measured ranking, and the server
-// takes the first of them that has room. A worker in another continent can be
-// the least loaded in the fleet and still the worst place for this viewer.
-//
-// Availability comes first all the same: speed on a worker that cannot take
-// the job is a number with nothing behind it.
+// Availability first, then fastest as measured from this browser.
 function rankBySpeed(workers: FleetMember[], speeds: Map<string, WorkerProbe>): FleetMember[] {
   const mbit = (member: FleetMember) => {
     const probe = speeds.get(member.id)
@@ -218,9 +168,6 @@ function rankBySpeed(workers: FleetMember[], speeds: Map<string, WorkerProbe>): 
   })
 }
 
-// One cell of the footer grid. The value carries its own shimmer while it is
-// still being worked out, so the card reads as "this number is coming" rather
-// than as a card with a word where a number belongs.
 function Fact({ label, value, note, pending }: { label: string; value: string; note?: string; pending?: boolean }) {
   return (
     <div className="fleet-fact">
@@ -244,10 +191,6 @@ function speedLabel(probe: WorkerProbe | undefined, probing: boolean, t: (key: s
   return `${probe.mbit ?? 0} Mbit/s`
 }
 
-// The shape of the answer, drawn before the answer arrives: same header, same
-// bar, same row of facts, so nothing jumps when the numbers land. Two cards,
-// because promising a number of workers the fleet may not have would be the
-// skeleton telling a small lie.
 function FleetSkeleton() {
   return (
     <>
@@ -281,26 +224,12 @@ function FleetSkeleton() {
   )
 }
 
-// What a person means by "how busy is it": whichever budget is closest to
-// running out, because that is the one that will refuse the next room. The
-// composite load the server sorts by would read as half-empty while the pipe
-// was already spoken for.
-// Reservations are still what decides whether a worker is full, so busyness
-// keeps reading diskUsed; only what a person sees changes.
 function diskLabel(member: FleetMember): string {
   const held = member.diskReal ?? member.diskUsed
   return member.diskQuota ? `${gib(held)} / ${gib(member.diskQuota)}` : gib(held)
 }
 
-// What a worker is fullest on, and how full that is. A worker is only as
-// available as its tightest resource, so the meter has always taken the
-// largest of the four; naming which one it came from is what was missing.
-// Reading "2 / 8" beside "60%" and a separate "2 / 12 torrents" invites the
-// obvious arithmetic, which does not work, because those were three different
-// numbers: the ratio the percentage came from was neither of the pairs shown.
 function busiest(member: FleetMember): { key: string; used: number; cap: number; ratio: number } {
-  // A worker that reports no ceiling for something cannot be measured against
-  // it, so it counts as nothing rather than as full.
   const parts = [
     { key: 'leases', used: member.leases, cap: member.maxLeases ?? 0 },
     { key: 'torrents', used: member.torrents, cap: member.maxTorrents ?? 0 },
@@ -318,8 +247,6 @@ function busyDetail(member: FleetMember, t: (key: string) => string): string {
   if (member.availability === 'offline') return t('fleet.state.offline')
   const worst = busiest(member)
   if (!worst.cap) return `${member.leases}`
-  // Disk and transfer are measured in bytes, and their own cells already say
-  // so; here only the name of the constraint is worth carrying.
   if (worst.key === 'disk' || worst.key === 'transfer') return t(`fleet.limit.${worst.key}`)
   return `${worst.used} / ${worst.cap} ${t(`fleet.limit.${worst.key}`)}`
 }

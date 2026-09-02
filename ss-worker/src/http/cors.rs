@@ -1,8 +1,5 @@
 use axum::http::{header, HeaderValue, Response};
 
-/// Every response, errors included, carries CORS for the ticket's audience
-/// — a 416 without it reads as a generic CORS failure in the browser
-/// instead of the status it actually was. The audience is exact, never `*`.
 pub fn apply<B>(response: &mut Response<B>, audience: &str) {
     let headers = response.headers_mut();
     if let Ok(origin) = HeaderValue::from_str(audience) {

@@ -29,39 +29,24 @@ const (
 	maxSubtitleVTTBytes   = 4 << 20
 	maxSubtitleASSBytes   = 4 << 20
 	maxSubtitleTitleBytes = 255
-	// Fonts ride with ASS tracks so the renderer draws the faces the script
-	// was authored against. Bounded hard: they are a courtesy, not media.
-	maxSubtitleFontBytes = 8 << 20
-	maxSubtitleFonts     = 24
+	maxSubtitleFontBytes  = 8 << 20
+	maxSubtitleFonts      = 24
 )
 
-// VTT is a pointer because omitting it means something: this track has not
-// changed since the last post, so the file already on disk and in the bucket
-// stands. The extraction republishes every few seconds and most tracks are
-// finished long before the pass is, so most of a post is bytes the server
-// already has — on the same uplink the remux is fighting for.
+// clientSubtitleTrack carries one extracted track. A nil VTT means unchanged since
+// the last post, so the file already on disk stands; an ASS document, when present,
+// makes the track codec "ass" with the VTT as fallback.
 type clientSubtitleTrack struct {
 	Language string  `json:"language"`
 	Title    string  `json:"title"`
 	VTT      *string `json:"vtt"`
-	// ASS carries the full styled document beside the VTT conversion. A
-	// track that has one is stored as codec "ass": the player renders the
-	// document with libass and keeps the VTT as its fallback.
-	ASS *string `json:"ass"`
+	ASS      *string `json:"ass"`
 }
 
-// Complete distinguishes a finished extraction from a progressive one. A
-// torrent or upload still streaming publishes the cues it already has with
-// complete=false, which keeps the authoritative ffmpeg pass scheduled. A
-// missing field means complete, which is what older clients send.
-// MediaGeneration names the source the tracks were read from. A browser
-// extraction runs for as long as the file is large, so it can outlive the
-// source it started on: the controller swaps the room onto another video and
-// the old extraction lands afterwards. Without this the room would be handed
-// the previous video's subtitles and, because that also marks the room as
-// carrying client subtitles, the server would skip its own extraction and the
-// new video would never get the right ones. A missing field means the client
-// cannot say, which is what older clients send.
+// clientSubtitlesRequest is one publish of a browser extraction. Complete=false
+// means a progressive publish, which keeps the ffmpeg pass scheduled; MediaGeneration
+// names the source read, since an extraction can outlive the video it started on.
+// Both fields absent means an older client, and are read as complete/unknown.
 type clientSubtitlesRequest struct {
 	Tracks          []clientSubtitleTrack `json:"tracks"`
 	Complete        *bool                 `json:"complete"`
@@ -78,32 +63,27 @@ func (r clientSubtitlesRequest) complete() bool {
 	return r.Complete == nil || *r.Complete
 }
 
-// SubtitlePublisher copies a room's subtitle files to the bucket viewers read
-// them from. It is an interface here so this package keeps depending only on
-// what it uses.
+// SubtitlePublisher copies a room's subtitle files to the bucket viewers read from.
 type SubtitlePublisher interface {
 	PublishSubtitles(ctx context.Context, roomID, subsDir string) error
 }
 
-// RegisterSubtitlesRoute mounts the browser-extracted WebVTT upload endpoint.
-// onSubsStored fires after the tracks are persisted (nil-safe). Subtitle
-// availability is a room update, not a media-status transition.
+// RegisterSubtitlesRoute mounts the browser-extracted subtitle upload endpoints.
+// onSubsStored fires after the tracks are persisted (nil-safe).
 func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
 	publisher SubtitlePublisher, onSubsStored func(roomID string)) {
 	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, publisher, onSubsStored))
 	rg.POST("/rooms/:id/subtitles/fonts", storeSubtitleFont(store, cfg, publisher, onSubsStored))
 }
 
-// fontExtensions is what a subtitle font upload may claim to be. The bytes
-// are stored and served as opaque binaries under a digest name; the extension
-// only informs the content type they are served back with.
+// fontExtensions is what a subtitle font upload may claim to be; the extension only
+// picks the content type the opaque bytes are served back with.
 var fontExtensions = map[string]struct{}{
 	".ttf": {}, ".otf": {}, ".ttc": {}, ".woff": {}, ".woff2": {},
 }
 
-// storeSubtitleFont accepts one font file a container attached for its ASS
-// tracks. Fonts are additive per generation, deduplicated by digest, and
-// bounded in count and size; they never gate media.
+// storeSubtitleFont accepts one font a container attached for its ASS tracks:
+// additive per generation, deduplicated by digest, and never gating media.
 func storeSubtitleFont(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
 	onSubsStored func(roomID string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -156,8 +136,6 @@ func storeSubtitleFont(store *room.Store, cfg config.Config, publisher SubtitleP
 			c.Status(http.StatusInternalServerError)
 			return
 		}
-		// The bucket gets the bytes before the room announces them, the same
-		// order the tracks follow.
 		if publisher != nil {
 			if err := publisher.PublishSubtitles(c.Request.Context(), roomID, subsDir); err != nil {
 				slog.ErrorContext(c.Request.Context(), "upload subtitle font failed", "room_id", roomID, "error", err)
@@ -236,11 +214,6 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 		for i, track := range req.Tracks {
 			previous, seen := held[i]
 			if track.VTT == nil {
-				// Nothing new for this one, so the file on disk stands and the
-				// metadata is carried over whole — the name it carries is part
-				// of its path. The names must still match: a track list that
-				// shifted under the client would otherwise hand this index the
-				// previous occupant's file, silently and for good.
 				if !seen || previous.Digest == "" ||
 					previous.Language != sanitizeSubtitleLanguage(track.Language) || previous.Title != track.Title {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
@@ -262,7 +235,6 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			payload := *track.VTT
 			if track.ASS != nil {
 				codec = "ass"
-				// One digest names both files: they grow and travel together.
 				payload += "\x00" + *track.ASS
 			}
 			digest := subtitleDigest(payload)
@@ -273,12 +245,9 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 				Codec:    codec,
 				Digest:   digest,
 			})
-			// An older client posts every track every time; the digest is what
-			// keeps that from rewriting files nobody changed.
 			if seen && previous.Digest == digest && previous.Language == language {
 				continue
 			}
-			// i and the sanitized language keep the file name path-safe.
 			writes = append(writes, pendingWrite{
 				path: filepath.Join(subsDir, fmt.Sprintf("sub_%d_%s.vtt", i, language)),
 				body: *track.VTT,
@@ -304,8 +273,6 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			}
 		}
 
-		// The bucket gets the files before the tracks are announced: the
-		// announcement is what makes a client go and fetch them.
 		if publisher != nil {
 			if err := publisher.PublishSubtitles(c.Request.Context(), roomID, subsDir); err != nil {
 				slog.ErrorContext(c.Request.Context(), "upload client subtitles failed",
@@ -330,9 +297,8 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 	}
 }
 
-// Names the bytes of one track. Half a sha256 is far more than enough to tell
-// two versions of the same file apart, and it rides in the room payload and in
-// every viewer's <track> url, both of which are worth keeping short.
+// subtitleDigest names the bytes of one track with half a sha256, kept short
+// because it rides in the room payload and in every viewer's <track> url.
 func subtitleDigest(vtt string) string {
 	sum := sha256.Sum256([]byte(vtt))
 	return hex.EncodeToString(sum[:8])
@@ -373,10 +339,8 @@ func validSubtitleVTT(value string) bool {
 		utf8.ValidString(value) && strings.HasPrefix(value, "WEBVTT")
 }
 
-// validSubtitleASS accepts a complete ASS/SSA document. It must open with the
-// script info section (an optional BOM aside); the file is served verbatim as
-// text and only ever parsed by libass in the viewer, so shape is all that is
-// checked here.
+// validSubtitleASS checks shape only: the document must open with the script info
+// section (an optional BOM aside). Only libass in the viewer ever parses it.
 func validSubtitleASS(value string) bool {
 	if len(value) == 0 || len(value) > maxSubtitleASSBytes || !utf8.ValidString(value) {
 		return false

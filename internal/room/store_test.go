@@ -41,7 +41,6 @@ func TestSetChaptersRoundTripsAndSwapClearsThem(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chapters, got.Chapters)
 
-	// The chapters describe the old recording; the next source starts clean.
 	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
 	require.NoError(t, err)
 	got, err = s.Get(t.Context(), "abc")
@@ -61,7 +60,6 @@ func TestReclaimStaleClientClaims(t *testing.T) {
 	}))
 	require.NoError(t, s.ReserveUpload(t.Context(), "stale", "client:aaa", now))
 	require.NoError(t, s.ReserveUpload(t.Context(), "live", "client:bbb", now))
-	// The stale one heartbeat is old; the live one is fresh.
 	require.NoError(t, s.mutateRoom(t.Context(), "stale", false, "client_media_touched",
 		strconv.FormatInt(now.Add(-10*time.Minute).UnixMilli(), 10)))
 	require.NoError(t, s.TouchClientClaim(t.Context(), "live"))
@@ -70,7 +68,6 @@ func TestReclaimStaleClientClaims(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, freed)
 
-	// The stale room can be claimed again; the live one is still held.
 	staleID, err := s.UploadID(t.Context(), "stale")
 	require.NoError(t, err)
 	require.Empty(t, staleID)
@@ -87,7 +84,6 @@ func TestAddClientMediaBytesRefusesARoomWithoutAClaim(t *testing.T) {
 		ID: "r1", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 
-	// No claim held: the charge must not recreate a bare hash.
 	_, err := s.AddClientMediaBytes(t.Context(), "r1", 100)
 	require.ErrorIs(t, err, ErrNotFound)
 
@@ -282,7 +278,6 @@ func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
 	require.True(t, got.ClientSubs)
 	require.Equal(t, subs, got.SubtitleTracks)
 
-	// Audio updates must not clobber client subtitle tracks.
 	require.NoError(t, s.SetAudioTracks(t.Context(), "subs", []TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}}, 2))
 	got, err = s.Get(t.Context(), "subs")
 	require.NoError(t, err)
@@ -310,8 +305,6 @@ func TestVersionsAdvanceWithRepublishedMedia(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, got.MediaVersion)
 
-	// Every subtitle write must move the version: the files keep their names,
-	// so the version is the only thing that makes a <track> refetch cues.
 	require.NoError(t, s.SetClientSubtitles(t.Context(), "v", []TrackInfo{{Index: 0}}, false))
 	require.NoError(t, s.SetClientSubtitles(t.Context(), "v", []TrackInfo{{Index: 0}}, true))
 	require.NoError(t, s.SetTracks(t.Context(), "v", nil, []TrackInfo{{Index: 0}}, 0))
@@ -349,7 +342,6 @@ func TestGatingSettingDefaultsOnAndRoundTrips(t *testing.T) {
 		ID: "gated", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 
-	// A room that never stored the field — every pre-existing room — is on.
 	got, err := s.Get(t.Context(), "gated")
 	require.NoError(t, err)
 	require.True(t, got.GatingEnabled)
@@ -366,9 +358,6 @@ func TestGatingSettingDefaultsOnAndRoundTrips(t *testing.T) {
 }
 
 func TestSwapSourceClearsThePublishedMediaOfTheOldSource(t *testing.T) {
-	// The next encode writes segments with the same names. Left behind, the
-	// published set would tell the publisher they were already uploaded, and
-	// the bucket would keep serving the previous video.
 	mr := miniredis.RunT(t)
 	store := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
 	now := time.Now()

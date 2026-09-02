@@ -80,8 +80,7 @@ impl Remux {
     }
 
     /// The heartbeat block: capability plus every run the server may still
-    /// care about. Terminal runs stay listed until the map is pruned, so a
-    /// reconnecting server sees how they ended.
+    /// care about, terminal ones included until the map is pruned.
     pub fn heartbeat(&self) -> Option<serde_json::Value> {
         if !self.enabled() {
             return None;
@@ -131,13 +130,9 @@ impl Remux {
         {
             let runs = self.runs.lock();
             if runs.contains_key(&spec.run_id) {
-                // Same run dispatched twice (a retry): one execution stands.
                 return Ok(());
             }
         }
-        // A follow supersedes the same room's active run: the fence already
-        // moved on the server, so the old run only wastes the slot. Rooms
-        // never queue behind their own past.
         let stale: Vec<String> = self
             .runs
             .lock()
@@ -188,7 +183,6 @@ impl Remux {
                 }
             }
             drop(status);
-            // Terminal runs linger for a few heartbeats, then go away.
             let this = this.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(120)).await;
@@ -238,8 +232,6 @@ impl Remux {
             .context("bridge start")?
             .clone();
 
-        // Probe reader and playhead reader carry distinct names so the
-        // engine's windows never mistake one for the other.
         let (probe_url, probe_cap) = bridge.register_input(InputTarget {
             engine: self.engine.clone(),
             infohash: infohash.into(),
@@ -266,9 +258,6 @@ impl Remux {
             return Ok(());
         }
 
-        // With copied video a seek starts at the keyframe at or before the
-        // target; the region start the room learns is that keyframe's real
-        // time, never the requested time by convenience.
         let mut start_seconds = 0.0f64;
         let mut offset_ms = 0u64;
         if spec.start_ms > 0 {
@@ -343,11 +332,6 @@ impl Remux {
             bridge.revoke(&input_cap, &output_cap);
         };
 
-        // A run that stops moving is killed, not waited on: a reader wedged
-        // over a cold swarm has parked FFmpeg forever before. While nothing
-        // has been produced yet the run simply respawns over the same
-        // capabilities; past first output it fails loudly instead, because a
-        // rerun would collide with objects already closed under their names.
         const STALL: Duration = Duration::from_secs(90);
         let mut attempts = 0u32;
         let exit = 'attempts: loop {
@@ -450,9 +434,6 @@ impl Remux {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
-        // Complete only when this run alone covered the room's timeline;
-        // a seek region ends with a final sealed publish and the backend
-        // decides what the claim does next.
         let covers_all = spec.start_ms == 0 && spec.end_ms == 0;
         publisher.round(&run_sink, false, covers_all).await?;
         entry.status.lock().produced_ms = publisher.produced_ms(&run_sink);

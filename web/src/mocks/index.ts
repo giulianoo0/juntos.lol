@@ -3,16 +3,12 @@ import type { RoomInfo } from '../types'
 import type { UploadResult } from '../upload'
 
 /**
- * Stand-ins for the two things the home flow cannot do on a laptop with no
- * server and no swarm: open a torrent, and create a room by uploading to one.
- *
- * Off unless asked for, and only in a dev build, so a production bundle never
- * carries a path that could hand someone a room that does not exist. Run it
- * with `npm run dev:mock`.
+ * Stand-ins for opening a torrent and creating a room, for a laptop with no
+ * server and no swarm. Off unless asked for (`npm run dev:mock`), and only in
+ * a dev build.
  */
 export const mocksEnabled = import.meta.env.DEV && import.meta.env.VITE_MOCK === '1'
 
-/** Long enough that filtering the list is worth having. */
 const MOCK_FILES: Array<{ name: string; size: number }> = [
   { name: 'Frieren.S01E01.Journeys.End.1080p.mkv', size: 1_412_000_000 },
   { name: 'Frieren.S01E02.It.Didnt.Have.To.Be.Magic.1080p.mkv', size: 1_388_400_000 },
@@ -43,7 +39,6 @@ function mockVideoFile({ name, size }: { name: string; size: number }, index = 0
   }
 }
 
-/** Climbs the way a real swarm does, so the picker's counters have something to show. */
 function mockStats(startedAt: number): TorrentStats {
   const seconds = (performance.now() - startedAt) / 1000
   return {
@@ -60,7 +55,6 @@ export function mockOpenTorrent(onStats?: (stats: TorrentStats) => void): Promis
   const startedAt = performance.now()
   let ticker = 0
   return new Promise((resolve) => {
-    // The wait is the point: it is what the button's loading state is for.
     window.setTimeout(() => {
       if (onStats) {
         ticker = window.setInterval(() => onStats(mockStats(startedAt)), 500)
@@ -86,13 +80,6 @@ export function mockCreateRoom(nickname: string): Promise<UploadResult> {
   })
 }
 
-/**
- * The dubs and renditions a mock room plays with.
- *
- * The real ones are reported by hls.js once it has attached to a playlist, and
- * there is no playlist here — so without these the settings panel has a single
- * group in it and most of what it does cannot be seen at all.
- */
 export const MOCK_AUDIO_TRACKS = [
   { name: 'Japonês', lang: 'jpn' },
   { name: 'Português', lang: 'por' },
@@ -144,12 +131,8 @@ function mockRoom(id: string, elapsedMs: number): RoomInfo {
 }
 
 /**
- * Answers the room endpoint so the whole waiting flow can be walked without a
- * server: a room that arrives, spends {@link MOCK_PREPARE_MS} receiving its
- * file with the counters climbing, then turns playable.
- *
- * `/room/expired` is always gone, since that state is otherwise unreachable
- * here and is the one people most often need to look at.
+ * Answers the room endpoint so the waiting flow can be walked without a
+ * server. `/room/expired` is always gone: that state is otherwise unreachable.
  */
 export function installMockApi() {
   if (!mocksEnabled) return

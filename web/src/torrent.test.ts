@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NoWorkersError, TorrentRejectedError, WorkersBusyError, openTorrent } from './torrent'
 
-// The fleet is the only torrent path: the server registers the hash, the
-// worker lists it, and the bytes come straight from the worker's origin.
 const MAGNET = 'magnet:?xt=urn:btih:' + 'ab'.repeat(20) + '&dn=Show&tr=udp%3A%2F%2Ft.example%3A1337'
 
 type Handler = (init?: RequestInit) => Response | Promise<Response>
@@ -102,7 +100,6 @@ describe('openTorrent', () => {
     const read = calls.find((call) => call.url.startsWith('https://w.test/v1/f/T1'))
     expect(read?.url).toBe('https://w.test/v1/f/T1?prio=head')
     expect((read!.init!.headers as Record<string, string>).Range).toBe('bytes=0-1')
-    // The server is never in the byte path.
     expect(calls.filter((call) => call.url.startsWith('/api')).every((call) => !call.url.includes('/v1/'))).toBe(true)
 
     session.destroy()

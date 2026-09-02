@@ -6,9 +6,6 @@ use base64::Engine;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-// The credential a browser presents on the data plane, minted by the server
-// and verified here without a round trip. It travels in the URL path so the
-// GET stays a simple request: a header would cost a preflight per read.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ticket {
     #[serde(rename = "room")]

@@ -158,10 +158,6 @@ func TestHubIdleCleanupRemovesRoomAndFiles(t *testing.T) {
 }
 
 func TestHubIdleCleanupReclaimsTheRoomsMedia(t *testing.T) {
-	// The room is gone the moment everyone leaves, and its media is
-	// unreachable from that moment: the playlists naming it went with it.
-	// Leaving the objects for the bucket's own rule keeps paying for storage
-	// nobody can watch.
 	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
 	hub.idleAfter = 20 * time.Millisecond
 	bucket := hub.bucket.(*objectstore.Fake)
@@ -180,8 +176,6 @@ func TestHubIdleCleanupReclaimsTheRoomsMedia(t *testing.T) {
 }
 
 func TestHubIdleCleanupKeepsTheMediaOfAnActiveUpload(t *testing.T) {
-	// An upload that outlives its tab keeps its room, so it must keep the
-	// segments the preview already published too.
 	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
 	hub.idleAfter = 20 * time.Millisecond
 	bucket := hub.bucket.(*objectstore.Fake)
@@ -200,10 +194,6 @@ func TestHubIdleCleanupKeepsTheMediaOfAnActiveUpload(t *testing.T) {
 	require.Len(t, bucket.Keys(), 1)
 }
 
-// The preview makes a room playable seconds after the first megabyte, so a
-// room reads "ready" for most of the time its source is still arriving and for
-// all of the time the final ladder is being encoded. Status alone therefore
-// says nothing about whether reclaiming it would destroy work in flight.
 func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -235,8 +225,6 @@ func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
 				return hub.rooms["r1"] == nil
 			}, time.Second, 10*time.Millisecond)
 
-			// The room outlives the connection, and so does everything the work
-			// still running needs: its directory, and what it already published.
 			_, err := store.Get(t.Context(), "r1")
 			require.NoError(t, err)
 			require.FileExists(t, filepath.Join(roomDir, "partial"))
@@ -245,8 +233,6 @@ func TestHubIdleCleanupKeepsARoomWhoseWorkIsUnfinished(t *testing.T) {
 	}
 }
 
-// The counterpart: with the transfer landed and the pipeline idle there is
-// nothing left to protect, and the room goes as it always did.
 func TestHubIdleCleanupReclaimsARoomWhoseWorkIsDone(t *testing.T) {
 	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 90})
 	hub.idleAfter = 20 * time.Millisecond
@@ -415,15 +401,12 @@ func TestHubGateReleasesOnTimeout(t *testing.T) {
 	require.Equal(t, "state", readHubEvent(t, host).Type)
 	require.Equal(t, "waiting", readHubEvent(t, host).Type)
 
-	// A member joining mid-wait is handed the pending roster without the
-	// clock restarting on its account.
 	third := dialHubWS(t, server)
 	thirdWelcome := helloHubClient(t, third, "third", 3)
 	require.False(t, thirdWelcome.State.Playing)
 	require.Equal(t, int64(10_000), thirdWelcome.State.PositionMs)
 	require.Equal(t, "waiting", readHubEvent(t, third).Type)
 
-	// Nobody ever reports ready; only the timeout can start playback.
 	deadline := time.Now().Add(2 * time.Second)
 	for _, conn := range []*websocket.Conn{host, guest, third} {
 		for {
@@ -451,7 +434,6 @@ func TestHubGateDisconnectDoesNotHangRoom(t *testing.T) {
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 5_000, BufferAheadMs: 5_000}))
 	require.Equal(t, "waiting", readHubEvent(t, host).Type)
 
-	// The guest never buffers; its disconnect must complete the quorum.
 	require.NoError(t, guest.Close())
 	for {
 		event := readHubEvent(t, host)
@@ -492,7 +474,6 @@ func TestHubGatingSettingIsControllerOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, stored.GatingEnabled)
 
-	// With gating off, play with several members broadcasts immediately.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 1_000, Rate: 1}))
 	for _, conn := range []*websocket.Conn{host, guest} {
 		event := readHubEvent(t, conn)
@@ -514,7 +495,6 @@ func TestHubGateSkipsScreenRooms(t *testing.T) {
 	helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
-	// A live screen has nothing to buffer, so play is never gated.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 0, Rate: 1}))
 	for _, conn := range []*websocket.Conn{host, guest} {
 		event := readHubEvent(t, conn)
@@ -523,8 +503,6 @@ func TestHubGateSkipsScreenRooms(t *testing.T) {
 	}
 }
 
-// startedRoom brings a room to playing with two members, which is the state a
-// mid-episode stall has to interrupt.
 func startedRoom(t *testing.T, server *httptest.Server) (host, guest *websocket.Conn) {
 	t.Helper()
 	host = dialHubWS(t, server)
@@ -538,7 +516,6 @@ func startedRoom(t *testing.T, server *httptest.Server) (host, guest *websocket.
 		require.Equal(t, "state", readHubEvent(t, conn).Type)
 		require.Equal(t, "waiting", readHubEvent(t, conn).Type)
 	}
-	// Both buffer the start, which releases the gate.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 30_000, BufferAheadMs: 5_000}))
 	require.Equal(t, "waiting", readHubEvent(t, host).Type)
 	require.Equal(t, "waiting", readHubEvent(t, guest).Type)
@@ -553,13 +530,10 @@ func startedRoom(t *testing.T, server *httptest.Server) (host, guest *websocket.
 
 func TestHubStopsTheRoomWhenSomeoneStallsMidPlayback(t *testing.T) {
 	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
-	// The cooldown only exists to stop a loop; it must not stop the first one.
 	hub.gateTimeout = time.Minute
 	hub.stallCooldown = 0
 	host, guest := startedRoom(t, server)
 
-	// The guest's buffer runs dry ten minutes in. Until now this left them
-	// watching alone with nobody else aware of it.
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 45_000, BufferAheadMs: 0, Stalled: true}))
 
 	for _, conn := range []*websocket.Conn{host, guest} {
@@ -585,13 +559,10 @@ func TestHubIgnoreLetsTheRoomCarryOnWithoutTheStalledMember(t *testing.T) {
 		require.Equal(t, "waiting", waiting.Type)
 		target = waiting.TargetMs
 	}
-	// The host has buffer at wherever the room stopped; the guest is what it
-	// is stuck on.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: target, BufferAheadMs: 5_000}))
 	require.Equal(t, "waiting", readHubEvent(t, host).Type)
 	require.Equal(t, "waiting", readHubEvent(t, guest).Type)
 
-	// One person on a hopeless connection would otherwise hold everyone still.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ignore", TargetID: "m2"}))
 
 	for _, conn := range []*websocket.Conn{host, guest} {
@@ -616,7 +587,6 @@ func TestHubIgnoreIsTheControllersAlone(t *testing.T) {
 		target = waiting.TargetMs
 	}
 
-	// A viewer excusing themselves would defeat the whole mechanism.
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "ignore", TargetID: "m2"}))
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: target, BufferAheadMs: 5_000}))
 
@@ -640,8 +610,6 @@ func TestHubDoesNotStopForAStalledMemberAlone(t *testing.T) {
 	require.Equal(t, "state", playing.Type)
 	require.True(t, playing.State.Playing, "a lone viewer was gated")
 
-	// Alone in the room there is nobody to wait with, so a stall is nobody
-	// else's problem and must not pause anything.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 12_000, BufferAheadMs: 0, Stalled: true}))
 	require.NoError(t, host.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 5}))
 	require.Equal(t, "pong", readHubEvent(t, host).Type, "the room reacted to a solo stall")
@@ -679,19 +647,15 @@ func TestHubTitleRequestValidationAndRateLimit(t *testing.T) {
 	helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
-	// The controller picks sources directly, so a request from it is dropped.
 	require.NoError(t, host.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt1", MetaType: "movie", Name: "X"}}))
-	// Malformed requests are dropped without an error frame.
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest"}))
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "", MetaType: "movie", Name: "X"}}))
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt1", MetaType: "other", Name: "X"}}))
 
-	// The first valid request lands...
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt2", MetaType: "movie", Name: "First"}}))
 	event := readHubEvent(t, guest)
 	require.Equal(t, "titleRequest", event.Type)
 	require.Equal(t, "First", event.Title.Name)
-	// ...and an immediate follow-up is rate-limited away.
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "titleRequest", Title: &TitleRequest{MetaID: "tt3", MetaType: "movie", Name: "Second"}}))
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 7}))
 	require.Equal(t, "pong", readHubEvent(t, guest).Type)
@@ -701,9 +665,6 @@ func TestHubTitleRequestValidationAndRateLimit(t *testing.T) {
 	require.Equal(t, "pong", readHubEvent(t, host).Type)
 }
 
-// A host that reloads with a guest present comes back as a brand new member,
-// and the guest has already been promoted. The owner token is the only thing
-// that can tell the server this is the same person, so control follows it.
 func TestHubOwnerTokenTakesControlBack(t *testing.T) {
 	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	require.NoError(t, store.Create(t.Context(), &room.Room{
@@ -735,7 +696,6 @@ func TestHubOwnerTokenTakesControlBack(t *testing.T) {
 	require.Equal(t, "state", readHubEvent(t, reloaded).Type)
 }
 
-// A wrong token is a guest with a guess: it must change nothing.
 func TestHubWrongOwnerTokenKeepsController(t *testing.T) {
 	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	require.NoError(t, store.Create(t.Context(), &room.Room{
@@ -758,10 +718,6 @@ func TestHubWrongOwnerTokenKeepsController(t *testing.T) {
 	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
 }
 
-// A restart replays member ids from m1, so a controller id that survived in
-// the store can name nobody at all. The first person through the door takes
-// the controls rather than the room being uncontrollable until the id
-// happens to collide.
 func TestHubStaleControllerIDDoesNotLockOutTheRoom(t *testing.T) {
 	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	require.NoError(t, store.Create(t.Context(), &room.Room{
@@ -778,8 +734,6 @@ func TestHubStaleControllerIDDoesNotLockOutTheRoom(t *testing.T) {
 	require.Equal(t, "state", readHubEvent(t, host).Type)
 }
 
-// The stall gate opens with no sender. A failing store on that path used to
-// hand a nil client to send and take the whole process down with it.
 func TestRoomSendToleratesNilTarget(t *testing.T) {
 	require.NotPanics(t, func() {
 		connection := &roomConn{id: "r1"}

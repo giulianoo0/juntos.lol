@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Onboarding } from './Onboarding'
 import { hasSeenOnboarding } from './seen'
 
-// The sounds are a click handler talking to WebAudio, which jsdom has none of.
-// What matters here is that a click makes one, not what it sounds like.
 vi.mock('./sounds', () => ({
   playAdvance: vi.fn(),
   playBack: vi.fn(),
@@ -73,8 +71,6 @@ describe('Onboarding', () => {
 
   it('makes a sound on the click, never on its own', async () => {
     render(<Onboarding />)
-    // Rendering alone is silent: a browser would refuse to play before a
-    // gesture anyway, and unannounced sound is worse than none.
     expect(playAdvance).not.toHaveBeenCalled()
     await userEvent.click(next())
     expect(playAdvance).toHaveBeenCalledOnce()

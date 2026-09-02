@@ -1,28 +1,12 @@
 import { motion, useReducedMotion } from 'motion/react'
 
 /**
- * The drawings for each onboarding step.
- *
- * SVG rather than images: they inherit the theme's colours, weigh nothing, and
- * stay sharp on any screen. Each one animates a single idea — do not add a
- * second, because a picture explaining two things explains neither.
- *
- * Colour is the grammar. Everything is a hairline in white at low opacity, and
- * only the one thing the step is about wears the accent: the playhead, the
- * magnet, the plugin. A second accent forces the eye to choose, which reads
- * the same as having no accent at all.
+ * The drawings for each onboarding step, as SVG so they inherit the theme.
+ * Each animates a single idea, and only that idea wears the accent colour.
  */
 
 const EASE = [0.23, 1, 0.32, 1] as const
 
-/**
- * Fast, and barely staggered.
- *
- * Somebody clicking straight through used to catch the picture still
- * assembling, or miss it entirely. The whole cascade now lands in about a
- * third of a second — long enough to feel built, short enough that the next
- * click never interrupts it.
- */
 const ENTER = 0.32
 const STAGGER = 0.05
 
@@ -49,13 +33,6 @@ function useDraw() {
     })
 }
 
-/**
- * One player, three people, one playhead.
- *
- * The old arc tied the three together without saying what they shared. A
- * progress bar with a single accent head says it: everyone is at the same
- * second, and that second is the product.
- */
 export function ArtTogether() {
   const enter = useEnter()
   const draw = useDraw()
@@ -66,7 +43,6 @@ export function ArtTogether() {
       <motion.polygon points="112,24 112,40 128,32" className="art-person" {...enter(STAGGER)} />
       <motion.path d="M 80 54 H 160" className="art-person" {...enter(STAGGER)} />
 
-      {/* The one purple thing on screen, because the shared moment is the point. */}
       <motion.path
         d="M 80 54 H 124"
         className="art-tie"
@@ -100,14 +76,6 @@ export function ArtTogether() {
   )
 }
 
-/**
- * A magnet, twice the size of anything else, falling into a room.
- *
- * The step is about the torrent, so the magnet is drawn as a magnet — a
- * horseshoe with two poles — instead of the small grey hook it was, and it is
- * the only shape here carrying colour. The file and the screen stay as thin
- * outlines at the edges: they are the other two doors, not the subject.
- */
 export function ArtOwn() {
   const enter = useEnter()
   const draw = useDraw()
@@ -118,7 +86,6 @@ export function ArtOwn() {
           d="M 96 56 v -20 a 24 24 0 0 1 48 0 v 20 h -10 v -20 a 14 14 0 0 0 -28 0 v 20 z"
           className="art-accent-fill"
         />
-        {/* The poles: without them a horseshoe is just an arch. */}
         <rect x="96" y="48" width="10" height="8" className="art-accent" />
         <rect x="134" y="48" width="10" height="8" className="art-accent" />
       </motion.g>
@@ -132,7 +99,6 @@ export function ArtOwn() {
         <path d="M 205 44 v 6 M 198 50 h 14" className="art-card-fold" />
       </motion.g>
 
-      {/* All three arrive in the same room, so all three lines end in it. */}
       <motion.path d="M 36 58 L 106 76" className="art-person" {...draw(STAGGER * 3)} />
       <motion.path d="M 120 60 L 120 76" className="art-person" {...draw(STAGGER * 3)} />
       <motion.path d="M 205 54 L 134 76" className="art-person" {...draw(STAGGER * 3)} />
@@ -143,13 +109,6 @@ export function ArtOwn() {
   )
 }
 
-/**
- * A search over covers, and the piece that is not in the box.
- *
- * The plug used to be a rounded rectangle with two stubs, which reads as
- * nothing. A jigsaw piece reads as a jigsaw piece, and it sits below the row
- * rather than in it: the catalogue is complete and still cannot open a thing.
- */
 export function ArtCatalogue() {
   const enter = useEnter()
   const reduceMotion = useReducedMotion()
@@ -175,7 +134,6 @@ export function ArtCatalogue() {
         />
       ))}
 
-      {/* Still outside the row, and still the only colour: it has to be brought. */}
       <motion.path
         d="M 103 96 h 11 a 6 6 0 0 1 12 0 h 11 v 4 a 6 6 0 0 0 0 12 v 4 h -34 z"
         className="art-accent-fill"

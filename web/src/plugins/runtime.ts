@@ -21,13 +21,7 @@ export interface SpawnOptions {
   onMessage(message: WorkerRequest): void
 }
 
-/**
- * What the page reports back about a request it had performed.
- *
- * `finalUrl` is where the response actually came from. It matters because a
- * declared host is free to answer 302 and send the page somewhere else, and a
- * policy that only inspects the request is a pre-flight policy.
- */
+/** `finalUrl` is where the response came from after redirects, which the policy re-checks. */
 export interface FetchResult {
   ok: boolean
   status: number
@@ -42,7 +36,6 @@ export interface RunPluginOptions {
   fetchUrl(url: URL, signal: AbortSignal): Promise<FetchResult>
   timeoutMs?: number
   maxRequests?: number
-  /** Ends the run from outside — a panel closing, a title changing. */
   signal?: AbortSignal
 }
 
@@ -57,9 +50,7 @@ export class PluginRunError extends Error {
   }
 }
 
-/** A resolution that has not finished in this long is not going to. */
 const DEFAULT_TIMEOUT_MS = 15_000
-/** Enough for a paginated addon, far short of using the page as a crawler. */
 const DEFAULT_MAX_REQUESTS = 32
 
 export function runPlugin(options: RunPluginOptions): Promise<unknown> {
@@ -71,12 +62,7 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
     let settled = false
     let requests = 0
     let handle: PluginHandle | null = null
-    // Replies produced before `spawn` returns would be posted into a null
-    // handle and lost in silence. They wait here instead.
     const outbox: WorkerReply[] = []
-    // Everything the page has in flight for this plugin, cancelled together
-    // with the worker. Without it the time ceiling kills the worker and the
-    // requests it started keep running.
     const inflight = new AbortController()
 
     const post = (reply: WorkerReply) => {
@@ -98,9 +84,6 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
       finish(() => reject(new PluginRunError('timeout', `plugin exceeded ${timeoutMs}ms`)))
     }, timeoutMs)
 
-    // Without this, closing a panel or picking another episode leaves the
-    // worker running out its whole budget, and the requests it started
-    // running with it. Six clicks in ten seconds is six live rounds.
     const onAbort = () => finish(() => reject(new PluginRunError('aborted', 'plugin run was cancelled')))
     if (options.signal?.aborted) {
       onAbort()
@@ -118,11 +101,7 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
         finish(() => reject(new PluginRunError('plugin-error', `plugin failed: ${message.message}`)))
         return
       }
-      // Anything that is not a well-formed fetch is not a request at all, and
-      // must not spend the budget.
       if (message.kind !== 'fetch' || typeof message.url !== 'string' || typeof message.id !== 'number') return
-      // Counted before the policy runs, so a plugin cannot spend an unlimited
-      // budget on requests that are going to be refused anyway.
       requests += 1
       if (requests > maxRequests) {
         finish(() => reject(new PluginRunError('too-many-requests', `plugin exceeded ${maxRequests} requests`)))
@@ -130,17 +109,12 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
       }
       const decision = checkFetchUrl(message.url, hosts, selfOrigin)
       if (!decision.ok) {
-        // A refusal is answered rather than thrown: a plugin that asks for
-        // something it may not have should get to handle that, the same as it
-        // would handle a server saying no.
         post({ id: message.id, ok: false, status: 0, text: `blocked: ${decision.reason}` })
         return
       }
       fetchUrl(decision.url, inflight.signal)
         .then(({ finalUrl, ...response }) => {
           if (settled) return
-          // The allowlist applies to where the response came from, not only to
-          // where the request went.
           const landed = finalUrl ? checkFetchUrl(finalUrl, hosts, selfOrigin) : null
           if (landed && !landed.ok) {
             post({ id: message.id, ok: false, status: 0, text: `blocked: redirect-${landed.reason}` })
@@ -154,8 +128,6 @@ export function runPlugin(options: RunPluginOptions): Promise<unknown> {
     }
 
     handle = spawn({ onMessage })
-    // `spawn` may have called `onMessage` synchronously, in which case the
-    // run is already over or there are replies waiting.
     if (settled) handle.terminate()
     else for (const reply of outbox.splice(0)) handle.post(reply)
   })

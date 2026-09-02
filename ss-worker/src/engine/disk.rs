@@ -3,13 +3,8 @@ use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
-/// How long a walk of the data directory stands in for the next one. The
-/// heartbeat asks every few seconds and the answer moves slowly.
 const REAL_TTL: Duration = Duration::from_secs(5);
 
-/// Disk is the worker's hard capacity: every served torrent tends to its
-/// full selected size, so the selection is reserved when it is made, and
-/// refused when it would not fit under the high-water mark.
 pub struct DiskAccountant {
     quota: u64,
     high_water: u64,
@@ -29,12 +24,8 @@ impl DiskAccountant {
         }
     }
 
-    /// What the filesystem is actually carrying under the data directory.
-    /// A reservation is a promise about the whole selected size, and the
-    /// files behind it are sparse until the pieces land, so the two answer
-    /// different questions: the reservation decides admission, this one says
-    /// how close the disk really is to full. Cached, because the heartbeat
-    /// asks far more often than the number moves.
+    /// What the filesystem is actually carrying under the data directory,
+    /// where `used` sums the reservations instead. Cached for a few seconds.
     pub fn real_used(&self) -> u64 {
         {
             let cached = self.real.lock();
@@ -166,7 +157,6 @@ mod tests {
             used >= 8192,
             "expected at least the written bytes, got {used}"
         );
-        // Nothing is reserved, so the two figures answer different questions.
         assert_eq!(d.used(), 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }

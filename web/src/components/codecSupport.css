@@ -13,8 +13,6 @@
 
 .ui-dialog.codec-dialog {
   width: min(460px, calc(100vw - 32px));
-  /* The theme's own dialog pop is replaced, not layered on: this one arrives
-     by unblurring and unfolding instead. */
   animation: none;
   opacity: 1;
   filter: blur(0);
@@ -41,9 +39,6 @@
   transition-duration: var(--t-close, 150ms);
 }
 
-/* A grid row that opens. Its child carries no padding of its own — a grid item
-   squeezed to a zero track still cannot go below its padding, and the leftover
-   band sits there looking like a bug. */
 .codec-unfold {
   display: grid;
   grid-template-rows: 1fr;
@@ -76,8 +71,6 @@
   animation: codec-row-in 420ms var(--ease, cubic-bezier(.16, 1, .3, 1)) backwards;
 }
 
-/* Dealt one after another rather than all at once. Decorative, and it never
-   blocks the button: the dialog is usable from the first frame. */
 .codec-row:nth-child(1) { animation-delay: 120ms; }
 .codec-row:nth-child(2) { animation-delay: 180ms; }
 .codec-row:nth-child(3) { animation-delay: 240ms; }
@@ -126,8 +119,6 @@
 
 .codec-actions { display: flex; justify-content: flex-end; }
 
-/* Fewer and gentler, not none: the fade stays because it is what says the
-   dialog arrived, and the travel and the blur are what go. */
 @media (prefers-reduced-motion: reduce) {
   .ui-dialog.codec-dialog,
   .ui-dialog.codec-dialog[data-state='closed'] { filter: none; transform: translate(-50%, -50%); }

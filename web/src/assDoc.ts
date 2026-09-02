@@ -5,7 +5,6 @@
 // wrote — karaoke, borders, blur, rotation, vector drawings — which the VTT
 // conversion by design cannot carry.
 
-/** The dialogue fields a Matroska ASS block carries, beside text and time. */
 export interface AssCueFields {
   layer?: string
   style?: string
@@ -26,7 +25,7 @@ const EVENTS_FORMAT = 'Format: Layer, Start, End, Style, Name, MarginL, MarginR,
 
 /** ASS timestamps are H:MM:SS.cc — centiseconds, single-digit hours. */
 export function formatAssTime(ms: number): string {
-  const clamped = Math.max(0, Math.round(ms / 10)) // centiseconds
+  const clamped = Math.max(0, Math.round(ms / 10))
   const cs = clamped % 100
   const totalSeconds = Math.floor(clamped / 100)
   const seconds = totalSeconds % 60
@@ -50,19 +49,12 @@ function numField(value: string | undefined, fallback: string): string {
   return /^-?\d+$/.test(v) ? v : fallback
 }
 
-/**
- * Builds the full document: the container header verbatim, an [Events]
- * section (reusing the header's own Format line when it ends with one), and
- * one Dialogue line per cue in playback order.
- */
+/** Header verbatim, then one Dialogue line per cue in playback order. */
 export function buildAssDocument(header: string, cues: AssDocCue[]): string {
   let head = header.replace(/\r\n?/g, '\n').trimEnd()
   if (head === '') {
     head = '[Script Info]\nScriptType: v4.00+\nPlayResX: 384\nPlayResY: 288'
   }
-  // Most CodecPrivate blocks end with "[Events]\nFormat: ...". If this one
-  // does not, both lines are appended so the Dialogue rows have a section
-  // and a field order to live under.
   const hasEvents = /^\s*\[events\]\s*$/im.test(head)
   const lines = [head]
   if (!hasEvents) {
@@ -89,7 +81,6 @@ export function buildAssDocument(header: string, cues: AssDocCue[]): string {
   return `${lines.join('\n')}\n`
 }
 
-/** MIME types Matroska releases use for attached fonts. */
 const FONT_MIMES = new Set([
   'font/ttf', 'font/otf', 'font/sfnt', 'font/woff', 'font/woff2', 'font/collection',
   'application/x-truetype-font', 'application/x-font-ttf', 'application/x-font-otf',
@@ -98,7 +89,6 @@ const FONT_MIMES = new Set([
 
 const FONT_EXTENSIONS = /\.(ttf|otf|ttc|woff2?)$/i
 
-/** Whether one Matroska attachment is a font the renderer should get. */
 export function isFontAttachment(file: { filename?: string; mimetype?: string }): boolean {
   const mime = (file.mimetype ?? '').toLowerCase().split(';')[0].trim()
   if (FONT_MIMES.has(mime)) return true

@@ -10,12 +10,6 @@ import './onboarding.css'
 const STEPS = ['welcome', 'own', 'catalogue'] as const
 type Step = typeof STEPS[number]
 
-/**
- * The step travels sideways, in the direction you asked for.
- *
- * A cross-fade in place reads as the same card changing its mind; a slide
- * reads as moving through a sequence, which is what this is.
- */
 const SLIDE = {
   enter: (direction: number) => ({ opacity: 0, x: direction * 36, filter: 'blur(5px)' }),
   middle: { opacity: 1, x: 0, filter: 'blur(0px)' },
@@ -30,21 +24,11 @@ const ART: Record<Step, () => React.JSX.Element> = {
   catalogue: ArtCatalogue,
 }
 
-/**
- * What this is, once, for someone who has never seen it.
- *
- * It exists because the two tabs do genuinely different things and neither
- * name explains itself: a room is media you already have, the catalogue is a
- * search that finds nothing until a plugin is installed. Someone who learns
- * that by clicking around learns it as a failure.
- */
+/** What this app is, shown once to someone who has never seen it. */
 export function Onboarding({ onDone }: { onDone?: () => void }) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const [index, setIndex] = useState(0)
-  // Which way the content should travel. Going forward it enters from the
-  // right and leaves to the left; going back, the reverse. Without this both
-  // directions look identical and the panel loses its sense of place.
   const [direction, setDirection] = useState(1)
   const [closing, setClosing] = useState(false)
   const step = STEPS[index]
@@ -73,8 +57,6 @@ export function Onboarding({ onDone }: { onDone?: () => void }) {
     setIndex(index - 1)
   }
 
-  // Escape skips it. Somebody who already knows the app should not have to
-  // click through three screens to reach it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') finish()
@@ -92,20 +74,14 @@ export function Onboarding({ onDone }: { onDone?: () => void }) {
 
   return (
     <div className="onboard-backdrop" role="dialog" aria-modal="true" aria-label={t('onboard.title')}>
-      {/* morphing stays false on purpose. MorphPanel's own dissolve takes the
-          whole pane to opacity 0 for a beat, which is right when the caller
-          does nothing itself — here the steps cross-fade and slide past each
-          other, and stacking the two made the panel vanish and come back.
-          The panel keeps the job of travelling between sizes; the content
-          keeps the job of changing. */}
+      {/* morphing stays false: MorphPanel's own dissolve stacked on the
+          steps' cross-fade made the panel vanish and come back. */}
       <MorphPanel sizeKey={step} morphing={false} className="onboard-morph">
         <div className="onboard-panel">
           <div className="onboard-stage">
-          {/* Both steps live in the same grid cell (see .onboard-stage), so
-              the outgoing and incoming ones overlap instead of following each
-              other. `popLayout` took the leaver out of flow and the panel
-              collapsed to nothing for a frame — the box blinked. Stacked, the
-              height is always somebody's, and it travels between them. */}
+          {/* Both steps share one grid cell (see .onboard-stage) so they
+              overlap; `popLayout` took the leaver out of flow and the panel
+              collapsed for a frame. */}
           <AnimatePresence initial={false} custom={direction}>
             <motion.div
               key={step}

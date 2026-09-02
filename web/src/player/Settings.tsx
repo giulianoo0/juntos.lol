@@ -5,13 +5,11 @@ import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
 
 export interface SettingOption {
-  /** Stable identity of the choice, independent of where it sits in the list. */
   value: number
   label: string
 }
 
 export interface SettingGroup {
-  /** Used for the group's test id and its React key. */
   id: string
   label: string
   options: SettingOption[]
@@ -20,17 +18,9 @@ export interface SettingGroup {
 }
 
 /**
- * Everything about how the room is being watched, in the button that opens it.
- *
- * The box is the control: closed it is the round gear in the bar, and opening
- * it widens and deepens that same box into the panel rather than raising a
- * second surface over it. It is taken out of the bar's flow so growing costs
- * the other controls no room, and anchored bottom-right so it grows up and to
- * the left, away from the edge it sits on.
- *
- * Groups expand where they stand: opening subtitles must not take audio and
- * quality off screen, or the settings stop being one surface and become a
- * stack of menus.
+ * Everything about how the room is being watched, in the button that opens it:
+ * the gear widens into the panel rather than raising a second surface over it,
+ * and groups expand where they stand instead of replacing each other.
  */
 export const Settings = memo(function Settings({ groups, t }: { groups: SettingGroup[]; t: Translator }) {
   const [open, setOpen] = useState(false)
@@ -41,9 +31,6 @@ export const Settings = memo(function Settings({ groups, t }: { groups: SettingG
   const { shown, morphing } = useMorphingStep(open)
   useMorphingSize(boxRef, `${shown}:${expanded}`, { durationMs: 260, contentRef: paneRef })
 
-  // Settings laid over the picture get out of the way the moment attention
-  // moves back to it. pointerdown rather than click, so it closes on the press
-  // that started elsewhere instead of waiting for the release.
   useEffect(() => {
     if (!open) return
     const dismiss = (event: PointerEvent) => {
@@ -63,8 +50,6 @@ export const Settings = memo(function Settings({ groups, t }: { groups: SettingG
       <div className={`settings-morph ${shown ? 'is-open' : ''}`} ref={boxRef}>
         <div className="settings-pane morph-fade" ref={paneRef} data-morphing={morphing}>
           {!shown ? (
-            // Bare on purpose: the circle it looks like is the panel's own
-            // border and background, so opening it grows that same box.
             <button
               className="settings-trigger"
               aria-label={label}
@@ -113,8 +98,6 @@ export const Settings = memo(function Settings({ groups, t }: { groups: SettingG
           )}
         </div>
       </div>
-      {/* Holds the gear's place in the bar while the box above it grows out
-          of flow, so opening the settings never shifts the other controls. */}
       <span className="settings-slot" aria-hidden="true" />
     </div>
   )

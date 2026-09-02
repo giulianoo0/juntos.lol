@@ -252,7 +252,7 @@ export const ptBR: Record<string, string> = {
   'onboard.own.aside': 'É a aba que abre por padrão. Tudo aqui funciona sem instalar nada.',
   'onboard.catalogue.title': 'Catálogo: procurar por nome',
   'onboard.catalogue.body': 'Busque um filme ou série e abra o título. Só que o catálogo mostra capas e não sabe onde estão os arquivos: quem resolve isso são os plugins, que você instala em Plugins, no topo.',
-  'onboard.catalogue.aside': 'O Torrentio é o plugin que faz isso hoje. Sem plugin, o catálogo lista tudo e não abre nada.',
+  'onboard.catalogue.aside': 'Quem resolve isso é um plugin de streams. Sem plugin, o catálogo lista tudo e não abre nada.',
 
   'home.tabCatalog': 'Catálogo',
   'home.tabOwn': 'Sala',

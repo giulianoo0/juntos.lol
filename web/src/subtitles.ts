@@ -1,30 +1,19 @@
-// Served from public/ rather than imported with `?url`: this module is
-// reachable from both the page graph and the worker graph, and each graph
-// emitted its own copy of the same 147 kB file under its own name — two
-// downloads, two cache entries, for one parser. The copy is refreshed by
-// postinstall, so a version bump cannot leave it behind.
-// The version is a cache key, not a path: the edge caches this URL for hours,
-// and a copy that changed under the same address would be served stale. It is
-// kept in step by scripts/sync-parser.mjs, which fails the install if the
-// package it copies no longer matches.
+// Served from public/ rather than imported with `?url`, so the page graph and
+// the worker graph share one copy. The version is a cache key, not a path, and
+// scripts/sync-parser.mjs keeps it in step with the installed package.
 const parserBundleUrl = '/matroska-subtitles.min.js?v=3.3.2'
 import { convertAssCue, parseAssHeader, positionDialogueCues, type AssTrackInfo } from './assvtt'
 import { buildAssDocument, isFontAttachment } from './assDoc'
 import type { VttTrack } from './subtitleFormats'
 
-// What the server stores per room (maxSubtitleTracks on its side).
 export const MAX_SUBTITLE_TRACKS = 64
-// Minimum gap between progressive publishes. Cues keep arriving for as long as
-// the source streams, and each publish rewrites every track server-side.
 const PUBLISH_INTERVAL_MS = 8_000
 
 export interface SubtitleCue {
   text: string
   time: number
   duration: number
-  /** ASS style name, present on cues of ass/ssa tracks. */
   style?: string
-  /** The remaining ASS dialogue fields the container carries per cue. */
   layer?: string
   name?: string
   marginL?: string
@@ -38,21 +27,17 @@ interface ExtractedTrack {
   language: string
   title: string
   cues: SubtitleCue[]
-  /** Parsed ASS header for ass/ssa tracks, null for plain-text ones. */
   ass: AssTrackInfo | null
-  /** The raw CodecPrivate of an ass/ssa track — the document's own head. */
   rawHeader: string | null
 }
 
-// Types for the self-contained browser bundle of matroska-subtitles, which is
-// loaded via a <script> tag and exposed as a global (its ESM build relies on
-// Node builtins and cannot be bundled by Vite).
+// The browser bundle of matroska-subtitles is loaded as a global: its ESM
+// build relies on Node builtins and cannot be bundled by Vite.
 interface MatroskaTrackInfo {
   number: number
   language?: string
   name?: string
   type: string
-  /** The track's CodecPrivate: for ass/ssa, the script info and style table. */
   header?: string
 }
 
@@ -84,9 +69,8 @@ let parserBundlePromise: Promise<MatroskaSubtitlesGlobal> | null = null
 
 function loadParserBundle(): Promise<MatroskaSubtitlesGlobal> {
   if (globalThis.MatroskaSubtitles) return Promise.resolve(globalThis.MatroskaSubtitles)
-  // A worker has no document to hang a script tag on, and importing the UMD
-  // bundle as a module would trap its `var` in module scope. Indirect eval
-  // runs it in the worker's global scope, where it lands on globalThis.
+  // A worker has no document for a script tag, and importing the UMD bundle
+  // would trap its `var` in module scope; indirect eval lands it on globalThis.
   if (typeof document === 'undefined') {
     parserBundlePromise ??= fetch(parserBundleUrl)
       .then((response) => {
@@ -94,8 +78,7 @@ function loadParserBundle(): Promise<MatroskaSubtitlesGlobal> {
         return response.text()
       })
       .then((code) => {
-        // The bundle reaches for `window` at parse time; a worker calls it
-        // globalThis. The alias is scoped to this worker's global.
+        // The bundle reaches for `window` at parse time.
         ;(globalThis as { window?: unknown }).window ??= globalThis
         ;(0, eval)(code)
         if (!globalThis.MatroskaSubtitles) throw new Error('matroska-subtitles bundle did not initialize')
@@ -121,33 +104,23 @@ export function isMatroska(file: { name: string; type?: string }): boolean {
 }
 
 /**
- * An incremental Matroska subtitle extractor.
- *
- * Cues live in the clusters interleaved with the video, so a complete track is
- * only known once the last byte has been read. Consuming the stream as it
- * arrives makes the cues seen so far usable immediately, which is what lets a
- * torrent show subtitles long before the download finishes.
+ * An incremental extractor: cues live in the clusters interleaved with the
+ * video, so what has been read so far is usable before the last byte arrives.
  */
 export interface MatroskaSubtitleStream {
   write(chunk: Uint8Array): void
-  /** Tracks parsed so far, in the container's own order. */
   snapshot(): VttTrack[]
   /** Ends the parser and resolves with the tracks that carry cues. */
   finish(): Promise<VttTrack[]>
-  /** Font attachments seen so far. Complete only once the parser has read
-   * past the attachments element, which sits near the head of most files. */
+  /** Complete only once the parser has read past the attachments element. */
   fonts(): AttachedFont[]
 }
 
-/** One font file muxed into the container for its ASS tracks. */
 export interface AttachedFont {
   filename: string
   data: Uint8Array
 }
 
-// Ceilings for what a room will carry to viewers: fonts are megabytes, and a
-// release with dozens of them must not turn the subtitle path into a second
-// video upload.
 const MAX_FONT_BYTES = 8 * 1024 * 1024
 const MAX_FONTS = 24
 
@@ -155,8 +128,8 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   const { SubtitleParser } = await loadParserBundle()
   const parser = new SubtitleParser()
   const tracks = new Map<number, ExtractedTrack>()
-  // The header order is fixed once the tracks event fires, so publishing in
-  // this order keeps a track at the same position across progressive updates.
+  // Publishing in header order keeps a track at the same position across
+  // progressive updates.
   const order: number[] = []
 
   const finished = new Promise<void>((resolve, reject) => {
@@ -189,8 +162,7 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
     fontBytes += data.byteLength
     fonts.push({ filename: file.filename ?? `font_${fonts.length}`, data })
   })
-  // The parser is a Transform stream: drain its readable side so the internal
-  // buffer never fills up while we feed it the source.
+  // Drain the Transform's readable side so its buffer never fills up.
   parser.resume()
 
   const collect = (requireCues: boolean): VttTrack[] => order
@@ -198,9 +170,6 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
     .filter((track): track is ExtractedTrack => track !== undefined && (!requireCues || track.cues.length > 0))
     .map((track) => {
       const out: VttTrack = { language: track.language, title: track.title, vtt: toWebVTT(track.cues, track.ass) }
-      // Styled tracks also travel as the full document, rebuilt from the
-      // container's own header and dialogue fields, so the renderer gets
-      // everything the author wrote instead of the VTT approximation.
       if (track.rawHeader !== null) out.ass = buildAssDocument(track.rawHeader, track.cues)
       return out
     })
@@ -224,8 +193,6 @@ export function toWebVTT(cues: SubtitleCue[], ass: AssTrackInfo | null = null): 
     const converted = ass
       ? convertAssCue(ass, cue.style, cue.text)
       : { settings: '', text: cleanCueText(cue.text) }
-    // A cue with nothing renderable left — a vector drawing, a bare override —
-    // would show viewers an empty box.
     if (converted.text === '') continue
     const settings = converted.settings === '' ? '' : ` ${converted.settings}`
     lines.push(`${formatVttTime(cue.time)} --> ${formatVttTime(cue.time + cue.duration)}${settings}`, converted.text, '')
@@ -243,10 +210,8 @@ function formatVttTime(ms: number): string {
   return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}.${String(millis).padStart(3, '0')}`
 }
 
-// cleanCueText rewrites an ASS dialogue line as VTT cue text. Italic and bold
-// overrides become the <i>/<b> tags WebVTT can carry — the same mapping the
-// server-side ffmpeg extraction produces — and every other override (colors,
-// positioning, karaoke) has no VTT equivalent and is dropped.
+// Rewrites an ASS dialogue line as VTT cue text: italic and bold become
+// <i>/<b>, every other override is dropped.
 function cleanCueText(text: string): string {
   const open: Array<'i' | 'b'> = []
   const active = { i: false, b: false }
@@ -283,13 +248,9 @@ function cleanCueText(text: string): string {
 }
 
 /**
- * Merges the subtitle sources of one room into a single publication.
- *
- * A torrent can offer both sibling subtitle files and tracks muxed into the
- * video. They land at very different times, so each source publishes on its
- * own and the collector posts the union. The room is only reported complete
- * once every registered source is done, which is what keeps the authoritative
- * server-side extraction scheduled while an extraction is still partial.
+ * Merges the subtitle sources of one room — sibling files and muxed tracks,
+ * which land at different times — and posts their union. The room counts as
+ * complete only once every registered source is done.
  */
 export interface SubtitleCollector {
   register(source: string): void
@@ -309,15 +270,10 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
   let pending: Promise<void> = Promise.resolve()
   let lastPostAt = 0
   let dirty = false
-  // The text of each track as the server last accepted it. Keyed by position
-  // *and* name, because position alone is not an identity: a sibling .srt
-  // finishing its read pushes every embedded track one slot along, and a
-  // track that inherits a neighbour's slot must send its bytes rather than
-  // let the server keep the previous occupant's file under that index.
+  // Keyed by position *and* name: a track can inherit a neighbour's slot, and
+  // must then resend its bytes rather than leave the previous file there.
   const sent = new Map<string, string>()
   const slot = (track: VttTrack, index: number) => `${index}\u0000${track.language}\u0000${track.title}`
-  // What identifies a track's bytes: the VTT and the ASS travel and change
-  // together, so one record covers both.
   const payloadOf = (track: VttTrack) => `${track.vtt}\u0000${track.ass ?? ''}`
 
   const register = (source: string) => {
@@ -326,8 +282,8 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     order.push(source)
   }
 
-  // The server refuses a post with more tracks than it will store, rather
-  // than keeping some: a release with more is cut here, embedded first.
+  // The server refuses a post that exceeds its ceiling rather than trimming
+  // it, so the cut happens here, embedded tracks first.
   const union = (): VttTrack[] => order.flatMap((source) => sources.get(source)?.tracks ?? []).slice(0, MAX_SUBTITLE_TRACKS)
   const allComplete = (): boolean => order.every((source) => sources.get(source)?.complete === true)
 
@@ -337,11 +293,7 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     if (tracks.length === 0) return
     const complete = allComplete()
     lastPostAt = Date.now()
-    // A pass over a big file republishes every few seconds, and most of what
-    // it sends is tracks that finished long ago — on the same uplink the
-    // remux is pushing segments up. A track whose text the server already has
-    // travels as its name alone; the position in the list is what identifies
-    // it, on both sides.
+    // A track whose text the server already has travels as its name alone.
     const body = tracks.map((track, index) => (
       sent.get(slot(track, index)) === payloadOf(track)
         ? { language: track.language, title: track.title }
@@ -353,18 +305,13 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tracks: body, complete, mediaGeneration }),
       })
-      // 409 means the room moved on to another video while this extraction
-      // was still reading the previous one. Nothing to retry: these cues
-      // describe a source nobody is watching any more.
+      // 409 means the room moved on to another video; nothing to retry.
       if (response.status === 409) return
       if (!response.ok) {
         console.warn(`subtitle upload failed with status ${response.status}`)
-        // The server and this map no longer agree on what it holds; the next
-        // post sends everything rather than guessing which half stuck.
         sent.clear()
         return
       }
-      // Only what the server acknowledged may be left out of the next post.
       sent.clear()
       tracks.forEach((track, index) => sent.set(slot(track, index), payloadOf(track)))
     } catch (error) {
@@ -386,9 +333,8 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
       schedule(complete)
     },
     flush: async () => {
-      // Re-check when the link runs, not when it is queued: a publish that
-      // already scheduled a post clears the flag before this link is reached,
-      // and an unconditional post here would duplicate it.
+      // Re-check when the link runs, not when it is queued: an unconditional
+      // post here would duplicate one already scheduled.
       pending = pending.then(() => (dirty ? post() : Promise.resolve()))
       await pending
     },
@@ -396,11 +342,8 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
 }
 
 /**
- * Sends the fonts a container carries for its ASS tracks. Each font goes up
- * once, raw, and the server records it on the room so every viewer's
- * renderer can load the exact faces the subtitles were authored against.
- * Failures are logged and skipped: fonts degrade to the renderer's fallback
- * face, never block the media.
+ * Each font goes up once, raw. Failures are logged and skipped: fonts degrade
+ * to the renderer's fallback face and never block the media.
  */
 export async function postSubtitleFonts(
   roomID: string,

@@ -9,8 +9,6 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 /// The certificate the listener presents, swappable under live connections
 /// so a renewal never drops a stream. SNI is ignored on purpose: browsers
-/// send none for an IP-literal URL (RFC 6066), and this worker has exactly
-/// one identity to offer anyway.
 #[derive(Default)]
 pub struct CertSlot {
     current: ArcSwapOption<CertifiedKey>,
@@ -64,8 +62,6 @@ pub fn not_after(cert: &CertificateDer<'_>) -> anyhow::Result<i64> {
     Ok(parsed.validity().not_after.timestamp())
 }
 
-/// A throwaway certificate for development: browsers need
-/// --ignore-certificate-errors, curl needs -k.
 pub fn self_signed(names: Vec<String>) -> anyhow::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     let key = rcgen::KeyPair::generate()?;
     let params = rcgen::CertificateParams::new(names)?;
@@ -74,7 +70,6 @@ pub fn self_signed(names: Vec<String>) -> anyhow::Result<(Vec<CertificateDer<'st
     Ok((vec![cert.der().clone()], key_der))
 }
 
-/// Reads a PEM pair from disk into the slot.
 pub fn install_from_files(slot: &CertSlot, cert: &std::path::Path, key: &std::path::Path) -> anyhow::Result<()> {
     let cert_pem = std::fs::read_to_string(cert).with_context(|| format!("read {}", cert.display()))?;
     let key_pem = std::fs::read_to_string(key).with_context(|| format!("read {}", key.display()))?;

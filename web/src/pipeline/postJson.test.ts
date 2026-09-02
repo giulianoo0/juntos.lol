@@ -12,8 +12,6 @@ describe('postJson', () => {
   afterEach(() => vi.restoreAllMocks())
 
   it('waits out a server that blinked and carries on', async () => {
-    // The case that threw a whole room away: a deploy swapping the container
-    // under a preparo that was half an hour in.
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 502 }))
       .mockResolvedValueOnce(new Response('{"ok":true}', { status: 200 }))
@@ -30,8 +28,6 @@ describe('postJson', () => {
   })
 
   it('returns a refusal the server meant at once', async () => {
-    // A 4xx carries a code — a source swap, a refused claim — and waiting on
-    // it would only delay the room being told what happened.
     fetchMock.mockResolvedValue(new Response('{"error":"claim_mismatch"}', { status: 409 }))
     const response = await postJson('/publish', {}, { sleep: nosleep })
     expect(response.status).toBe(409)

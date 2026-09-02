@@ -12,7 +12,6 @@ const grant: WorkerGrant = {
   fileIndex: 0,
 }
 
-// The generation a hint carries, in the order the hints were sent.
 function hintedGenerations(fetchMock: ReturnType<typeof vi.fn>): number[] {
   return fetchMock.mock.calls
     .filter(([url]) => String(url).includes('/v1/hint/'))
@@ -30,10 +29,6 @@ describe('workerInput generations', () => {
   afterEach(() => vi.restoreAllMocks())
 
   it('never restarts a generation a previous input already used', () => {
-    // The worker keeps its floor per reader, but one room reaching the same
-    // torrent twice — a source swap, a reload, a resumed preparo — is the
-    // same reader. A fresh input counting from one again would have every
-    // playhead read refused as superseded by the floor it left last time.
     const first = workerInput(grant)
     first.prefetchAt?.(0)
     first.abortReads()

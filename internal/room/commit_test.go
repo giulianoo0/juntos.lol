@@ -32,8 +32,8 @@ func TestCommitPublishAppliesAtomically(t *testing.T) {
 
 	outcome, err := s.CommitPublish(t.Context(), "r1", PublishCommit{
 		Claim: "client:a", Generation: 0, RunID: "run1", Seq: 1, Digest: "d1",
-		Confirmed: []string{"cinit_1.mp4", "cs_1_1.m4s"},
-		Playlists: map[string]string{"client_stream_1.m3u8": "body1"},
+		Confirmed:   []string{"cinit_1.mp4", "cs_1_1.m4s"},
+		Playlists:   map[string]string{"client_stream_1.m3u8": "body1"},
 		ApplyOffset: true, OffsetMs: 0,
 		DurationMs: 60_000,
 	})
@@ -61,7 +61,6 @@ func TestCommitPublishFencesStaleSeq(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The straggler from before must not regress the playlist.
 	_, err = s.CommitPublish(t.Context(), "r1", PublishCommit{
 		Claim: "client:a", RunID: "run1", Seq: 1, Digest: "d1",
 		Playlists: map[string]string{"client_stream_1.m3u8": "four seconds"},
@@ -88,7 +87,6 @@ func TestCommitPublishReplaysSameSeqSameDigest(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, outcome.Replayed)
 
-	// Same seq, different payload: a conflict, not a replay.
 	_, err = s.CommitPublish(t.Context(), "r1", PublishCommit{
 		Claim: "client:a", RunID: "run1", Seq: 1, Digest: "dX",
 		Playlists: map[string]string{"client_stream_1.m3u8": "v2"},
@@ -114,8 +112,6 @@ func TestCommitPublishRefusesAfterSourceSwap(t *testing.T) {
 	s := commitStore(t)
 	addRoomWithClaim(t, s, "r1", "client:a")
 
-	// The swap lands while the old publish is mid-HEAD; its commit must not
-	// leave the new generation with the old generation's playlists.
 	_, _, err := s.SwapSource(t.Context(), "r1", SourceUpload, "other.mkv", "uploading", time.Now())
 	require.NoError(t, err)
 
@@ -131,7 +127,6 @@ func TestCommitPublishRefusesAfterSourceSwap(t *testing.T) {
 func TestCommitPublishRefusesWrongGeneration(t *testing.T) {
 	s := commitStore(t)
 	addRoomWithClaim(t, s, "r1", "client:a")
-	// Same claim still held, but the caller believes another generation.
 	_, err := s.CommitPublish(t.Context(), "r1", PublishCommit{
 		Claim: "client:a", Generation: 3, RunID: "run1", Seq: 1, Digest: "d1",
 	})
@@ -149,7 +144,6 @@ func TestSwapSourceClearsProducerFencing(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, generation)
 	require.NoError(t, s.ReserveUpload(t.Context(), "r1", "client:b", time.Now()))
-	// A fresh claim starts a fresh run at seq 1 without tripping the fence.
 	_, err = s.CommitPublish(t.Context(), "r1", PublishCommit{
 		Claim: "client:b", Generation: 1, RunID: "run2", Seq: 1, Digest: "d1",
 	})

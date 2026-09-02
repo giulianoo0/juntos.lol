@@ -8,20 +8,14 @@ import (
 	"strings"
 )
 
-// This file converts ASS/SSA subtitle documents to WebVTT while keeping what
-// WebVTT has vocabulary for: alignment and \pos become cue settings, italics
-// and bold become <i>/<b>, and colors snap to the standard VTT color classes.
-// Everything else — karaoke, borders, blur, rotation, vector drawings — is
-// dropped. The client-side converter (web/src/assvtt.ts) implements the same
-// mapping, so the authoritative pass replaces the progressive files without
-// visibly restyling anything.
+// Converts ASS/SSA subtitle documents to WebVTT, keeping only what WebVTT has
+// vocabulary for: alignment and \pos, italics and bold, and the standard color
+// classes. web/src/assvtt.ts implements the same mapping client-side.
 
 type assStyle struct {
-	italic bool
-	bold   bool
-	// color is a VTT color class, empty when the color is effectively white.
-	color string
-	// alignment is numpad 1-9, already normalized from the legacy encoding.
+	italic    bool
+	bold      bool
+	color     string
 	alignment int
 }
 
@@ -51,10 +45,6 @@ var vttColors = []vttColor{
 	{"black", 0, 0, 0},
 }
 
-// assOverrideTag matches the overrides the converter understands; everything
-// else inside a block is ignored. The lookarounds keep short names from
-// swallowing longer ones (\b vs \bord, \c vs \clip, \p vs \pos), spelled as
-// explicit character classes because Go's regexp has no lookahead.
 var assOverrideTag = regexp.MustCompile(`\\(pos|move|an|a-?[0-9]|1?c(?:&[^\\]*)?|i-?[0-9]|b-?[0-9]+|p-?[0-9]+|r)([^\\]*)`)
 
 var assBlockPattern = regexp.MustCompile(`\{[^}]*\}`)
@@ -65,9 +55,9 @@ var assPointPattern = regexp.MustCompile(`\(\s*(-?[0-9.]+)\s*,\s*(-?[0-9.]+)`)
 
 var assStampPattern = regexp.MustCompile(`^(\d{1,2}):(\d{1,2}):(\d{1,2})[.,](\d{1,3})$`)
 
-// ConvertASSToVTT converts a complete ASS/SSA document to WebVTT. It returns
-// nil when the document holds no renderable cue, and tolerates a truncated
-// final line, so it can run over a file ffmpeg is still writing.
+// ConvertASSToVTT returns nil when the document holds no renderable cue, and
+// tolerates a truncated final line, so it can run over a file ffmpeg is still
+// writing.
 func ConvertASSToVTT(data []byte) []byte {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n")
 	doc := parseAssDocument(text)
@@ -103,8 +93,6 @@ func ConvertASSToVTT(data []byte) []byte {
 		}
 		order := fields
 		if order == nil {
-			// Without a Format line the script is malformed; assume the
-			// standard order.
 			order = []string{"layer", "start", "end", "style", "name",
 				"marginl", "marginr", "marginv", "effect", "text"}
 		}
@@ -137,11 +125,6 @@ func ConvertASSToVTT(data []byte) []byte {
 	return positionDialogueCues([]byte(out.String()))
 }
 
-// Dialogue sits two cue lines off the frame's bottom edge — roughly 100px on
-// a 1080p picture, scaling with the player — clearing the control bar. A
-// second simultaneous dialogue goes to the top with the same spacing, the way
-// double-speaker lines are conventionally set. Snap-line units anchor the
-// box's edge, so the spacing holds for one-line and two-line cues alike.
 const (
 	bottomDialogueSetting = "line:-3"
 	topDialogueSetting    = "line:2"
@@ -193,10 +176,7 @@ func parseVttStampMs(stamp string) (int, bool) {
 	return ((hours*60+minutes)*60+seconds)*1000 + millis, true
 }
 
-// parseAssDocument reads the script info and style sections — the same
-// content Matroska stores as a track's CodecPrivate.
 func parseAssDocument(text string) *assDocument {
-	// 384x288 is the resolution libass assumes when a script declares none.
 	doc := &assDocument{playResX: 384, playResY: 288, styles: map[string]assStyle{}}
 	var fields []string
 	section := ""
@@ -260,7 +240,6 @@ func parseAssDocument(text string) *assDocument {
 	return doc
 }
 
-// convertAssCue converts one dialogue text into VTT cue settings and text.
 func convertAssCue(doc *assDocument, styleName, raw string) (settings, text string) {
 	style, known := doc.styles[styleName]
 	if !known {
@@ -270,9 +249,6 @@ func convertAssCue(doc *assDocument, styleName, raw string) (settings, text stri
 	alignment := style.alignment
 	var pos *[2]float64
 	drawing := false
-	// What the overrides ask for, reconciled into tags only when text
-	// actually arrives — so redundant flips collapse and an empty cue emits
-	// no tags.
 	desired := style
 	var open []byte
 	openColor := ""
@@ -357,8 +333,6 @@ func convertAssCue(doc *assDocument, styleName, raw string) (settings, text stri
 				alignment = normalizeAssAlignment(parsed, true)
 			}
 		case name == "c" || name == "1c":
-			// A bare \c resets to the style color. Leftover value means the
-			// regex matched the head of an unrelated tag (\clip): not a color.
 			if strings.TrimSpace(value) == "" {
 				desired.color = style.color
 			}
@@ -406,17 +380,14 @@ func convertAssCue(doc *assDocument, styleName, raw string) (settings, text stri
 	return assCueSettings(alignment, pos, doc), text
 }
 
-// assCueSettings maps the anchor grid onto VTT's line/position/align
-// settings. A positioned cue keeps the anchor its alignment row implies: a
-// bottom-row \pos names where the text's bottom edge sits. WebVTT spells that
-// as a line alignment suffix, but Chromium rejects the suffix and drops the
-// whole setting with it, so the anchor is approximated instead by lifting the
-// box's top edge a nominal text height.
+// assCueSettings maps the anchor grid onto VTT's line/position/align settings.
+// Chromium drops a setting carrying a line alignment suffix, so a bottom-row
+// anchor is approximated by lifting the box's top edge a nominal text height.
 func assCueSettings(alignment int, pos *[2]float64, doc *assDocument) string {
 	var parts []string
 	top := alignment >= 7
 	middle := alignment >= 4 && alignment <= 6
-	column := alignment % 3 // 1 left, 2 center, 0 right
+	column := alignment % 3
 	if pos != nil {
 		anchor := 0
 		if middle {
@@ -556,7 +527,6 @@ func assField(order, values []string, name string) string {
 	return ""
 }
 
-// parseAssStamp reads an H:MM:SS.CC timestamp into milliseconds.
 func parseAssStamp(stamp string) (int, bool) {
 	match := assStampPattern.FindStringSubmatch(strings.TrimSpace(stamp))
 	if match == nil {

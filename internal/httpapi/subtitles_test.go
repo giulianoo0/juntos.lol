@@ -155,7 +155,6 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 	w := postSubtitles(t, e, "r2", body)
 	require.Equal(t, http.StatusCreated, w.Code)
 
-	// The cues are published so playback can already use them...
 	got, err := store.Get(t.Context(), "r2")
 	require.NoError(t, err)
 	require.Equal(t, []room.TrackInfo{
@@ -165,13 +164,11 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, validVTT, string(data))
 
-	// ...but the authoritative ffmpeg pass must still run at upload completion.
 	require.False(t, got.ClientSubs)
 	has, err := store.HasClientSubs(t.Context(), "r2")
 	require.NoError(t, err)
 	require.False(t, has)
 
-	// The finishing post promotes the same room to a completed extraction.
 	w = postSubtitles(t, e, "r2", `{"complete":true,"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}]}`)
 	require.Equal(t, http.StatusCreated, w.Code)
 	has, err = store.HasClientSubs(t.Context(), "r2")
@@ -179,7 +176,6 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 	require.True(t, has)
 }
 
-// recordingSubtitlePublisher stands in for the bucket in handler tests.
 type recordingSubtitlePublisher struct {
 	dirs []string
 	err  error
@@ -217,8 +213,6 @@ func TestStoreClientSubtitlesUploadsBeforeAnnouncing(t *testing.T) {
 }
 
 func TestStoreClientSubtitlesFailsWhenTheBucketRefuses(t *testing.T) {
-	// Announcing tracks the bucket does not hold would point every connected
-	// player at a subtitle URL that 404s.
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	addSubtitlesTestRoom(t, store, "r1")
@@ -241,9 +235,6 @@ func TestStoreClientSubtitlesRejectsAnExtractionFromAReplacedSource(t *testing.T
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: "r1", FileName: "first.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
-	// The controller swaps the room onto a second video. The browser is still
-	// reading the first one — its extraction runs for as long as the file is
-	// large — and finishes afterwards.
 	_, generation, err := store.SwapSource(t.Context(), "r1", room.SourceUpload, "second.mkv", "uploading", now)
 	require.NoError(t, err)
 	require.Equal(t, 1, generation)
@@ -255,9 +246,6 @@ func TestStoreClientSubtitlesRejectsAnExtractionFromAReplacedSource(t *testing.T
 		`]}`
 	w := postSubtitles(t, e, "r1", body)
 
-	// Accepting it would hand the new video the previous one's subtitles and,
-	// worse, mark the room as having client subtitles: the server then skips
-	// its own extraction and the new video never gets the right ones at all.
 	require.Equal(t, http.StatusConflict, w.Code)
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
@@ -282,9 +270,6 @@ func TestStoreClientSubtitlesAcceptsTheCurrentGeneration(t *testing.T) {
 }
 
 func TestStoreClientSubtitlesCarriesOverATrackWithNoNewBytes(t *testing.T) {
-	// The extraction republishes every few seconds and most tracks are done
-	// long before the pass is; sending them again costs the host's uplink,
-	// which is the same one the remux is uploading segments on.
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	now := time.Now()
@@ -318,8 +303,6 @@ func TestStoreClientSubtitlesCarriesOverATrackWithNoNewBytes(t *testing.T) {
 		{Index: 1, Language: "por", Codec: "webvtt", Digest: subtitleDigest(grown)},
 	}, got.SubtitleTracks)
 
-	// The untouched track keeps both its bytes and the name viewers cached
-	// them under, so nothing about it is refetched.
 	after, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, before.ModTime(), after.ModTime())
@@ -343,8 +326,6 @@ func TestStoreClientSubtitlesRefusesOmittedBytesForATrackItNeverHad(t *testing.T
 }
 
 func TestStoreClientSubtitlesLeavesUnchangedBytesAlone(t *testing.T) {
-	// An older client posts every track every time; the digest is what keeps
-	// that from rewriting files nobody changed.
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	now := time.Now()
@@ -367,9 +348,6 @@ func TestStoreClientSubtitlesLeavesUnchangedBytesAlone(t *testing.T) {
 }
 
 func TestStoreClientSubtitlesRefusesACarryOverUnderADifferentName(t *testing.T) {
-	// A sibling .srt finishing its read pushes every embedded track one slot
-	// along. If the client miscounts, the index it left empty must not quietly
-	// inherit the previous occupant's file.
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	now := time.Now()
@@ -382,7 +360,6 @@ func TestStoreClientSubtitlesRefusesACarryOverUnderADifferentName(t *testing.T) 
 	first := `{"complete":false,"tracks":[{"language":"spa","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
 	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r8", first).Code)
 
-	// Same slot, different track, no bytes: nothing on disk answers to this.
 	shifted := `{"complete":false,"tracks":[{"language":"eng","title":"Forced"}]}`
 	require.Equal(t, http.StatusBadRequest, postSubtitles(t, e, "r8", shifted).Code)
 }
@@ -408,8 +385,6 @@ func TestStoreClientSubtitlesWithASS(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.SubtitleTracks, 1)
 	require.Equal(t, "ass", got.SubtitleTracks[0].Codec)
-	// One digest names both files together: it must differ from a VTT-only
-	// track with the same VTT bytes.
 	require.NotEqual(t, subtitleDigest(validVTT), got.SubtitleTracks[0].Digest)
 
 	for name, want := range map[string]string{"sub_0_eng.vtt": validVTT, "sub_0_eng.ass": validASS} {
@@ -465,14 +440,12 @@ func TestStoreSubtitleFont(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fontbytes", string(data))
 
-	// The same bytes land once: a duplicate post is acknowledged, not stored.
 	w = post("OpenSans.ttf", "fontbytes")
 	require.Equal(t, http.StatusOK, w.Code)
 	got, err = store.Get(t.Context(), "rf")
 	require.NoError(t, err)
 	require.Len(t, got.SubtitleFonts, 1)
 
-	// Extensions outside the whitelist are refused.
 	w = post("evil.exe", "MZ")
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }

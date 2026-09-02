@@ -13,9 +13,6 @@ describe('nextRecovery', () => {
   })
 
   it('forgives a budget spent long ago', () => {
-    // The case that stranded a room: the player no longer rebuilds itself
-    // every couple of seconds, so a count kept for life meant the second
-    // rough patch of an evening was fatal.
     const spent = { spent: MAX_RECOVERIES, atMs: 1_000 }
     expect(nextRecovery(spent, 1_000 + FORGIVE_MS - 1)).toBeNull()
     const after = nextRecovery(spent, 1_000 + FORGIVE_MS)

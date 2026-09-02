@@ -16,19 +16,12 @@
 
 use std::time::Duration;
 
-/// How long the reader must have been still before the fill starts. Long
-/// enough that a seek's own reads, and the scan slices that follow it, are
-/// not mistaken for quiet.
 pub const QUIET: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fill {
-    /// The window alone; the sweep releases what falls outside it.
     Off,
-    /// The whole file is selected; the reservation is the file's size.
     Filling,
-    /// The window alone again, but nothing is released and the reservation
-    /// keeps the file's size: what the fill brought in stays.
     Holding,
 }
 
@@ -40,7 +33,6 @@ impl Fill {
             Fill::Holding => "holding",
         }
     }
-    /// Whether the reservation is the whole file rather than the window.
     pub fn reserves_file(self) -> bool {
         self != Fill::Off
     }
@@ -49,10 +41,7 @@ impl Fill {
 /// What the reader looks like right now, as the sweep sees it.
 #[derive(Clone, Copy, Debug)]
 pub struct Reader {
-    /// No hint and no out-of-window read for `QUIET`.
     pub quiet: bool,
-    /// Every piece of the playhead's window is already here. True when
-    /// there is no playhead at all: nothing is blocking on anything.
     pub window_have: bool,
 }
 

@@ -4,19 +4,9 @@ import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, Pr
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
 
-// Presence is a rolling log: the room header shows the newest entries and the
-// chat keeps them inline, so an unbounded list would only grow memory.
 const PRESENCE_LIMIT = 50
-// The server's GateReadyBufferMs (see ./gate). Only used to round a buffer
-// that runs to the very end of the media up to "enough": the last seconds of
-// a video can never hold 3s of lookahead, and must not stall a gated start.
-// Readiness cadence while the room is waiting on a gated start. The 5s
-// heartbeat carries the steady reports; this only exists during the wait.
 const WAITING_REPORT_MS = 1000
-// How long a buffer event waits for the next before the report goes.
 const READINESS_DEBOUNCE_MS = 100
-// Reconnect backoff. A dropped socket used to be permanent: the tab went mute,
-// every command was swallowed, and the room played on without the person.
 const RECONNECT_MIN_MS = 500
 const RECONNECT_MAX_MS = 8000
 
@@ -59,17 +49,10 @@ interface SyncResult {
   presence: PresenceEvent[]
   roomStatus: string
   roomVersion: number
-  /** What the last publish moved, for the page to apply in place. */
   mediaPatch: MediaSnapshot | null
-  /** Fetch the room again: a patch the page could not apply. */
   refreshRoom: () => void
   connected: boolean
   buffering: boolean
-  /**
-   * The browser refused to start this viewer's element and muting it did not
-   * help either, so only a click of theirs will. The room plays on without
-   * them until then, which is why the player says so on screen.
-   */
   autoplayBlocked: boolean
   serverOffsetMs: number
   capability: string
@@ -78,30 +61,14 @@ interface SyncResult {
   titleRequests: TitleRequest[]
   lastError: string
   errorSeq: number
-  /**
-   * When the room closes itself for want of anyone doing anything, on the
-   * server's clock, or null when nothing is being asked. Everyone counts down
-   * to the same instant rather than to their own arrival.
-   */
   stillThereDeadlineMs: number | null
-  /** Whether this client left the room on purpose. */
   left: boolean
-  /** Whether the controller put this client out of the room. */
   kicked: boolean
   leave: () => void
-  // Reports whether the frame actually left. A command written into a closed
-  // socket used to vanish silently, which is exactly what "I pressed pause
-  // and nothing happened" looks like from the outside.
   send: (type: string, payload?: Record<string, unknown>) => boolean
-  // The player owns the media element, so it owns the buffering picture. The
-  // hook used to bind waiting/canplay to whatever videoRef held at mount —
-  // nothing at all while a room was still being prepared, and a discarded
-  // node after a source swap.
   reportBuffering: (stalled: boolean) => void
 }
 
-// The request log is a rolling inbox, like presence: old asks age out of
-// memory rather than accumulating for the room's lifetime.
 const TITLE_REQUEST_LIMIT = 20
 
 const initialState: PlayState = { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 }
@@ -110,22 +77,9 @@ export function useSync(
   roomId: string,
   nickname: string,
   videoRef: MutableRefObject<HTMLVideoElement | null>,
-  // Where the current media region begins on the room's absolute timeline.
-  // A ref, because the socket handlers close over it once: every positionMs
-  // on the wire is absolute, every media.currentTime is region-relative, and
-  // this is the only place the two meet.
   mediaOffsetMsRef?: MutableRefObject<number>,
-  // Raised by the player while the room points at media no region has
-  // produced yet. Steering the element then would clamp it into the old
-  // region: the sync layer holds still and keeps it paused instead.
   coldWaitRef?: MutableRefObject<boolean>,
-  // Stamped every time a server frame steers the element. The player checks
-  // it before reporting a native pause: the DOM event a remote pause produces
-  // is indistinguishable from the one a media key produces, and echoing it
-  // back would have the room paused twice over.
   remoteSteerAtRef?: MutableRefObject<number>,
-  // Whether a room position has no region under it: judged per message,
-  // against the position that message carries.
   coldForRef?: MutableRefObject<((ms: number) => boolean) | null>,
 ): SyncResult {
   const socketRef = useRef<WebSocket | null>(null)
@@ -133,10 +87,6 @@ export function useSync(
   const bufferingRef = useRef(false)
   const mediaOffset = () => mediaOffsetMsRef?.current ?? 0
   const coldWait = () => coldWaitRef?.current ?? false
-  // The wait as the player last rendered it lags one frame behind a state
-  // message that moves the room somewhere cold; seeking the element on that
-  // stale answer sent it to the old region's edge and showed a frame from
-  // there. The message is judged on its own position instead.
   const coldAt = (state: PlayState): boolean => {
     const judge = coldForRef?.current
     return judge ? judge(expectedPositionMs(state, Date.now() + offsetRef.current)) : coldWait()
@@ -147,18 +97,11 @@ export function useSync(
   const [members, setMembers] = useState<Member[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [presence, setPresence] = useState<PresenceEvent[]>([])
-  // Null until the welcome frame lands. The server only broadcasts a member
-  // list to the other clients, so the roster a client is handed on arrival is
-  // the baseline to diff against rather than a room full of arrivals.
   const knownMembersRef = useRef<Map<string, string> | null>(null)
   const presenceSeqRef = useRef(0)
   const [autoplayBlocked, setAutoplayBlocked] = useState(false)
   const [roomStatus, setRoomStatus] = useState('connecting')
-  // Bumps on every roomStatus message, even repeated ones, so consumers can
-  // refetch tracks without interpreting a subtitle update as media readiness.
   const [roomVersion, setRoomVersion] = useState(0)
-  // The last publish's media, applied in place by the page; a bare update
-  // still bumps roomVersion and costs a fetch.
   const [mediaPatch, setMediaPatch] = useState<MediaSnapshot | null>(null)
   const [connected, setConnected] = useState(false)
   const [buffering, setBuffering] = useState(false)
@@ -167,15 +110,10 @@ export function useSync(
   const [waiting, setWaiting] = useState<RoomWaiting | null>(null)
   const [gatingEnabled, setGatingEnabled] = useState(true)
   const [titleRequests, setTitleRequests] = useState<TitleRequest[]>([])
-  // The last refusal the server sent, with a counter so the same code twice
-  // in a row still reaches whoever is showing it.
   const [lastError, setLastError] = useState('')
   const [errorSeq, setErrorSeq] = useState(0)
   const [stillThereDeadlineMs, setStillThereDeadlineMs] = useState<number | null>(null)
-  // Left on purpose: the socket is closed and stays closed. A reconnect out
-  // of a room the person was just taken out of would put them back in it.
   const [left, setLeft] = useState(false)
-  // Left because the controller said so, not because the room went quiet.
   const [kicked, setKicked] = useState(false)
   const titleSeqRef = useRef(0)
 
@@ -186,9 +124,6 @@ export function useSync(
     return true
   }, [])
 
-  // Reports this client's buffering picture: position, contiguous buffer held
-  // ahead of it, and whether playback is stalled. A screen-share room has no
-  // media element here and simply never reports.
   const sendReadiness = useCallback(() => {
     const media = videoRef.current
     if (!media) return
@@ -197,7 +132,6 @@ export function useSync(
     for (let index = 0; index < media.buffered.length; index += 1) {
       if (media.buffered.start(index) > media.currentTime + 0.1 || media.currentTime > media.buffered.end(index)) continue
       bufferAheadMs = Math.round((media.buffered.end(index) - media.currentTime) * 1000)
-      // Buffer running to the very end of the media is all there will ever be.
       if (Number.isFinite(media.duration) && media.buffered.end(index) >= media.duration - 0.3) {
         bufferAheadMs = Math.max(bufferAheadMs, GATE_READY_BUFFER_MS)
       }
@@ -206,24 +140,11 @@ export function useSync(
     send('ready', { positionMs, bufferAheadMs, stalled: bufferingRef.current })
   }, [send, videoRef])
 
-  // The media element's buffering picture, handed in by whoever owns the
-  // element. Binding waiting/canplay here used to mean binding them to
-  // whatever videoRef held when the socket opened — nothing at all while the
-  // room was still being prepared, and a discarded node after a source swap.
-  // The flag then stuck at its last value forever: never stalled (so a member
-  // that had genuinely run dry was counted as ready), or always stalled (so
-  // the room re-gated on that member every few seconds, which is the room
-  // that pauses itself in cycles).
   const reportBuffering = useCallback((stalled: boolean) => {
     if (bufferingRef.current === stalled) return
     bufferingRef.current = stalled
     setBuffering(stalled)
     if (stalled) return
-    // A playlist that is still growing carries no ENDLIST, so hls.js reads it
-    // as live and recovers a stall by seeking to the newest segment, which
-    // throws the viewer to the end of whatever has been published so far.
-    // Drift is only ever corrected while not buffering, so this is the first
-    // moment the room's own position can be put back.
     const media = videoRef.current
     if (!media || media.paused) return
     setState((current) => {
@@ -243,12 +164,8 @@ export function useSync(
       const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}`)
       socketRef.current = socket
-      // Every handshake mints a new member id, so a reconnect re-seeds from its
-      // own welcome frame instead of announcing everyone who was already
-      // watching as a fresh arrival — or the viewer's own self as a departure.
       knownMembersRef.current = null
 
-      // Diffs the roster against the last one seen and logs who came and went.
       const applyMembers = (next: Member[]) => {
         const previous = knownMembersRef.current
         const roster = new Map(next.map((member) => [member.id, member.nickname]))
@@ -267,15 +184,6 @@ export function useSync(
         setMembers(next)
       }
 
-      // Starts this viewer's element for a room that is already playing.
-      //
-      // Arriving is the one moment nobody has clicked anything yet, which is
-      // precisely when a browser refuses to play audio — so the refusal is
-      // not an error to swallow, it is the normal case. Muted playback is
-      // always allowed: the picture starts in sync and the mute button is
-      // already lit, one click from sound. Only a browser that refuses even
-      // that leaves the viewer to click, and then the player says so rather
-      // than sitting paused under a clock that keeps running.
       const start = async (media: HTMLVideoElement) => {
         try {
           await media.play()
@@ -299,9 +207,6 @@ export function useSync(
         if (!media) return
         if (remoteSteerAtRef) remoteSteerAtRef.current = Date.now()
         if (coldAt(nextState)) {
-          // The wrong region is all the element has; playing it would show the
-          // wrong minutes under the room's clock. The player reloads it onto
-          // the right region when that region publishes.
           if (!media.paused) media.pause()
           return
         }
@@ -319,16 +224,11 @@ export function useSync(
         attempt = 0
         setConnected(true)
         const clientTimeMs = Date.now()
-        // The owner token is how a reloaded host takes the controls back. A
-        // guest simply has none and joins as a guest.
         socket.send(JSON.stringify({ type: 'hello', nickname, clientTimeMs, ownerToken: ownerTokenFor(roomId) }))
       }
       socket.onclose = () => {
         setConnected(false)
         if (disposed || socketRef.current !== socket) return
-        // Nothing is replayed on the way back: the welcome frame re-seeds state,
-        // roster and roomVersion, and a pause from forty seconds ago would only
-        // re-introduce the desync this exists to prevent.
         const backoff = Math.min(RECONNECT_MIN_MS * 2 ** attempt, RECONNECT_MAX_MS)
         attempt += 1
         retry = window.setTimeout(connect, backoff * (0.75 + Math.random() * 0.5))
@@ -351,14 +251,10 @@ export function useSync(
             setGatingEnabled(message.gating ?? true)
             setWaiting(null)
             setRoomStatus('live')
-            // A reconnecting client may have missed roomStatus/roomUpdated
-            // broadcasts entirely; refetching on every welcome closes that gap.
             setRoomVersion((version) => version + 1)
             if (message.state) applyState(message.state)
             break
           case 'state':
-            // Any state broadcast supersedes a pending gated start: either the
-            // gate released into it or the controller withdrew the start.
             setWaiting(null)
             if (message.state) applyState(message.state)
             break
@@ -366,8 +262,6 @@ export function useSync(
             setWaiting({ targetMs: message.targetMs ?? 0, readiness: message.readiness ?? [] })
             break
           case 'error':
-            // Until now the server refused a command in silence, which on screen
-            // is indistinguishable from the app being broken.
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
             if (message.error === 'kicked') {
@@ -380,7 +274,6 @@ export function useSync(
             setStillThereDeadlineMs(message.deadlineMs ?? null)
             break
           case 'awake':
-            // Someone answered, or the room simply got on with something.
             setStillThereDeadlineMs(null)
             break
           case 'gating':
@@ -423,9 +316,6 @@ export function useSync(
       }
     }
 
-    // A laptop that slept wakes with a socket the browser already gave up on,
-    // and the close event may never arrive. Both of these are the moment the
-    // person is looking at the room again.
     const wakeUp = () => {
       if (disposed || socketRef.current?.readyState === WebSocket.OPEN) return
       if (document.visibilityState === 'hidden') return
@@ -436,16 +326,11 @@ export function useSync(
     window.addEventListener('online', wakeUp)
     document.addEventListener('visibilitychange', wakeUp)
 
-    // The heartbeat reads socketRef rather than closing over one socket: it
-    // outlives every reconnect.
     const heartbeat = window.setInterval(() => {
       send('heartbeat', { clientTimeMs: Date.now() })
       sendReadiness()
       const media = videoRef.current
       if (!media || bufferingRef.current || coldWait()) return
-      // A stopped element does not drift. Dragging its clock every 5s only
-      // repaints a frozen frame — and while disconnected it would walk the
-      // viewer away from the room against a truth that is no longer arriving.
       if (media.paused) return
       setState((current) => {
         const expected = expectedPositionMs(current, Date.now() + offsetRef.current)
@@ -458,8 +343,6 @@ export function useSync(
     connect()
 
     return () => {
-      // Disposed first: closing on purpose fires onclose, and reconnecting
-      // out of a room the viewer just left is its own bug.
       disposed = true
       window.clearInterval(heartbeat)
       if (retry !== null) window.clearTimeout(retry)
@@ -469,24 +352,17 @@ export function useSync(
       socketRef.current = null
     }
   }, [nickname, roomId, send, sendReadiness, videoRef, left])
-  /** Leaves the room for good: the socket closes and nothing reopens it. */
   const leave = useCallback(() => {
     setLeft(true)
     setStillThereDeadlineMs(null)
     setConnected(false)
   }, [])
 
-  // The waiting window is exactly when readiness matters, so reports tighten
-  // to ~1s for its duration — and only for its duration.
   const waitingForStart = waiting !== null
   useEffect(() => {
     if (!waitingForStart) return
     sendReadiness()
     const reporter = window.setInterval(sendReadiness, WAITING_REPORT_MS)
-    // The interval is the floor. The element says when its buffer moved, and
-    // the report that releases the room should not wait for the next tick:
-    // with three viewers the gate opens on the slowest, and a second lost
-    // per report is a second lost for everyone.
     let soon: number | null = null
     const reportSoon = () => {
       if (soon !== null) return
@@ -501,7 +377,6 @@ export function useSync(
       for (const name of events) media?.removeEventListener(name, reportSoon)
     }
   }, [sendReadiness, waitingForStart, videoRef])
-  /** Asks the page to fetch the room again: for a patch it cannot apply. */
   const refreshRoom = useCallback(() => setRoomVersion((version) => version + 1), [])
 
   return {

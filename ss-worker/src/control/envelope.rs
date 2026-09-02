@@ -10,9 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::ticket::now_secs;
 
-/// A job the server signed for this worker. It names an infohash, never a
-/// URL; it names this worker; it expires; and its nonce is remembered
-/// across restarts so a captured envelope cannot be replayed after one.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
@@ -57,8 +54,6 @@ pub struct NonceStore {
     seen: Mutex<HashMap<String, u64>>,
 }
 
-// A nonce is remembered for as long as its job could be replayed, capped
-// so a far-off expiry cannot grow the file without bound.
 const NONCE_TTL_CAP: u64 = 6 * 3600;
 
 impl NonceStore {
@@ -67,8 +62,6 @@ impl NonceStore {
             Ok(raw) => match serde_json::from_str::<HashMap<String, u64>>(&raw) {
                 Ok(seen) => seen,
                 Err(e) => {
-                    // A truncated store must not pass as an empty one in
-                    // silence; the bad file is kept aside for inspection.
                     tracing::error!(error = %e, path = %path.display(), "nonce store unreadable; starting empty");
                     let _ = std::fs::rename(&path, path.with_extension("corrupt"));
                     HashMap::new()
@@ -97,8 +90,6 @@ impl NonceStore {
     }
 }
 
-/// Writes through a sibling temp file and a rename, so a crash leaves
-/// either the old file or the new one, never a torn one.
 pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, data)?;
@@ -170,7 +161,6 @@ mod tests {
         let mut url = job("w1", "n3");
         url.infohash = Some("http://evil".into());
         assert!(verify(&envelope(&url, &key), &vk, "w1", &nonces).is_err(), "url instead of hash");
-        // Survives a restart.
         let reopened = NonceStore::open(dir.clone());
         assert!(verify(&envelope(&job("w1", "n1"), &key), &vk, "w1", &reopened).is_err(), "replay after restart");
         let _ = std::fs::remove_file(&dir);

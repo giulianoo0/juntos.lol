@@ -25,44 +25,31 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/giulianoo0/ss/internal/config"
-	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
 const (
-	maxWSMessageBytes  = 16 << 10
-	maxWSNicknameBytes = 64
-	maxChatBytes       = 2 << 10
-	storeTimeout       = 5 * time.Second
-	// titleRequest bounds: id/name stay short, posters are full image URLs.
+	maxWSMessageBytes    = 16 << 10
+	maxWSNicknameBytes   = 64
+	maxChatBytes         = 2 << 10
+	storeTimeout         = 5 * time.Second
 	maxTitleFieldBytes   = 256
 	maxTitleURLBytes     = 1 << 10
 	titleRequestCooldown = 5 * time.Second
 )
 
 type Hub struct {
-	store *room.Store
-	// bucket is where a reclaimed room's media is given back. The bucket's own
-	// lifecycle rule is the backstop; this is what returns the storage as soon
-	// as the room stops existing.
-	bucket      room.MediaStore
-	cfg         config.Config
-	upgrader    websocket.Upgrader
-	idleAfter   time.Duration
-	gateTimeout time.Duration
-	// stallCooldown is how long a room refuses to stop for a stall again after
-	// releasing. A field so tests can exercise the stall path without waiting
-	// out the real interval.
+	store         *room.Store
+	bucket        room.MediaStore
+	cfg           config.Config
+	upgrader      websocket.Upgrader
+	idleAfter     time.Duration
+	gateTimeout   time.Duration
 	stallCooldown time.Duration
 
-	// What to tell when a room is gone for good: its torrent job outlives it
-	// otherwise, seeded for nobody until its own idle sweep notices.
 	onReclaimed func(roomID string)
 
-	// onPosition is told the room's authoritative position whenever the
-	// controller moves it — play, pause, seek, gated or not. Called off the
-	// room's goroutine; the remote-remux follow hangs here. Nil-safe.
 	onPosition func(roomID string, positionMs int64)
 
 	mu           stdsync.Mutex
@@ -76,36 +63,18 @@ type Hub struct {
 }
 
 type roomConn struct {
-	id           string
-	hub          *Hub
-	controllerID string
-	// gating mirrors the persisted room setting so the welcome frame does not
-	// cost a store read. Only this connection's goroutine ever changes it.
-	gating bool
-	// ownerToken is the room creator's secret, mirrored from the store. A
-	// hello frame carrying it takes the controls back: a reload mints a new
-	// member id, and without this the host returns as a spectator of their
-	// own room.
-	ownerToken string
-	gate       *playGate
-	// ignored holds members the controller has excused from synchronized
-	// playback: the room neither waits for them nor stops when they stall.
-	ignored map[string]struct{}
-	// stallGateReadyAt is when the room may next stop for a stall, so one bad
-	// connection cannot pause everyone in a loop.
+	id               string
+	hub              *Hub
+	controllerID     string
+	gating           bool
+	ownerToken       string
+	gate             *playGate
+	ignored          map[string]struct{}
 	stallGateReadyAt time.Time
-	// lastActivity is when this room was last doing something on purpose: a
-	// play, a pause, a seek, a rate change, a line of chat. Not connections,
-	// which a forgotten tab supplies for as long as the browser is open, and
-	// which are exactly what this is here to catch.
-	lastActivity time.Time
-	// asked is whether the room is currently waiting for someone to say they
-	// are still there, so the question is put once rather than on every tick.
-	asked bool
-	// When this room last woke its viewers for progress alone. Taken from
-	// whichever request goroutine is publishing, so it carries its own lock.
-	progressMu     stdsync.Mutex
-	lastProgressAt time.Time
+	lastActivity     time.Time
+	asked            bool
+	progressMu       stdsync.Mutex
+	lastProgressAt   time.Time
 
 	nextMember int
 	clients    map[string]*client
@@ -128,9 +97,6 @@ type clientInbound struct {
 	message Inbound
 }
 
-// NewHub creates a WebSocket hub backed by the room store and the bucket its
-// media lives in.
-// OnPosition registers the authoritative-position hook.
 func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
 	h.onPosition = fn
 }
@@ -164,17 +130,14 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 }
 
 // OnRoomReclaimed registers what to do when a room is torn down for good, so
-// the work it started elsewhere goes with it. Set once at startup, before any
-// room exists, and read from the room goroutines afterwards.
+// the work it started elsewhere goes with it. Set once at startup.
 func (h *Hub) OnRoomReclaimed(fn func(roomID string)) {
 	h.onReclaimed = fn
 }
 
-// Live reports the rooms with someone in them and how many people that is,
-// right now. Counted from the capability table rather than each room's own
-// client map: that map belongs to the room's goroutine, and this is asked
-// from a request's. A room whose last member left is still in `rooms` until
-// its goroutine winds down, so an empty one is not a room anyone is in.
+// Live reports the rooms with someone in them and how many people that is.
+// Counted from the capability table rather than each room's client map, which
+// belongs to the room's own goroutine.
 func (h *Hub) Live() (rooms, members int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -197,7 +160,6 @@ func (h *Hub) AuthorizeMember(roomID, memberID, capability string) bool {
 	return want != "" && len(want) == len(capability) && subtle.ConstantTimeCompare([]byte(want), []byte(capability)) == 1
 }
 
-// Close stops all room and client goroutines owned by the hub.
 func (h *Hub) Close() {
 	h.closeOnce.Do(func() {
 		h.mu.Lock()
@@ -231,8 +193,6 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
-	metrics.WebsocketConnections.Inc()
-	defer metrics.WebsocketConnections.Dec()
 	conn.SetReadLimit(maxWSMessageBytes)
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return
@@ -285,7 +245,6 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	client.readPump()
 }
 
-// NotifyStatus broadcasts a persisted room media status to connected clients.
 func (h *Hub) NotifyStatus(roomID, status string) {
 	h.notify(roomID, Outbound{Type: "roomStatus", Status: status})
 }
@@ -296,16 +255,12 @@ func (h *Hub) NotifyRoomUpdated(roomID string) {
 	h.notify(roomID, Outbound{Type: "roomUpdated"})
 }
 
-// NotifyRoomMedia is a roomUpdated that says what moved: the regions, the
-// offset, the version. A viewer waiting on a cold seek applies it in place,
-// one round trip sooner than refetching the room.
+// NotifyRoomMedia is a roomUpdated that says what moved — regions, offset,
+// version — so a viewer applies it in place instead of refetching the room.
 func (h *Hub) NotifyRoomMedia(roomID string, media room.MediaSnapshot) {
 	h.notify(roomID, Outbound{Type: "roomUpdated", Media: &media})
 }
 
-// How often a room's progress alone may wake every viewer. Each wake costs
-// them a full room refetch, and a preparo publishes progress every couple of
-// seconds for as long as it runs.
 const progressNotifyEvery = 5 * time.Second
 
 // NotifyRoomProgress says the preparo moved, and nothing else did. Unlike an
@@ -379,8 +334,6 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 }
 
 func (r *roomConn) run() {
-	// Registered first, so it runs last: every other deferred cleanup still
-	// runs, and one room's failure never takes the whole server with it.
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Error("room goroutine panicked", "room_id", r.id, "panic", p, "stack", string(debug.Stack()))
@@ -389,10 +342,6 @@ func (r *roomConn) run() {
 	defer r.hub.removeRoom(r.id, r)
 	defer r.dropGate()
 	defer func() {
-		// A shutdown closes the room out from under whoever is still in it,
-		// so the gauge is settled here rather than left counting members of a
-		// room that no longer exists.
-		metrics.ParticipantsConnected.Sub(float64(len(r.clients)))
 		for _, connected := range r.clients {
 			close(connected.send)
 		}
@@ -403,7 +352,6 @@ func (r *roomConn) run() {
 	awake := time.NewTicker(idleTick)
 	defer awake.Stop()
 	for {
-		// A nil channel blocks forever, so the case only fires while gated.
 		var gateExpired <-chan time.Time
 		if r.gate != nil {
 			gateExpired = r.gate.timer.C
@@ -454,7 +402,6 @@ func (r *roomConn) run() {
 
 func (r *roomConn) handleJoin(request joinRequest) {
 	if len(r.clients) >= r.hub.cfg.MaxParticipants {
-		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "room_full"
 		return
 	}
@@ -463,7 +410,6 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	request.client.id = memberID
 	capabilityBytes := make([]byte, 32)
 	if _, err := rand.Read(capabilityBytes); err != nil {
-		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -475,7 +421,6 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	defer cancel()
 	if err := r.hub.store.AddMember(ctx, r.id, request.client.member); err != nil {
 		slog.ErrorContext(ctx, "add websocket member failed", "room_id", r.id, "member_id", memberID, "error", err)
-		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -483,7 +428,6 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket state failed", "room_id", r.id, "error", err)
 		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
-		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
@@ -494,16 +438,9 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket chat failed", "room_id", r.id, "error", err)
 		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
-		metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 		request.result <- "internal_error"
 		return
 	}
-	// Three ways this join owns the room. The token is a deliberate handover
-	// back to whoever created it — a reloaded host — so it wins even over a
-	// live controller. The liveness check covers a controllerID that survived
-	// in the store but names nobody: a process restart replays member ids
-	// from m1, so a stale "m2" would otherwise lock everyone out of the
-	// controls until the second person happened to join.
 	_, controllerLive := r.clients[r.controllerID]
 	claimsOwnership := r.ownerToken != "" && request.ownerToken != "" &&
 		subtle.ConstantTimeCompare([]byte(r.ownerToken), []byte(request.ownerToken)) == 1
@@ -511,7 +448,6 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		if err := r.hub.store.SetController(ctx, r.id, memberID); err != nil {
 			slog.ErrorContext(ctx, "set initial websocket controller failed", "room_id", r.id, "error", err)
 			_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
-			metrics.ParticipantJoins.WithLabelValues(metrics.JoinRejected).Inc()
 			request.result <- "internal_error"
 			return
 		}
@@ -527,10 +463,6 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.touch()
 	members := r.members()
 	gating := r.gating
-	// Through send rather than straight into the channel, so the frames a
-	// join produces are counted like every other frame the room emits. The
-	// buffer is untouched and 64 deep at this point, so nothing can be
-	// dropped here that would not have blocked before.
 	r.send(request.client, Outbound{
 		Type: "welcome", MemberID: memberID, State: &state, ControllerID: r.controllerID,
 		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
@@ -542,11 +474,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.broadcastExcept(request.client, Outbound{
 		Type: "members", ControllerID: r.controllerID, Members: members,
 	})
-	// A mid-wait joiner is counted in the quorum but never restarts the clock:
-	// it only gets the pending roster so its client starts reporting.
 	r.broadcastWaiting()
-	metrics.ParticipantJoins.WithLabelValues(metrics.JoinAccepted).Inc()
-	metrics.ParticipantsConnected.Inc()
 	request.result <- ""
 }
 
@@ -594,9 +522,6 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.controllerID = target.id
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 	case "kick":
-		// Told, then dropped: the write pump closes the socket behind this
-		// frame, the read pump unregisters the member, and the roster
-		// broadcast follows from there like any other leave.
 		r.send(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
 	}
 	r.touch()
@@ -607,12 +532,7 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 		return
 	}
 	delete(r.clients, disconnected.id)
-	metrics.ParticipantsConnected.Dec()
-	metrics.ParticipantLeaves.Inc()
 	r.logSyncSummary(disconnected)
-	// Being ignored is a decision about a person in this room right now. If
-	// they come back — usually after fixing whatever was wrong — they rejoin
-	// as a full member rather than silently still excluded.
 	delete(r.ignored, disconnected.id)
 	r.hub.mu.Lock()
 	delete(r.hub.capabilities[r.id], disconnected.id)
@@ -637,8 +557,6 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 	if len(r.clients) > 0 {
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 	}
-	// A member who left must not keep the wait alive: everyone remaining may
-	// now be the whole quorum.
 	if r.gate != nil {
 		if len(r.clients) == 0 {
 			r.dropGate()
@@ -650,7 +568,6 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 
 func (r *roomConn) handleInbound(event clientInbound) {
 	message := event.message
-	metrics.WebsocketMessages.WithLabelValues("in", inboundLabel(message.Type)).Inc()
 	switch message.Type {
 	case "heartbeat":
 		r.send(event.client, Outbound{
@@ -676,8 +593,6 @@ func (r *roomConn) handleInbound(event clientInbound) {
 			}
 			return
 		}
-		// Nobody is waiting yet, so this report is the room's only chance to
-		// notice that someone's playback has run dry mid-episode.
 		r.gateOnStall(readyCtx, now)
 	case "gating":
 		r.handleGatingToggle(event.client, message)
@@ -710,8 +625,6 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.handleTitleRequest(event.client, message)
 		r.touch()
 	case "stillHere":
-		// Anybody may answer: the question is put to the room, and one person
-		// still watching is the whole answer.
 		r.touch()
 	}
 }
@@ -743,17 +656,12 @@ func (r *roomConn) handleTitleRequest(sender *client, message Inbound) {
 
 func (r *roomConn) handleState(sender *client, message Inbound) {
 	if sender.id != r.controllerID {
-		// Silence here reads as "the app is broken": the person pressed pause
-		// and the room kept playing. Saying so lets the client explain it.
 		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
 		return
 	}
 	if message.PositionMs < 0 {
 		return
 	}
-	// The follow leaves before the early returns below: a gated seek is as
-	// authoritative as an ungated one, and openGate returning must not lose
-	// it. Never on this goroutine — the hook may talk to a worker.
 	if r.hub.onPosition != nil && message.Type != "rate" {
 		go r.hub.onPosition(r.id, message.PositionMs)
 	}
@@ -793,9 +701,6 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 			state.Rate = message.Rate
 		}
 	case "seek":
-		// A seek that lands in playback is gated exactly like play, so it
-		// puts everyone at the target together. A seek while a gate is
-		// already pending retargets it rather than leaving a stale start.
 		if (state.Playing || r.gate != nil) && r.shouldGate(ctx) {
 			r.openGate(ctx, sender, message.PositionMs, state, now)
 			return
@@ -816,8 +721,6 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	}
 	stateCopy := state
 	r.broadcast(Outbound{Type: "state", State: &stateCopy})
-	// An ungated play, pause or seek supersedes any start still pending;
-	// leaving it would replay a stale target on timeout.
 	switch message.Type {
 	case "play", "pause", "seek":
 		r.dropGate()
@@ -856,13 +759,9 @@ func (r *roomConn) broadcastExcept(excluded *client, event Outbound) {
 }
 
 func (r *roomConn) send(target *client, event Outbound) {
-	// A stall gate opens with no sender: there is nobody to report an error to.
 	if target == nil {
 		return
 	}
-	// Outbound types are this package's own constants, so unlike the inbound
-	// ones they need no clamping.
-	metrics.WebsocketMessages.WithLabelValues("out", event.Type).Inc()
 	select {
 	case target.send <- event:
 	default:
@@ -870,43 +769,21 @@ func (r *roomConn) send(target *client, event Outbound) {
 	}
 }
 
-// How long a room nobody is watching may stay in the preparing stage before it
-// is reclaimed anyway. Long enough for a slow swarm to reach a first playable
-// segment, short enough that a source which never will does not hold a worker
-// and a torrent for the room's whole lifetime.
 const preparingGrace = 10 * time.Minute
 
-// A room with people in it but nothing happening is usually a tab someone
-// forgot, holding a worker's torrent and a bucket's worth of segments for an
-// audience of nobody. It is asked first and closed only if the question goes
-// unanswered, because the alternative is closing a room on people who were
-// arguing about what to watch next.
 const (
 	idleAsk   = 15 * time.Minute
 	idleClose = 20 * time.Minute
-	// How often the room checks its own clock. Coarse on purpose: this decides
-	// nothing that needs to be accurate to the second, and the countdown a
-	// member sees runs from a deadline they were handed, not from this.
-	idleTick = 15 * time.Second
+	idleTick  = 15 * time.Second
 )
 
 // unfinishedWork names what an idle room still has running, or "" when
-// reclaiming it destroys nothing.
-//
-// Status is not enough on its own. The host's remux publishes a playable
-// segment seconds in and flips the room to ready there, which is the whole
-// point of it — but the source goes on arriving for minutes after that.
-// Reclaiming on status alone lands a finished remux in a room that no longer
-// exists.
+// reclaiming it destroys nothing. Status is not enough on its own: the room
+// flips to ready while the source is still arriving.
 func unfinishedWork(r *room.Room, now time.Time) string {
-	// A room that failed has nothing left to protect, whatever stage it says
-	// it is in: keeping it only holds a torrent open for an error message.
 	if r.Status == "error" || r.ErrorMessage != "" {
 		return ""
 	}
-	// Preparing is protected, but not forever. A source that has not become
-	// playable in this long with nobody watching is not going to; without a
-	// ceiling the room and its torrent sit there until the room's whole TTL.
 	if now.Sub(r.CreatedAt) > preparingGrace {
 		return ""
 	}
@@ -930,19 +807,14 @@ func (r *roomConn) touch() {
 }
 
 // sweepIdle asks a quiet room whether anyone is still there, and closes it if
-// the question went unanswered. It reports whether the room is gone.
-//
-// Only rooms with someone in them: an empty one belongs to the reclaim timer,
-// which runs on a much shorter fuse and does not need to ask anybody.
+// the question went unanswered. It reports whether the room is gone. Only
+// rooms with someone in them; an empty one belongs to the reclaim timer.
 func (r *roomConn) sweepIdle() bool {
 	if len(r.clients) == 0 {
 		return false
 	}
 	quiet := time.Since(r.lastActivity)
 	if quiet >= idleClose {
-		// Deleting the record is what ends it: every socket here drops with
-		// it, and the link answers as an expired room from then on, which is
-		// what it is.
 		r.cleanupIdle()
 		return true
 	}
@@ -961,15 +833,10 @@ func (r *roomConn) cleanupIdle() {
 	r.hub.reclaimIdle(r.id)
 }
 
-// abandonedSweepEvery is how often the hub looks for rooms nobody is in and no
-// goroutine is watching: a room kept past its idle timer for work still
-// running, or one whose goroutine died with the process.
 const abandonedSweepEvery = time.Minute
 
 // sweepAbandoned reclaims every stored room that has no goroutine here and no
-// work left to protect. The idle timer only fires once per goroutine, and a
-// room it spared ("idle room kept") used to sit in the store until its TTL
-// with nobody ever asking again — as did every empty room after a restart.
+// work left to protect: the idle timer only fires once per goroutine.
 func (h *Hub) sweepAbandoned() {
 	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
 	ids, err := h.store.IDs(ctx)
@@ -1017,10 +884,6 @@ func (h *Hub) reclaimIdle(id string) bool {
 		return false
 	}
 	if reason := unfinishedWork(storedRoom, time.Now()); reason != "" {
-		// Work that outlives the websocket idle window keeps its persisted
-		// room and files: the host's browser can go on publishing segments. A
-		// later connection gets fresh ownership. The abandoned sweep comes
-		// back for it once the work is done or the grace runs out.
 		if err := h.store.SetController(ctx, id, ""); err != nil {
 			slog.ErrorContext(ctx, "clear controller for idle active upload failed", "room_id", id, "error", err)
 		}
@@ -1028,15 +891,6 @@ func (h *Hub) reclaimIdle(id string) bool {
 		return false
 	}
 	fileErr := os.RemoveAll(filepath.Join(h.cfg.DataDir, "rooms", id))
-	// The published media goes with the room. Nothing can reach it once the
-	// room is gone — the playlists naming it are part of the room record — so
-	// leaving it for the bucket's own rule only pays for storage nobody can
-	// watch. Removed before the room record, which is the only thing that
-	// still names these objects.
-	// The store's few-second timeout is not enough to delete hundreds of
-	// segments: a big room's cleanup died halfway and left a zombie — a
-	// "ready" record over gutted media that a returning member could rejoin.
-	// The bucket work gets its own clock.
 	mediaCtx, cancelMedia := context.WithTimeout(h.ctx, 2*time.Minute)
 	mediaErr := h.removeMedia(mediaCtx, id)
 	cancelMedia()
@@ -1049,13 +903,6 @@ func (h *Hub) reclaimIdle(id string) bool {
 		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", id, "error", err)
 		return false
 	}
-	// A room that everyone left is reclaimed well before its TTL, and used to
-	// go without a word. Its link then answers room_not_found with nothing
-	// anywhere saying why, which reads like data loss rather than the cleanup
-	// it is.
-	metrics.RoomsReclaimed.WithLabelValues(metrics.ReclaimIdle).Inc()
-	// Only now, with the record gone: whatever this releases cannot be taken
-	// back, and a room that failed to delete is a room still being watched.
 	if h.onReclaimed != nil {
 		h.onReclaimed(id)
 	}
@@ -1064,7 +911,6 @@ func (h *Hub) reclaimIdle(id string) bool {
 	return true
 }
 
-// removeMedia gives a room's published objects back to the bucket.
 func (h *Hub) removeMedia(ctx context.Context, roomID string) error {
 	if h.bucket == nil {
 		return nil
@@ -1093,22 +939,6 @@ func sameHostnameOrigin(request *http.Request) bool {
 		requestHost = strings.Trim(requestHost[:colon], "[]")
 	}
 	return strings.EqualFold(parsed.Hostname(), requestHost)
-}
-
-// inboundLabel folds a client-supplied message type onto the closed set this
-// package actually handles.
-//
-// The type arrives over the wire from a browser, and using it as a label value
-// unchecked would let anyone mint an unbounded number of time series by
-// sending nonsense — the metrics endpoint would grow until it, rather than the
-// video, became the expensive part of the server.
-func inboundLabel(messageType string) string {
-	switch messageType {
-	case "hello", "heartbeat", "ready", "gating", "ignore", "chat",
-		"play", "pause", "seek", "rate", "kick", "transfer", "source":
-		return messageType
-	}
-	return "other"
 }
 
 func validRoomID(id string) bool {

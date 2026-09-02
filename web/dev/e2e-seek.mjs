@@ -22,8 +22,7 @@ const info = async () => (await fetch(`${base}/api/rooms/${roomID}`)).json()
 const until = async (name, pred, ms = 120_000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const i = await info(); if (pred(i)) return i; await new Promise((r) => setTimeout(r, 1500)) }; throw new Error('timeout: ' + name) }
 const video = () => page.evaluate(() => { const v = document.querySelector('video'); return { t: v.currentTime, rs: v.readyState, paused: v.paused, dur: v.duration } })
 const seekTo = async (seconds) => {
-  // The scrubber is a controlled range input: set through the native setter
-  // so React sees the change, then commit the gesture.
+  // Set through the native setter so React sees the change.
   await page.evaluate((s) => {
     const input = document.querySelector('input[type=range]')
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
@@ -40,8 +39,6 @@ await page.getByRole('button', { name: /play|reproduzir|tocar/i }).first().click
 await page.waitForTimeout(6000)
 console.log('playing from start:', JSON.stringify(await video()))
 
-// 1. Seek to 10:00 — far past anything produced. The pipeline must open a
-// region there, and the player must play it without 0:00–10:00 arriving.
 await seekTo(600)
 i = await until('region near 600', (i) => (i.mediaRegions ?? []).some((r) => Math.abs(r.startMs - 600_000) < 15_000 && r.producedMs >= 4000), 180_000)
 console.log('after seek 600 regions:', regions(i))
@@ -51,8 +48,6 @@ console.log('video after cold seek:', JSON.stringify(v), 'offset region:', regio
 const have = (await info()).preparation?.swarm
 console.log('swarm at that point:', JSON.stringify(have), 'fraction', (have.haveBytes / have.selectedBytes).toFixed(2))
 
-// 2. Seek back into region 0's produced stretch: no restart, the player
-// switches on its own.
 const before = (await info()).mediaRegions.length
 await seekTo(20)
 await page.waitForTimeout(8000)
@@ -60,8 +55,6 @@ i = await info()
 v = await video()
 console.log('after seek 20 regions:', regions(i), 'count', before, '->', i.mediaRegions.length, 'video', JSON.stringify(v))
 
-// 3. Seek storm: five cold targets in quick succession; the room must
-// survive and end up producing the last one.
 for (const s of [300, 420, 200, 480, 360]) { await seekTo(s); await page.waitForTimeout(700) }
 i = await until('region near 360', (i) => (i.mediaRegions ?? []).some((r) => Math.abs(r.startMs - 360_000) < 15_000 && r.growing), 180_000)
 await page.waitForTimeout(8000)

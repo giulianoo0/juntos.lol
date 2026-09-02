@@ -5,23 +5,17 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   worker: {
-    // The plugin worker dynamically imports the plugin's own module, and a
-    // classic worker cannot do that. Vite's build default is 'iife', so
-    // without this the sandbox works in `npm run dev` and breaks after
-    // deploy — the worst shape a bug can have.
+    // The plugin worker dynamically imports the plugin's module, which a
+    // classic worker cannot do; Vite's build default is 'iife'.
     format: 'es',
-    // Its own directory, so the server can match a path rather than a name and
-    // give this one response a Content-Security-Policy the rest of the app
-    // must not have. All three patterns are pinned on purpose: with only
-    // entryFileNames set, the first `import` added to worker.ts would split a
-    // shared chunk out to the default `assets/[name]-[hash].js`, which stops
-    // matching, and the worker would then load code with no policy at all —
-    // a security downgrade caused by adding an import.
+    // Its own directory, so the server can match a path and give this one
+    // response its own Content-Security-Policy. All three patterns are pinned:
+    // otherwise a new import splits a chunk out to the default path, which the
+    // server does not match, and the worker loads with no policy at all.
     rolldownOptions: {
       output: {
-        // The remux worker is the app's own code and must be able to fetch
-        // (the workers, the bucket, the api); the plugin-worker CSP would
-        // strangle it, so its entry lives on a path the server leaves alone.
+        // The remux worker must be able to fetch, so its entry lives on a
+        // path the plugin-worker CSP does not cover.
         entryFileNames: (chunk) => chunk.name === 'remuxWorker'
           ? 'assets/media-worker/[hash].js'
           : 'assets/plugin-worker/[hash].js',

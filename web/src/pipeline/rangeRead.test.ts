@@ -10,7 +10,6 @@ function body(start: number, end: number, cut?: number): Response {
   const slice = FILE.subarray(start, cut === undefined ? end + 1 : Math.min(end + 1, start + cut))
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
-      // Two chunks so the resume logic sees a partial delivery.
       const half = Math.floor(slice.byteLength / 2)
       if (half > 0) c.enqueue(slice.subarray(0, half))
       if (slice.byteLength - half > 0) c.enqueue(slice.subarray(half))
@@ -81,7 +80,6 @@ describe('rangeBytes', () => {
     let served = 0
     install((s, e) => {
       served += 1
-      // Fail twice between every 10 delivered bytes; never three in a row.
       if (served % 3 !== 0) return new Response('', { status: 503 })
       return body(s, Math.min(e, s + 9))
     })
@@ -186,7 +184,7 @@ describe('origin policies', () => {
       if (n > 1) return body(s, e)
       const slice = FILE.subarray(s, e + 1)
       const stream = new ReadableStream<Uint8Array>({
-        start(c) { c.enqueue(slice.subarray(0, 10)) /* then silence */ },
+        start(c) { c.enqueue(slice.subarray(0, 10)) },
       })
       return new Response(stream, { status: 206, headers: { 'Content-Range': `bytes ${s}-${e}/${SIZE}` } })
     })

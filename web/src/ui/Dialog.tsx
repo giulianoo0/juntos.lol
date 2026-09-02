@@ -2,11 +2,8 @@ import type { ReactNode } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 
-// Dialog wraps Radix so every modal in the app gets the same behaviour for
-// free: focus moves in and comes back out, Escape and the overlay close it,
-// the page behind stops scrolling and screen readers are told a dialog opened.
-// The previous <dialog> elements had to be taught each of those by hand, and
-// were not consistent about it.
+// Wraps Radix so every modal in the app gets the same focus, Escape, overlay
+// and scroll-lock behaviour.
 
 export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
@@ -23,14 +20,9 @@ export function DialogContent({
 }: {
   children: ReactNode
   className?: string
-  // Radix requires a title for the accessible name. Passing it here keeps a
-  // dialog from ever shipping without one.
   title: ReactNode
   description?: ReactNode
   closeLabel?: string
-  // For content that renders its own heading — one that changes as the dialog
-  // advances through steps. The title still exists for assistive technology,
-  // it just is not drawn twice.
   hideTitle?: boolean
   onCloseClick?: () => void
 }) {

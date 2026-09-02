@@ -46,7 +46,6 @@ async function getJSON<T>(url: string): Promise<T> {
       return response.json() as Promise<unknown>
     })
     cache.set(url, pending)
-    // A failed fetch must not poison the cache: the catalog retries on demand.
     pending.catch(() => cache.delete(url))
   }
   return await (pending as Promise<T>)
@@ -56,8 +55,7 @@ function isMetaType(value: unknown): value is MetaType {
   return value === 'movie' || value === 'series'
 }
 
-// Search results and catalog rows share one wire shape; anything without the
-// fields a poster card needs is dropped rather than rendered broken.
+/** Anything missing a field a poster card needs is dropped rather than rendered broken. */
 export function parseCatalogMetas(payload: unknown, fallbackType?: MetaType): CatalogMeta[] {
   if (typeof payload !== 'object' || payload === null) return []
   const metas = (payload as { metas?: unknown }).metas
@@ -133,8 +131,7 @@ export async function fetchMeta(type: MetaType, id: string): Promise<MetaDetail 
   return parseMetaDetail(payload)
 }
 
-// One query fans out to both types; movies and series come back interleaved by
-// each list's own ranking, movies first on ties.
+/** Fans out to both types; results interleave by each list's own ranking, movies first on ties. */
 export async function searchCatalog(query: string): Promise<CatalogMeta[]> {
   const trimmed = query.trim()
   if (!trimmed) return []

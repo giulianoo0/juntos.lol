@@ -1,19 +1,12 @@
 /**
- * A fragment loader that keeps the next few segments in flight.
- *
- * The bucket answers a single connection at a few MB/s with over half a
- * second before the first byte, and hls.js fetches strictly one fragment at
- * a time — a 4K episode fills its buffer barely faster than it plays.
- * Segment names are numbered (…cs_0_154.m4s), so while one downloads the
- * ones right after it are fetched in parallel, and answered from memory
- * when hls.js asks for them.
+ * A fragment loader that keeps the next few segments in flight: hls.js fetches
+ * strictly one fragment at a time, so the numbered segments after the current
+ * one (…cs_0_154.m4s) are fetched in parallel and answered from memory.
  */
 import type { HlsConfig, Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 
 const LOOKAHEAD = 3
 const CACHE_MAX = 8
-// A warmed body older than this is dropped rather than served: the fetch
-// raced something (a stall, a region switch) and the network is the truth.
 const FRESH_MS = 30_000
 
 /** The URL `step` segments after this one, or null off the naming scheme. */
@@ -43,8 +36,6 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
     }
     warmed.set(url, {
       at: performance.now(),
-      // A miss is null, never an error: the playlist may simply not have
-      // reached that segment yet, and hls.js will ask again later.
       promise: fetch(url).then((response) => (response.ok ? response.arrayBuffer() : null)).catch(() => null),
     })
   }

@@ -12,14 +12,8 @@ export type CodecID = 'h264' | 'hevc' | 'av1' | 'vp9'
 
 export interface CodecProbe {
   id: CodecID
-  /** The name to show. HEVC and H.265 are the same codec under two names. */
   label: string
-  /**
-   * Every variant the pipeline can emit for this codec. A codec counts as
-   * supported only when all of them do: a browser that decodes 8-bit HEVC but
-   * not 10-bit cannot play the releases this app sees, and reporting it as
-   * supported would cost someone a player that never starts.
-   */
+  /** Every variant the pipeline can emit; supported only when all of them are. */
   mimeTypes: string[]
 }
 
@@ -30,9 +24,6 @@ export interface CodecSupport extends CodecProbe {
 /** Oracle for a MIME type, or null when the browser offers no way to ask. */
 export type CodecOracle = ((mimeType: string) => boolean) | null
 
-// Codec strings chosen to match what the remux actually writes: libx264 at
-// High for the transcode target, and the hvc1/av01 strings ffmpeg produces
-// when it copies a source through.
 export const CODEC_PROBES: CodecProbe[] = [
   {
     id: 'h264',
@@ -57,11 +48,8 @@ export const CODEC_PROBES: CodecProbe[] = [
 ]
 
 /**
- * How the running browser answers, or null if it will not.
- *
- * MediaSource is asked first because that is what plays here: hls.js feeds
- * segments through Media Source Extensions, and canPlayType can answer yes for
- * a codec MSE then refuses.
+ * MediaSource is asked first because that is what plays here: canPlayType can
+ * answer yes for a codec MSE then refuses.
  */
 export function browserOracle(): CodecOracle {
   if (typeof MediaSource !== 'undefined' && typeof MediaSource.isTypeSupported === 'function') {
@@ -79,8 +67,6 @@ export function browserOracle(): CodecOracle {
 export function detectCodecSupport(oracle: CodecOracle = browserOracle()): CodecSupport[] {
   return CODEC_PROBES.map((probe) => ({
     ...probe,
-    // Silence beats a false alarm: with nothing to ask, claim everything works
-    // rather than warning about codecs that may well be fine.
     supported: oracle === null || probe.mimeTypes.every(oracle),
   }))
 }
@@ -90,12 +76,9 @@ export function unsupportedCodecs(support: CodecSupport[]): CodecSupport[] {
 }
 
 /**
- * The codecs a stored dismissal covered.
- *
- * Reads the list this app writes, and the older whole-answer form
- * (`h264:1,hevc:0`) it used to write, where only the entries marked
- * unsupported were ever a complaint. Anything unrecognised is ignored, so a
- * record written by a future version costs a repeat warning at worst.
+ * Reads the list this app writes and the older whole-answer form
+ * (`h264:1,hevc:0`), where only the entries marked unsupported were a
+ * complaint. Anything unrecognised is ignored.
  */
 export function dismissedCodecs(stored: string): Set<CodecID> {
   const known = new Set<string>(CODEC_PROBES.map((probe) => probe.id))
@@ -108,24 +91,13 @@ export function dismissedCodecs(stored: string): Set<CodecID> {
   return ids
 }
 
-/**
- * What will not play and has not already been said.
- *
- * The probe is not a fixed property of a browser. Chrome answers for HEVC out
- * of the machine's hardware video decoding, which switches off and on by
- * itself — a GPU process that crashed, a driver the blocklist started
- * refusing, the acceleration setting. So the same browser gives different
- * answers on different days, and a viewer who is told twice about the same
- * codec learns only that the app nags.
- */
 export function unacknowledgedCodecs(support: CodecSupport[], dismissed: Set<CodecID>): CodecSupport[] {
   return unsupportedCodecs(support).filter((codec) => !dismissed.has(codec.id))
 }
 
 /**
- * What to store when this answer is dismissed: every codec ever reported, not
- * merely the ones reported now. A codec that comes back is not news, and a
- * browser that gained one back has not grown a problem worth a modal.
+ * Every codec ever reported, not merely the ones reported now: the probe is
+ * not stable across days, and a codec that comes back is not news.
  */
 export function dismissalRecord(stored: string, support: CodecSupport[]): string {
   const ids = dismissedCodecs(stored)

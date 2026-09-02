@@ -9,7 +9,6 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Notify};
 
-/// What one PUT from the muxer turned out to be.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ObjectKind {
     Manifest,
@@ -79,9 +78,6 @@ const MAX_MANIFEST_BYTES: usize = 512 * 1024;
 
 /// One run's output sink: manifests as replaceable snapshots in memory,
 /// media objects spooled to disk under a byte budget the muxer feels.
-/// Admission reserves the whole object ceiling before consuming the body,
-/// so several part-written objects can never wedge each other out of the
-/// space needed to finish; the excess is returned at close.
 pub struct Sink {
     dir: PathBuf,
     object_cap: u64,
@@ -145,13 +141,10 @@ impl Sink {
         Ok(())
     }
 
-    /// Streams one media object body into the spool. The muxer keeps several
-    /// output bodies open at once (every variant's init plus the growing
-    /// segments), so budget is reserved in slabs as each body grows — never
-    /// the whole object ceiling up front, which once handed the entire spool
-    /// to two open inits and deadlocked FFmpeg against its own segment.
-    /// Backpressure still lands where it should: a body that outgrows the
-    /// free budget stops being read until an upload returns bytes.
+    /// Streams one media object body into the spool, reserving budget in
+    /// slabs as the body grows rather than the whole object ceiling up front.
+    /// A body that outgrows the free budget stops being read until an upload
+    /// returns bytes.
     pub async fn store_media<S, B, E>(&self, name: &str, mut body: S) -> anyhow::Result<()>
     where
         S: futures::Stream<Item = Result<B, E>> + Unpin,
@@ -160,16 +153,11 @@ impl Sink {
     {
         let held = { self.closed.lock().get(name).cloned() };
         if let Some(held) = held {
-            // Idempotent retry: only the same bytes may land on a closed name.
             return self.verify_retry(&held, &mut body).await;
         }
         let slab = self.object_cap.min(16 * 1024 * 1024);
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
         let tmp = self.dir.join(format!("part_{serial}.tmp"));
-        // The producer may vanish mid-body — hyper drops the handler future
-        // when FFmpeg's side of the connection dies — and a plain counter
-        // then leaks its slabs until the spool runs dry. The hold gives the
-        // budget and the temp file back however this future ends.
         let mut hold = SpoolHold { sink: self, amount: 0, tmp: Some(tmp.clone()) };
         let object = self.consume(name, &tmp, &mut body, slab, &mut hold.amount).await?;
         tokio::fs::rename(&tmp, &object.path).await?;
@@ -195,9 +183,6 @@ impl Sink {
         let mut hasher = Sha256::new();
         let mut size: u64 = 0;
         loop {
-            // A body that goes quiet is telling on its producer: hyper polled
-            // but the socket gave nothing. Distinguishes that from this very
-            // future never being polled, which logs nothing at all.
             let next = loop {
                 match tokio::time::timeout(std::time::Duration::from_secs(30), body.next()).await {
                     Ok(item) => break item,
@@ -274,10 +259,6 @@ impl Sink {
             if self.cancelled() {
                 bail!("run cancelled");
             }
-            // The waiter registers BEFORE the budget check: a release that
-            // lands in between is kept, not lost. Checking first parked a
-            // body forever on a wakeup that had already fired, and every
-            // later body queued behind its dead reservation.
             let notified = self.freed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();

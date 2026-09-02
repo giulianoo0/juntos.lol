@@ -14,15 +14,11 @@ import (
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/media"
-	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-// A room id is read off a screen and typed back in by hand, so it is built
-// from the characters that survive that trip: capitals and digits only. The
-// url-safe default alphabet mixes cases and adds - and _, which turns "was
-// that a dash or an underscore, and was the l lower or upper" into a question
-// someone has to answer before they can join.
+// A room id is read off a screen and typed back in by hand, so the alphabet is
+// capitals and digits only: no mixed case, no - or _ to misread.
 const (
 	roomIDAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	roomIDLength   = 8
@@ -34,14 +30,13 @@ const (
 	maxNicknameBytes       = 64
 )
 
-// RegisterRoomRoutes mounts the room creation and lookup endpoints on rg.
 func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config) {
 	rg.POST("/rooms", createRoom(store, cfg))
 	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL))
 }
 
-// Kind selects what the room starts out playing. It is optional so existing
-// clients, which only ever create upload rooms, keep working unchanged.
+// createRoomRequest's Kind selects what the room starts out playing; it is optional
+// so older clients, which only create upload rooms, keep working.
 type createRoomRequest struct {
 	FileName string `json:"fileName"`
 	Nickname string `json:"nickname"`
@@ -60,7 +55,6 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		if kind == "" {
 			kind = room.SourceUpload
 		}
-		// A shared screen has no file to name or to wait for, so it opens ready.
 		status := "uploading"
 		fileName := req.FileName
 		switch kind {
@@ -114,13 +108,9 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		metrics.RoomsCreated.WithLabelValues(kind).Inc()
 
 		c.JSON(http.StatusCreated, gin.H{
-			"id": id,
-			// The host keeps this. A reload comes back with it in the hello
-			// frame and takes the room's controls back instead of returning
-			// as a spectator of their own watch party.
+			"id":         id,
 			"ownerToken": ownerToken,
 			"nickname":   nickname,
 			"sourceKind": kind,
@@ -162,10 +152,9 @@ func validRoomText(value string, maxBytes int) bool {
 	return true
 }
 
-// getRoom answers with the room and where its media is served from. The
-// client builds subtitle URLs itself, and those objects live in the bucket
-// rather than on this server. The base carries the media generation, so a
-// source swap cannot be answered with the previous source's files.
+// getRoom answers with the room and the bucket base its media is served from. The
+// base carries the media generation, so a source swap cannot be answered with the
+// previous source's files.
 func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, err := store.Get(c.Request.Context(), c.Param("id"))
@@ -184,28 +173,25 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"id":                r.ID,
-			"fileName":          r.FileName,
-			"status":            r.Status,
-			"sourceKind":        r.SourceKind,
-			"mediaGeneration":   r.MediaGeneration,
-			"mediaVersion":      r.MediaVersion,
-			"durationMs":        r.DurationMs,
-			"mediaOffsetMs":     r.MediaOffsetMs,
-			"mediaRegions":      r.MediaRegions,
-			"subsVersion":       r.SubsVersion,
-			"gatingEnabled":     r.GatingEnabled,
-			"errorMessage":      r.ErrorMessage,
-			"controllerId":      r.ControllerID,
-			"sourceMemberId":    r.SourceMemberID,
-			"sourceOrigin":      r.SourceOrigin,
-			"audioTracks":       r.AudioTracks,
-			"subtitleTracks":    r.SubtitleTracks,
-			"chapters":          r.Chapters,
-			"bitmapSubsSkipped": r.BitmapSubsSkipped,
-			// What tells a cold seek apart from a room whose pipeline died.
-			// Omitted from the struct's own JSON when zero, and this map is
-			// what the browser actually reads, so it is named here.
+			"id":                  r.ID,
+			"fileName":            r.FileName,
+			"status":              r.Status,
+			"sourceKind":          r.SourceKind,
+			"mediaGeneration":     r.MediaGeneration,
+			"mediaVersion":        r.MediaVersion,
+			"durationMs":          r.DurationMs,
+			"mediaOffsetMs":       r.MediaOffsetMs,
+			"mediaRegions":        r.MediaRegions,
+			"subsVersion":         r.SubsVersion,
+			"gatingEnabled":       r.GatingEnabled,
+			"errorMessage":        r.ErrorMessage,
+			"controllerId":        r.ControllerID,
+			"sourceMemberId":      r.SourceMemberID,
+			"sourceOrigin":        r.SourceOrigin,
+			"audioTracks":         r.AudioTracks,
+			"subtitleTracks":      r.SubtitleTracks,
+			"chapters":            r.Chapters,
+			"bitmapSubsSkipped":   r.BitmapSubsSkipped,
 			"producerHeartbeatMs": r.ProducerHeartbeatMs,
 			"preparation":         r.Preparation,
 			"memberCount":         len(members),

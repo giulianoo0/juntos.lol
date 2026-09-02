@@ -6,9 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The status page counts from here, so an empty room must not read as an
-// occupied one: a room's entry outlives its last member until the room's
-// goroutine winds down.
 func TestLiveCountsOnlyRoomsWithSomeoneInThem(t *testing.T) {
 	h := &Hub{capabilities: map[string]map[string]string{
 		"busy":    {"m1": "cap-1", "m2": "cap-2"},

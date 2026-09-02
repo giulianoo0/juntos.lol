@@ -22,11 +22,8 @@ function transient(status: number): boolean {
 
 export interface PostJsonOptions {
   signal?: AbortSignal
-  /** Attempts in total, including the first. */
   attempts?: number
-  /** Base of the exponential backoff between attempts. */
   backoffMs?: number
-  /** Swappable for tests; defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>
 }
 
@@ -39,13 +36,9 @@ function wait(ms: number): Promise<void> {
 }
 
 /**
- * POSTs `body` as JSON and resolves with the response.
- *
- * A response the server meant — any 2xx, and any 4xx — comes back as it is,
- * for the caller to read the code off. A 5xx, a 429 or a dropped connection
- * is retried; when the patience runs out the last response is returned (or
- * the last network error thrown), so the caller reports what actually
- * happened rather than a retry of its own invention.
+ * POSTs `body` as JSON. Any 2xx and any 4xx come back as they are, for the
+ * caller to read the code off; a 5xx, a 429 or a dropped connection is
+ * retried, and the last response (or network error) is what survives.
  */
 export async function postJson(url: string, body: unknown, options: PostJsonOptions = {}): Promise<Response> {
   const attempts = options.attempts ?? DEFAULT_ATTEMPTS
@@ -56,7 +49,6 @@ export async function postJson(url: string, body: unknown, options: PostJsonOpti
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (attempt > 0) {
       await sleep(Math.min(BACKOFF_CAP_MS, backoffMs * 2 ** (attempt - 1)))
-      // An abort during the wait is the run ending, not a failure to report.
       if (options.signal?.aborted) break
     }
     try {
@@ -67,8 +59,6 @@ export async function postJson(url: string, body: unknown, options: PostJsonOpti
         body: JSON.stringify(body),
       })
       if (response.ok || !transient(response.status)) return response
-      // The body is never read on a retry, and an unread body holds the
-      // connection open until it is collected.
       void response.body?.cancel().catch(() => undefined)
       lastResponse = response
     } catch (error) {

@@ -62,7 +62,7 @@ func TestCleanTrackers(t *testing.T) {
 	kept, err := cleanTrackers([]string{
 		"udp://tracker.opentrackr.org:1337/announce",
 		"https://tracker.example/announce",
-		"wss://tracker.example/ws",   // librqbit would drop it anyway
+		"wss://tracker.example/ws",
 		"not a url",
 		"udp://",
 		"http://1.2.3.4:6969/announce",

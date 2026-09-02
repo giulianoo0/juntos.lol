@@ -15,9 +15,6 @@ const CODE = /^[A-Z0-9]{8}$/
 export function roomCodeFrom(input: string): string | null {
   const trimmed = input.trim()
   if (!trimmed) return null
-  // The last non-empty path segment, so /room/XXXX and a bare XXXX are the
-  // same read. Query strings and fragments are dropped: an invite that picked
-  // up a tracking parameter still names its room.
   const withoutQuery = trimmed.split(/[?#]/)[0]
   const segments = withoutQuery.split('/').filter(Boolean)
   const last = segments[segments.length - 1] ?? ''

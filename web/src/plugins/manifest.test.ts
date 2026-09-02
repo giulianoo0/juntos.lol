@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseManifest } from './manifest'
 
-const valid = { id: 'torrentio', name: 'Torrentio', version: '1.0.0', hosts: ['torrentio.strem.fun'] }
+const valid = { id: 'acme', name: 'Acme', version: '1.0.0', hosts: ['streams.example.com'] }
 
 describe('parseManifest', () => {
   it('accepts the minimum valid manifest and defaults updateUrl to null', () => {
@@ -14,7 +14,7 @@ describe('parseManifest', () => {
   })
 
   it('rejects an id outside the allowed shape', () => {
-    expect(() => parseManifest({ ...valid, id: 'Torrentio!' })).toThrow(/id/)
+    expect(() => parseManifest({ ...valid, id: 'Acme!' })).toThrow(/id/)
     expect(() => parseManifest({ ...valid, id: '' })).toThrow(/id/)
   })
 
@@ -41,9 +41,6 @@ describe('parseManifest', () => {
   })
 
   it('rejects an address wearing a hostname shape', () => {
-    // The policy compares hostnames by equality and refuses literals, so an
-    // address here is either dead on arrival or a hole. Neither should reach
-    // the consent screen looking like a name.
     for (const host of ['1.2.3.4', '127.1', '0x7f.0x1', '1.2.3.04', '2130706433']) {
       expect(() => parseManifest({ ...valid, hosts: [host] })).toThrow(/hosts/)
     }
@@ -54,7 +51,7 @@ describe('parseManifest', () => {
   })
 
   it('lowercases hosts, which is what the exact-equality match depends on', () => {
-    expect(parseManifest({ ...valid, hosts: ['TORRENTIO.Strem.FUN'] }).hosts).toEqual(['torrentio.strem.fun'])
+    expect(parseManifest({ ...valid, hosts: ['STREAMS.Example.COM'] }).hosts).toEqual(['streams.example.com'])
   })
 
   it('collapses a repeated host instead of listing it twice', () => {
@@ -73,8 +70,6 @@ describe('parseManifest', () => {
   })
 
   it('rejects the holes of a sparse array rather than passing undefined through', () => {
-    // Array.prototype.map skips holes, so a sparse list used to come back as
-    // `[null, null]` — a hosts: string[] that is not one.
     expect(() => parseManifest({ ...valid, hosts: new Array<string>(3) })).toThrow(/hosts/)
   })
 
@@ -101,9 +96,6 @@ describe('parseManifest', () => {
   })
 
   it('stores one spelling of updateUrl, because it is the plugin identity', () => {
-    // The registry key is a hash of this string and an update declaring a
-    // different one is refused. Two spellings of one repository must not
-    // become two plugins.
     for (const written of [
       'https://github.com/user/repo',
       'https://github.com/user/repo/',
@@ -119,7 +111,7 @@ describe('parseManifest', () => {
   })
 
   it('rejects a name carrying control characters, which could reorder the consent screen', () => {
-    expect(() => parseManifest({ ...valid, name: 'Torrentio\u202E' })).toThrow(/name/)
+    expect(() => parseManifest({ ...valid, name: 'Acme\u202E' })).toThrow(/name/)
   })
 
   it('caps the length of the fields it only ever displays', () => {

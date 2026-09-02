@@ -35,7 +35,6 @@ async fn main() -> anyhow::Result<()> {
         Some(other) => anyhow::bail!("unknown argument {other}; try --help"),
         None => {}
     }
-    // The env file the wizard writes; explicit env always wins over it.
     let env_file = std::env::var("SS_WORKER_ENV_FILE").unwrap_or_else(|_| "ss-worker.env".into());
     if std::path::Path::new(&env_file).exists() {
         let loaded = config::load_env_file(std::path::Path::new(&env_file))?;
@@ -91,8 +90,6 @@ async fn main() -> anyhow::Result<()> {
             );
             http::tls::install_from_files(&slot, &cert, &key)?;
             tracing::info!(not_after = ?slot.not_after(), cert = %cert.display(), "certificate loaded from files");
-            // Whoever renews the files does it on their own clock; an hourly
-            // re-read is early enough for any real certificate lifetime.
             let reload = slot.clone();
             tokio::spawn(async move {
                 loop {
@@ -151,8 +148,6 @@ async fn main() -> anyhow::Result<()> {
     )?);
     tokio::spawn(control.run());
 
-    // Shutdown — a signal, or a drain job from the server: stop taking
-    // leases, let responses in flight finish (bounded), close the listener.
     tokio::select! {
         _ = shutdown_signal() => {}
         _ = drain.notified() => {}
@@ -167,10 +162,6 @@ async fn main() -> anyhow::Result<()> {
     }
     handle.graceful_shutdown(Some(Duration::from_secs(5)));
     tokio::time::sleep(Duration::from_millis(500)).await;
-    // The next process cannot resume any of this — the session keeps no
-    // persistence — so leaving the pieces behind only costs disk. Bounded by
-    // what is left of the drain deadline: a slow unlink must not hold the
-    // container open past it.
     let left = deadline
         .saturating_duration_since(tokio::time::Instant::now())
         .max(Duration::from_secs(5));

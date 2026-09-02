@@ -20,8 +20,6 @@ func TestFleetRanksTheWayPlacementChooses(t *testing.T) {
 	require.Equal(t, "available", fleet[0].Availability)
 	require.Equal(t, "busy", fleet[2].Availability)
 
-	// The page must not disagree with the system it describes: the head of
-	// the list is where the next room would actually land.
 	placed, err := r.Place(strings.Repeat("a", 40), 0, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, fleet[0].ID, placed.ID)
@@ -37,8 +35,6 @@ func TestFleetSeparatesDrainingFromSilent(t *testing.T) {
 	require.Equal(t, "available", fleet[0].Availability)
 	require.Equal(t, "draining", fleet[1].Availability)
 
-	// A worker that simply stopped reporting is a different thing from one
-	// that announced it was leaving, and reads differently on the page.
 	silent := r.Fleet(time.Now().Add(2 * time.Minute))
 	byID := map[string]string{}
 	for _, member := range silent {
@@ -65,6 +61,5 @@ func TestFleetReportsTheBudgetsBehindTheVerdict(t *testing.T) {
 	require.Equal(t, int64(20<<30), member.DiskUsed)
 	require.Equal(t, int64(250_000), member.TransferUsedBps)
 	require.Equal(t, int64(3600), member.UptimeSecs)
-	// 2/8 leases at 0.7 and 20/100 disk at 0.3.
 	require.InDelta(t, 0.235, member.Load, 0.001)
 }

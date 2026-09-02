@@ -4,8 +4,6 @@ import { ByteTap, teeInto } from './byteTap'
 const bytes = (from: number, length: number) =>
   new Uint8Array(length).map((_, i) => (from + i) % 251)
 
-// The idle wait is real time; every test that depends on it drives the
-// clock, and the ones that do not never reach it.
 const IDLE_MS = 50
 
 describe('ByteTap', () => {
@@ -21,8 +19,6 @@ describe('ByteTap', () => {
   it('holds bytes read ahead of the cursor until the gap closes', async () => {
     const tap = new ByteTap(1024, IDLE_MS)
     tap.offer(10, bytes(10, 10))
-    // Nothing at the cursor yet: the wait runs out and the caller is told to
-    // fetch the gap itself.
     expect(await tap.pull()).toBeNull()
     tap.fill(bytes(0, 10))
     expect(await tap.pull()).toEqual(bytes(10, 10))
@@ -48,7 +44,6 @@ describe('ByteTap', () => {
 
   it('takes a chunk buffered from before the cursor reached it', async () => {
     const tap = new ByteTap(1024, IDLE_MS)
-    // Two overlapping reads: the second starts before the cursor will be.
     tap.offer(20, bytes(20, 40))
     tap.offer(0, bytes(0, 30))
     const out = await tap.pull()
@@ -56,9 +51,6 @@ describe('ByteTap', () => {
   })
 
   it('waits, then reports a gap, and keeps offering to wait', async () => {
-    // Nothing has been read anywhere near the cursor, so there is no evidence
-    // the remux has moved past — only that it is slow. Giving up on the tap
-    // here for good would turn the scan back into a second full read.
     const tap = new ByteTap(1024, IDLE_MS)
     const started = Date.now()
     expect(await tap.pull()).toBeNull()
@@ -77,18 +69,13 @@ describe('ByteTap', () => {
   it('drops what does not fit rather than the bytes it is about to want', async () => {
     const tap = new ByteTap(150, IDLE_MS)
     tap.offer(50, bytes(50, 100))
-    // Over budget now, so this one is let go.
     tap.offer(150, bytes(150, 100))
-    // At the cursor, so it is taken whatever the budget says.
     tap.offer(0, bytes(0, 50))
     expect(await tap.pull()).toEqual(bytes(0, 150))
     expect(await tap.pull()).toBeNull()
   })
 
   it('ignores bytes further ahead than it could ever hold', async () => {
-    // The remux reads the container's index at the end of the file, and after
-    // a seek it reads a stretch the scan will not reach for gigabytes.
-    // Buffering either squats the budget against what the scan wants next.
     const tap = new ByteTap(100, IDLE_MS)
     tap.offer(10_000, bytes(0, 50))
     tap.offer(0, bytes(0, 50))
@@ -149,9 +136,6 @@ describe('ByteTap, when the remux runs far ahead', () => {
     new Uint8Array(length).map((_, i) => (from + i) % 251)
 
   it('crosses the gap itself and rides again once the cursor is back in reach', async () => {
-    // Waiting on a reader that has moved on costs the idle wait per slice and
-    // fills none of the gap; but giving up on the tap for good would make the
-    // scan a second full read of the file, which is the whole point.
     const tap = new ByteTap(200, 50)
     tap.offer(10_000, bytes2(0, 10))
     const started = Date.now()
@@ -166,8 +150,6 @@ describe('ByteTap, when the remux runs far ahead', () => {
   it('keeps what it holds when a replacement would not fit', async () => {
     const tap = new ByteTap(120, 50)
     tap.offer(20, bytes2(20, 100))
-    // Same offset, larger, and past the budget: the held chunk must survive
-    // rather than be let go for one that is then refused.
     tap.offer(20, bytes2(20, 200))
     tap.offer(0, bytes2(0, 20))
     expect((await tap.pull())?.length).toBe(120)

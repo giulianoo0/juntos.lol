@@ -13,7 +13,6 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// R2 stores objects in a Cloudflare R2 bucket over the S3 API.
 type R2 struct {
 	client *minio.Client
 	bucket string
@@ -26,11 +25,8 @@ type R2Config struct {
 	Bucket    string
 	AccessKey string
 	SecretKey string
-	// Endpoint overrides the account-derived address, for a local MinIO
-	// standing in during development. Empty means real R2.
-	Endpoint string
-	// Insecure permits plain HTTP to the override endpoint.
-	Insecure bool
+	Endpoint  string
+	Insecure  bool
 }
 
 // NewR2 dials an R2 bucket. It does not verify the credentials — that costs a
@@ -39,9 +35,6 @@ func NewR2(cfg R2Config) (*R2, error) {
 	if cfg.AccountID == "" || cfg.Bucket == "" || cfg.AccessKey == "" || cfg.SecretKey == "" {
 		return nil, fmt.Errorf("objectstore: account id, bucket, access key and secret key are all required")
 	}
-	// The endpoint is normally derived from the account, but a local MinIO
-	// can stand in for the bucket during development — same S3 surface,
-	// different address, optionally without TLS.
 	endpoint := cfg.Endpoint
 	secure := !cfg.Insecure
 	if endpoint == "" {
@@ -53,16 +46,10 @@ func NewR2(cfg R2Config) (*R2, error) {
 		return nil, fmt.Errorf("objectstore: build R2 transport: %w", err)
 	}
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: secure,
-		// R2 ignores the region but the S3 signature does not: it is part of
-		// the signing scope, and "auto" is what R2 expects to sign against.
-		Region: "auto",
-		// Every billed operation is counted here rather than around Put and
-		// RemovePrefix, because one call to either is not one operation: a
-		// large object splits into a multipart upload and a prefix removal
-		// pages through a listing. See metrics.go.
-		Transport: meteredTransport{next: transport, bucket: cfg.Bucket},
+		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+		Secure:    secure,
+		Region:    "auto",
+		Transport: transport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("objectstore: dial R2: %w", err)
@@ -70,16 +57,6 @@ func NewR2(cfg R2Config) (*R2, error) {
 	return &R2{client: client, bucket: cfg.Bucket}, nil
 }
 
-// singlePartSize is the size below which an object is written with one
-// request.
-//
-// The client's own default is 16 MiB, and past it an upload becomes
-// CreateMultipartUpload plus one UploadPart per chunk plus
-// CompleteMultipartUpload — every one of them a billed write, and every one of
-// them a round trip to the bucket. Media segments run to tens of megabytes at
-// most, so raising the threshold to something none of them reach makes each
-// one cost the single write it is. Anything genuinely larger still splits,
-// which is what keeps a huge object recoverable.
 const singlePartSize = 128 * 1024 * 1024
 
 func putOptions(contentType, cacheControl string) minio.PutObjectOptions {
@@ -100,9 +77,8 @@ func (r *R2) Put(ctx context.Context, key string, reader io.Reader, size int64,
 	return nil
 }
 
-// Stat reports the size of the object under key. It exists for the client
-// media path: a browser claims it uploaded a segment through a presigned URL,
-// and this is how the claim is checked without ever reading the bytes back.
+// Stat reports the size of the object under key, which is how a browser's
+// claim that it uploaded a segment is checked without reading the bytes back.
 func (r *R2) Stat(ctx context.Context, key string) (int64, error) {
 	info, err := r.client.StatObject(ctx, r.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
@@ -112,11 +88,8 @@ func (r *R2) Stat(ctx context.Context, key string) (int64, error) {
 }
 
 // PresignPut signs a PUT for key that a browser can use directly. Content
-// type, cache control and — crucially — the exact byte length are pinned into
-// the signature: the client's request must carry all three or the bucket
-// refuses the write. Signing Content-Length is what bounds the upload; a
-// browser's fetch sets that header from the body it sends, so the body cannot
-// be larger (or smaller) than the size the presign was charged for.
+// type, cache control and the exact byte length are pinned into the signature,
+// so the client's body cannot be larger or smaller than what was signed for.
 func (r *R2) PresignPut(ctx context.Context, key, contentType, cacheControl string,
 	size int64, expiry time.Duration) (string, http.Header, error) {
 	headers := http.Header{
@@ -131,12 +104,6 @@ func (r *R2) PresignPut(ctx context.Context, key, contentType, cacheControl stri
 	return signed.String(), headers, nil
 }
 
-// RemovePrefix deletes every object under prefix.
-//
-// Listing is a billed write operation and deleting is free, so the cost of
-// this is one request per thousand objects — nothing against the storage a
-// finished room would otherwise hold until the bucket's own lifecycle rule
-// caught up with it.
 func (r *R2) RemovePrefix(ctx context.Context, prefix string) error {
 	if prefix == "" {
 		return ErrEmptyPrefix
@@ -145,8 +112,6 @@ func (r *R2) RemovePrefix(ctx context.Context, prefix string) error {
 		Prefix:    prefix,
 		Recursive: true,
 	})
-	// A failed listing must not read as an empty one: the deletes would report
-	// success having removed only what was listed before the error.
 	var listErr error
 	keys := make(chan minio.ObjectInfo)
 	go func() {
@@ -169,8 +134,6 @@ func (r *R2) RemovePrefix(ctx context.Context, prefix string) error {
 			return fmt.Errorf("objectstore: remove %s: %w", failure.ObjectName, failure.Err)
 		}
 	}
-	// Safe to read unsynchronized: the goroutine closes keys before returning,
-	// and RemoveObjects only closes its own channel once keys is drained.
 	if listErr != nil {
 		return fmt.Errorf("objectstore: list %s: %w", prefix, listErr)
 	}

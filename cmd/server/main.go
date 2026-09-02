@@ -1,3 +1,6 @@
+// The ss server does no media work: it creates rooms, keeps their members in step
+// over WebSocket, signs the bucket writes the host's browser makes while remuxing
+// its own source, and accepts the playlists that come out of that.
 package main
 
 import (
@@ -12,31 +15,16 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
-	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
-// The server does no media work. It creates rooms, keeps their members in
-// step over WebSocket, signs the bucket writes the host's browser makes while
-// remuxing its own source, and accepts the playlists that come out of that.
-// Every video byte and every second of CPU spent on it belongs to the host's
-// machine.
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	// Before anything else can fail: a metrics port already in use is a
-	// deployment mistake, and finding it out at boot is the point of binding
-	// here rather than inside a goroutine.
-	if cfg.MetricsPort != 0 {
-		if err := metrics.Serve(cfg.MetricsPort); err != nil {
-			log.Fatal(err)
-		}
 	}
 
 	opts, err := redis.ParseURL(cfg.RedisURL)
@@ -62,12 +50,9 @@ func main() {
 	ctx := context.Background()
 	go room.StartSweeper(ctx, store, cfg.DataDir, bucket, time.Minute,
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
-	go room.StartStatsSampler(ctx, store, roomCensusInterval)
 	hub := syncapi.NewHub(store, cfg, bucket)
 	defer hub.Close()
 
-	// The worker fleet. Without an enrollment secret the torrent path reports
-	// itself disabled and everything else runs as before.
 	signer, err := worker.LoadOrCreateSigner(cfg.WorkerSigningKeyFile)
 	if err != nil {
 		log.Fatal(err)
@@ -89,8 +74,6 @@ func main() {
 		RelayBase: cfg.WorkerRelayBase,
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
 	}
-	// Every heartbeat would otherwise make every member refetch the room;
-	// only numbers that moved are worth telling.
 	var swarmMu sync.Mutex
 	lastSwarm := map[string]worker.SwarmStats{}
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
@@ -111,13 +94,8 @@ func main() {
 		}
 		hub.NotifyRoomUpdated(roomID)
 	}
-	// A reclaimed room takes its torrent with it. CancelRoom existed for this
-	// and nothing called it, so the fleet kept seeding for rooms that had
-	// already been deleted and the status page and the worker disagreed.
 	remuxOrch := worker.NewRemuxOrchestrator(torrents, store, cfg)
 	remuxOrch.Notify = hub.NotifyRoomUpdated
-	// A reclaimed or re-pointed room takes its torrent and its remote
-	// production with it.
 	hub.OnRoomReclaimed(func(roomID string) {
 		remuxOrch.CancelRoom(roomID)
 		torrents.CancelRoom(roomID)
@@ -151,9 +129,3 @@ func main() {
 		log.Fatal(err)
 	}
 }
-
-// roomCensusInterval is how often the number of live rooms is counted for the
-// metrics endpoint. Rooms are minutes-to-hours things and the count costs a
-// Redis round trip per room, so anything faster would be paying for precision
-// no graph could show.
-const roomCensusInterval = 15 * time.Second

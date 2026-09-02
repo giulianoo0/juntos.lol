@@ -31,9 +31,6 @@ func TestCensusSplitsLiveRoomsByState(t *testing.T) {
 }
 
 func TestCensusDoesNotCountARoomRedisAlreadyExpired(t *testing.T) {
-	// The expiry index outlives the records it names: an entry is only
-	// removed when a room is deleted, not when its hash times out. Counting
-	// the index itself would report rooms that stopped existing hours ago.
 	mr := miniredis.RunT(t)
 	store := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), 5*time.Hour)
 	now := time.Now()

@@ -7,10 +7,9 @@ use tokio::sync::{mpsc, Semaphore};
 
 use super::sink::{ClosedObject, Sink};
 
-/// Closed objects flow: presign in small coalesced batches, PUT under a
-/// per-job and a global ceiling, and hand the uploaded object to the
-/// committer. The spool bytes stay until the server confirms the object —
-/// a retry may need them — so releasing is the committer's job.
+/// Closed objects flow: presign in coalesced batches, PUT under a per-job
+/// and a global ceiling, then hand the object to the committer. The spool
+/// bytes stay until the committer releases them.
 pub struct Uploader {
     pub client: reqwest::Client,
     pub api_base: String,
@@ -78,7 +77,6 @@ impl Uploader {
                     let _ = uploaded.send(object);
                     anyhow::Ok(())
                 });
-                // Failures surface as soon as they exist, not at drain time.
                 while let Some(done) = inflight.try_join_next() {
                     done.context("upload task")??;
                 }

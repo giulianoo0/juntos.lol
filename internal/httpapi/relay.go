@@ -12,12 +12,9 @@ import (
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
-// The relay: browsers reach private workers through the fleet's front door
-// instead of learning their addresses. This handler is the middle hop —
-// it forwards /relay/{worker}/... to the worker's real base, streaming,
-// never buffering, and only for workers that asked to be relayed. It adds
-// no authorization of its own because the destination worker verifies the
-// ticket in the path, exactly as it does for direct readers.
+// RegisterRelayRoute streams /relay/{worker}/... to the worker's real base so
+// browsers never learn its address. Authorization is the ticket in the path,
+// which the destination worker verifies.
 func RegisterRelayRoute(r gin.IRoutes, service *worker.Service) {
 	if service == nil {
 		return
@@ -43,8 +40,6 @@ func RegisterRelayRoute(r gin.IRoutes, service *worker.Service) {
 				pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 				pr.Out.Host = target.Host
 			},
-			// Range bodies stream as the pieces arrive; buffering them would
-			// reintroduce the exact latency the streaming design removes.
 			FlushInterval: -1,
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 				slog.Debug("relay proxy error", "worker", workerID, "error", err)

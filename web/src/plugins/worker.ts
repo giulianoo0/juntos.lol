@@ -36,14 +36,12 @@
  */
 
 const ALLOWED = new Set([
-  // --- The global itself, and the message port that is the only way out.
   'self', 'globalThis', 'postMessage', 'onmessage', 'onmessageerror', 'close',
   'onerror', 'onunhandledrejection', 'onrejectionhandled',
   'addEventListener', 'removeEventListener', 'dispatchEvent', 'constructor',
   'EventTarget', 'Event', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent',
   'DOMException', 'WorkerGlobalScope', 'DedicatedWorkerGlobalScope',
 
-  // --- ECMAScript. Inert by construction: no I/O, no persistence.
   'Object', 'Function', 'Boolean', 'Symbol', 'Array', 'Number', 'BigInt',
   'String', 'RegExp', 'Date', 'Math', 'JSON', 'Promise', 'Proxy', 'Reflect',
   'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef', 'FinalizationRegistry',
@@ -58,7 +56,6 @@ const ALLOWED = new Set([
   'parseFloat', 'parseInt', 'decodeURI', 'decodeURIComponent',
   'encodeURI', 'encodeURIComponent', 'escape', 'unescape',
 
-  // --- Utilities with no reach outside this worker.
   'console', 'crypto', 'Crypto', 'SubtleCrypto', 'CryptoKey',
   'performance', 'Performance',
   'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
@@ -76,20 +73,16 @@ const ALLOWED = new Set([
   'CountQueuingStrategy',
 ])
 
-// Object.prototype is where `hasOwnProperty` and `toString` live. Trimming it
-// would break the plugin, this file, and the module loader alike.
 for (let scope: object | null = self; scope && scope !== Object.prototype; scope = Object.getPrototypeOf(scope) as object | null) {
   for (const name of Object.getOwnPropertyNames(scope)) {
     if (ALLOWED.has(name)) continue
     try {
       delete (scope as Record<string, unknown>)[name]
     } catch {
-      // Non-configurable. The defineProperty below is the second attempt, and
-      // the CSP header is what this ultimately rests on.
     }
     try {
       Object.defineProperty(scope, name, { value: undefined, writable: false, configurable: false })
-    } catch { /* see above */ }
+    } catch { }
   }
 }
 
@@ -135,9 +128,6 @@ self.onmessage = (event: MessageEvent) => {
         manifest?: unknown
         streams?: (target: unknown, api: unknown) => Promise<unknown>
       }
-      // Importing already ran the plugin's top level. That it happened in
-      // here and not in the page is the whole point of reading the manifest
-      // through this path.
       if (data.op === 'manifest') {
         self.postMessage({ kind: 'done', streams: module.manifest })
         return

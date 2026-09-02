@@ -5,49 +5,23 @@
 //! of bandwidth and disk for a 4K release nobody will watch to the end. These
 //! turn a set of read cursors into the piece set worth holding.
 
-/// Kept selected ahead of each cursor.
 pub const AHEAD: u64 = 256 * 1024 * 1024;
-/// Kept ahead of the playhead in the first seconds after a seek. The swarm
-/// gives each selected piece to one peer and only doubles up once every
-/// selected piece is in flight; with sixteen pieces selected the one the
-/// first byte is waiting on has one peer while fifteen fetch read-ahead
-/// nobody can use yet. Two pieces' worth puts every peer on what blocks.
 pub const STARTUP_AHEAD: u64 = 32 * 1024 * 1024;
-/// How long after a hint the startup window holds before the full one
-/// returns. Enough for the first segment's pieces; short enough that the
-/// read-ahead is back before the remux could outrun it.
 pub const STARTUP: std::time::Duration = std::time::Duration::from_secs(3);
-/// Kept ahead of the subtitle scan. It walks the file once, sequentially,
-/// and is never what a viewer is waiting on; a full window for it halves
-/// what reaches the playhead.
 pub const SCAN_AHEAD: u64 = 32 * 1024 * 1024;
-/// Kept behind it, so a small step back does not refetch.
 pub const BEHIND: u64 = 32 * 1024 * 1024;
-/// The head and tail of the file always stay selected: the container's header
-/// sits at the front, and Matroska keeps its Cues at the very end. Drop either
-/// and the demuxer cannot seek at all.
 pub const PIN: u64 = 32 * 1024 * 1024;
 
-/// How many cursors one file can have windows for at once: the playhead and
-/// the subtitle scan each park a stream, and head probes never get one.
 const CURSORS: u64 = 2;
 
 /// The most this file can occupy while the window is doing its job: the
 /// pinned head and tail, plus a full span around every cursor that can exist.
-///
-/// This is what a torrent should be admitted against. Reserving the whole
-/// file was right before the window existed and is now wildly pessimistic —
-/// it would turn away a second room over disk that the first one never takes,
-/// since everything behind the window is punched back out to the filesystem.
-/// Generous on purpose: pieces are only released on the sweep, so what is
-/// held overshoots the ideal between rounds.
 pub fn footprint(file_len: u64, ahead: u64, behind: u64, pin: u64) -> u64 {
     let spans = (ahead + behind).saturating_mul(CURSORS);
     let pins = pin.saturating_mul(2);
     spans.saturating_add(pins).min(file_len)
 }
 
-/// One reader's cursor and how far around it to hold.
 #[derive(Clone, Copy, Debug)]
 pub struct Cursor {
     pub at: u64,
@@ -137,8 +111,6 @@ mod tests {
 
     #[test]
     fn pins_the_head_and_tail_around_a_cursor_in_the_middle() {
-        // Without the tail, a Matroska file's Cues stop being fetched and the
-        // next seek has nothing to seek with.
         let ranges = needed_ranges(1000 * MB, &[500 * MB], 100 * MB, 10 * MB, 32 * MB);
 
         assert_eq!(
@@ -155,7 +127,6 @@ mod tests {
     fn merges_windows_that_touch() {
         let ranges = needed_ranges(1000 * MB, &[400 * MB, 450 * MB], 100 * MB, 10 * MB, 1 * MB);
 
-        // 390..500 and 440..550 overlap into one span.
         assert_eq!(ranges[1], (390 * MB, 550 * MB));
     }
 
@@ -175,7 +146,6 @@ mod tests {
 
     #[test]
     fn maps_ranges_to_pieces_through_the_file_offset() {
-        // The file starts 10 pieces into the torrent, so file byte 0 is piece 10.
         let pieces = pieces_for_ranges(10 * MB, MB, 100, &[(0, 2 * MB)]);
 
         assert_eq!(pieces, vec![10, 11]);
@@ -183,7 +153,6 @@ mod tests {
 
     #[test]
     fn includes_a_piece_the_range_only_partly_covers() {
-        // Half of piece 0 and a byte of piece 1 are still both needed.
         let pieces = pieces_for_ranges(0, MB, 100, &[(MB / 2, MB + 1)]);
 
         assert_eq!(pieces, vec![0, 1]);
@@ -198,8 +167,6 @@ mod tests {
 
     #[test]
     fn each_cursor_carries_its_own_span() {
-        // The playhead just seeked: narrow. The scan is far behind: narrower
-        // still, and never widened by the playhead's window.
         let ranges = needed_ranges_for(
             1000 * MB,
             &[
@@ -219,8 +186,6 @@ mod tests {
 
     #[test]
     fn a_huge_file_is_admitted_against_its_window_not_its_length() {
-        // The whole point: a 23 GB release never sits on the disk in full, so
-        // reserving 23 GB for it turns away rooms that would have fitted.
         let held = footprint(23 * 1024 * MB, AHEAD, BEHIND, PIN);
 
         assert!(held < 1024 * MB, "expected well under a gigabyte, got {held}");

@@ -11,9 +11,7 @@ import {
   WORDMARK_VIEWBOX,
 } from './wordmarkPaths'
 
-/** Unidades do viewBox por milissegundo: a velocidade da caneta, constante. */
 const SPEED = 1.05
-/** Quanto a caneta fica no ar entre uma letra e a seguinte. */
 const LIFT = 26
 const POP = 150
 const PLAY_POP = 240
@@ -25,10 +23,8 @@ const BOUNCE = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
 const SEEN = 'juntos:written'
 
 /**
- * Avaliado uma vez por carga da página, na importação do módulo — e não dentro
- * do componente. Em StrictMode o React monta duas vezes, e uma checagem feita
- * na montagem marcava o storage no primeiro mount e devolvia `false` no
- * segundo: em desenvolvimento a escrita simplesmente nunca acontecia.
+ * Avaliado uma vez por carga da página, na importação do módulo: em StrictMode
+ * uma checagem feita na montagem devolveria `false` no segundo mount.
  */
 export const WRITES_ON_LOAD = ((): boolean => {
   if (typeof window === 'undefined') return false
@@ -36,25 +32,17 @@ export const WRITES_ON_LOAD = ((): boolean => {
   try {
     if (sessionStorage.getItem(SEEN)) return false
     sessionStorage.setItem(SEEN, '1')
-  } catch {
-    // aba privada sem storage: o nome se escreve de novo, e é só isso que se perde
-  }
+  } catch {}
   return true
 })()
 
-/** Traço ainda não escrito. `pathLength=1` normaliza o dash para todos. */
 const UNDRAWN: React.CSSProperties = { strokeDasharray: 1, strokeDashoffset: 1 }
-/** O pingo e o play não são traços: nascem de um toque da caneta. */
 const UNPLACED: React.CSSProperties = { opacity: 0, transformBox: 'fill-box', transformOrigin: 'center' }
 
 /**
- * A escrita: cada traço percorrido na velocidade de uma caneta de verdade.
- *
- * O estado escondido dos traços vem do `style` do próprio render, nunca de uma
- * classe posta no DOM por fora — `className` é do React, e um cleanup que
- * mexesse nele deixaria o header sem logo nenhum no segundo mount do
- * StrictMode. Pelo mesmo motivo o efeito roda uma vez só, guardado por um ref:
- * a escrita é um evento da carga da página, não do ciclo de vida do componente.
+ * Roda uma vez só, guardada por um ref: a escrita é um evento da carga da
+ * página, não do ciclo de vida do componente. Sem WAAPI ou com reduced motion,
+ * chama `onWritten` de imediato.
  */
 function useWriting(ref: React.RefObject<SVGSVGElement | null>, active: boolean, onWritten: () => void) {
   const started = useRef(false)
@@ -63,8 +51,6 @@ function useWriting(ref: React.RefObject<SVGSVGElement | null>, active: boolean,
     const svg = ref.current
     if (!svg || !active || started.current) return
 
-    // Sem motion, ou num ambiente sem WAAPI/SVG geometry (jsdom nos testes):
-    // o nome aparece inteiro e pronto. A escrita é enfeite, nunca requisito.
     const probe = svg.querySelector<SVGGeometryElement>('[data-stroke]')
     const drawable = typeof probe?.getTotalLength === 'function' && typeof svg.animate === 'function'
     if (!drawable || matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -88,8 +74,6 @@ function useWriting(ref: React.RefObject<SVGSVGElement | null>, active: boolean,
       if (!opening && !stroke.joined) t += LIFT
       opening = false
 
-      // É `getTotalLength` que dá a duração, para a caneta não disparar numa
-      // haste curta e arrastar num círculo.
       const duration = Math.max(70, node.getTotalLength() / SPEED)
       running.push(node.animate(
         [{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }],
@@ -102,7 +86,6 @@ function useWriting(ref: React.RefObject<SVGSVGElement | null>, active: boolean,
       }
       t += duration
 
-      // o play é o ponto do domínio: entra depois de `juntos`, antes do `lol`
       if (stroke.id === 's') {
         t += LIFT + 20
         const play = svg.querySelector('[data-play]')
@@ -111,24 +94,16 @@ function useWriting(ref: React.RefObject<SVGSVGElement | null>, active: boolean,
       }
     }
 
-    // Escrito o nome, o React re-renderiza sem os estilos de escondido: o
-    // estado final não depende de nenhuma animação continuar viva.
     running[running.length - 1]?.finished.then(onWritten, () => undefined)
   }, [ref, active, onWritten])
 }
 
-/**
- * O brilho que passa por dentro do nome no hover. Ele é recortado pelos
- * próprios traços — a máscara é o mesmo desenho, em branco — então o que anda
- * é uma faixa que só existe onde há tinta.
- */
 function useShimmer(ref: React.RefObject<SVGRectElement | null>) {
   const running = useRef<Animation | null>(null)
   return useRef(() => {
     const node = ref.current
     if (!node || typeof node.animate !== 'function') return
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    // Reentrar com o mouse recomeça o gesto em vez de empilhar dois brilhos.
     running.current?.cancel()
     running.current = node.animate(
       [{ transform: 'translateX(0)' }, { transform: 'translateX(660px)' }],
@@ -137,11 +112,7 @@ function useShimmer(ref: React.RefObject<SVGRectElement | null>) {
   }).current
 }
 
-/**
- * O nome inteiro. Os traços herdam `currentColor`; o play é o único ponto de
- * cor. Com `writing`, ele se escreve — uma vez por carga, no header — e a
- * qualquer momento um brilho atravessa a tinta quando o ponteiro passa.
- */
+/** O nome inteiro. Com `writing`, ele se escreve traço a traço ao montar. */
 export function Wordmark({ className, writing = false }: { className?: string; writing?: boolean }) {
   const ref = useRef<SVGSVGElement>(null)
   const sheenRef = useRef<SVGRectElement>(null)
@@ -150,7 +121,6 @@ export function Wordmark({ className, writing = false }: { className?: string; w
   useWriting(ref, writing, onWritten)
   const shimmer = useShimmer(sheenRef)
 
-  // Dois wordmarks na mesma página não podem disputar o mesmo `url(#...)`.
   const uid = useId().replace(/:/g, '')
   const maskId = `jl-ink-${uid}`
   const sheenId = `jl-sheen-${uid}`
@@ -173,9 +143,6 @@ export function Wordmark({ className, writing = false }: { className?: string; w
           <circle cx={WORDMARK_DOT.cx} cy={WORDMARK_DOT.cy} r={WORDMARK_DOT.r} fill="#fff" />
           <path d={WORDMARK_PLAY} fill="#fff" stroke="#fff" strokeWidth={4} strokeLinejoin="round" />
         </mask>
-        {/* Os traços já são claros, então o brilho não pode ser mais claro que
-            eles: o que passa é uma faixa de coral saturado que tinge a tinta
-            por um instante. */}
         <linearGradient id={sheenId} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0" stopColor={CORAL} stopOpacity="0" />
           <stop offset="0.5" stopColor={CORAL} stopOpacity="1" />
@@ -191,8 +158,6 @@ export function Wordmark({ className, writing = false }: { className?: string; w
       <circle data-dot cx={WORDMARK_DOT.cx} cy={WORDMARK_DOT.cy} r={WORDMARK_DOT.r} fill="currentColor" style={hidden ? UNPLACED : undefined} />
       <path data-play d={WORDMARK_PLAY} fill={CORAL} stroke={CORAL} strokeWidth={4} strokeLinejoin="round" style={hidden ? UNPLACED : undefined} />
 
-      {/* A faixa entra pela esquerda, inclinada, e só é visível dentro da
-          tinta. `pointer-events: none` para não roubar o clique do link. */}
       <g mask={`url(#${maskId})`} style={{ pointerEvents: 'none' }}>
         <g transform="rotate(14 200 -30)">
           <rect ref={sheenRef} x={-200} y={-230} width={110} height={400} fill={`url(#${sheenId})`} />

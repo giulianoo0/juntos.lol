@@ -17,8 +17,6 @@ export interface OverlayFocus {
 
 interface CatalogOverlayProps {
   mode: Exclude<DetailsMode, 'create'>
-  // Jump straight into one title's details — how the host lands on the exact
-  // episode a viewer asked for.
   focus?: OverlayFocus | null
   onClose: () => void
   onPickStream: (pick: TitlePick) => void
@@ -34,15 +32,10 @@ export function CatalogOverlay({ mode, focus, onClose, onPickStream, onRequestTi
   const [details, setDetails] = useState<TitleOpen | null>(focus?.open ?? null)
   const [pluginsOpen, setPluginsOpen] = useState(false)
 
-  // "Ver fontes" on a request card must land here even when the overlay is
-  // already open; `focus` is parent state, so its identity only changes when
-  // a new request is opened.
   useEffect(() => {
     if (focus) setDetails(focus.open)
   }, [focus])
 
-  // Escape only closes the overlay when the details panel is not up — the
-  // panel handles its own Escape and stops there being two layers vanishing.
   useEffect(() => {
     if (details) return
     const onKeyDown = (event: KeyboardEvent) => {

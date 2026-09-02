@@ -41,8 +41,6 @@ func TestServePlaylistReturnsWhatWasPublished(t *testing.T) {
 }
 
 func TestServePlaylistIsNeverCached(t *testing.T) {
-	// An event playlist grows with every segment the preview publishes, and a
-	// cached one strands a viewer at whatever length it had.
 	store := newTestStore(t)
 	addMediaTestRoom(t, store, "r1")
 	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": testPlaylist}))
@@ -54,8 +52,6 @@ func TestServePlaylistIsNeverCached(t *testing.T) {
 }
 
 func TestServePlaylistRefusesAnythingButAPlaylist(t *testing.T) {
-	// Segments are delivered by the bucket. Serving them here too would put
-	// this machine's bandwidth back in the path it was taken out of.
 	store := newTestStore(t)
 	addMediaTestRoom(t, store, "r1")
 	engine := mediaEngine(store)
@@ -84,9 +80,6 @@ func TestServePlaylistRequiresAPublishedName(t *testing.T) {
 }
 
 func TestServePlaylistRequiresLiveRoom(t *testing.T) {
-	// The bucket serves segments to anyone holding the URL, so this request is
-	// where an expired room stops being watchable: a viewer cannot start
-	// playback without first being handed a playlist.
 	store := newTestStore(t)
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
@@ -129,8 +122,6 @@ func addMediaTestRoom(t *testing.T, store *room.Store, id string) {
 }
 
 func TestServePlaylistCompressesWhenTheClientCan(t *testing.T) {
-	// The one media response this machine still pays for, asked for again
-	// every few seconds per rendition while a room grows.
 	store := newTestStore(t)
 	addMediaTestRoom(t, store, "r1")
 	long := "#EXTM3U\n"
@@ -156,8 +147,6 @@ func TestServePlaylistCompressesWhenTheClientCan(t *testing.T) {
 	require.Equal(t, long, string(decoded))
 }
 
-// testPlaylist is a master: short enough that gzip would make it bigger, which
-// is why the last case here asks for gzip and still gets none.
 func TestServePlaylistStaysPlainForAClientThatRefusesGzip(t *testing.T) {
 	store := newTestStore(t)
 	addMediaTestRoom(t, store, "r1")

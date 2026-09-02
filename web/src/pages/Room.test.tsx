@@ -77,7 +77,6 @@ describe('RoomPage join screen', () => {
   it('asks for a name and nothing else when the room is opened from a link', async () => {
     renderRoom()
 
-    // The link already grants access, so the only prompt is the display name.
     const field = await screen.findByLabelText(/your name|seu nome/i)
     expect(field).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /what should we call you|como devemos chamar você/i })).toBeInTheDocument()
@@ -134,15 +133,9 @@ describe('RoomPage refetch under version churn', () => {
   })
 
   it('lands a slow refetch even when more version signals arrive meanwhile', async () => {
-    // During a torrent download the server announces fresh metadata every
-    // second or so. On a connection where each round trip is slower than that
-    // cadence, a refetch that gets cancelled by the next signal means no
-    // response ever lands and the room stays frozen at its join-time state.
     const slow: Array<(json: unknown) => void> = []
     let calls = 0
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
-      // Only the room itself is slow here; the player's own fetches (the
-      // region's playlist bundle) are not what this test is about.
       if (!String(url).includes('/api/rooms/')) return Promise.resolve({ ok: false, status: 404, json: async () => ({}) })
       calls += 1
       if (calls === 1) return Promise.resolve({ ok: true, status: 200, json: async () => base })
@@ -159,9 +152,7 @@ describe('RoomPage refetch under version churn', () => {
 
     signal()
     await waitFor(() => expect(slow.length).toBeGreaterThan(0))
-    // The next signal arrives while that refetch is still in flight.
     signal()
-    // The slow response finally lands and must not have been thrown away.
     act(() => slow[0]({ ...base, fileName: 'updated.mkv' }))
 
     await screen.findByText('updated.mkv')
@@ -213,7 +204,6 @@ describe('RoomPage source swap', () => {
   it('hides the swap from everyone who is not driving the room', async () => {
     renderRoom()
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    // m2 is a viewer: the controller is m1.
     welcome('m2')
 
     await screen.findByRole('button', { name: /copy link|copiar link/i })
@@ -229,7 +219,6 @@ describe('RoomPage source swap', () => {
     fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
     fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
 
-    // The screen is granted first, then carried into the room it will play in.
     await waitFor(() => expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'screen'))
     expect(requestScreenStream).toHaveBeenCalled()
     expect(stashScreenStream).toHaveBeenCalledWith('abc123', screenStream)
@@ -246,7 +235,6 @@ describe('RoomPage source swap', () => {
     fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
     fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
 
-    // Nothing was swapped, so the room still plays what it played before.
     await waitFor(() => expect(requestScreenStream).toHaveBeenCalled())
     expect(changeRoomSource).not.toHaveBeenCalled()
     expect(stashScreenStream).not.toHaveBeenCalled()
@@ -254,9 +242,6 @@ describe('RoomPage source swap', () => {
 })
 
 describe('RoomPage retomar o preparo', () => {
-  // Resuming reopens the source on a fresh generation, and nothing already
-  // produced survives that. It has to wait until the room is actually
-  // pointing at media no region holds.
   const roomWith = (mediaRegions: unknown, producerHeartbeatMs?: number) => ({
     id: 'abc123', fileName: 'movie.mkv', status: 'ready',
     sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
@@ -312,12 +297,6 @@ describe('RoomPage retomar o preparo', () => {
     await waitFor(() => expect(changeRoomSource).toHaveBeenCalled())
   })
 
-  // The bug this guards: a cold seek puts the room somewhere no region holds
-  // yet, which is exactly the shape of a dead room. Any tab holding a
-  // resumable source — a second window, a viewer who once hosted this room —
-  // would answer it by swapping the source for a fresh, empty generation and
-  // throwing away everything the running pipeline had produced. A live
-  // heartbeat says the pipeline is already on its way there.
   it('leaves a cold seek alone while a pipeline is still producing', async () => {
     setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }], Date.now())
     renderRoom()
@@ -392,8 +371,6 @@ describe('RoomPage header', () => {
   it('no longer offers screen sharing next to the source switcher', async () => {
     await joinedRoom()
 
-    // Sharing a screen is what "change video" does; two entry points for it
-    // only made the header longer.
     expect(screen.queryByRole('button', { name: /share screen|compartilhar tela/i })).not.toBeInTheDocument()
   })
 
@@ -406,8 +383,6 @@ describe('RoomPage header', () => {
 
     expect(writeText).toHaveBeenCalledWith('http://localhost/room/abc123')
     expect(await screen.findByText(/link copied|link copiado/i)).toBeInTheDocument()
-    // The glyph is what confirms; the button keeps naming itself, so nobody
-    // has to work out what a lone tick used to be.
     await waitFor(() => expect(copy.querySelector('.lucide-check')).toBeTruthy())
     expect(copy).toHaveAccessibleName(/copy link|copiar link/i)
   })
@@ -416,7 +391,6 @@ describe('RoomPage header', () => {
     await joinedRoom()
     const toggle = screen.getByRole('button', { name: /^chat$/i })
 
-    // The chat starts open, so shut it before anything can go unread.
     fireEvent.click(toggle)
     chat('Ana', 'oi')
     chat('Ana', 'tudo bem?')
@@ -498,8 +472,6 @@ describe('RoomPage waiting screen', () => {
   })
 
   it('keeps reading its own progress when no live update arrives', async () => {
-    // A dropped WebSocket used to freeze this screen on the last figure it
-    // heard, which looks identical to a transfer that died.
     let received = 10 * 1024 * 1024
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
       ok: true, status: 200, json: async () => roomBody(received),
@@ -509,7 +481,6 @@ describe('RoomPage waiting screen', () => {
     await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '10'))
 
     received = 40 * 1024 * 1024
-    // No socket frame is delivered: only the poll can move this.
     await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40'),
       { timeout: 6000 })
   }, 10_000)
@@ -538,8 +509,6 @@ describe('RoomPage waiting panel', () => {
     vi.restoreAllMocks()
   })
 
-  // Presence toasts are role=status too, so the panel is found by its own
-  // heading rather than by role alone.
   const waitingPanel = async () => {
     const heading = await screen.findByText(/everyone to buffer|todo mundo/i)
     return heading.closest('.waiting-panel') as HTMLElement
@@ -598,7 +567,6 @@ describe('RoomPage waiting panel', () => {
   it('keeps Ignore away from viewers', async () => {
     renderRoom()
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    // m2 is a viewer; the controller is m1.
     joinAndWait('m2', [
       { memberId: 'm1', bufferAheadMs: 0, ready: false, stalled: true },
       { memberId: 'm2', bufferAheadMs: 5000, ready: true },

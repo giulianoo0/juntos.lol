@@ -12,10 +12,6 @@
 import type { MediaInput } from './mediaInput'
 import type { TorrentVideoFile, WorkerGrant } from '../torrent'
 
-// Every source the site can play, as data. The last two are the page-bound
-// escape hatches — a live MediaInput, or a torrent file read through the
-// session's own callbacks — which cannot cross into a worker and pin the job
-// to the page's thread (mocks and tests live there).
 export type RemuxSource =
   | { kind: 'file'; file: File }
   | { kind: 'stream'; url: string; name: string; size: number }
@@ -24,15 +20,11 @@ export type RemuxSource =
   | { kind: 'torrentFile'; file: TorrentVideoFile }
   | { kind: 'input'; input: MediaInput }
 
-// A subtitle file shipped next to the video. With a url it clones into the
-// worker; a read function pins the job to the page like 'input' does.
 export interface RemuxSideFile {
   name: string
   path: string
   size: number
   url?: string
-  // A sibling of a worker-served video: read through the video's own input,
-  // so the ticket in the url is whichever is current, not the one at start.
   workerIndex?: number
   read?: () => Promise<ArrayBuffer>
 }
@@ -42,8 +34,6 @@ export interface RemuxJob {
   mediaGeneration: number
   source: RemuxSource
   sideFiles: RemuxSideFile[]
-  /** The media is produced elsewhere (the fleet's FFmpeg); this browser only
-   * walks the source for its subtitles and fonts. */
   subtitlesOnly?: boolean
 }
 

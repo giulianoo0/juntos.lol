@@ -8,7 +8,6 @@ vi.mock('../remoteTorrent', async (importOriginal) => ({
   probeWorkers: vi.fn(),
 }))
 
-/** Measuring is the page's other source; most tests do not exercise it. */
 function measures(results: Array<{ id: string; mbit?: number; state?: 'ok' | 'down' }> = []) {
   vi.mocked(probeWorkers).mockImplementation(async () => results.map((r) => ({
     id: r.id, readBase: '', holds: false, state: r.state ?? 'ok', mbit: r.mbit,
@@ -54,11 +53,8 @@ describe('FleetStatus', () => {
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending))
     const { container } = render(<FleetStatus />)
 
-    // Same header, same bar, same row of facts, so nothing jumps when the
-    // numbers land.
     expect(container.querySelectorAll('.fleet-card.is-skeleton')).toHaveLength(2)
     expect(container.querySelector('.fleet-meter-track')).not.toBeNull()
-    // The bones are decoration; the announcement is the sentence behind them.
     expect(screen.getByText('Reading the fleet…')).toHaveClass('sr-only')
 
     release({ ok: true, json: async () => ({ capacity: 'available', workers: [member()] }) })
@@ -75,9 +71,6 @@ describe('FleetStatus', () => {
   })
 
   it('ranks by the speed it measured from this browser, not by how idle a worker is', async () => {
-    // The least loaded worker in the fleet can be the worst place for this
-    // viewer: a dispatch carries the page's own ranking, and the server takes
-    // the first of those that has room.
     answer({
       capacity: 'available',
       workers: [
@@ -112,7 +105,6 @@ describe('FleetStatus', () => {
 
   it('claims no best until it has measured one', async () => {
     answer({ capacity: 'available', workers: [member({ id: 'w_one000000' }), member({ id: 'w_two000000' })] })
-    // Nothing measurable: a badge here would be a guess wearing a label.
     measures([{ id: 'w_one000000', state: 'down' }, { id: 'w_two000000', state: 'down' }])
     render(<FleetStatus />)
 
@@ -121,8 +113,6 @@ describe('FleetStatus', () => {
   })
 
   it('measures busyness by whichever budget is closest to refusing the next room', async () => {
-    // Leases and disk are nearly empty; the pipe is not. An average would
-    // call this quiet, and the next room would be refused anyway.
     answer({
       capacity: 'available',
       workers: [member({ leases: 1, maxLeases: 8, diskUsed: 1, diskQuota: 100, transferUsedBps: 80, transferCapBps: 100 })],
@@ -133,9 +123,6 @@ describe('FleetStatus', () => {
   })
 
   it('keeps every field in every card, so two workers can be read against each other', async () => {
-    // One worker reports a bandwidth ceiling and the other does not. Dropping
-    // the field shifted every later field left, and the gap looked like a
-    // fault rather than an unset setting.
     answer({
       capacity: 'available',
       workers: [member({ id: 'w_capped000' }), member({ id: 'w_uncapped0', transferCapBps: undefined })],
@@ -150,8 +137,6 @@ describe('FleetStatus', () => {
   })
 
   it('reads bandwidth in bytes per second, which is what the worker reports', async () => {
-    // capBps is the worker's ceiling in BYTES; a megabit is 125_000 of them.
-    // Dividing by a million printed a 600 Mbit/s pipe as 75.
     answer({ capacity: 'available', workers: [member({ transferCapBps: 75_000_000, transferUsedBps: 1_250_000 })] })
     render(<FleetStatus />)
 
@@ -167,8 +152,6 @@ describe('FleetStatus', () => {
     expect(container.querySelector('dd.is-pending')?.textContent).toBe('measuring…')
   })
 
-  // The status page's one live number: counted from the open sockets, so it
-  // has its own endpoint and its own faster clock.
   it('shows how many rooms and people are on right now', async () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
       ok: true,
@@ -180,15 +163,11 @@ describe('FleetStatus', () => {
 
     await waitFor(() => expect(screen.getByText('Rooms open')).toBeInTheDocument())
     expect(screen.getByText('People watching')).toBeInTheDocument()
-    // NumberFlow animates towards the value and keeps the digits it is given
-    // in the accessible text, so the count is asserted through that.
     const counts = document.querySelectorAll('.fleet-live dd')
     expect(counts[0].textContent).toContain('3')
     expect(counts[1].textContent).toContain('7')
   })
 
-  // The worker holds a window, not the file: reporting the reservation said a
-  // 100 GB quota was a tenth full when the volume held a few hundred MB.
   it('reports the disk a worker is really holding, not what it reserved', async () => {
     answer({ capacity: 'available', workers: [member({ diskUsed: 10_737_418_240, diskReal: 343_932_928 })] })
     render(<FleetStatus />)
@@ -196,10 +175,6 @@ describe('FleetStatus', () => {
     await waitFor(() => expect(screen.getByText('0.3 GB / 100.0 GB')).toBeInTheDocument())
   })
 
-  // The meter is the worker's tightest resource, but the figure beside it
-  // always read leases. A worker held back by its disk showed "1 / 8" next to
-  // "80%", which is not that fraction, next to a separate "2 / 12 torrents"
-  // which is not it either: three numbers inviting arithmetic that cannot work.
   it('names the resource the busy percentage actually came from', async () => {
     answer({ capacity: 'available', workers: [member({
       leases: 1, maxLeases: 8,
@@ -209,7 +184,6 @@ describe('FleetStatus', () => {
     })] })
     render(<FleetStatus />)
 
-    // Disk at 80% is the tightest, so that is what the meter is reporting.
     await waitFor(() => expect(screen.getByText(/limited by disk/)).toBeInTheDocument())
     expect(screen.getByText(/80%/)).toBeInTheDocument()
     expect(screen.queryByText(/1 \/ 8/)).not.toBeInTheDocument()
@@ -245,8 +219,6 @@ describe('FleetStatus', () => {
 
     await vi.advanceTimersByTimeAsync(10_000)
 
-    // A blip in the poll is not news about the fleet: blanking the page
-    // would say it was.
     await waitFor(() => expect(screen.getByText(/has not answered since/)).toBeInTheDocument())
     expect(screen.getByText('aaaaaaaa')).toBeInTheDocument()
   })

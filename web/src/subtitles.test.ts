@@ -105,9 +105,6 @@ describe('createSubtitleCollector', () => {
   }
 
   it('names the source the tracks were read from', async () => {
-    // Extraction outlives the source when the room is swapped mid-read, so
-    // the post has to say which video it describes or the server cannot tell
-    // it apart from one describing the video now playing.
     const collector = createSubtitleCollector('room1', 2)
     collector.publish('embedded', [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }], true)
     await collector.flush()
@@ -153,7 +150,6 @@ describe('createSubtitleCollector', () => {
     }
     await collector.flush()
     expect(vi.mocked(fetch).mock.calls.length).toBeLessThan(5)
-    // The newest snapshot must still be the one that lands.
     expect(body(vi.mocked(fetch).mock.calls.length - 1).tracks[0].title).toBe('cue 4')
   })
 
@@ -181,9 +177,6 @@ describe('createSubtitleCollector, once the server has the bytes', () => {
   }
 
   it('sends only the tracks whose cues moved', async () => {
-    // A pass over a long file republishes every few seconds and most of what
-    // it would resend is tracks that finished long ago — on the same uplink
-    // the remux is pushing segments up.
     const collector = createSubtitleCollector('r1', 1)
     collector.publish('embedded', [
       { language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\none' },
@@ -199,8 +192,6 @@ describe('createSubtitleCollector, once the server has the bytes', () => {
 
     expect(posted(0).tracks.map((t) => t.vtt !== undefined)).toEqual([true, true])
     expect(posted(1).tracks.map((t) => t.vtt !== undefined)).toEqual([false, true])
-    // The name always travels: it is what the server matches a carried-over
-    // track by.
     expect(posted(1).tracks[0].language).toBe('eng')
     expect(posted(1).tracks[1].vtt).toBe('WEBVTT\n\num\n\ndois')
   })

@@ -24,8 +24,6 @@ describe('UploadAvailability', () => {
   })
 
   it('measures the wait against the point playback can start, not the whole file', () => {
-    // 30 MB of a 600 MB file, needing 60 MB to play: half way to playable,
-    // and only 5% of the way through the transfer.
     renderPrep({
       sourceBytes: 600 * MB,
       receivedBytes: 30 * MB,
@@ -48,8 +46,6 @@ describe('UploadAvailability', () => {
   })
 
   it('says outright when a source cannot be previewed, and measures the whole file', () => {
-    // This is the case that used to show a bar stuck at 100% for ever: an MP4
-    // whose index trails its media only plays once every byte has landed.
     renderPrep({
       sourceBytes: 400 * MB,
       receivedBytes: 100 * MB,
@@ -75,7 +71,6 @@ describe('UploadAvailability', () => {
       preparation={{ sourceBytes: 100 * MB, receivedBytes: 10 * MB, previewPhase: 'receiving' }}
     />)
 
-    // The bar tracks the server's 10 MB, not this tab's 90 MB.
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '10')
   })
 
@@ -103,7 +98,6 @@ describe('UploadAvailability', () => {
         sourceBytes: 600 * MB, receivedBytes: 10 * MB, previewTargetBytes: 60 * MB,
       })
 
-      // 10 MB arrive over 10 seconds, so the remaining 40 MB take about 40s.
       act(() => { vi.advanceTimersByTime(10_000) })
       rerender(<UploadAvailability t={t} progress={null} preparation={{
         sourceBytes: 600 * MB, receivedBytes: 20 * MB, previewTargetBytes: 60 * MB,
@@ -117,7 +111,6 @@ describe('UploadAvailability', () => {
         sourceBytes: 6000 * MB, receivedBytes: 10 * MB, previewTargetBytes: 610 * MB,
       })
 
-      // 2 MB/s with 600 MB to go is 300 seconds.
       act(() => { vi.advanceTimersByTime(5_000) })
       rerender(<UploadAvailability t={t} progress={null} preparation={{
         sourceBytes: 6000 * MB, receivedBytes: 20 * MB, previewTargetBytes: 610 * MB,
@@ -132,8 +125,6 @@ describe('UploadAvailability', () => {
       })
       act(() => { vi.advanceTimersByTime(10_000) })
 
-      // A swapped source starts from zero; carrying the old samples over would
-      // read as a huge negative rate.
       rerender(<UploadAvailability t={t} progress={null} preparation={{
         sourceBytes: 600 * MB, receivedBytes: 0, previewTargetBytes: 60 * MB,
       }} />)

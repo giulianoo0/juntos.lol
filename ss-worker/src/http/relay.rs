@@ -7,10 +7,7 @@ use axum::response::{IntoResponse, Response};
 
 /// The fleet's front door. A worker on a private network never shows the
 /// browser its address: the site points readers here instead, and this
-/// worker forwards the whole exchange to the app, which routes it on to
-/// the sibling. Bytes stream both ways; nothing is buffered or inspected.
-/// Authorization stays where it always was — the destination worker
-/// verifies the ticket in the path.
+/// worker forwards the exchange to the app, which routes it to the sibling.
 pub struct Relay {
     pub upstream: String,
     client: reqwest::Client,
@@ -60,9 +57,6 @@ pub async fn any(
     let mut response = Response::builder().status(status);
     if let Some(headers_mut) = response.headers_mut() {
         for (name, value) in upstream.headers() {
-            // Hop-by-hop headers stay per hop; everything else — CORS, the
-            // honest Content-Range, content types — passes through as the
-            // destination worker wrote it.
             if matches!(name.as_str(), "connection" | "transfer-encoding" | "keep-alive" | "upgrade") {
                 continue;
             }

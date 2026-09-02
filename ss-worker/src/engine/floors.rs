@@ -3,15 +3,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 /// The generation each reader has moved past on one torrent.
-///
-/// A seek bumps the reader's generation and the responses behind it stop
-/// being fed, which is what keeps a swarm from spending the seconds after a
-/// jump on the region the remux just left. The floor that decides this is
-/// per reader, never per torrent: a torrent outlives the room that warmed
-/// it, and two rooms watching the same release are two readers with two
-/// cursors. One floor for the pair would have every seek in one room refuse
-/// the other's reads — and a room arriving at a torrent someone else already
-/// seeked through would find every read of it refused before it began.
 #[derive(Default)]
 pub struct Floors(HashMap<String, Arc<AtomicU64>>);
 
@@ -26,9 +17,6 @@ impl Floors {
         floor
     }
 
-    /// Forgets every reader. Called where the parked streams are dropped:
-    /// nothing is reading, so no floor is holding anything back, and a room
-    /// that comes back is a new reader anyway.
     pub fn clear(&mut self) {
         self.0.clear();
     }

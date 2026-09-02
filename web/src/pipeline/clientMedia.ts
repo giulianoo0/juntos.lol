@@ -37,15 +37,8 @@ import { createSegmentLedger } from './segmentLedger'
 import { createSeekTracer, formatSeekTrace, type SeekTrace } from './seekTrace'
 import { isUnreadableFile } from '../uploadErrors'
 
-// The WASM decoders register lazily: nothing loads until a file actually
-// carries one of these codecs.
 registerAc3Decoder()
 registerDtsDecoder()
-// The AAC encoder is different: a registered custom encoder takes absolute
-// priority over WebCodecs in mediabunny, so registering it unconditionally
-// makes every transcoded region spin up one WASM instance per audio track —
-// a MULTi release re-encoding ten of them ran a worker out of memory. It is
-// registered only where the native encoder is missing, as a true fallback.
 let codecsReady: Promise<void> | null = null
 function ensureCodecs(): Promise<void> {
   codecsReady ??= (async () => {
@@ -58,34 +51,15 @@ function ensureCodecs(): Promise<void> {
   return codecsReady
 }
 
-/** The codecs the pipeline will copy — the same set the server refuses to
- * transcode away from. */
 const COPYABLE_VIDEO = new Set(['avc', 'hevc', 'vp9', 'av1'])
 const SEGMENT_SECONDS = 4
-/** How many objects ride in one presign call at most. Presigns coalesce
- * whatever is ready; nothing waits to fill a batch. */
 const PRESIGN_BATCH = 32
-/** Global ceiling of simultaneous segment PUTs. The experiment matrix tests
- * 4/8/16; 8 is the opening value, not a law. */
 const PUT_CONCURRENCY = 8
-/** Global ceiling of bytes admitted but not yet uploaded. The muxer's own
- * finalize callback awaits admission, so hitting this stalls production —
- * backpressure — instead of growing an unbounded array. */
 const MAX_QUEUED_BYTES = 192 * 1024 * 1024
-/** How often accumulated segments and playlists are pushed to the server
- * when nothing else asks for it: the floor, not the pace. A publish is
- * normally kicked by the upload that gives it something to say. */
 const PUBLISH_INTERVAL_MS = 2_000
-/** How long a kicked publish waits for company: the init and the first
- * segment of every rendition land within a breath of each other, and the
- * master only renders once each rendition has one — sent apart, the first
- * round would confirm names the master could not use yet. */
 const PUBLISH_DEBOUNCE_MS = 200
 const PUT_RETRIES = 2
-/** How many extra drain rounds a stuck object gets before the complete pass. */
 const DRAIN_ROUNDS = 10
-/** How long a seek waits for its keyframe before starting unsnapped: the
- * probe reads from the swarm and may sit on pieces nobody has yet. */
 const KEYFRAME_SNAP_MS = 60_000
 
 export interface ClientRemuxPlan {
@@ -116,9 +90,6 @@ export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan
     }
     const audioTracks = await input.getAudioTracks()
     for (const track of audioTracks) {
-      // Copyable AAC skips the decoder entirely; everything else must be
-      // decodable here (WebCodecs or a registered WASM decoder) and AAC must
-      // be encodable, or the room would end up with silent video.
       if (track.codec === 'aac') continue
       if (!(await track.canDecode())) return refuse(`audio codec ${track.codec ?? 'unknown'} cannot be decoded in this browser`)
       if (!(await canEncodeAudio('aac'))) return refuse('this browser cannot encode aac, which every audio track is converted to')
@@ -134,16 +105,11 @@ export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan
       durationSeconds,
     }
   } catch (error) {
-    // Bytes that could not be read are not a verdict on the media; the
-    // caller names that failure for what it is.
     if (error instanceof ReadUnreachableError || error instanceof ReadFailedError || isUnreadableFile(error)) throw error
     return refuse(error instanceof Error ? `${error.name}: ${error.message}` : String(error))
   }
 }
 
-// Why the last plan said no. "Unsupported media" is the least actionable
-// message a person can be handed, and the reason is known right here and
-// nowhere else; it rides out with the error so a report can carry it.
 let lastRefusal: string | null = null
 
 export function lastPlanRefusal(): string | null {
@@ -154,8 +120,6 @@ interface ClaimResponse {
   claim: string
   mediaGeneration: number
   maxBytes: number
-  /** Authorizes the late-metadata endpoint; outlives the claim, dies with
-   * the source. Absent from older servers. */
   metadataToken?: string
 }
 
@@ -170,12 +134,8 @@ export interface RunClientRemuxOptions {
   file: MediaInput
   plan: ClientRemuxPlan
   onProgress?: (pct: number) => void
-  /** Where the time of each cold seek went, once it is known. */
   onTrace?: (trace: SeekTrace) => void
-  /** The region being produced has its first segment in the bucket: whatever
-   * held back for the seek — the subtitle scan — may go on. */
   onRegionWarm?: () => void
-  /** Hands out the live pipeline handle once the remux is running. */
   onHandle?: (handle: ClientRemuxHandle) => void
 }
 
@@ -188,17 +148,12 @@ export interface ClientRemuxHandle {
   follow(absoluteMs: number): void
 }
 
-/** How far past the produced edge a position may run before the pipeline
- * restarts there instead of letting production catch up. */
 const COLD_AHEAD_MS = 30_000
-/** Positions this close before the region start are treated as covered: the
- * keyframe snap places region starts slightly before the requested time. */
 const COLD_BEHIND_MS = 1_000
 
 /**
- * Thrown when the room moved on under the run — the source was swapped, so the
- * server released the claim or rejected the generation. The caller must not
- * report it as a failure of this source: the room is on a different one now.
+ * Thrown when the room moved on under the run — the source was swapped. The
+ * caller must not report it as a failure of this source.
  */
 export class RoomMovedOnError extends Error {
   constructor(message: string) {
@@ -210,9 +165,7 @@ export class RoomMovedOnError extends Error {
 /**
  * A failed call to one of the client-media endpoints, carrying the server's
  * own `error` code from the JSON body. The code — not the HTTP status — is
- * what distinguishes a source swap (`claim_mismatch`, `stale_generation`)
- * from a run that simply failed (`no_playable_media`) or a bucket PUT that
- * 403'd: the same status means different things, so only the code decides.
+ * what distinguishes a source swap from a run that simply failed.
  */
 class ServerError extends Error {
   readonly code: string
@@ -225,24 +178,21 @@ class ServerError extends Error {
   }
 }
 
-/** The error codes the server returns when the room has moved on under a run. */
 const MOVED_ON_CODES = new Set(['claim_mismatch', 'stale_generation', 'room_not_found'])
 
-// Reads the server's `{"error": code}` body off a failed response.
 async function serverError(response: Response): Promise<ServerError> {
   let code = ''
   try {
     const body = await response.json() as { error?: string }
     code = body.error ?? ''
-  } catch { /* no JSON body */ }
+  } catch {}
   return new ServerError(code, response.status)
 }
 
 /**
- * Runs the whole pipeline: claim, remux, upload, publish, complete. Throws on
- * failure — RoomMovedOnError when the room was swapped (do not fall back),
- * any other error when the run itself failed (fall back to tus). The claim is
- * released on the way out either way, so the fallback upload can proceed.
+ * Runs the whole pipeline: claim, remux, upload, publish, complete. Throws
+ * RoomMovedOnError when the room was swapped, any other error when the run
+ * itself failed. The claim is released on the way out either way.
  */
 export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions): Promise<void> {
   const claimResponse = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/claim`, {
@@ -260,13 +210,7 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
   try {
     await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, metadataToken, onProgress, onHandle, onTrace, onRegionWarm })
   } catch (error) {
-    // The server releases the claim itself on a successful complete; this
-    // covers every path that threw before it, so a retry from the host does
-    // not hit a still-held reservation.
     await releaseClaimReliably(roomID, claim)
-    // Only the server's own swap codes mean the room moved on. Everything
-    // else — a bucket 403, a 409 no_playable_media, a network error — is a
-    // failed run.
     if (error instanceof ServerError && MOVED_ON_CODES.has(error.code)) {
       throw new RoomMovedOnError(error.message)
     }
@@ -280,10 +224,6 @@ async function releaseClaim(roomID: string, claim: string): Promise<void> {
   })
 }
 
-// Releasing must actually land, or the next attempt on this room hits a
-// still-held reservation and wedges it until its TTL. A 404 or 403 means the claim
-// is already gone (room swapped, or the server released it on complete), which
-// is success for our purpose; only a network error or 5xx is retried.
 async function releaseClaimReliably(roomID: string, claim: string): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -292,27 +232,16 @@ async function releaseClaimReliably(roomID: string, claim: string): Promise<void
       })
       if (response.ok || response.status === 404 || response.status === 403) return
     } catch {
-      // network error — retry
     }
     await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)))
   }
 }
 
-/** The rendition number in a muxer playlist name, or null if it is not one. */
 function renditionOf(name: string): number | null {
   const match = /^(?:r\d+_)?client_stream_(\d+)\.m3u8$/.exec(name)
   return match ? Number(match[1]) : null
 }
 
-/**
- * The first `keep` segments of a media playlist, ended. Tags read since the
- * last segment describe the one that follows, so they are dropped with it —
- * the same cut the server makes, made here so the end marker survives it.
- *
- * Null when there is nothing to end: a playlist with no confirmed segment is
- * not a finished region, it is an empty one.
- */
-/** The segment lengths a media playlist declares, in order. */
 export function segmentDurations(body: string): number[] {
   const out: number[] = []
   for (const line of body.split('\n')) {
@@ -322,6 +251,11 @@ export function segmentDurations(body: string): number[] {
   return out
 }
 
+/**
+ * The first `keep` segments of a media playlist, ended. Tags read since the
+ * last segment are dropped with it. Null when there is nothing to end: a
+ * playlist with no confirmed segment is an empty region, not a finished one.
+ */
 export function endPlaylist(body: string, keep: number): string | null {
   if (keep <= 0) return null
   const out: string[] = []
@@ -339,19 +273,10 @@ export function endPlaylist(body: string, keep: number): string | null {
     segments += 1
   }
   if (segments === 0) return null
-  // Whatever was still pending belongs to a segment that is not here.
   return `${out.join('\n')}\n#EXT-X-ENDLIST\n`
 }
 
 async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, metadataToken, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions & { claim: string; metadataToken?: string }): Promise<void> {
-  // Object flow: the muxer finalizes a file and awaits its admission; the
-  // pump drains admitted objects through presign + PUT into `uploaded`; each
-  // publish confirms `uploaded` names with the server, which HEADs the
-  // bucket and extends the published set the playlists are cut against.
-  //
-  // Chapters are optional and may live in a cold part of a remote file. They
-  // ride their own late-metadata protocol: they never gate a publish, never
-  // hold up complete, and still land after the claim is released.
   void readMkvChapters(file).then(async (found: MkvChapter[]) => {
     if (found.length === 0 || !metadataToken) return
     await postMetadataWithRetry(roomID, mediaGeneration, metadataToken, found)
@@ -359,44 +284,22 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   const totalBytes = file.size
   const uploaded: string[] = []
   const playlists = new Map<string, string>()
-  // Playlists of regions that closed, waiting for the publish that hands them
-  // over. Each remembers the region it belongs to: the seal may only go once
-  // that region has nothing left waiting to be confirmed, or the server cuts
-  // the playlist at what it has and the end marker is dropped with the tail.
-  // They are not kept after being accepted — the map travels whole in every
-  // publish, and a finished region would ride along in all of them.
   const sealed = new Map<string, { prefix: string; region: number; playlist: number; body: string }>()
   let uploadedBytes = 0
   let failure: unknown = null
   let metadataSent = false
-  // One execution, one committer: the id fences this run's publishes on the
-  // server, the sequence orders them.
   const runId = crypto.randomUUID()
   let seq = 0
 
-  // Wakes the region loop when it is parked between regions (see below).
-
   const fail = (error: unknown) => {
-    // The first failure aborts everything: the conversion stops encoding, the
-    // ticker stops publishing, and execute() throws — instead of paying to
-    // upload the rest of a doomed run. Admissions parked on capacity and the
-    // drain parked on idle are woken so nothing awaits a queue that died.
     failure ??= error
     onFailure()
     void conversion?.cancel().catch(() => {})
   }
   let onFailure: () => void = () => {}
 
-  // Backpressure that reaches the producer: admission happens inside the
-  // muxer's own awaited finalize callback, bounded by one global budget of
-  // bytes and one global ceiling of PUTs. The old shape counted "pumps",
-  // each fanning into up to 32 PUTs — a blocked transport could hold 1,024
-  // objects in flight; this one cannot.
   const queued: PendingObject[] = []
   let queuedBytes = 0
-  // Objects that left the queue and are presigning or uploading. The slot
-  // count is what caps simultaneous PUTs; the byte count is what admission
-  // budgets against.
   let activeSlots = 0
   let inflightBytes = 0
   const inflightAborts = new Set<AbortController>()
@@ -413,8 +316,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     for (const waiter of capacityWaiters.splice(0)) waiter()
     for (const waiter of idleWaiters.splice(0)) waiter()
   }
-  /** Resolves once nothing is queued or in flight — the whole-lifecycle
-   * drain the complete pass depends on. */
   const queueIdle = async () => {
     while (queued.length > 0 || activeSlots > 0 || inflightBytes > 0) {
       if (failure) return
@@ -430,9 +331,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     queuedBytes += buffer.byteLength
     kickPump()
   }
-  // A seek abandons the dying region's work wholesale: queued objects are
-  // dropped before they cost a presign, in-flight ones are aborted. Their
-  // names simply never confirm.
   const dropQueued = () => {
     for (const object of queued.splice(0)) queuedBytes -= object.bytes.byteLength
     for (const abort of inflightAborts) abort.abort()
@@ -444,13 +342,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     pumping = true
     void pumpLoop().catch(fail).finally(() => {
       pumping = false
-      // Admissions that landed while the loop was winding down restart it.
       if (queued.length > 0 && !failure) kickPump()
     })
   }
-  // The pump reserves PUT slots, presigns whatever is ready, and hands each
-  // batch off without awaiting it: one held PUT must not park the objects
-  // behind it. A full pool means presigning more would only hoard URLs.
   const pumpLoop = async () => {
     while (queued.length > 0 && !failure) {
       const roomLeft = PUT_CONCURRENCY - activeSlots
@@ -467,8 +361,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   const uploadBatch = async (batch: PendingObject[]) => {
     const abort = new AbortController()
     inflightAborts.add(abort)
-    // Every object settles exactly once, whether its PUT ran, failed, or
-    // never started — an abort must not leak slots or byte budget.
     const remaining = new Set(batch)
     const settle = (object: PendingObject) => {
       if (!remaining.delete(object)) return
@@ -494,15 +386,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
         }
         uploaded.push(object.name)
         uploadedBytes += object.bytes.byteLength
-        // A name of the region being watched is worth a publish of its
-        // own; a straggler of an abandoned one can ride the floor.
         if (inCurrentRegion(object.name)) {
           trace.mark('firstPutOk', object.name)
           kickPublish()
         }
       }))
     } catch (error) {
-      // An aborted batch belonged to a region the room already left.
       if (!abort.signal.aborted) throw error
     } finally {
       for (const object of [...remaining]) settle(object)
@@ -514,10 +403,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   const inCurrentRegion = (name: string): boolean =>
     (region <= 0 ? !/^r\d+_/.test(name) : name.startsWith(`r${region}_`))
 
-  // The publish runs on demand — kicked by an upload or a master — and on a
-  // floor timer for what nobody kicks: retries of names the bucket did not
-  // vouch for, progress. One at a time; a kick during a round marks it
-  // dirty and the round that follows carries what arrived meanwhile.
   let publishing: Promise<void> | null = null
   let publishDirty = false
   let publishStopped = false
@@ -536,26 +421,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     kickTimer = setTimeout(() => { kickTimer = null; runPublish() }, PUBLISH_DEBOUNCE_MS)
   }
 
-  // Returns whether the server considers the room playable, which is the
-  // only trustworthy "done" signal on the complete pass.
   const publish = async (complete: boolean): Promise<boolean> => {
-    // The current region's names confirm first: after a seek, hundreds of
-    // the dead region's uploads would otherwise queue ahead of the very
-    // segments the master is waiting on, at 128 names a round.
     const current = inCurrentRegion
-    // A seal only travels once its region has nothing left to confirm. Sent
-    // early, the server renders the playlist against what it holds, cuts at
-    // the first name it cannot vouch for, and drops the end marker with the
-    // tail — and the seal would be gone with no way to know. Read before the
-    // splice below, which is the only other place a name can be waiting.
     const outstanding = (regionPrefix: string) => uploaded.some(
       (name) => (regionPrefix === '' ? !/^r\d+_/.test(name) : name.startsWith(regionPrefix)),
     )
-    // Cut to what the bucket vouches for, and only then ended. A region a
-    // seek abandoned names segments whose upload was dropped mid-queue; sent
-    // whole, the server stops at the first it cannot reach and throws the end
-    // marker away with the tail — which is every time, for exactly the regions
-    // this is for.
     const sealing = [...sealed]
       .filter(([, entry]) => complete || !outstanding(entry.prefix))
       .map(([name, entry]) => [name, endPlaylist(entry.body, ledger.contiguousIn(entry.region, entry.playlist))] as const)
@@ -565,19 +435,12 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     const body: Record<string, unknown> = {
       claim,
       mediaGeneration,
-      // One committer, one run, one monotonic sequence: the server fences
-      // with these, so a straggling round can never regress a newer one.
       runId,
       seq: (seq += 1),
       confirm,
-      // The growing region wins any name it shares with a sealed one:
-      // master.m3u8 always names whichever region is live.
       playlists: Object.fromEntries([...sealing, ...playlists]),
       complete,
       progress: { receivedBytes: uploadedBytes, sourceBytes: totalBytes },
-      // The offset is read at send time: after a seek it names the new
-      // region, and the server holds it back until that region's master
-      // actually renders.
       timeline: { durationMs: Math.round(plan.durationSeconds * 1000), offsetMs: regionStartMs, regions: regionMap() },
     }
     if (!metadataSent) {
@@ -585,14 +448,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     }
     const response = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/publish`, body)
     if (!response.ok) throw await serverError(response)
-    // The metadata stuck only now that the request succeeded, and so did the
-    // seals this round actually carried. The rest wait for their region's
-    // last names to land.
     metadataSent = true
     for (const [name] of sealing) sealed.delete(name)
     const { confirmed, ready } = await response.json() as { confirmed: string[]; ready: boolean }
-    // Confirmed means the server HEADed the object and the playlists can
-    // now reach it: this, and nothing earlier, is what a region may claim.
     ledger.noteConfirmed(confirmed)
     if (warmRegion !== region && confirmed.some((name) => /cs_\d+_\d+\.m4s$/.test(name) && current(name))) {
       warmRegion = region
@@ -602,18 +460,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       trace.mark('publishOk', regionSpanMs(regions.find((r) => r.growing) ?? regions[regions.length - 1]))
       trace.end()
     }
-    // Whatever the bucket did not vouch for is claimed again next round.
     const vouched = new Set(confirmed)
     for (const name of confirm) if (!vouched.has(name)) uploaded.push(name)
     return ready
   }
 
-  // One region at a time: a contiguous stretch of the source, converted in
-  // order from wherever the room last landed. The upload machinery above is
-  // shared across regions — segments of an abandoned region finish uploading
-  // harmlessly, since a region's names are never reused. Every region ever
-  // produced stays published under its own names; the map of them travels
-  // with each publish so a player can move between them.
   let conversion: Conversion | null = null
   let region = -1
   let regionStartMs = 0
@@ -624,15 +475,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     console.info(formatSeekTrace('host', done))
     onTrace?.(done)
   })
-  // A region spans what the bucket confirmed, never what the muxer emitted.
-  // The muxer runs far ahead of the uplink — a local file stream-copies many
-  // times faster than a home connection uploads — so counting emissions
-  // claims media no viewer can fetch and no seek can land in.
   const regionSpanMs = (r: RegionRecord): number => {
     const covered = ledger.coveredMs(r.n, SEGMENT_SECONDS * 1000)
-    // A region that ran to the end of the file is as long as the file says
-    // minus where it started; the segment count rounds off its last partial
-    // segment. That claim is only honest once nothing is still in flight.
     if (r.ranToEnd && ledger.settled(r.n)) {
       return Math.max(covered, Math.round(plan.durationSeconds * 1000) - r.startMs)
     }
@@ -641,8 +485,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   const regionMap = () => regions.map((r) => ({
     n: r.n, startMs: r.startMs, producedMs: regionSpanMs(r), growing: r.growing,
   }))
-  // Whether the regions together cover the whole timeline, so the run is
-  // done regardless of the order they were produced in.
   const timelineCovered = (): boolean => {
     const durationMs = Math.round(plan.durationSeconds * 1000)
     const spans = regionMap().map((r) => ({ start: r.startMs, end: r.startMs + r.producedMs })).sort((a, b) => a.start - b.start)
@@ -653,17 +495,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     }
     return reach >= durationMs - SEGMENT_SECONDS * 1000
   }
-  // A region that stops growing keeps exactly what the bucket confirmed.
-  // A seek abandons queued and in-flight uploads, but abandoning them
-  // cannot un-store what already landed, so there is nothing to estimate
-  // away here: the ledger only ever counted names the server vouched for.
-  //
-  // Closing it also ends its playlists. A region abandoned by a seek never
-  // reaches the muxer's own finalize, so without this its playlists carry no
-  // EXT-X-ENDLIST — and to a player a playlist with no end is still live: it
-  // reloads it every few seconds, forever, from every viewer, for a region
-  // nothing will ever be added to. Sealed here while the map still holds the
-  // dying region, and sent once, because the server keeps what it is given.
   const closeRegion = () => {
     const current = regions.find((r) => r.growing)
     if (!current) return
@@ -672,33 +503,19 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     console.log(`[remux-worker] region ${current.n} closed: ${stats.count} segments, mean ${stats.meanSec.toFixed(2)}s, max ${stats.maxSec.toFixed(2)}s (target ${SEGMENT_SECONDS}s)`)
     const prefix = region <= 0 ? '' : `r${region}_`
     for (const [name, content] of playlists) {
-      // Masters carry no segments and are never reloaded on a timer. A
-      // playlist the muxer already ended is sealed all the same: the publish
-      // re-cuts it to what the bucket vouches for, and a fill region that
-      // ends short of the file would otherwise lose its playlists to the
-      // next region's map reset before any publish carried them.
       if (!content.includes('#EXTINF')) continue
       const rendition = renditionOf(name)
       if (rendition === null) continue
       sealed.set(name, { prefix, region: current.n, playlist: rendition, body: content })
-      // Out of the live map as well, or the unsealed twin under the same name
-      // rides the next publish and overwrites the seal on the server.
       playlists.delete(name)
     }
   }
   let seekTargetSeconds: number | null = null
   let nextStartSeconds = 0
-  // Where the region being set up stops, when it is filling a gap between
-  // regions rather than running to the end of the file. Null otherwise.
   let fillEndSeconds: number | null = null
-  // The region a traced seek left: its stragglers still confirm for a while
-  // after, and must not read as the new region publishing.
   let seekFromRegion = -1
-  // The last region whose first segment the bucket vouched for.
   let warmRegion = -1
 
-  // Seeks snap back to the keyframe at or before the target, so a region
-  // always starts on a frame the copied stream can actually begin at.
   const videoTrack = await plan.input.getPrimaryVideoTrack()
   const packetSink = videoTrack ? new EncodedPacketSink(videoTrack) : null
   const snapToKeyframe = async (seconds: number): Promise<number> => {
@@ -715,27 +532,13 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     }
   }
 
-  // Publishing runs alongside the remux for the same reason the server's
-  // does: a room that only became watchable at the end would not be a
-  // preview. A publish failure aborts the whole run through fail().
   const ticker = setInterval(runPublish, PUBLISH_INTERVAL_MS)
 
   let restartPending = false
   let pendingRestart: Promise<void> | null = null
-  // Set once the region loop is over: every position is produced and only
-  // the last uploads are draining. A seek that lands now has nowhere to
-  // restart — and tearing the drain down would strand the tail of a
-  // finished region, leaving the seek's target uncovered for good.
   let draining = false
   let lastFollowMs: number | null = null
-  // Where this region is heading: its own start, or the seek target it was
-  // started for when the nearest keyframe fell well before it. Without this
-  // a long GOP makes the fresh region look like it does not cover the very
-  // seek that created it, and the pipeline restarts in place forever.
   let regionAimMs = 0
-  // Covered means some region already holds the position: the growing one,
-  // with its aim and the room ahead of it, or a finished one the player can
-  // switch to on its own. Only an uncovered position restarts the pipeline.
   const uncovered = (absoluteMs: number): boolean => {
     for (const r of regionMap()) {
       const end = r.startMs + r.producedMs
@@ -752,20 +555,9 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     seekFromRegion = region
     closeRegion()
     pendingRestart = (async () => {
-      // The dying region goes first: its queued and in-flight segments would
-      // otherwise hold the uplink, and its conversion would compete with the
-      // keyframe snap for the worker. Aborted names simply never confirm.
       dropQueued()
-      // The reads go before the conversion: a cancel waits on the demuxer,
-      // and the demuxer may be parked on a range the swarm has not fetched.
       file.abortReads()
       trace.mark('readsAborted')
-      // Then say where we are going, before anything here reads there. The
-      // cancel below and the keyframe probe after it are the slow part of a
-      // seek, and a remote origin would otherwise spend all of it fetching
-      // around the position we just left. The timeline gives the offset to
-      // within a few percent, which a window this wide swallows whole; the
-      // reads that follow correct it.
       if (plan.durationSeconds > 0) {
         file.prefetchAt?.(Math.round((absoluteMs / (plan.durationSeconds * 1000)) * file.size))
       }
@@ -778,9 +570,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       regionAimMs = absoluteMs
     })()
   }
-  // Waits for a region's confirmations to catch up with its uploads, or for
-  // a seek to arrive, bounded: a name the bucket never vouches for must not
-  // hold the fill forever.
   const SETTLE_MAX_MS = 30_000
   const settled = async (n: number): Promise<void> => {
     const deadline = Date.now() + SETTLE_MAX_MS
@@ -788,9 +577,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       await new Promise<void>((resolve) => setTimeout(resolve, 500))
     }
   }
-  // The next stretch of the timeline no region holds: the one just behind
-  // where the room last pointed — where a viewer is likeliest to go back to
-  // — else the earliest. Null when everything is held.
   const nextGap = (): { startMs: number; endMs: number } | null => {
     const durationMs = Math.round(plan.durationSeconds * 1000)
     const spans = regionMap()
@@ -810,8 +596,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   }
   const handle: ClientRemuxHandle = {
     follow: (absoluteMs) => {
-      // Remembered even mid-restart: a second seek while the first is still
-      // tearing down must win, and the new region rechecks it on arrival.
       lastFollowMs = absoluteMs
       if (failure || restartPending) return
       if (draining) {
@@ -827,18 +611,11 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     region += 1
     const startSeconds = nextStartSeconds
     regionStartMs = Math.round(startSeconds * 1000)
-    // A fill region aims at its own start: the aim is only ever raised, and
-    // the seek target the previous region was built for would otherwise let
-    // this one claim it covers everything up to there.
     regionAimMs = fillEndSeconds !== null ? regionStartMs : Math.max(regionAimMs, regionStartMs)
     closeRegion()
     seekTargetSeconds = null
     regions.push({ n: region, startMs: regionStartMs, growing: true, ranToEnd: false })
-    // The old region's playlists stay published on the server; only the
-    // local map restarts, so the next publish carries the new region's
-    // master rather than a mix.
     playlists.clear()
-    // Region zero keeps the unprefixed names existing rooms already use.
     const prefix = region === 0 ? '' : `r${region}_`
 
     const output = new Output({
@@ -849,8 +626,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
         getPlaylistPath: ({ n }) => `${prefix}client_stream_${n}.m3u8`,
         getSegmentPath: ({ playlist, n }) => `${prefix}cs_${playlist.n}_${n}.m4s`,
         getInitPath: ({ n }) => `${prefix}cinit_${n}.mp4`,
-        // The bare name is the growing region's, for players that only know
-        // an offset; the prefixed one is this region's for good.
         onMaster: (content) => {
           playlists.set('master.m3u8', content)
           playlists.set(`r${region}_master.m3u8`, content)
@@ -863,16 +638,10 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
         },
         onSegment: (target, info) => {
           const name = `${prefix}cs_${info.playlist.n}_${info.n}.m4s`
-          // Registers the playlist so a rendition that has confirmed nothing
-          // yet still holds this region's span down to what a viewer can play.
           ledger.noteEmitted(name)
           trace.mark('firstSegmentMuxed', (target as BufferTarget).buffer?.byteLength ?? '')
         },
       }),
-      // Admission rides each file's own finalize: the muxer awaits the
-      // returned promise, so a saturated queue stalls production itself —
-      // the backpressure no notification callback could apply. Playlists
-      // are not uploaded as objects; their content arrives via onPlaylist.
       target: new PathedTarget('master.m3u8', ({ path }) => new BufferTarget({
         onFinalize: path.endsWith('.m3u8')
           ? undefined
@@ -894,8 +663,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       throw new Error('client remux plan rejected by conversion: '
         + current.discardedTracks.map((track) => track.reason).join(', '))
     }
-    // Progress is the whole timeline's, not the region's: the bar must not
-    // jump back to zero because someone sought.
     current.onProgress = (progress) => {
       const regionSpan = Math.max((fillEndSeconds ?? plan.durationSeconds) - startSeconds, 0)
       onProgress?.(Math.round(((startSeconds + progress * regionSpan) / plan.durationSeconds) * 100))
@@ -905,49 +672,30 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     trace.mark('convInit')
     restartPending = false
     if (region === 0) onHandle?.(handle)
-    // A seek that arrived while this region was being set up may point
-    // somewhere else entirely; honour it before paying for any conversion.
     if (lastFollowMs !== null && uncovered(lastFollowMs)) restartAt(lastFollowMs)
 
     try {
       await current.execute()
     } catch (error) {
-      // A cancel is either a seek (restart there) or fail() (throw below);
-      // anything else is the conversion's own failure. A seek may also
-      // surface as the aborted read the demuxer was waiting on.
       const seekAbort = error instanceof ReadAbortedError && restartPending
       if (!(error instanceof ConversionCanceledError || seekAbort)) fail(error)
     }
     if (failure) throw failure
-    // A restart may still be snapping its keyframe when the conversion ends
-    // on its own; settle it before deciding this was a natural finish.
     if (pendingRestart) {
       await pendingRestart
       pendingRestart = null
     }
     if (seekTargetSeconds !== null) {
-      // A seek out of a fill region is a plain region again: it runs from
-      // the target to the end, not to the fill's bound.
       fillEndSeconds = null
       nextStartSeconds = seekTargetSeconds
       continue
     }
-    // This region ran to the end of the file on its own, so it may claim the
-    // tail its segment count rounds off — but regionSpanMs holds that claim
-    // back until every one of its segments has actually reached the bucket.
     closeRegion()
     const finished = regions.find((r) => r.n === region)
     const wasFill = fillEndSeconds !== null
     fillEndSeconds = null
     if (finished && !wasFill) finished.ranToEnd = true
-    // The whole timeline is done once the regions together cover it —
-    // one from a breath of zero to the end, or several stitched by seeks
-    // and fills.
     if ((!wasFill && startSeconds <= COLD_BEHIND_MS / 1000) || timelineCovered()) break
-    // Something is still unproduced. Rather than park until the next cold
-    // seek, go and produce it: every gap filled now is a seek that opens in
-    // a second later instead of ten. The gaps are measured against what
-    // the bucket holds, so this region's stragglers get a moment to land.
     await settled(region)
     if (failure) throw failure
     if (pendingRestart) {
@@ -962,8 +710,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     const gap = nextGap()
     if (!gap) break
     const start = await snapToKeyframe(gap.startMs / 1000)
-    // A segment of slack past the gap so the two regions overlap on a
-    // whole segment; a gap that reaches the end is a plain run to the end.
     const end = gap.endMs >= Math.round(plan.durationSeconds * 1000) ? null : gap.endMs / 1000 + SEGMENT_SECONDS
     nextStartSeconds = start
     fillEndSeconds = end !== null && end > start ? end : null
@@ -971,10 +717,6 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   }
 
   draining = true
-  // The whole lifecycle drains: everything admitted, presigned or mid-PUT
-  // finishes (or fails the run) before completion is even considered. The
-  // old drain snapshotted a set that admissions could outrun, and a
-  // complete has gone out with 33 PUTs still pending.
   await queueIdle()
   if (failure) throw failure
   } finally {
@@ -982,32 +724,19 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     publishStopped = true
     if (kickTimer !== null) clearTimeout(kickTimer)
   }
-  // A round the last kick started is still splicing `uploaded`; the drain
-  // must not race it for names.
   await publishing
-  // Drain what the remux produced, bounded: an object the bucket never
-  // vouches for must not spin here forever short of the complete pass.
   for (let round = 0; uploaded.length > 0 && round < DRAIN_ROUNDS; round += 1) await publish(false)
-  // The complete pass throws (409 no_playable_media) if it produced nothing
-  // watchable. Chapters do not hold it up: they travel the late-metadata
-  // protocol and land whenever they land, claim or no claim.
   await publish(true)
 }
 
-/**
- * Posts late metadata — today, chapters — under the producer's metadata
- * token. Best-effort with bounded retries: metadata is a courtesy, and its
- * failure is never allowed to look like a failure of the media.
- */
 async function postMetadataWithRetry(roomID: string, mediaGeneration: number, token: string, chapters: MkvChapter[]): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const response = await postJson(`/api/rooms/${encodeURIComponent(roomID)}/client-media/metadata`, {
         token, mediaGeneration, chapters,
       })
-      // 4xx will not improve on retry: the source moved on or the token died.
       if (response.ok || response.status < 500) return
-    } catch { /* network hiccup — retry */ }
+    } catch {}
     await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)))
   }
   console.warn('chapters were read but could not be posted; the timeline stays unmarked')

@@ -10,18 +10,13 @@ import { StepBack } from '../ui/StepBack'
 
 const EMPTY_TORRENT_STATS: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
 
-/** How often the file list re-reads the swarm's counters. */
 const STATS_INTERVAL_MS = 500
 
 interface TorrentPickerProps {
   maxFileBytes: number
-  /** Handed a selected and prioritized file, and the magnet it came from; ownership of the session moves to the caller. */
   onPicked: (file: TorrentVideoFile, session: TorrentSession, magnet: string) => void
-  /** Called when backing out past the magnet, to leave the torrent flow. */
   onExit?: () => void
-  /** A swarm given back by the caller, so the picker opens on its list rather than on an empty magnet. */
   initialSession?: TorrentSession | null
-  /** The magnet that swarm was listed from, so backing out of the list still has it. */
   initialMagnet?: string
   t: Translator
 }
@@ -39,22 +34,14 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Magnet input and file chooser for a torrent.
- *
- * It owns the session until a file is picked, and tears down what it opened on
- * unmount, so abandoning the dialog never leaves a swarm connection running. A
- * session handed in by the caller is a step being resumed rather than one
- * opened here: it is given up only deliberately, by backing out of its list.
+ * Owns the swarm session until a file is picked, tearing down on unmount what
+ * it opened itself; a session handed in by the caller is released only by
+ * backing out of its list.
  */
 export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
-  // The fleet as this browser measured it, shown while it happens: which
-  // workers answered, how fast each one is from here, and which one won.
   const [probes, setProbes] = useState<WorkerProbe[]>([])
-  // Whether the fleet can take a magnet at all right now. Asked once when the
-  // picker opens: metadata needs a worker, so the answer belongs at the paste,
-  // not at play.
   const [capacity, setCapacity] = useState<string>('available')
   useEffect(() => {
     let cancelled = false
@@ -72,23 +59,8 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
   const [query, setQuery] = useState('')
   const owned = useRef<TorrentSession | null>(null)
   const loadRef = useRef<HTMLButtonElement>(null)
-  // The word changes a beat after the press, so the outgoing one is gone
-  // before the button starts widening for the incoming one. Keyed on the shown
-  // label rather than on `loading`, or the width would travel while the button
-  // still reads as the old word. The shimmer and the disabling stay on
-  // `loading` itself: a press has to be answered at once.
   const { shown: waiting, morphing: swapping } = useMorphingStep(loading)
   useMorphingSize(loadRef, waiting, { axis: 'width', durationMs: 260 })
-  // The magnet field giving way to the file list is a step change like any
-  // other, so it dissolves rather than cutting — inside the same panel, which
-  // grows to fit whichever of the two is showing.
-  //
-  // It is the session itself that is held a beat behind, not merely whether
-  // there is one. Backing out hands the swarm back at once, and a list drawn
-  // from the live session would empty on that frame — while it is still fully
-  // on screen — collapsing the panel to the height of its own heading and then
-  // sending it back up once the magnet field arrived. Drawn from the outgoing
-  // session it dissolves at the size it had, and the panel travels once.
   const { shown: listed, morphing: picking } = useMorphingStep(session)
   const listing = listed !== null
 
@@ -99,10 +71,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
 
   useEffect(() => () => owned.current?.destroy(), [])
 
-  // A swarm reports its progress to whoever opened it. One handed back to a
-  // picker that did not open it would report to a picker that no longer
-  // exists, so a list on screen reads the numbers off the session instead of
-  // waiting to be told them.
   useEffect(() => {
     if (!session) return
     setStats(session.stats())
@@ -129,20 +97,14 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
       setSession(opened)
       if (opened.files.length === 0) setError(t('home.torrentNoVideos'))
     } catch (error) {
-      // A fleet that is missing or full is not a bad magnet, and "check the
-      // magnet" would send someone to fix the wrong thing.
       setError(t(torrentErrorKey(error)))
     } finally {
       setLoading(false)
     }
   }
 
-  // Retreats one step. From the list that is the magnet it was listed from,
-  // still holding what was typed — a swarm with the wrong episode in it should
-  // not cost the magnet as well. From the magnet there is nothing left to
-  // retreat to, so it leaves. Which of the two it is comes from the live
-  // session, not from the step being drawn: what a press does is decided by
-  // where the picker actually is, not by what is still fading out of it.
+  // From the list, drops the swarm but keeps the magnet typed; from the magnet
+  // there is nothing left to retreat to, so it leaves the flow.
   const back = () => {
     if (!session) { onExit?.(); return }
     session.destroy()
@@ -164,7 +126,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
       setError(t('home.torrentFailed'))
       return
     }
-    // The caller drives the upload from here and owns the teardown.
     owned.current = null
     setSession(null)
     onPicked(file, session, magnet)
@@ -173,7 +134,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
   return (
     <div className="morph-fade" data-morphing={picking}>
       <div className="morph-head">
-        {/* Nothing to retreat to from the magnet unless the caller says where. */}
         {listing || onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
         <h2 className="stage-title">{listing ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
       </div>
@@ -198,9 +158,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
             <strong>{listed.name}</strong>
             <span>{stats.peers} {t('home.peers')} · {formatBytes(stats.downloadSpeed)}/s</span>
           </div>
-          {/* A season pack is dozens of files in a panel one pill wide.
-              Scrolling for an episode whose name is already known is the
-              wrong ask. */}
           <label className="sr-only" htmlFor="torrent-search">{t('home.torrentSearch')}</label>
           <input
             id="torrent-search"
@@ -225,9 +182,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
       {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
       {!listing ? (
         <div className="torrent-actions">
-          {/* It keeps hugging its label; the label is just longer while the
-              swarm is being asked. Both widths are the button's own content,
-              which is why the travel between them has to be measured. */}
           <button
             ref={loadRef}
             type="button"

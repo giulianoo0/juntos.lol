@@ -2,9 +2,8 @@ use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 /// A token bucket over the data plane's egress. The pump asks before every
-/// chunk it sends; past the ceiling it waits, which is exactly the
-/// backpressure h2 passes on to the reader. Burst is a quarter second of
-/// the cap, so short reads stay snappy and sustained ones average out.
+/// chunk it sends; past the ceiling it waits. Burst is a quarter second
+/// of the cap, so short reads stay snappy and sustained ones average out.
 pub struct Throttle {
     cap_bps: f64,
     state: Mutex<(f64, Instant)>,
@@ -52,12 +51,11 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn caps_sustained_throughput() {
-        let throttle = Throttle::new(1_000_000); // 1 MB/s
+        let throttle = Throttle::new(1_000_000);
         let started = tokio::time::Instant::now();
         for _ in 0..8 {
             throttle.acquire(250_000).await;
         }
-        // 2 MB at 1 MB/s minus the initial burst: at least ~1.7 s.
         assert!(started.elapsed() >= Duration::from_millis(1_600), "took {:?}", started.elapsed());
     }
 

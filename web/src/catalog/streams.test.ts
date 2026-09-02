@@ -39,13 +39,13 @@ describe('parseStreams', () => {
   it('reads a torrent stream into a torrent location', () => {
     const [stream] = parseStreams({
       streams: [{
-        name: 'Torrentio\n4k DV',
+        name: 'Acme\n4k DV',
         title: 'Movie.2160p\n\u{1F464} 40 \u{1F4BE} 17.1 GB \u2699\uFE0F 1337x',
         infoHash: 'AD9462066CDF17273F91C4B4F708F1650394FC00',
         fileIdx: 0,
         behaviorHints: { filename: 'Movie.2160p.mkv' },
       }],
-    }, 'sha-of-origin', 'Torrentio')
+    }, 'sha-of-origin', 'Acme')
     expect(stream).toMatchObject({
       quality: '4k DV',
       resolution: '2160p',
@@ -61,9 +61,8 @@ describe('parseStreams', () => {
       fileIdx: 0,
       fileName: 'Movie.2160p.mkv',
     })
-    // The id is the opaque registry key; the name is what a person reads.
     expect(stream.pluginId).toBe('sha-of-origin')
-    expect(stream.pluginName).toBe('Torrentio')
+    expect(stream.pluginName).toBe('Acme')
   })
 
   it('reads a direct https url into a url location', () => {
@@ -75,8 +74,6 @@ describe('parseStreams', () => {
   })
 
   it('prefers the torrent when a stream carries both', () => {
-    // A torrent goes through the swarm and costs nobody bandwidth; a url is
-    // somebody's server. Given the choice, take the swarm.
     const [stream] = parseStreams({
       streams: [{ infoHash: 'a'.repeat(40), url: 'https://cdn.example.com/movie.mkv' }],
     }, 'p')
@@ -132,8 +129,6 @@ describe('streamKey', () => {
   })
 
   it('separates the same torrent found by two different plugins', () => {
-    // Having more than one plugin is the point, and two of them returning the
-    // same release is the normal case, not a collision to ignore.
     const location = { kind: 'torrent' as const, infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' }
     expect(streamKey(of(location, 'a'))).not.toBe(streamKey(of(location, 'b')))
   })
@@ -150,8 +145,6 @@ describe('isPlayable', () => {
 
 describe('readLocation, through parseStreams', () => {
   it('refuses a url carrying credentials', () => {
-    // These would have the server send Basic auth to an address a plugin
-    // chose — the same reason the manifest refuses them in updateUrl.
     expect(parseStreams({ streams: [{ url: 'https://user:pass@cdn.example.com/m.mkv' }] }, 'p')).toEqual([])
   })
 

@@ -11,8 +11,6 @@ func TestRoomPrefixCoversEveryGenerationOfOneRoom(t *testing.T) {
 	prefix := RoomPrefix("r1")
 
 	require.Equal(t, "rooms/r1/", prefix)
-	// The trailing separator is what keeps the prefix from reaching a room whose
-	// id merely starts with this one's.
 	require.True(t, strings.HasPrefix("rooms/r1/g0/hls/stream_0_000.m4s", prefix))
 	require.True(t, strings.HasPrefix("rooms/r1/g3/subs/sub_0_eng.vtt", prefix))
 	require.False(t, strings.HasPrefix("rooms/r10/g0/hls/stream_0_000.m4s", prefix))
@@ -34,9 +32,6 @@ func TestFakeRemovePrefixTakesOnlyTheMatchingRoom(t *testing.T) {
 }
 
 func TestRemovePrefixRefusesToEmptyTheWholeBucket(t *testing.T) {
-	// The one argument this takes is the difference between reclaiming a room
-	// and deleting every room's media, so an empty one is never a request worth
-	// honouring.
 	fake := NewFake()
 	require.NoError(t, fake.Put(t.Context(), "rooms/r1/g0/hls/a.m4s", strings.NewReader("x"), 1, "", ""))
 

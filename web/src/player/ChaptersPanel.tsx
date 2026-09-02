@@ -7,7 +7,6 @@ interface ChaptersPanelProps {
   chapters: RoomChapter[]
   open: boolean
   onClose: () => void
-  /** Seeks the room. Absent for a viewer, who may look but not jump. */
   onSeek?: (seconds: number) => void
   videoRef: MutableRefObject<HTMLVideoElement | null>
   t: Translator
@@ -29,9 +28,6 @@ function formatTime(totalSeconds: number): string {
  * points, so nothing here waits on what has been prepared.
  */
 export function ChaptersPanel({ chapters, open, onClose, onSeek, videoRef, t }: ChaptersPanelProps) {
-  // Where playback is, sampled while the panel is open. Polled rather than
-  // subscribed: it moves constantly, and once a second is exactly as alive
-  // as the highlight needs to be.
   const [nowAt, setNowAt] = useState(0)
   useEffect(() => {
     if (!open) return

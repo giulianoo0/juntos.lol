@@ -24,8 +24,6 @@ use crate::config::TlsMode;
 use crate::engine::Engine;
 use crate::ticket::{self, Ticket};
 
-/// What every handler needs: the engine, the key tickets are checked
-/// against, this worker's id, the revoked set, and the counters.
 pub struct AppState {
     pub engine: Arc<Engine>,
     pub throttle: Arc<throttle::Throttle>,
@@ -33,13 +31,8 @@ pub struct AppState {
     pub server_key: RwLock<Option<VerifyingKey>>,
     pub worker_id: RwLock<String>,
     pub revoked: Mutex<HashMap<String, u64>>,
-    /// Bytes each probe ticket has already served, by jti, with the ticket's
-    /// exp for cleanup. A probe ticket is minted on demand and free, so a
-    /// per-request cap alone is no cap at all — this is what keeps the
-    /// endpoint from being an unmetered firehose of zeros.
     pub probe_spent: Mutex<HashMap<String, (usize, u64)>>,
     pub metrics: Arc<Metrics>,
-    /// The remote-remux supervisor; None when the capability is off.
     pub remux: parking_lot::RwLock<Option<Arc<crate::remux::Remux>>>,
 }
 
@@ -71,12 +64,8 @@ pub struct Metrics {
     pub bytes_served: AtomicU64,
     pub stalls: AtomicU64,
     pub first_byte_timeouts: AtomicU64,
-    /// Responses a hint ended before their body ran out: the old region's
-    /// reads a seek left behind.
     pub superseded: AtomicU64,
     pub in_flight: AtomicU64,
-    // Histogram buckets in seconds for the first byte of a range: the SLI
-    // a viewer actually feels.
     pub first_byte_buckets: [AtomicU64; 8],
     pub first_byte_sum_ms: AtomicU64,
     pub first_byte_count: AtomicU64,
@@ -125,9 +114,6 @@ pub fn ok_json(audience: &str, value: serde_json::Value) -> Response {
     response
 }
 
-// Preflights carry no ticket the server could trust without parsing, so
-// the ticket in the path is verified the same way and the origin is its
-// audience. An unverifiable ticket gets no CORS at all.
 async fn preflight(State(state): State<Arc<AppState>>, Path(ticket): Path<String>) -> Response {
     match state.verify(&ticket) {
         Ok(t) => {
@@ -146,10 +132,6 @@ async fn preflight_sub(
     preflight(State(state), Path(ticket)).await
 }
 
-// A short-lived signed ticket buys a few megabytes of zeros: what the page
-// measures each worker with before choosing one. The per-request cap fits
-// what the page asks for (3 MiB), and the per-ticket budget covers one
-// retry of it — past that the ticket is done, however much life it has left.
 const PROBE_CAP: usize = 4 * 1024 * 1024;
 const PROBE_TICKET_BUDGET: usize = 8 * 1024 * 1024;
 
@@ -232,7 +214,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-// Counts responses still being written, for the drain on shutdown.
 async fn in_flight(
     State(state): State<Arc<AppState>>,
     request: axum::extract::Request,
@@ -264,8 +245,6 @@ pub async fn serve(
             let rustls =
                 axum_server::tls_rustls::RustlsConfig::from_config(tls::server_config(slot));
             let mut server = axum_server::bind_rustls(cfg.https_addr, rustls).handle(handle);
-            // Generous windows: a stream fed from disk at WAN latency must
-            // not be throttled by a 64 KiB default.
             server
                 .http_builder()
                 .http2()
@@ -351,7 +330,6 @@ mod tests {
             spend_probe_budget(&mut spent, "j2", exp, 4 * 1024 * 1024),
             "another ticket has its own budget"
         );
-        // An expired ticket's entry is swept; the same jti would start over.
         let mut stale =
             std::collections::HashMap::from([("old".to_string(), (8 * 1024 * 1024usize, 1u64))]);
         assert!(spend_probe_budget(&mut stale, "j3", exp, 1));

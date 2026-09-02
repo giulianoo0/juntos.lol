@@ -5,22 +5,15 @@ import (
 	"time"
 )
 
-// ErrNoWorkers means no worker is enrolled and connected at all.
 var ErrNoWorkers = errors.New("no_workers")
 
-// ErrWorkersBusy means workers exist but none has room for this job.
 var ErrWorkersBusy = errors.New("workers_busy")
 
-// Place picks the worker for an infohash: hard filters (healthy, disk for
-// the file with slack, leases under max), then affinity — a worker that
-// already holds the torrent serves the next episode or a rewatch from warm
-// pieces — then least loaded. Never round-robin: jobs run for hours and are
-// nothing alike.
+// Place picks the worker for an infohash: hard filters (healthy, disk with
+// slack, leases under max), then affinity to a worker already holding the
+// torrent, then least loaded. Never round-robin: jobs run for hours.
 func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker, error) {
 	if holders := r.Holders(infohash, now); len(holders) > 0 {
-		// Two passes: a relayed holder is still warm, but every byte it
-		// serves crosses this machine three times, so it only wins when no
-		// direct one can take the job.
 		for _, relayed := range []bool{false, true} {
 			for _, w := range holders {
 				if w.Heartbeat.Relayed == relayed && hasRoom(w, 0) {
@@ -43,10 +36,6 @@ func (r *Registry) Place(infohash string, sizeHint int64, now time.Time) (Worker
 			continue
 		}
 		load := loadOf(*w)
-		// A relayed worker's bytes are proxied through this machine on the
-		// way to the browser, so it loses to any direct one that can take the
-		// job however lightly loaded it is. This is the server's own guess;
-		// a page that measured the paths sends its ranking and overrides it.
 		if best == nil || better(*w, load, *best, bestLoad) {
 			best, bestLoad = w, load
 		}
@@ -85,8 +74,6 @@ func hasRoom(w Worker, sizeHint int64) bool {
 			return false
 		}
 	}
-	// A worker serving near its bandwidth ceiling is full: another room
-	// there would only split a pipe that is already spoken for.
 	if hb.Transfer != nil && hb.Transfer.CapBps > 0 && hb.Transfer.UsedBps >= hb.Transfer.CapBps*85/100 {
 		return false
 	}

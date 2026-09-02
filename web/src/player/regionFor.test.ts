@@ -11,7 +11,6 @@ describe('regionFor', () => {
     expect(regionFor(map, 10_000, null)).toBe(0)
     expect(regionFor(map, 610_000, null)).toBe(1)
     expect(regionFor(map, 100_000, null)).toBe(2)
-    // Region 2 overlaps region 0 from 23.9s on; the newer start wins.
     expect(regionFor(map, 23_950, null)).toBe(2)
   })
 

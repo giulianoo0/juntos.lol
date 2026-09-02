@@ -40,10 +40,8 @@ const base = params.get('base') ?? 'http://127.0.0.1:8099/f'
 const seconds = Number(params.get('seconds') ?? '60')
 const withAudio = params.get('audio') === '1'
 const cacheMiB = Number(params.get('cache') ?? '96')
-// The abort experiment: after `abortAt` seconds the reads are aborted from
-// under the running conversion (as a seek does), and a second conversion is
-// started on the SAME Input from `resumeAt` seconds. Whether it produces
-// segments answers whether an aborted read poisons the shared input.
+// The abort experiment: a second conversion is started on the SAME Input
+// after the first's reads are aborted, as a seek does.
 const abortAt = Number(params.get('abortAt') ?? '0')
 const resumeAt = Number(params.get('resumeAt') ?? '600')
 const out = document.getElementById('out')!
@@ -98,8 +96,7 @@ async function main() {
     audio: withAudio ? { codec: 'aac' } : { discard: true },
   })
   if (!conversion.isValid) throw new Error('conversion invalid: ' + conversion.discardedTracks.map((t) => t.reason).join(','))
-  // Throughput over 5 s windows; "sustained" is the median of them, which
-  // ignores the warm-up and the tail.
+  // "sustained" is the median of the 5 s windows, ignoring warm-up and tail.
   let windowStart = result.bytesRead
   const ticker = setInterval(() => {
     const now = result.bytesRead

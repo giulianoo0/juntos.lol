@@ -1,9 +1,8 @@
 use anyhow::{bail, Context};
 use serde::Deserialize;
 
-/// The explicit codec matrix, mirrored from internal/remux. Nothing outside
-/// it is accepted by analogy: an unlisted codec is a clear refusal, never a
-/// hidden transcode.
+/// The explicit codec matrix, mirrored from internal/remux: an unlisted
+/// codec is a clear refusal, never a hidden transcode.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AudioAction {
@@ -81,7 +80,6 @@ fn audio_action(codec: &str, channels: u32) -> anyhow::Result<AudioAction> {
 }
 
 fn parse_mkv_duration(tag: &str) -> Option<u64> {
-    // 00:41:59.940000000
     let mut parts = tag.split(':');
     let h: u64 = parts.next()?.parse().ok()?;
     let m: u64 = parts.next()?.parse().ok()?;
@@ -176,8 +174,6 @@ pub fn ffmpeg_args(
     if let Some(end) = end_seconds {
         args.extend(["-to".into(), format!("{end:.3}")]);
     }
-    // The input is the loopback bridge and nothing else: only http, no
-    // redirects off the box, and a probe bounded rather than unbounded.
     args.extend([
         "-protocol_whitelist".into(),
         "http,tcp".into(),
@@ -188,9 +184,6 @@ pub fn ffmpeg_args(
         "-c:v".into(),
         "copy".into(),
     ]);
-    // Copied HEVC lands in fMP4 as hev1 by default, and browser MSE only
-    // accepts hvc1 (parameter sets out of band): without the tag every x265
-    // source plays nowhere.
     if plan.video_codec == "hevc" {
         args.extend(["-tag:v".into(), "hvc1".into()]);
     }
@@ -199,10 +192,6 @@ pub fn ffmpeg_args(
         args.extend(["-map".into(), format!("0:a:{}", audio.input_index)]);
         match &audio.action {
             AudioAction::Copy => args.extend([format!("-c:a:{out_index}"), "copy".into()]),
-            // E-AC-3 and DTS decode to side-channel layouts (5.1(side)), and
-            // FFmpeg's AAC encoder writes those as channelConfiguration 0 with
-            // an in-band PCE — which Chrome's MSE refuses to even init. Pinning
-            // the layout to a standard one keeps the config in 1..7.
             AudioAction::ConvertAac { bitrate } => args.extend([
                 format!("-c:a:{out_index}"),
                 "aac".into(),
@@ -239,10 +228,6 @@ pub fn ffmpeg_args(
         var_map.join(" "),
         "-method".into(),
         "PUT".into(),
-        // Persistent connections are load-bearing, not an optimisation: with
-        // 0, FFmpeg closes each PUT right after the body and hyper drops the
-        // handler mid-store — the object never closes and its spool slab
-        // leaks. With 1, FFmpeg reads the response first: real backpressure.
         "-http_persistent".into(),
         "1".into(),
         format!("{sink_base}/{prefix}client_stream_%v.m3u8"),

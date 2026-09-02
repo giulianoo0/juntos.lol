@@ -1,6 +1,3 @@
-// The ledger is what keeps a region's published span honest: the muxer runs
-// far ahead of the uplink, so counting what it emitted claims media the
-// bucket does not hold yet and the player cannot seek into.
 import { describe, expect, it } from 'vitest'
 
 import { createSegmentLedger } from './segmentLedger'
@@ -24,7 +21,6 @@ describe('segment ledger', () => {
       ledger.noteEmitted(`cs_1_${n}.m4s`)
     }
 
-    // The video playlist is three ahead; its audio rendition has one.
     ledger.noteConfirmed(['cs_0_1.m4s', 'cs_0_2.m4s', 'cs_0_3.m4s', 'cs_1_1.m4s'])
 
     expect(ledger.covered(0)).toBe(1)
@@ -92,8 +88,6 @@ describe('contiguousIn', () => {
   })
 
   it('stops at the first hole, however much landed after it', () => {
-    // A seek drops uploads out of the middle of the queue, and the names that
-    // confirm afterwards leave a gap the server cannot serve across.
     const ledger = createSegmentLedger()
     ledger.noteConfirmed(['r2_cs_0_1.m4s', 'r2_cs_0_2.m4s', 'r2_cs_0_4.m4s', 'r2_cs_0_5.m4s'])
     expect(ledger.contiguousIn(2, 0)).toBe(2)
@@ -110,8 +104,6 @@ describe('segment ledger durations', () => {
   it('measures a region by what its playlists declare, not by the target length', () => {
     const ledger = createSegmentLedger()
     for (const n of [1, 2, 3]) ledger.noteEmitted(`r1_cs_0_${n}.m4s`)
-    // A source with a ten-second GOP closes every segment on its keyframe:
-    // three "four-second" segments are really thirty seconds of media.
     ledger.noteDurations(1, 0, [10, 10, 10])
     ledger.noteConfirmed(['r1_cs_0_1.m4s', 'r1_cs_0_2.m4s', 'r1_cs_0_3.m4s'])
 
@@ -135,7 +127,6 @@ describe('segment ledger durations', () => {
     }
     ledger.noteDurations(0, 0, [4, 4, 4])
     ledger.noteDurations(0, 1, [4.01, 3.99, 4])
-    // Video landed 1 and 3 — the server cuts it at the hole. Audio landed all.
     ledger.noteConfirmed(['cs_0_1.m4s', 'cs_0_3.m4s', 'cs_1_1.m4s', 'cs_1_2.m4s', 'cs_1_3.m4s'])
 
     expect(ledger.coveredMs(0, 4_000)).toBe(4_000)

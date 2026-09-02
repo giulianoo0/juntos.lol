@@ -5,27 +5,17 @@ import { listPlugins, type InstalledPlugin } from './store'
 
 export type ResolveResult =
   | { kind: 'no-plugins' }
-  /**
-   * `failed` names the plugins that ran and did not finish — out of time,
-   * blocked by the policy, or thrown. Without it, "nobody found anything" and
-   * "everybody broke" are the same sentence, and one of them tells you to go
-   * install more plugins for no reason.
-   */
   | { kind: 'streams'; streams: CatalogStream[]; failed: string[] }
 
 export interface ResolveDeps {
   load?: () => Promise<InstalledPlugin[]>
   run?: (plugin: InstalledPlugin, target: StreamTarget, signal?: AbortSignal) => Promise<unknown>
-  /** Ends every worker this started — a panel closing, a title changing. */
   signal?: AbortSignal
 }
 
 function runInWorker(plugin: InstalledPlugin, target: StreamTarget, signal?: AbortSignal): Promise<unknown> {
   return runPlugin({
     signal,
-    // The hosts agreed to at install, never the ones the manifest currently
-    // claims. A held update leaves those wider, and running against them
-    // would grant exactly the capability the hold exists to withhold.
     hosts: plugin.approvedHosts,
     selfOrigin: globalThis.location?.origin ?? '',
     spawn: spawnPluginWorker(plugin.source, target),
@@ -34,14 +24,8 @@ function runInWorker(plugin: InstalledPlugin, target: StreamTarget, signal?: Abo
 }
 
 /**
- * Asks every enabled plugin for this title, in parallel.
- *
- * "Nothing installed" and "installed, found nothing" are separate answers
- * because they are separate problems for the person looking at the screen:
- * one is fixed by installing a plugin, the other is not.
- *
- * A plugin that throws, or runs past its budget, drops out silently and takes
- * nobody else with it.
+ * Asks every enabled plugin for this title in parallel; one that throws or runs
+ * past its budget drops out silently and is named in `failed`.
  */
 export async function resolveStreams(target: StreamTarget, deps: ResolveDeps = {}): Promise<ResolveResult> {
   const load = deps.load ?? listPlugins

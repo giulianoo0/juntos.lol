@@ -1,22 +1,14 @@
 package sync
 
 // What each viewer's playback looked like against the room's authoritative
-// clock, kept so a desync complaint is answerable after the fact from the
-// server logs alone. The steady "ready" reports already carry position,
-// buffer and stall; this is the side that finally reads them.
+// clock, kept so a desync complaint is answerable from the server logs alone.
 
 import (
 	"context"
 	"log/slog"
 	"time"
-
-	"github.com/giulianoo0/ss/internal/metrics"
 )
 
-// driftLogMs is how far a viewer may run from the room's clock before a
-// report earns a log line of its own. The client corrects itself at 450ms,
-// so a report past this survived a correction cycle — that is the story
-// worth a line while it happens.
 const driftLogMs = 1000
 
 type syncTelemetry struct {
@@ -42,8 +34,6 @@ func (r *roomConn) recordSync(ctx context.Context, c *client, m Inbound, now int
 			"position_ms", m.PositionMs, "buffer_ms", m.BufferAheadMs)
 	}
 	t.wasStalled = m.Stalled
-	// Drift only means something against a moving clock: while gated or
-	// paused, everyone is where they are on purpose.
 	if r.gate != nil {
 		return
 	}
@@ -60,7 +50,6 @@ func (r *roomConn) recordSync(ctx context.Context, c *client, m Inbound, now int
 	if abs > t.maxAbsDriftMs {
 		t.maxAbsDriftMs = abs
 	}
-	metrics.SyncDrift.Observe(float64(abs) / 1000)
 	if abs > driftLogMs {
 		t.driftedReports++
 		slog.InfoContext(ctx, "viewer drifted",

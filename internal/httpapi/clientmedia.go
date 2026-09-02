@@ -18,66 +18,38 @@ import (
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/media"
-	"github.com/giulianoo0/ss/internal/metrics"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-// The client media pipeline's server half. A capable browser remuxes the
-// source itself and PUTs segments straight into the bucket; these routes are
-// everything the server still owns: the claim that makes the browser the
-// room's one producer, the presigns that scope what it may write, and the
-// acceptance step that turns its playlists into published media without ever
-// trusting them — a playlist only names objects the bucket has confirmed.
-//
-// Trust model, deliberately identical to tus: possession of the room id plus
-// being first is what authorizes an upload today, and the claim secret is
-// that same authorization with a token the later calls can present.
-
 const (
 	maxClientMediaBodyBytes = 4 << 20
-	// maxPresignObjects bounds one presign call; the client batches.
-	maxPresignObjects = 64
-	// maxConfirmObjects bounds one acceptance call's HEAD bill.
-	maxConfirmObjects = 128
-	// presignExpiry is how long a signed PUT stays valid. Segments upload in
-	// seconds; the slack is for retries, not for hoarding URLs.
-	presignExpiry = 15 * time.Minute
-	// confirmConcurrency is how many HEADs run at once during acceptance.
-	confirmConcurrency = 8
-	// budgetSlack is how far past the room's upload limit the presign budget
-	// may run: remuxed output can exceed the source a little, never by much.
-	budgetSlackNumerator   = 5
-	budgetSlackDenominator = 4
-	maxClientAudioTracks   = 32
-	maxClientChapters      = 512
+	maxPresignObjects       = 64
+	maxConfirmObjects       = 128
+	presignExpiry           = 15 * time.Minute
+	confirmConcurrency      = 8
+	budgetSlackNumerator    = 5
+	budgetSlackDenominator  = 4
+	maxClientAudioTracks    = 32
+	maxClientChapters       = 512
 )
 
-// ClientMediaBucket is the part of the bucket this path needs: signing
-// writes it will never relay, and confirming they landed without reading
-// the bytes back.
+// ClientMediaBucket is the part of the bucket this path needs: signing writes it
+// will never relay, and confirming they landed without reading the bytes back.
 type ClientMediaBucket interface {
 	Stat(ctx context.Context, key string) (int64, error)
 	PresignPut(ctx context.Context, key, contentType, cacheControl string, size int64, expiry time.Duration) (string, http.Header, error)
 }
 
-// ClientMediaHooks tells connected clients what the acceptance step changed.
-// Both are nil-safe.
+// ClientMediaHooks tells connected clients what the acceptance step changed. All
+// are nil-safe, and the specific ones fall back to NotifyRoomUpdated when unset.
 type ClientMediaHooks struct {
-	NotifyStatus      func(roomID, status string)
-	NotifyRoomUpdated func(roomID string)
-	// NotifyRoomProgress carries the same meaning as NotifyRoomUpdated for the
-	// one signal worth coalescing: the preparo's byte counters moving. Falls
-	// back to NotifyRoomUpdated when unset.
+	NotifyStatus       func(roomID, status string)
+	NotifyRoomUpdated  func(roomID string)
 	NotifyRoomProgress func(roomID string)
-	// NotifyRoomMedia carries what a publish changed. Falls back to
-	// NotifyRoomUpdated when unset.
-	NotifyRoomMedia func(roomID string, media room.MediaSnapshot)
-	// NotifyPlaylists says this room's playlists just changed: a request
-	// holding for the next segment can have it now.
-	NotifyPlaylists func(roomID string)
+	NotifyRoomMedia    func(roomID string, media room.MediaSnapshot)
+	NotifyPlaylists    func(roomID string)
 }
 
-// RegisterClientMediaRoutes mounts the claim, presign and publish endpoints.
 func RegisterClientMediaRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
 	bucket ClientMediaBucket, hooks ClientMediaHooks) {
 	if bucket == nil {
@@ -94,10 +66,7 @@ type clientClaimResponse struct {
 	Claim           string `json:"claim"`
 	MediaGeneration int    `json:"mediaGeneration"`
 	MaxBytes        int64  `json:"maxBytes"`
-	// MetadataToken authorizes the late-metadata endpoint. It outlives the
-	// claim (chapters can surface after complete) but dies with the source:
-	// a swap, an expiry or a reclaim revokes it.
-	MetadataToken string `json:"metadataToken"`
+	MetadataToken   string `json:"metadataToken"`
 }
 
 func claimClientMedia(store *room.Store, cfg config.Config) gin.HandlerFunc {
@@ -188,10 +157,6 @@ func presignClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			types[i] = contentType
 			declared += object.Size
 		}
-		// The budget is charged for what the client declares, and the
-		// declaration is not a promise but a constraint: the presign signs
-		// the exact Content-Length below, so the bucket refuses any PUT whose
-		// body is not that size. Declared bytes are therefore real bytes.
 		total, err := store.AddClientMediaBytes(c.Request.Context(), roomID, declared)
 		if err != nil {
 			c.Status(http.StatusInternalServerError)
@@ -219,8 +184,6 @@ func presignClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			}
 			signed[i] = presignedObject{Name: object.Name, URL: url, Headers: flat}
 		}
-		metrics.ClientMediaPresigned.Add(float64(len(signed)))
-		metrics.ClientMediaPresignedBytes.Add(float64(declared))
 		c.JSON(http.StatusOK, gin.H{"objects": signed})
 	}
 }
@@ -239,14 +202,11 @@ type clientAudioTrack struct {
 }
 
 type publishRequest struct {
-	Claim           string `json:"claim" binding:"required"`
-	MediaGeneration *int   `json:"mediaGeneration"`
-	// RunID identifies this execution of the producer; Seq orders its
-	// publishes. Older clients send neither and skip run fencing — their
-	// commit is still atomic under claim and generation.
-	RunID   string   `json:"runId"`
-	Seq     *int64   `json:"seq"`
-	Confirm []string `json:"confirm"`
+	Claim           string             `json:"claim" binding:"required"`
+	MediaGeneration *int               `json:"mediaGeneration"`
+	RunID           string             `json:"runId"`
+	Seq             *int64             `json:"seq"`
+	Confirm         []string           `json:"confirm"`
 	Playlists       map[string]string  `json:"playlists"`
 	AudioTracks     []clientAudioTrack `json:"audioTracks"`
 	Chapters        []clientChapter    `json:"chapters"`
@@ -254,9 +214,6 @@ type publishRequest struct {
 		ReceivedBytes int64 `json:"receivedBytes"`
 		SourceBytes   int64 `json:"sourceBytes"`
 	} `json:"progress"`
-	// Timeline carries the source's full duration and the current region's
-	// start. The offset is applied only on the publish whose master actually
-	// rendered, and its change is what bumps the media version.
 	Timeline *struct {
 		DurationMs int64              `json:"durationMs"`
 		OffsetMs   int64              `json:"offsetMs"`
@@ -265,7 +222,6 @@ type publishRequest struct {
 	Complete bool `json:"complete"`
 }
 
-// maxClientRegions bounds the region list one run may report.
 const maxClientRegions = 64
 
 func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMediaBucket,
@@ -283,9 +239,6 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			return
 		}
 		ctx := c.Request.Context()
-		// A complete whose response was lost is retried against a claim the
-		// server already released. The receipt is what keeps that retry from
-		// reading as a source swap.
 		if req.Complete {
 			if receipt, err := store.CompleteReceiptFor(ctx, roomID, req.Claim); err == nil && receipt != nil {
 				c.JSON(http.StatusOK, gin.H{"confirmed": []string{}, "ready": receipt.Ready})
@@ -296,16 +249,11 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 		if !ok {
 			return
 		}
-		// The remux outlives source swaps; media for a generation the room
-		// has already replaced must not land on the new one.
 		if req.MediaGeneration != nil && *req.MediaGeneration != storedRoom.MediaGeneration {
 			c.JSON(http.StatusConflict, gin.H{"error": "stale_generation"})
 			return
 		}
 
-		// Confirmation is a HEAD per newly-claimed object: "it landed" is a
-		// client assertion until the bucket vouches for it, and only vouched
-		// objects enter the published set the playlist render trusts.
 		if len(req.Confirm) > maxConfirmObjects {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "too many confirmations"})
 			return
@@ -332,11 +280,6 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			}
 		}
 
-		// Playlists are rendered exactly like the publisher renders its own:
-		// bucket URLs prepended and the list cut at the first object the
-		// published set has not confirmed. A viewer never gets a 404. The
-		// names this very round confirmed count as published for the render;
-		// the commit below is what makes both facts true together.
 		rendered, playable, ok := renderClientPlaylists(c, store, cfg, roomID, storedRoom.MediaGeneration, req.Playlists, confirmed)
 		if !ok {
 			return
@@ -362,25 +305,17 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 		regionsChanged := false
 		_, masterRendered := rendered["master.m3u8"]
 		if req.Timeline != nil {
-			// The region map only names regions whose master has rendered:
-			// a player sent to rN_master.m3u8 must find it.
 			if regions := renderedRegions(ctx, store, roomID, req.Timeline.Regions, rendered, storedRoom.MediaRegions); regions != nil && !sameRegions(regions, storedRoom.MediaRegions) {
 				commit.Regions = regions
 				regionsChanged = true
 			}
 			commit.DurationMs = req.Timeline.DurationMs
-			// The offset only moves once this publish carried a rendered
-			// master: reloading players into a master that still points at the
-			// old region would put their clock on the wrong timeline.
 			if masterRendered {
 				commit.ApplyOffset = true
 				commit.OffsetMs = req.Timeline.OffsetMs
 			}
 		}
 		if req.Progress != nil {
-			// The browser counts what it uploaded, which is the remux's output
-			// and never equals the source's size. The complete pass is what
-			// says the whole source has been read, so it lands the figure.
 			received := req.Progress.ReceivedBytes
 			if req.Complete {
 				received = req.Progress.SourceBytes
@@ -389,10 +324,6 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			commit.SourceBytes = &req.Progress.SourceBytes
 		}
 
-		// Everything this publish changes lands in one atomic step, refused
-		// whole if the room expired, the claim moved, the generation was
-		// swapped, or a newer publish of this run already committed. The
-		// HEADs above authorized nothing by themselves.
 		outcome, err := store.CommitPublish(ctx, roomID, commit)
 		switch {
 		case errors.Is(err, room.ErrNotFound):
@@ -420,21 +351,14 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 			return
 		}
 
-		// Notifications only follow an accepted commit: a refused publish
-		// must not produce readiness or region changes for viewers.
 		if !outcome.Replayed {
 			if len(rendered) > 0 && hooks.NotifyPlaylists != nil {
 				hooks.NotifyPlaylists(roomID)
 			}
-			// One update per publish, however many things it moved, and it
-			// carries what moved: two bare updates used to cost every viewer
-			// two room fetches and the player two rebuilds.
 			if regionsChanged || outcome.VersionBumped {
 				notifyMedia(ctx, store, roomID, hooks)
 			}
 			if req.Progress != nil {
-				// Progress alone goes down the throttled path when the caller
-				// offers one: every wake costs each viewer a room refetch.
 				notifyProgress := hooks.NotifyRoomProgress
 				if notifyProgress == nil {
 					notifyProgress = hooks.NotifyRoomUpdated
@@ -446,10 +370,6 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 		}
 
 		becameReady := false
-		// Playable alone is one variant with a segment; the player's first
-		// request is for the master, and a ready room whose master is still
-		// waiting on its slowest rendition serves that request a 404 the
-		// player eventually gives up on. Ready means the master resolves.
 		masterReady := masterRendered
 		if !masterReady {
 			if has, err := store.HasPlaylist(ctx, roomID, "master.m3u8"); err == nil && has {
@@ -466,16 +386,10 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 		}
 		roomReady := becameReady || storedRoom.Status == "ready"
 		if req.Complete {
-			// The receipt goes down before the claim is released: a retry that
-			// lost this response must find it, not a released claim.
 			if err := store.StoreCompleteReceipt(ctx, roomID, req.Claim,
 				room.CompleteReceipt{Ready: roomReady}, time.Hour); err != nil {
 				slog.WarnContext(ctx, "store complete receipt failed", "room_id", roomID, "error", err)
 			}
-			// The claim is released either way, so the fallback tus upload can
-			// take the room. But a "complete" run that never made the room
-			// playable failed, and the client must be told so it falls back
-			// rather than leaving a room stuck in "uploading" with no media.
 			if err := store.ReleaseUpload(ctx, roomID, req.Claim); err != nil {
 				slog.WarnContext(ctx, "release client media claim failed", "room_id", roomID, "error", err)
 			}
@@ -492,10 +406,9 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 	}
 }
 
-// publishDigest fingerprints a publish's logical payload, so a retry of the
-// same sequence is told apart from a different publish reusing it. It hashes
-// the request as sent — not the HEAD results, which can legitimately differ
-// between the original and its retry.
+// publishDigest fingerprints a publish's logical payload, so a retry of the same
+// sequence is told apart from a different publish reusing it. It hashes the request
+// as sent, not the HEAD results, which may legitimately differ on a retry.
 func publishDigest(req publishRequest) string {
 	h := sha256.New()
 	for _, name := range req.Confirm {
@@ -532,8 +445,6 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		c.Status(http.StatusInternalServerError)
 		return nil, false, false
 	}
-	// What this very round confirmed renders as published; the commit that
-	// follows makes the playlist and the set land together.
 	for _, name := range confirmed {
 		published[name] = struct{}{}
 	}
@@ -545,7 +456,7 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 			return nil, false, false
 		}
 		if strings.HasSuffix(name, "master.m3u8") {
-			continue // validated after every media playlist is known
+			continue
 		}
 		if media.IsMasterPlaylist([]byte(body)) || !media.SanitizeClientMediaPlaylist([]byte(body)) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid playlist", "name": name})
@@ -553,7 +464,6 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		}
 		out, ok := media.RenderClientPlaylist(cfg.MediaPublicURL, roomID, generation, []byte(body), published)
 		if !ok {
-			// Nothing in this playlist is confirmed yet; publish it later.
 			continue
 		}
 		rendered[name] = out
@@ -568,8 +478,6 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		has, err := store.HasPlaylist(ctx, roomID, name)
 		return err == nil && has
 	}
-	// master.m3u8 is the region still growing; rN_master.m3u8 is each region's
-	// own, which is what a player on that region loads.
 	for name, master := range playlists {
 		if !strings.HasSuffix(name, "master.m3u8") {
 			continue
@@ -581,9 +489,6 @@ func renderClientPlaylists(c *gin.Context, store *room.Store, cfg config.Config,
 		case media.ClientMasterReady:
 			rendered[name] = master
 		case media.ClientMasterEarly:
-			// Sound, but a variant it names has no confirmed segments yet.
-			// Every run starts here; publish the master once the variant
-			// lands, and never fail the round for it.
 		}
 	}
 	return rendered, playable, true
@@ -606,16 +511,9 @@ func validRegions(regions []room.MediaRegion) bool {
 	return true
 }
 
-// renderedRegions keeps the regions whose master the server holds, so the
-// map never points a player at a playlist that is not there. Nil means the
-// request carried no regions at all. A failed lookup must not shrink the
-// map: a region already published stays in it, because dropping it would
-// yank every player off a playlist that is in fact still there.
-//
-// Regions the sender did not name are kept as they stand: the local
-// pipeline always sends its whole map, so this changes nothing for it, and
-// a remote run that only knows its own region must not erase the regions
-// earlier runs of the same generation left published.
+// renderedRegions keeps the regions whose master the server holds, so the map never
+// points a player at a playlist that is not there. Nil means no regions were sent;
+// regions the sender did not name, or whose lookup failed, are kept as they stand.
 func renderedRegions(ctx context.Context, store *room.Store, roomID string, regions []room.MediaRegion, rendered map[string]string, current []room.MediaRegion) []room.MediaRegion {
 	if regions == nil {
 		return nil
@@ -646,8 +544,6 @@ func renderedRegions(ctx context.Context, store *room.Store, roomID string, regi
 	}
 	for _, r := range current {
 		if _, named := sent[r.N]; !named {
-			// A region an abandoned run left growing would read as live
-			// forever; the newcomer's map is the sign that run is gone.
 			r.Growing = false
 			out = append(out, r)
 		}
@@ -668,9 +564,8 @@ func sameRegions(a, b []room.MediaRegion) bool {
 	return true
 }
 
-// storeClientMetadata persists the track and chapter annotations the client
-// read from the source. They are annotations, never security: validated for
-// shape and bounds, and worth a warning rather than a failed publish.
+// storeClientMetadata persists the track and chapter annotations the client read
+// from the source; a failure here warns rather than failing the publish.
 func storeClientMetadata(c *gin.Context, store *room.Store, roomID string, req publishRequest) bool {
 	ctx := c.Request.Context()
 	if len(req.AudioTracks) > maxClientAudioTracks || len(req.Chapters) > maxClientChapters {
@@ -717,11 +612,9 @@ type metadataRequest struct {
 	AudioTracks     []clientAudioTrack `json:"audioTracks"`
 }
 
-// metadataClientMedia accepts late metadata — chapters, track annotations —
-// under the producer's metadata token. Chapters live in cold parts of the
-// file and may only surface after the media completed and the claim was
-// released; this endpoint is why that never holds the media back. It cannot
-// touch readiness, playlists or regions, and its token dies with the source.
+// metadataClientMedia accepts chapters and track annotations that surface after the
+// media completed, under the producer's metadata token. It cannot touch readiness,
+// playlists or regions.
 func metadataClientMedia(store *room.Store, hooks ClientMediaHooks) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roomID := c.Param("id")
@@ -829,8 +722,8 @@ func maxClientBytes(cfg config.Config) int64 {
 	return cfg.MaxUploadMB << 20 * budgetSlackNumerator / budgetSlackDenominator
 }
 
-// notifyMedia announces a publish that moved the room's media, with the
-// room as it now stands when the hook can carry it.
+// notifyMedia announces a publish that moved the room's media, carrying the room as
+// it now stands when the hook can take it.
 func notifyMedia(ctx context.Context, store *room.Store, roomID string, hooks ClientMediaHooks) {
 	if hooks.NotifyRoomMedia != nil {
 		if fresh, err := store.Get(ctx, roomID); err == nil {

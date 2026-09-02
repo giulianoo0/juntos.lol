@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { heading, inTriangle, safeTriangle } from './safeHover'
 
-// The volume panel as it actually sits: a small box floating above the
-// button, with a gap between the two that neither of them covers.
 const panel = { left: 480, right: 520, top: 300, bottom: 340 }
 const leftButton = { x: 500, y: 360 }
 
@@ -21,8 +19,6 @@ describe('safeTriangle', () => {
 
 describe('heading', () => {
   it('keeps a diagonal move towards the panel', () => {
-    // The move that used to lose the panel: up and across, through the gap
-    // where neither the button nor the panel is hovered.
     expect(heading({ x: 494, y: 350 }, leftButton, panel)).toBe(true)
     expect(heading({ x: 488, y: 344 }, leftButton, panel)).toBe(true)
   })
@@ -49,9 +45,6 @@ describe('inTriangle', () => {
 
 describe('heading over the panel itself', () => {
   it('counts the panel as safe, because the corridor stops at its edge', () => {
-    // Pressing the slider gives the input pointer capture, which fires leave
-    // on the control behind it. Every move along the slider then reports a
-    // point on the panel — and the panel is not inside its own corridor.
     expect(heading({ x: 500, y: 320 }, leftButton, panel)).toBe(true)
     expect(heading({ x: 482, y: 302 }, leftButton, panel)).toBe(true)
     expect(heading({ x: 518, y: 338 }, leftButton, panel)).toBe(true)

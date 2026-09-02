@@ -5,8 +5,6 @@ import { translate, type Translator } from '../i18n/useT'
 import type { RoomInfo } from '../types'
 import { Player } from './Player'
 
-// A controllable stand-in for hls.js: tests drive the exact event sequences
-// the real library emits when a browser cannot decode a stream.
 vi.mock('hls.js', () => {
   type Handler = (event: string, data: Record<string, unknown>) => void
   class FakeLoader {
@@ -106,8 +104,6 @@ const room: RoomInfo = {
 }
 
 const unplayableMessage = translate('en', 'room.unplayable')
-// What a stopped playback says when nothing has actually proved the browser
-// cannot decode: a starved decoder and a dead one look alike from here.
 const playbackFailedMessage = translate('en', 'room.playbackFailed')
 
 async function renderPlayer(override: Partial<RoomInfo> = {}) {
@@ -129,10 +125,6 @@ describe('Player HLS lifecycle', () => {
   })
 
   it('does not reload the source when the media re-attaches after a recovery', async () => {
-    // hls.js's recoverMediaError re-attaches the media and resumes loading at
-    // the pre-error position itself. Reloading the source on that second
-    // MEDIA_ATTACHED resets playback to the configured start position, which
-    // viewers saw as a jump to 0:00 before the sync dragged them back.
     const { hls } = await renderPlayer()
     const instance = hls.instances[0]
 
@@ -148,8 +140,6 @@ describe('Player HLS lifecycle', () => {
     const instance = hls.instances[0]
     instance.levels = [{ videoCodec: 'hvc1.2.4.L120.90', audioCodec: 'mp4a.40.2' }]
 
-    // hls.js emits this as NON-fatal, deletes the video track and keeps the
-    // audio group playing; before the fix the player ignored it entirely.
     act(() => instance.emit('hlsError', {
       fatal: false,
       type: 'mediaError',
@@ -166,7 +156,6 @@ describe('Player HLS lifecycle', () => {
   it('stays quiet about a dropped codec while another video rendition remains', async () => {
     const { view, hls } = await renderPlayer()
     const instance = hls.instances[0]
-    // The state after hls.js removed the failing level itself.
     instance.levels = [{ videoCodec: 'avc1.640028', audioCodec: 'mp4a.40.2' }]
 
     act(() => instance.emit('hlsError', {
@@ -198,7 +187,6 @@ describe('Player HLS lifecycle', () => {
     const LoaderClass = second.config.pLoader
     expect(LoaderClass).toBeDefined()
 
-    // The retry loader must hand hls.js a manifest with the prediction gone.
     const loader = new LoaderClass!({})
     const delivered: string[] = []
     loader.load({ type: 'manifest' }, {}, {
@@ -211,7 +199,6 @@ describe('Player HLS lifecycle', () => {
     expect(delivered[0]).not.toContain('CODECS')
     expect(delivered[0]).toContain('RESOLUTION=1920x1080')
 
-    // A second rejection, now free of wrong strings, is the real verdict.
     act(() => second.emit('hlsError', {
       fatal: true,
       type: 'mediaError',
@@ -221,7 +208,6 @@ describe('Player HLS lifecycle', () => {
   })
 
   it('gives up when the clock advances but no video frames are displayed', async () => {
-    // Fake timers must exist before mount so the watchdog interval is theirs.
     vi.useFakeTimers()
     try {
       const videoRef = createRef<HTMLVideoElement>()
@@ -232,8 +218,6 @@ describe('Player HLS lifecycle', () => {
       let clock = 0
       Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
       Object.defineProperty(video, 'paused', { configurable: true, value: false })
-      // A dead decoder holds data it is not displaying; without data the
-      // clock is merely waiting for a region and the watchdog stays quiet.
       Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA })
       Object.defineProperty(video, 'getVideoPlaybackQuality', {
         configurable: true,
@@ -247,9 +231,6 @@ describe('Player HLS lifecycle', () => {
         }
       })
 
-      // Frames stopping is not evidence about the codec. The room says so and
-      // offers the report, rather than sending someone to install Chrome over
-      // a stretch of media that simply had not arrived.
       expect(view.getByRole('alert')).toHaveTextContent(playbackFailedMessage)
       expect(view.getByRole('alert')).not.toHaveTextContent(unplayableMessage)
       expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('no new video frames'))
@@ -259,8 +240,6 @@ describe('Player HLS lifecycle', () => {
   })
 
   it('waits out a clock running ahead of an empty buffer without giving up', async () => {
-    // A cold seek parks the playhead where no region exists yet: the resync
-    // clock advances, nothing decodes, and that must read as waiting.
     vi.useFakeTimers()
     try {
       const videoRef = createRef<HTMLVideoElement>()
@@ -305,8 +284,6 @@ describe('Player HLS lifecycle', () => {
         configurable: true,
         value: () => ({ totalVideoFrames: 0 }),
       })
-      // Some hardware overlay paths report zero for the life of a video that
-      // is displaying perfectly. Real dimensions are the proof it is there.
       Object.defineProperty(video, 'videoWidth', { configurable: true, value: 1920 })
 
       await act(async () => {
@@ -333,14 +310,12 @@ describe('Player HLS lifecycle', () => {
     await waitFor(() => expect(hls.instances.length).toBe(2))
     expect(hls.instances[0].destroyed).toBe(true)
     expect(hls.instances[1].loadedSource).toContain('g=3&v=1')
-    // Same recording republished: the viewer keeps their place.
     expect(hls.instances[1].config.startPosition).toBe(42)
 
     view.rerender(
       <Player room={{ ...room, mediaGeneration: 4, mediaVersion: 1 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
     )
     await waitFor(() => expect(hls.instances.length).toBe(3))
-    // A different recording starts at its beginning.
     expect(hls.instances[2].config.startPosition).toBe(0)
     expect(hls.instances[2].loadedSource).toContain('g=4&v=1')
   })
@@ -349,8 +324,6 @@ describe('Player HLS lifecycle', () => {
     const subtitleTracks = [{ index: 0, language: 'en', title: 'English', codec: 'webvtt' }]
     const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
     const video = videoRef.current!
-    // A real TextTrack is an EventTarget carrying its active cues; SubtitleLayer
-    // subscribes to it, so the stub has to be one too.
     const textTracks = [{
       mode: 'disabled',
       activeCues: null,
@@ -362,14 +335,9 @@ describe('Player HLS lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
     fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
     fireEvent.click(await screen.findByRole('button', { name: 'English' }))
-    // "hidden", not "showing": the track parses and reports its cues, and
-    // SubtitleLayer draws them. A shown track is drawn by the browser in the
-    // system caption style, which the page cannot override.
     expect(textTracks[0].mode).toBe('hidden')
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=1')
 
-    // The extraction publishing more cues bumps the version: the URL must
-    // change so the browser refetches, and the selection must survive it.
     view.rerender(
       <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
     )
@@ -382,9 +350,6 @@ describe('Player HLS lifecycle', () => {
     const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
     const before = view.container.querySelector('track')
 
-    // Browsers do not reliably refetch a <track> whose src attribute merely
-    // changed: the cue list loaded first stays. Only a fresh element makes the
-    // new version's cues reach a viewer who joined while extraction ran.
     view.rerender(
       <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
     )

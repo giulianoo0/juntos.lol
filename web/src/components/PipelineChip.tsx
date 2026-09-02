@@ -6,31 +6,16 @@ import type { RoomUploadProgress } from '../upload'
 import type { Translator } from '../i18n/useT'
 
 /**
- * What the running pipeline is actually doing, in the room header. A single
- * percentage meant nothing once seeks made the remux jump around the
- * timeline; what a viewer can act on is how fast the source is arriving and
- * how much playback is sitting on.
- *
- * The source stops arriving long before the room is finished — a torrent that
- * has every byte reads 0 MB/s forever — so once the swarm is done the chip
- * follows the other half of the pipeline instead: the segments going up to
- * the bucket, which is what the room is still waiting on.
+ * Shows the swarm's download speed while the source is still arriving, then
+ * switches to the upload half of the pipeline once the swarm is done.
  */
 export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
   swarm: TorrentStats | null
-  /** The host's own pipeline. A viewer has none: their chip reads the swarm
-   *  the host reported through the room, and their own buffer. */
   progress: RoomUploadProgress | null
-  /** The fleet's FFmpeg is producing this room ("R"); a local pipeline shows
-   *  "L"; a viewer, who has neither, shows no letter. */
   remote?: boolean
   videoRef: MutableRefObject<HTMLVideoElement | null>
   t: Translator
 }) {
-  // Contiguous seconds buffered ahead of the playhead, polled: the element
-  // has no event that fires as the buffer drains. The upload rate rides the
-  // same second, differenced from the running total nothing reports a speed
-  // for.
   const [bufferSec, setBufferSec] = useState(0)
   const [upSpeed, setUpSpeed] = useState(0)
   const uploadedRef = useRef(progress?.bytesUploaded ?? 0)
@@ -60,8 +45,6 @@ export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
     const timer = window.setInterval(read, 1_000)
     return () => window.clearInterval(timer)
   }, [videoRef])
-  // Still pulling the source: the swarm's speed is the one that decides how
-  // fast the room can be built.
   const arriving = swarm !== null && (swarm.downloadSpeed > 0 || swarm.progress < 1)
   return (
     <span className="upload-chip pipeline-chip">
@@ -99,8 +82,6 @@ export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
   )
 }
 
-// NumberFlow animates between the values it is handed, so feeding it the raw
-// float would roll every decimal place on every poll.
 const round = (value: number, places: number): number => {
   const factor = 10 ** places
   return Math.round(value * factor) / factor

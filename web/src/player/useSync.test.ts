@@ -55,12 +55,6 @@ describe('useSync', () => {
     act(() => socket.onopen?.())
     act(() => socket.receive({ type: 'state', state: { playing: false, positionMs: 475_000, rate: 1, serverTimeMs: 100_000 } }))
 
-    // A playlist that is still growing has no ENDLIST, so hls.js treats it as
-    // live and recovers a stall by seeking to the newest segment. The viewer
-    // is thrown to the end of what has been published; the room's own position
-    // is the one that counts.
-    // The player owns the element's events and hands the picture back here,
-    // so a room whose <video> arrives late still reports.
     act(() => result.current.reportBuffering(true))
     video.currentTime = 1401
     act(() => result.current.reportBuffering(false))
@@ -93,7 +87,6 @@ describe('useSync', () => {
     expect(result.current.roomVersion).toBe(2)
     act(() => socket.receive({ type: 'roomStatus', status: 'ready' }))
     expect(result.current.roomVersion).toBe(3)
-    // Repeated updates must remain observable even when the status is equal.
     act(() => socket.receive({ type: 'roomStatus', status: 'ready' }))
     expect(result.current.roomVersion).toBe(4)
     act(() => socket.receive({ type: 'roomStatus', status: 'processing' }))
@@ -109,7 +102,6 @@ describe('useSync', () => {
     act(() => socket.receive({ type: 'roomUpdated', media }))
     expect(result.current.roomVersion).toBe(0)
     expect(result.current.mediaPatch).toEqual(media)
-    // The page could not apply it: it asks for the room instead.
     act(() => result.current.refreshRoom())
     expect(result.current.roomVersion).toBe(1)
     unmount()
@@ -135,8 +127,6 @@ describe('useSync', () => {
     const socket = FakeWebSocket.instances[0]
 
     expect(result.current.roomVersion).toBe(0)
-    // A client that was disconnected while the final remux published would
-    // otherwise keep playing the superseded preview forever.
     act(() => socket.receive({ type: 'welcome', memberId: 'm1', members: [] }))
     expect(result.current.roomVersion).toBe(1)
     unmount()
@@ -181,7 +171,6 @@ describe('useSync', () => {
       { memberId: 'm4', nickname: 'Bob', kind: 'join' },
       { memberId: 'm1', nickname: 'Ana', kind: 'leave' },
     ])
-    // Ids are unique and increasing so the toast queue can track what it showed.
     expect(result.current.presence[1].id).toBeGreaterThan(result.current.presence[0].id)
     unmount()
   })
@@ -214,7 +203,6 @@ describe('useSync', () => {
       type: 'ready', positionMs: 1_000, bufferAheadMs: 4_000, stalled: false,
     }))
 
-    // Any state broadcast ends the wait, released or withdrawn alike.
     act(() => socket.receive({ type: 'state', state: { playing: true, positionMs: 1_000, rate: 1, serverTimeMs: 100_000 } }))
     expect(result.current.waiting).toBeNull()
     unmount()
@@ -262,7 +250,6 @@ describe('useSync', () => {
       memberId: 'm2', from: 'guest', metaId: 'tt0903747', metaType: 'series',
       name: 'Breaking Bad', poster: 'p', season: 1, episode: 2,
     })
-    // A frame without a title payload is ignored rather than rendered empty.
     act(() => socket.receive({ type: 'titleRequest', memberId: 'm2' }))
     expect(result.current.titleRequests).toHaveLength(1)
     unmount()
@@ -274,15 +261,12 @@ describe('useSync', () => {
     const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     expect(FakeWebSocket.instances).toHaveLength(1)
 
-    // A dropped socket used to be permanent: the tab went mute and the room
-    // played on without the person.
     const first = FakeWebSocket.instances[0]
     first.readyState = 3
     act(() => { first.onclose?.() })
     act(() => { vi.advanceTimersByTime(2_000) })
     expect(FakeWebSocket.instances).toHaveLength(2)
 
-    // Leaving is not a drop: closing on purpose must not reconnect.
     unmount()
     act(() => { FakeWebSocket.instances[1].onclose?.() })
     act(() => { vi.advanceTimersByTime(10_000) })
@@ -323,8 +307,6 @@ describe('useSync', () => {
     act(() => socket.onopen?.())
     act(() => socket.receive({ type: 'state', state: { playing: false, positionMs: 475_000, rate: 1, serverTimeMs: 100_000 } }))
 
-    // A paused element does not drift, so dragging its clock would only
-    // repaint a frozen frame.
     act(() => result.current.reportBuffering(true))
     video.currentTime = 1401
     act(() => result.current.reportBuffering(false))
@@ -333,10 +315,6 @@ describe('useSync', () => {
   })
 
   it('falls back to muted playback when the browser refuses to autoplay on arrival', async () => {
-    // Joining a room already playing is the one moment nobody has clicked
-    // anything yet, so an audible play is exactly what browsers refuse. The
-    // refusal used to be swallowed: the clock ran on and the picture never
-    // started, and the only way out was finding the play button.
     const video = document.createElement('video')
     Object.defineProperty(video, 'paused', { value: true, configurable: true })
     const refused = new DOMException('gesture required', 'NotAllowedError')

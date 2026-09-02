@@ -1,6 +1,3 @@
-// Reproduces the frozen producedMs seen in production: region 0 abandoned at
-// birth, a far seek (region 1), a seek back to 0 (region 2), and region 2's
-// confirmed span must keep growing as its segments land.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocked = vi.hoisted(() => {
@@ -127,7 +124,6 @@ describe('double seek', () => {
     })
     await flush()
 
-    // Region 0 barely starts; the user seeks to 1190s immediately.
     handle!.follow(1_190_000)
     await flush(); await flush()
     expect(conversions).toHaveLength(2)
@@ -139,7 +135,6 @@ describe('double seek', () => {
     await flush()
     await publishRound()
 
-    // Back near the start: region 2.
     handle!.follow(30_000)
     await flush(); await flush()
     expect(conversions).toHaveLength(3)
@@ -153,7 +148,6 @@ describe('double seek', () => {
     await publishRound()
     await publishRound()
 
-    // Production continues: many more segments confirm.
     for (let n = 8; n <= 30; n += 1) void emit(conversions[2], `r2_cs_1_${n}.m4s`, { playlist: { n: 1 }, n })
     ;(second.onPlaylist as (c: string, i: unknown) => void)(playlist(30), { n: 1 })
     await flush()
@@ -165,8 +159,6 @@ describe('double seek', () => {
     const last = publishes[publishes.length - 1].body!.timeline as { regions: { n: number; producedMs: number; growing: boolean }[] }
     const region2 = last.regions.find((r) => r.n === 2)
     expect(region2).toBeDefined()
-    // 30 segments of 3.5s confirmed: the span must reflect them, not the
-    // first batch only.
     expect(region2!.producedMs).toBeGreaterThanOrEqual(30 * 3_500)
     conversions[2].finish()
   })

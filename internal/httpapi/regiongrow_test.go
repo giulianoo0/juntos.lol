@@ -34,7 +34,6 @@ func TestRegionProducedMsKeepsGrowing(t *testing.T) {
 	require.Len(t, got.MediaRegions, 1)
 	require.EqualValues(t, 8000, got.MediaRegions[0].ProducedMs)
 
-	// Next round: only producedMs grew.
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","runId":"run1","seq":2,"confirm":[],`+
 			`"playlists":{},`+

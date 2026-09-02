@@ -6,9 +6,6 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-/// Who this worker is: a keypair it generated itself (custody stays here,
-/// like Tailscale's node keys), the id the server gave it at enrollment,
-/// and the server key it verifies jobs and tickets against.
 #[derive(Serialize, Deserialize, Default)]
 pub struct Identity {
     #[serde(rename = "workerId")]
@@ -29,7 +26,6 @@ impl Identity {
 
     /// A new keypair with no id and no server key yet, written over
     /// whatever was on disk. A hello signed by this asks to enroll, so
-    /// nothing but the enrollment token can get it admitted.
     pub fn fresh(path: &Path) -> anyhow::Result<Self> {
         let key = SigningKey::generate(&mut rand::thread_rng());
         let id = Self { worker_id: String::new(), secret_key: B64.encode(key.to_bytes()), server_pubkey: None };

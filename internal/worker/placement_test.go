@@ -50,7 +50,6 @@ func TestPlacementRefusals(t *testing.T) {
 	_, err = r.Place(strings.Repeat("e", 40), 0, time.Now())
 	require.ErrorIs(t, err, ErrWorkersBusy)
 
-	// Disk: a 10 GB file does not fit a worker with 1 GB left of a 100 GB quota.
 	live(r, "tight", Heartbeat{Leases: 0, MaxLeases: 8, Disk: DiskReport{Used: 89 << 30, Quota: 100 << 30}})
 	_, err = r.Place(strings.Repeat("e", 40), 10<<30, time.Now())
 	require.ErrorIs(t, err, ErrWorkersBusy)
@@ -58,8 +57,6 @@ func TestPlacementRefusals(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "tight", w.ID)
 
-	// Stale: a worker whose heartbeat is old is not healthy, and a fleet
-	// with nothing healthy in it is no fleet.
 	r.mu.Lock()
 	for _, w := range r.workers {
 		w.LastSeen = time.Now().Add(-time.Minute)
@@ -103,10 +100,6 @@ func TestPlacementRefusesAWorkerNearItsBandwidthCeiling(t *testing.T) {
 }
 
 func TestPlacementLeavesRelayedWorkersForLast(t *testing.T) {
-	// Every byte a relayed worker serves crosses this machine three times on
-	// its way to the browser, so it loses to a direct one however lightly
-	// loaded it is. A page that measured the paths sends its own ranking and
-	// overrides this.
 	r := newRegistry(t)
 	ih := strings.Repeat("d", 40)
 	live(r, "relayed", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10, Relayed: true})

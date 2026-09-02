@@ -34,24 +34,14 @@ pub struct Entry {
     pub phase: Phase,
     pub selected_file: Option<usize>,
     pub selected_bytes: u64,
-    /// Every file index ever selected: what may be on disk.
     pub ever_selected: HashSet<usize>,
     pub slots: HashMap<(usize, Prio), Arc<StreamSlot>>,
-    /// How far each reader has seeked past. Per reader, not per torrent —
-    /// see floors.rs for why that distinction is the whole point.
     pub floors: Floors,
-    /// Whether the one in-place restart after a failure was spent.
     pub retried: bool,
-    /// Whether the swarm is filling the rest of the file behind the
-    /// readers, or holding what a fill already brought in. See fill.rs.
     pub fill: Fill,
-    /// Blocks this torrent's files actually hold, and when that was last
-    /// counted. Walking the folder is cheap but the digest is asked for far
-    /// more often than the number moves.
     disk: Mutex<(u64, Option<Instant>)>,
 }
 
-/// How long a walk of one torrent's folder stands in for the next.
 const DISK_TTL: Duration = Duration::from_secs(5);
 
 impl Entry {
@@ -72,10 +62,6 @@ impl Entry {
         }
     }
 
-    /// What this torrent is really costing the disk right now. Not the
-    /// selected size and not what it has downloaded over its life: the window
-    /// punches everything behind it back out, so those two say nothing about
-    /// how full the volume is.
     fn disk_bytes(&self) -> u64 {
         {
             let cached = self.disk.lock();
@@ -92,9 +78,6 @@ impl Entry {
         self.last_active = Instant::now();
     }
 
-    // A lease revives whatever the reaper had in mind: the phase goes back
-    // to serving and the idle clock restarts. Lease and pending reap are
-    // never both true — reap() refuses an entry with leases.
     pub fn take_lease(&mut self, lease_id: &str) {
         self.leases.insert(lease_id.to_string(), Instant::now());
         if matches!(self.phase, Phase::Idle | Phase::Reaping) {
@@ -121,9 +104,6 @@ impl Entry {
             infohash: infohash.to_string(),
             name: self.handle.name().unwrap_or_default(),
             phase: if failed { "failed" } else { self.phase.name() },
-            // Not progress_bytes: that is progress against the current piece
-            // window, which shrinks every time the window moves. This is what
-            // the torrent actually holds, so the room's readout only grows.
             have_bytes: stats.have_bytes.max(stats.progress_bytes),
             selected_bytes: self.selected_bytes,
             disk_bytes: self.disk_bytes(),

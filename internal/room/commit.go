@@ -13,12 +13,8 @@ import (
 
 // The publish commit: everything a client-media publish changes lands in one
 // Lua script, verified against the room's liveness, the producer's claim, the
-// media generation, and — for clients that send them — the run and sequence
-// fencing. The confirmation HEADs happen before this (they are pure reads of
-// the bucket); nothing they authorized survives a room that moved on, because
-// the checks and the writes share one atomic step.
+// media generation and, when the client sends them, the run and seq fences.
 
-// Commit refusal errors, mapped by the HTTP layer onto their response codes.
 var (
 	ErrCommitClaim      = errors.New("claim_mismatch")
 	ErrCommitGeneration = errors.New("stale_generation")
@@ -31,49 +27,30 @@ var (
 type PublishCommit struct {
 	Claim      string
 	Generation int
-	// RunID identifies the execution; empty for legacy clients, which then
-	// skip run/seq fencing but still commit atomically under claim+generation.
-	RunID string
-	// Seq orders publishes of one run. Ignored when RunID is empty.
-	Seq int64
-	// Digest is a fingerprint of this publish's logical payload: a retry of
-	// the same Seq with the same Digest is answered as already applied.
-	Digest string
+	RunID      string
+	Seq        int64
+	Digest     string
 
-	// Confirmed object names to add to the published set.
-	Confirmed []string
-	// Playlists to store, already rendered.
-	Playlists map[string]string
-	// Regions to store; nil means leave untouched.
-	Regions []MediaRegion
-	// DurationMs stores the source duration when > 0 and changed.
-	DurationMs int64
-	// ApplyOffset moves media_offset_ms to OffsetMs (bumping media_version
-	// when it changed). Only set when this publish carried a rendered master.
-	ApplyOffset bool
-	OffsetMs    int64
-	// Progress counters; nil leaves them untouched.
+	Confirmed     []string
+	Playlists     map[string]string
+	Regions       []MediaRegion
+	DurationMs    int64
+	ApplyOffset   bool
+	OffsetMs      int64
 	ReceivedBytes *int64
 	SourceBytes   *int64
-	// Heartbeat refreshes client_media_touched.
-	Heartbeat bool
+	Heartbeat     bool
 }
 
-// PublishOutcome is what the commit did.
 type PublishOutcome struct {
-	// VersionBumped says media_version moved (the offset changed).
 	VersionBumped bool
-	// Replayed says this was a same-seq same-digest retry: nothing moved,
-	// the original result stands.
-	Replayed bool
+	Replayed      bool
 }
 
 // CommitPublish applies one publish atomically. It returns ErrNotFound for a
 // dead room, ErrCommitClaim / ErrCommitGeneration / ErrCommitRun /
 // ErrCommitSeq for a publish the room has moved on from.
 func (s *Store) CommitPublish(ctx context.Context, id string, commit PublishCommit) (PublishOutcome, error) {
-	// cjson has no idea what to do with a JSON null, so empties marshal as
-	// their empty containers.
 	if commit.Confirmed == nil {
 		commit.Confirmed = []string{}
 	}
@@ -114,22 +91,22 @@ func (s *Store) CommitPublish(ctx context.Context, id string, commit PublishComm
 
 	result, err := s.rdb.Eval(ctx, commitPublishScript,
 		[]string{roomKey(id), playlistsKey(id), publishedKey(id)},
-		strconv.FormatInt(time.Now().UnixMilli(), 10), // 1 now
-		commit.Claim,                        // 2
-		strconv.Itoa(commit.Generation),     // 3
-		commit.RunID,                        // 4
-		strconv.FormatInt(commit.Seq, 10),   // 5
-		commit.Digest,                       // 6
-		string(confirmed),                   // 7
-		string(playlists),                   // 8
-		regions,                             // 9
-		strconv.FormatInt(commit.DurationMs, 10), // 10
-		applyOffset,                         // 11
-		strconv.FormatInt(commit.OffsetMs, 10), // 12
-		received,                            // 13
-		source,                              // 14
-		heartbeat,                           // 15
-		strconv.FormatInt(int64(s.ttl/time.Second), 10), // 16
+		strconv.FormatInt(time.Now().UnixMilli(), 10),
+		commit.Claim,
+		strconv.Itoa(commit.Generation),
+		commit.RunID,
+		strconv.FormatInt(commit.Seq, 10),
+		commit.Digest,
+		string(confirmed),
+		string(playlists),
+		regions,
+		strconv.FormatInt(commit.DurationMs, 10),
+		applyOffset,
+		strconv.FormatInt(commit.OffsetMs, 10),
+		received,
+		source,
+		heartbeat,
+		strconv.FormatInt(int64(s.ttl/time.Second), 10),
 	).Slice()
 	if err != nil {
 		return PublishOutcome{}, fmt.Errorf("commit publish: %w", err)
@@ -229,7 +206,6 @@ type CompleteReceipt struct {
 
 func completeReceiptKey(id, claim string) string { return "room:" + id + ":complete:" + claim }
 
-// StoreCompleteReceipt records the accepted complete for this claim.
 func (s *Store) StoreCompleteReceipt(ctx context.Context, id, claim string, receipt CompleteReceipt, ttl time.Duration) error {
 	raw, err := json.Marshal(receipt)
 	if err != nil {
@@ -238,7 +214,6 @@ func (s *Store) StoreCompleteReceipt(ctx context.Context, id, claim string, rece
 	return s.rdb.Set(ctx, completeReceiptKey(id, claim), raw, ttl).Err()
 }
 
-// CompleteReceiptFor answers the stored receipt, nil when there is none.
 func (s *Store) CompleteReceiptFor(ctx context.Context, id, claim string) (*CompleteReceipt, error) {
 	raw, err := s.rdb.Get(ctx, completeReceiptKey(id, claim)).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -255,9 +230,8 @@ func (s *Store) CompleteReceiptFor(ctx context.Context, id, claim string) (*Comp
 }
 
 // SetProducerRun designates which run the publish fence accepts, resetting
-// its sequence. The orchestrator moves it when replacing a run on a seek,
-// before the old process is told to stop: the old committer's next publish
-// is refused first, whatever order the network delivers things in.
+// its sequence. The orchestrator moves it before the old process is told to
+// stop, so the old committer's next publish is refused first.
 func (s *Store) SetProducerRun(ctx context.Context, id, runID string) error {
 	_, err := s.rdb.Eval(ctx, `
 redis.call('HSET', KEYS[1], 'producer_run', ARGV[1])
@@ -277,8 +251,6 @@ func (s *Store) SetMetadataToken(ctx context.Context, id, token string) error {
 	return s.mutateRoom(ctx, id, false, "metadata_token", token)
 }
 
-// MetadataTokenMatches reports whether the presented token is the room's
-// current one and the generation still stands.
 func (s *Store) MetadataTokenMatches(ctx context.Context, id, token string) (bool, error) {
 	if token == "" {
 		return false, nil

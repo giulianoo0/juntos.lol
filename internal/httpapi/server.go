@@ -14,8 +14,6 @@ import (
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 )
 
-// ServerOption tunes the engine without forcing every caller to pass hooks
-// they do not have.
 type ServerOption func(*serverOptions)
 
 type serverOptions struct {
@@ -38,8 +36,6 @@ func WithPluginFetch(sessions *Sessions, quota *Quota) ServerOption {
 	}
 }
 
-// WithTorrents mounts the torrent routes over the worker fleet, and the
-// control link the workers dial.
 func WithTorrents(access TorrentAccess, workerLink gin.HandlerFunc) ServerOption {
 	return func(o *serverOptions) {
 		o.torrentAccess = access
@@ -47,20 +43,18 @@ func WithTorrents(access TorrentAccess, workerLink gin.HandlerFunc) ServerOption
 	}
 }
 
-// WithSourceHooks connects the room source endpoint to the media pipeline.
 func WithSourceHooks(hooks SourceHooks) ServerOption {
 	return func(o *serverOptions) { o.sourceHooks = hooks }
 }
 
-// WithSubtitlePublisher sends browser-extracted subtitles to the bucket they
-// are served from. Without it they are stored but never delivered.
+// WithSubtitlePublisher sends browser-extracted subtitles to the bucket they are
+// served from; without it they are stored but never delivered.
 func WithSubtitlePublisher(publisher SubtitlePublisher) ServerOption {
 	return func(o *serverOptions) { o.subtitlePublisher = publisher }
 }
 
-// WithClientMedia enables the client media pipeline: the host's browser
-// remuxes the source itself and writes segments straight into the bucket
-// through presigned URLs. It is the only way media reaches a room.
+// WithClientMedia enables the only path by which media reaches a room: the host's
+// browser remuxes the source and writes segments into the bucket via presigned URLs.
 func WithClientMedia(bucket ClientMediaBucket, hooks ClientMediaHooks) ServerOption {
 	return func(o *serverOptions) {
 		o.clientMediaBucket = bucket
@@ -68,28 +62,21 @@ func WithClientMedia(bucket ClientMediaBucket, hooks ClientMediaHooks) ServerOpt
 	}
 }
 
-// NewServer assembles the HTTP engine: the health check plus the room API.
-// Later features (media serving, WebSocket, screenshare) extend this.
 func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...ServerOption) *gin.Engine {
 	var options serverOptions
 	for _, apply := range opts {
 		apply(&options)
 	}
 	r := gin.Default()
-	// The app is bound to loopback behind the edge proxy. Do not accept
-	// client-controlled forwarding headers as authoritative addresses.
 	if err := r.SetTrustedProxies(nil); err != nil {
 		panic("configure trusted proxies: " + err.Error())
 	}
-	r.Use(requestMetrics())
 	r.Use(privacyHeaders())
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
 	RegisterScreenshareRoute(r.Group("/api"), store, cfg, hub)
-	// Playlist requests hold for the publish that grows them; the publish
-	// handler is what lets them go.
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
 	options.clientMediaHooks.NotifyPlaylists = waiter.Notify
@@ -101,8 +88,6 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		onSubsStored = hub.NotifyRoomUpdated
 	}
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
-	// hub is a typed nil in tests; pass the interface only when it is real so
-	// the authorizer check inside the handler stays meaningful.
 	var authorizer memberAuthorizer
 	if hub != nil {
 		authorizer = hub
@@ -112,18 +97,8 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
-		// What is actually up right now, for the status page.
-		//
-		// The two halves are counted from different places on purpose. People
-		// come from the live socket connections, because that is what being in
-		// a room means. Rooms come from the store, because a room does not
-		// stop existing when its last tab closes: it is held for the reclaim
-		// window, and longer while a pipeline is still producing into it.
-		// Counting rooms from the sockets too dropped the number to zero the
-		// instant someone left, while the room, its media and its torrent were
-		// all still there. This follows the deletion itself.
-		//
-		// Public: two integers, not a roster.
+		// Members come from the live sockets, rooms from the store: a room outlives
+		// its last tab for the reclaim window and while a pipeline still produces.
 		r.GET("/api/live", func(c *gin.Context) {
 			_, members := hub.Live()
 			census, err := store.Census(c.Request.Context())
@@ -148,19 +123,9 @@ func privacyHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
-		// The plugin worker gets a policy of its own, and it is the only layer
-		// of that sandbox plugin code cannot reach around from the inside.
-		// `default-src 'none'` removes every network API from that context —
-		// including any the bootstrap's allowlist missed — and closes
-		// `import('https://…')`, which fetches the url before rejecting it and
-		// is therefore an exfiltration channel nothing inside a worker can
-		// take away. `script-src blob:` is the one exception it needs to exist
-		// at all: the plugin's own module is imported from a blob url. What it
-		// does not allow is https or 'self'.
-		//
-		// Matched by directory, not by filename prefix: vite is configured to
-		// emit every chunk of the worker graph in here, so an import added to
-		// worker.ts cannot split a chunk out to a path with no policy.
+		// The plugin worker's sandbox: default-src 'none' strips every network API
+		// (including import('https://…')), blob: only so its own module can load.
+		// Matched by directory so no worker chunk can land on a path with no policy.
 		if strings.HasPrefix(c.Request.URL.Path, "/assets/plugin-worker/") {
 			c.Header("Content-Security-Policy", "default-src 'none'; script-src blob:")
 		}
@@ -177,11 +142,6 @@ func registerFrontend(r *gin.Engine, webDir string) {
 	}
 	r.Static("/assets", filepath.Join(webDir, "assets"))
 	r.Static("/docs", filepath.Join(webDir, "docs"))
-	// Everything the build leaves at the root of the bundle is served from
-	// there. This used to be a hand-written list, and the file it did not
-	// name — the Matroska subtitle parser, served from public/ — fell through
-	// to the SPA fallback below: every .mkv came back with no subtitles
-	// because the worker was handed index.html to run as a script.
 	entries, _ := os.ReadDir(webDir)
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == "index.html" {
@@ -190,8 +150,6 @@ func registerFrontend(r *gin.Engine, webDir string) {
 		r.StaticFile("/"+entry.Name(), filepath.Join(webDir, entry.Name()))
 	}
 	r.NoRoute(func(c *gin.Context) {
-		// A documentation address that is wrong should say it is wrong, not
-		// open the application.
 		if c.Request.Method != http.MethodGet || strings.HasPrefix(c.Request.URL.Path, "/api/") ||
 			strings.HasPrefix(c.Request.URL.Path, "/media/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") ||
 			strings.HasPrefix(c.Request.URL.Path, "/docs/") {

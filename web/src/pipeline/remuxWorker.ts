@@ -25,13 +25,8 @@ export type PageToWorker =
 
 const post = (message: WorkerToPage) => { self.postMessage(message) }
 
-// Surfaced on the page's console: a worker's own console is easy to never
-// look at, and a silent death here is a room that quietly stops preparing.
 self.addEventListener('unhandledrejection', (event) => {
   const reason = (event as PromiseRejectionEvent).reason as unknown
-  // A seek aborts the reads of the region it left; mediabunny's prefetch
-  // workers surface that as a rejection nobody awaits. Expected, not
-  // trouble. Matched by name: the error may have crossed a bundle seam.
   if (reason instanceof ReadAbortedError || (reason instanceof Error && reason.name === 'ReadAbortedError')) {
     event.preventDefault()
     return
@@ -45,8 +40,6 @@ self.addEventListener('error', (event) => {
 })
 
 let handle: ClientRemuxHandle | null = null
-// A follow that lands before the pipeline's first region is remembered, not
-// dropped: it is exactly where the resumed room wants to start.
 let pendingFollowMs: number | null = null
 
 self.onmessage = (event: MessageEvent<PageToWorker>) => {
@@ -81,8 +74,6 @@ self.onmessage = (event: MessageEvent<PageToWorker>) => {
   })
 }
 
-// The error in words, for the report the page can hand to a person. The code
-// above is what the screen renders; this is what says why.
 function describe(error: unknown): string {
   if (error instanceof UnsupportedMediaError && error.reason) return error.reason
   if (error instanceof PlanFailedError) {
@@ -94,16 +85,9 @@ function describe(error: unknown): string {
 
 function classify(error: unknown, kind: RemuxJob['source']['kind']): string {
   if (error instanceof UnsupportedMediaError) return UNSUPPORTED_MEDIA
-  // Planning reads the source, so it fails for the source's reasons as often
-  // as for the media's. Unwrap it and judge the failure itself: a swarm that
-  // stopped answering during the plan is the same unreachable origin it would
-  // be a second later during the remux, and telling someone their browser
-  // cannot play the file sends them off to fix the wrong thing.
   const failure = error instanceof PlanFailedError ? error.failure : error
   const read = readFailureCode(failure, kind)
   if (read) return read
-  // Anything else the planner choked on is the media itself: it read bytes
-  // and could not make a container out of them.
   if (error instanceof PlanFailedError) return kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
   return error instanceof Error ? error.message : 'upload failed'
 }

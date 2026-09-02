@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState, type ImgHTMLAttributes } from 'react'
 
-// A deterministic two-tone gradient stands in while the bytes arrive — the
-// hue comes from the URL, so each title waits under its own colour instead
-// of a flat grey box. It also stays if the URL turns out to be dead.
+// Deterministic in the URL, so each title waits under its own colour.
 function placeholderGradient(src: string): string {
   let hash = 0
   for (let index = 0; index < src.length; index += 1) {
@@ -12,24 +10,11 @@ function placeholderGradient(src: string): string {
   return `linear-gradient(140deg, hsl(${hue} 32% 24%), hsl(${(hue + 46) % 360} 30% 13%))`
 }
 
-// An image that never pops in: its colour placeholder shows until the bytes
-// are decoded, then the picture fades over it. Swapping `src` fades out and
-// back in with the new picture, so hero and thumbnail changes stay soft.
-//
-// `onReady` avisa quando os bytes estão decodificados — para quem precisa
-// desmontar a camada que estava segurando o lugar. Passe uma referência
-// estável: ela entra nas dependências do efeito.
-//
-// `overlay` drops the colour placeholder: the frame stays transparent until
-// the picture arrives, for an image stacked over another that must crossfade
-// in rather than blot out what it is covering.
+// An image that never pops in: the colour placeholder holds the frame until the
+// bytes decode, then the picture fades over it. `overlay` drops the placeholder,
+// for an image stacked over another; `onReady` must be a stable reference.
 export function FadeImg({ src, className, style, overlay = false, onReady, ...props }: ImgHTMLAttributes<HTMLImageElement> & { overlay?: boolean; onReady?: () => void }) {
   const [shown, setShown] = useState<string | undefined>(undefined)
-  // A detached loader is not in the document, so `loading="lazy"` on the img
-  // below gated nothing: the bytes were already downloaded by the time the
-  // element got a src. Two hundred posters are mounted at once in the catalog
-  // and six of them are on screen. Where the caller asked for lazy, the
-  // browser's own gate does the work and the fade rides the img's own load.
   const lazy = props.loading === 'lazy'
   const gradient = useMemo(
     () => (!overlay && typeof src === 'string' && src ? placeholderGradient(src) : undefined),
@@ -45,10 +30,7 @@ export function FadeImg({ src, className, style, overlay = false, onReady, ...pr
     let cancelled = false
     const loader = new Image()
     loader.onload = () => { if (!cancelled) { setShown(src); onReady?.() } }
-    // On error the placeholder colours simply stay — a permanently empty box
-    // is worse than an honest tint.
     loader.src = src
-    // Cached images resolve synchronously-ish; complete avoids a blank frame.
     if (loader.complete && loader.naturalWidth > 0) { setShown(src); onReady?.() }
     return () => {
       cancelled = true
@@ -56,8 +38,6 @@ export function FadeImg({ src, className, style, overlay = false, onReady, ...pr
     }
   }, [src, lazy, onReady])
 
-  // The gradient lives on a wrapper: the img itself sits at opacity 0 until
-  // decoded, and a background on an invisible element would be invisible too.
   return (
     <span className={`fade-frame ${className ?? ''}`} style={{ ...style, background: gradient }}>
       {lazy ? (

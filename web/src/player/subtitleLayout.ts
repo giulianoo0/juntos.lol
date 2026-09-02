@@ -7,13 +7,8 @@ export interface ContentRect {
 }
 
 /**
- * Where the picture actually sits inside a `object-fit: contain` video.
- *
- * The element is whatever the layout gave it; the picture keeps its own aspect
- * ratio inside that and leaves bars on two sides. Subtitles belong on the
- * picture, not on the bars — the browser's own cue rendering anchors them that
- * way, and an overlay that anchors to the element instead drifts onto the black
- * as soon as the room is not exactly 16:9.
+ * Where the picture actually sits inside an `object-fit: contain` video:
+ * subtitles belong on the picture, not on the bars the aspect ratio leaves.
  */
 export function videoContentRect(video: {
   clientWidth: number
@@ -22,8 +17,6 @@ export function videoContentRect(video: {
   videoHeight: number
 }): ContentRect {
   const { clientWidth, clientHeight, videoWidth, videoHeight } = video
-  // Before metadata arrives there is no ratio to preserve, and the element is
-  // the best answer available.
   if (!videoWidth || !videoHeight || !clientWidth || !clientHeight) {
     return { left: 0, top: 0, width: clientWidth, height: clientHeight }
   }
@@ -34,12 +27,9 @@ export function videoContentRect(video: {
 }
 
 /**
- * Cue text size, as a share of the picture's height.
- *
- * WebVTT sizes cues against the video height for a reason: the same room is
- * watched in a phone-sized box and on a television, and a size in pixels is
- * either unreadable on one or overbearing on the other. The floor keeps a
- * thumbnail-sized player legible.
+ * Cue text size, as a share of the picture's height: a size in pixels is either
+ * unreadable in a phone-sized box or overbearing on a television. The floor
+ * keeps a thumbnail-sized player legible.
  */
 export function subtitleFontSize(pictureHeight: number): number {
   return Math.max(13, Math.round(pictureHeight * 0.045))

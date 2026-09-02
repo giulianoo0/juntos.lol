@@ -101,9 +101,8 @@ pub fn is_sidecar(name: &str, size: u64) -> bool {
     size > 0 && size <= MAX_SIDECAR && SIDECAR_EXT.contains(&ext(name).as_str())
 }
 
-/// The worker only carries video. A torrent passes when its bytes are
-/// overwhelmingly video files, with sidecar subtitles and small extras
-/// tolerated; anything else is refused before a byte is stored.
+/// Passes when the torrent's bytes are overwhelmingly video, with sidecar
+/// subtitles and small extras tolerated.
 pub fn screen_video_only(info: &librqbit::ValidatedTorrentMetaV1Info<librqbit::ByteBufOwned>) -> Result<(), Rejection> {
     let mut video = 0u64;
     let mut total = 0u64;

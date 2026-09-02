@@ -15,37 +15,22 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// An anonymous identity for the one thing on this server that spends
-// someone else's resources: dispatching a torrent to a worker. Rooms stay
-// as open as they are; only the torrent routes ask for a session, and they
-// mint one on first sight. A future account is just a session with a user
-// attached — the shape here is deliberately that thin.
-//
-// The cookie is trivially reset, so the session is not the rate limit's
-// last line: minting sessions is itself limited per client address, read
-// from the edge proxy's header because the app refuses to trust
-// X-Forwarded-For (SetTrustedProxies(nil)).
-
 const (
-	sessionCookie = "ss_sid"
-	// sessionContextKey is where the middleware leaves the session id.
+	sessionCookie     = "ss_sid"
 	sessionContextKey = "ss.session"
 	sessionIDBytes    = 32
-	// clientIPHeader is the edge proxy's own header, which the proxy sets
-	// from the connection and clients cannot spoof through it.
+	// clientIPHeader is set by the edge proxy from the connection, so clients cannot spoof it.
 	clientIPHeader = "CF-Connecting-IP"
 )
 
-// Sessions mints and recognises anonymous sessions.
+// Sessions mints and recognises the anonymous identity the torrent routes require;
+// rooms themselves stay open. The cookie is trivially reset, so minting is itself
+// capped per client address.
 type Sessions struct {
 	rdb          *redis.Client
 	ttl          time.Duration
 	perIPPerHour int
-	// behindEdge says the edge proxy's client-address header is to be
-	// believed. Off, the header is ignored and a request that arrives from
-	// loopback (some other proxy in front) cannot be told apart from the
-	// next one, so the per-address cap does not apply to it.
-	behindEdge bool
+	behindEdge   bool
 }
 
 // NewSessions returns a session minter. perIPPerHour caps how many fresh
@@ -59,12 +44,9 @@ func ipSessionsKey(ip string) string {
 	return "sessions:ip:" + ip + ":" + time.Now().UTC().Format("2006010215")
 }
 
-// ErrTooManySessions is returned when a client address minted too many.
 var ErrTooManySessions = errors.New("too many sessions")
 
-// clientIP is the address to rate-limit on, or "" when there is no
-// trustworthy one: the edge header only counts behind the edge, and a
-// loopback peer without it is a proxy, not a person.
+// clientIP is the address to rate-limit on, or "" when there is no trustworthy one.
 func (s *Sessions) clientIP(r *http.Request) string {
 	if s.behindEdge {
 		if ip := strings.TrimSpace(r.Header.Get(clientIPHeader)); ip != "" {
@@ -83,8 +65,7 @@ func (s *Sessions) clientIP(r *http.Request) string {
 	return host
 }
 
-// secureRequest is whether the cookie may be marked Secure: the request
-// came over TLS, here or at the edge.
+// secureRequest reports TLS here or at the edge, which is when the cookie may be Secure.
 func secureRequest(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
@@ -101,7 +82,6 @@ func (s *Sessions) Lookup(ctx context.Context, id string) (bool, error) {
 	return ok, nil
 }
 
-// Mint creates a session for a client address, subject to the per-address cap.
 func (s *Sessions) Mint(ctx context.Context, ip string) (string, error) {
 	if s.perIPPerHour > 0 && ip != "" {
 		key := ipSessionsKey(ip)
@@ -169,7 +149,6 @@ func (s *Sessions) Middleware() gin.HandlerFunc {
 	}
 }
 
-// SessionID answers the session the middleware attached, or "".
 func SessionID(c *gin.Context) string {
 	id, _ := c.Get(sessionContextKey)
 	s, _ := id.(string)

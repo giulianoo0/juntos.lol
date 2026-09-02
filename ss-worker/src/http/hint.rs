@@ -13,15 +13,11 @@ pub struct Hint {
     pub read_offset: u64,
     #[serde(default)]
     pub gen: u64,
-    /// The reader jumped, rather than drifted forward through its window.
     #[serde(default)]
     pub seek: bool,
 }
 
 /// POST /v1/hint/{ticket}: the remux's read offset moved. Carries the
-/// reader's offset, not the room's playhead — the remux runs ahead of
-/// playback, and the pieces it is blocked on are the ones to fetch. The
-/// body is read as text so the browser sends it without a preflight.
 pub async fn post(State(state): State<Arc<AppState>>, Path(ticket): Path<String>, body: String) -> Response {
     let ticket = match state.verify(&ticket) {
         Ok(t) => t,

@@ -14,9 +14,8 @@ import (
 	"github.com/giulianoo0/ss/internal/remux"
 )
 
-// Heartbeat is what a worker reports every ten seconds. The affinity table
-// is derived from it on every arrival and never stored: what a worker holds
-// is whatever its last heartbeat said, nothing staler.
+// Heartbeat is what a worker reports every ten seconds. The affinity table is
+// derived from it on arrival and never stored.
 type Heartbeat struct {
 	Type       string `json:"type"`
 	Version    string `json:"version"`
@@ -28,17 +27,15 @@ type Heartbeat struct {
 		NotAfter   *int64  `json:"notAfter"`
 		LastResult *string `json:"lastResult"`
 	} `json:"cert"`
-	Disk         DiskReport      `json:"disk"`
-	Relayed      bool            `json:"relayed"`
-	Transfer     *TransferStats  `json:"transfer"`
-	Leases       int             `json:"leases"`
-	MaxLeases    int             `json:"maxLeases"`
-	MaxTorrents  int             `json:"maxTorrents"`
-	PermitsInUse int64           `json:"permitsInUse"`
-	Torrents     []TorrentDigest `json:"torrents"`
-	// Remux is the worker's remote-remux capability; absent means it takes
-	// no remux jobs. Declared as remux.Capability in internal/remux.
-	Remux *remux.Capability `json:"remux,omitempty"`
+	Disk         DiskReport        `json:"disk"`
+	Relayed      bool              `json:"relayed"`
+	Transfer     *TransferStats    `json:"transfer"`
+	Leases       int               `json:"leases"`
+	MaxLeases    int               `json:"maxLeases"`
+	MaxTorrents  int               `json:"maxTorrents"`
+	PermitsInUse int64             `json:"permitsInUse"`
+	Torrents     []TorrentDigest   `json:"torrents"`
+	Remux        *remux.Capability `json:"remux,omitempty"`
 }
 
 // TransferStats is the worker's serving-bandwidth ceiling and how much of
@@ -48,12 +45,9 @@ type TransferStats struct {
 	UsedBps int64 `json:"usedBps"`
 }
 
-// TorrentDigest is one torrent as the worker sees it.
-// DiskReport is a worker's storage as it last reported it. Used is what its
-// admission counts on — a window's worth reserved per torrent, downloaded or
-// not — and Real is what the volume is actually carrying. They diverge by
-// design: everything behind a reader's window is punched back out to the
-// filesystem, so a promise and a measurement are different numbers.
+// DiskReport is a worker's storage as it last reported it. Used is what
+// admission counts on — a window's worth reserved per torrent — and Real is
+// what the volume actually carries; the window punches the rest back out.
 type DiskReport struct {
 	Used  int64 `json:"used"`
 	Real  int64 `json:"real"`
@@ -61,14 +55,11 @@ type DiskReport struct {
 }
 
 type TorrentDigest struct {
-	Infohash      string `json:"infohash"`
-	Name          string `json:"name"`
-	Phase         string `json:"phase"`
-	HaveBytes     int64  `json:"haveBytes"`
-	SelectedBytes int64  `json:"selectedBytes"`
-	// DiskBytes is what this torrent's files actually hold on the worker right
-	// now. The window punches everything behind it back out, so neither the
-	// selected size nor what it has downloaded says how much storage is in use.
+	Infohash      string   `json:"infohash"`
+	Name          string   `json:"name"`
+	Phase         string   `json:"phase"`
+	HaveBytes     int64    `json:"haveBytes"`
+	SelectedBytes int64    `json:"selectedBytes"`
 	DiskBytes     int64    `json:"diskBytes"`
 	Peers         int64    `json:"peers"`
 	DownSpeed     int64    `json:"downSpeed"`
@@ -102,7 +93,6 @@ func (w *Worker) Healthy(now time.Time) bool {
 	return w.link != nil && now.Sub(w.LastSeen) < 35*time.Second && w.Heartbeat.Ready && !w.Heartbeat.Draining
 }
 
-// Holds answers whether the worker reported this infohash on disk.
 func (w *Worker) Holds(infohash string) (TorrentDigest, bool) {
 	for _, t := range w.Heartbeat.Torrents {
 		if t.Infohash == infohash {
@@ -128,7 +118,6 @@ func workerKey(id string) string { return "worker:" + id }
 
 const workersBySeen = "workers:by_seen"
 
-// Enroll records a new worker's identity.
 func (r *Registry) Enroll(ctx context.Context, id, pubkey, publicBase string) error {
 	pipe := r.rdb.TxPipeline()
 	pipe.HSet(ctx, workerKey(id), "pubkey", pubkey, "publicBase", publicBase, "enrolledAt", time.Now().UTC().Format(time.RFC3339))
@@ -146,7 +135,6 @@ func (r *Registry) PubKey(ctx context.Context, id string) (string, error) {
 	return v, err
 }
 
-// Attach binds a live link to a worker.
 func (r *Registry) Attach(ctx context.Context, id, pubkey, publicBase string, l *link) {
 	r.mu.Lock()
 	w := r.workers[id]
@@ -194,11 +182,8 @@ func (r *Registry) Observe(ctx context.Context, id string, l *link, hb Heartbeat
 	return true
 }
 
-// Cull forgets workers that have been silent for maxAge with no live link.
-// A worker whose identity file is wiped enrolls the same machine under a
-// fresh id, and the old one would otherwise sit on the status page as a
-// silent ghost until the next server restart. A culled worker that comes
-// back simply enrolls again.
+// Cull forgets workers silent for maxAge with no live link, so a machine that
+// re-enrolled under a fresh id leaves no ghost on the status page.
 func (r *Registry) Cull(ctx context.Context, now time.Time, maxAge time.Duration) {
 	r.mu.Lock()
 	var stale []string
@@ -293,11 +278,9 @@ type JobRecord struct {
 	Audience   string      `json:"audience,omitempty"`
 	CreatedAt  time.Time   `json:"createdAt"`
 	LastSeenAt time.Time   `json:"lastSeenAt"`
-	// HaveBytes is the last per-torrent byte count charged to the session.
-	HaveBytes int64 `json:"haveBytes"`
+	HaveBytes  int64       `json:"haveBytes"`
 }
 
-// FileEntry mirrors the worker's file listing.
 type FileEntry struct {
 	Index int    `json:"index"`
 	Name  string `json:"name"`
@@ -305,7 +288,6 @@ type FileEntry struct {
 	Size  int64  `json:"size"`
 }
 
-// Job states.
 const (
 	JobResolving = "resolving"
 	JobListed    = "listed"
@@ -321,7 +303,6 @@ func roomJobsKey(roomID string) string { return "room:" + roomID + ":jobs" }
 
 const jobsAllKey = "jobs:all"
 
-// SaveJob writes a job record with the given TTL.
 func (r *Registry) SaveJob(ctx context.Context, job *JobRecord, ttl time.Duration) error {
 	raw, err := json.Marshal(job)
 	if err != nil {
@@ -356,7 +337,6 @@ func (r *Registry) LoadJob(ctx context.Context, id string) (*JobRecord, error) {
 	return &job, nil
 }
 
-// DeleteJob forgets a job.
 func (r *Registry) DeleteJob(ctx context.Context, job *JobRecord) error {
 	pipe := r.rdb.TxPipeline()
 	pipe.Del(ctx, jobKey(job.ID))
@@ -369,17 +349,14 @@ func (r *Registry) DeleteJob(ctx context.Context, job *JobRecord) error {
 	return err
 }
 
-// JobsForRoom lists job ids attached to a room.
 func (r *Registry) JobsForRoom(ctx context.Context, roomID string) ([]string, error) {
 	return r.rdb.SMembers(ctx, roomJobsKey(roomID)).Result()
 }
 
-// JobsForWorker lists job ids placed on a worker.
 func (r *Registry) JobsForWorker(ctx context.Context, workerID string) ([]string, error) {
 	return r.rdb.SMembers(ctx, workerJobsKey(workerID)).Result()
 }
 
-// AllJobs lists every job id.
 func (r *Registry) AllJobs(ctx context.Context) ([]string, error) {
 	return r.rdb.SMembers(ctx, jobsAllKey).Result()
 }

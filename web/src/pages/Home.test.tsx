@@ -7,21 +7,16 @@ import { openTorrent } from '../torrent'
 
 vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn(), createRoomAndUploadTorrent: vi.fn() }))
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
-// The board would otherwise fetch Cinemeta over the real network.
 vi.mock('../catalog/cinemeta', () => ({
   fetchCatalog: vi.fn().mockResolvedValue([]),
   searchCatalog: vi.fn().mockResolvedValue([]),
   fetchMeta: vi.fn().mockResolvedValue(null),
 }))
 
-// The manual flow is the tab the page opens on, so there is no panel to open
-// first — only a way in to choose. The panel holds each step one beat while
-// the last one dissolves, so every step has to be waited for.
 async function openManual(step: RegExp) {
   fireEvent.click(await screen.findByRole('button', { name: step }))
 }
 
-/** The catalog is the other tab now. */
 const showCatalog = () => fireEvent.click(screen.getByRole('tab', { name: /catalogue|catálogo/i }))
 
 const openFilePanel = () => openManual(/upload a file|enviar um arquivo/i)
@@ -43,8 +38,6 @@ describe('Home', () => {
   })
 
   it('gives each tab its own address, and follows the browser back to it', async () => {
-    // A catalogue and the fleet's status are places: linkable, bookmarkable,
-    // and reachable with the browser's own back button.
     render(
       <MemoryRouter initialEntries={['/status']}>
         <Routes><Route path="*" element={<Home />} /></Routes>
@@ -69,7 +62,6 @@ describe('Home', () => {
 
   it('opens on the manual tab and starts upload after file selection', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
-    // Manual is the default: it is the path that works with nothing installed.
     expect(screen.getByRole('tab', { name: /room|sala/i })).toHaveAttribute('aria-selected', 'true')
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
@@ -109,7 +101,7 @@ describe('Home', () => {
   it('shows a preparing state while an mp4 is being converted', async () => {
     vi.mocked(createRoomAndUpload).mockImplementation(async (_file, _nick, onProgress) => {
       onProgress?.({ phase: 'converting', pct: 42 })
-      return new Promise(() => undefined) // conversion still running
+      return new Promise(() => undefined)
     })
     render(<MemoryRouter><Home /></MemoryRouter>)
     await openFilePanel()
@@ -120,7 +112,6 @@ describe('Home', () => {
     expect(await screen.findByText(/preparing video|preparando o vídeo/i)).toBeInTheDocument()
     expect(screen.getByText('42%')).toBeInTheDocument()
 
-    // A second drop while converting is ignored.
     fireEvent.change(input, { target: { files: [new File(['video'], 'other.mp4', { type: 'video/mp4' })] } })
     expect(createRoomAndUpload).toHaveBeenCalledOnce()
   })
@@ -139,8 +130,6 @@ describe('Home', () => {
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
     fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
 
-    // createRoomAndUpload resolves once the room exists, long before the
-    // upload completes, so navigation must not wait for completion either.
     expect(await screen.findByText('room page')).toBeInTheDocument()
   })
 
@@ -185,8 +174,6 @@ describe('build info', () => {
 
     const repo = screen.getByRole('link', { name: /source on github|código no github/i })
     expect(repo).toHaveAttribute('href', 'https://github.com/giulianoo0/ss')
-    // A local dev build has no upstream commit to point at, so it shows the
-    // repository alone rather than a link that would 404.
     expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).not.toBeInTheDocument()
   })
 })

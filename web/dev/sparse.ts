@@ -57,7 +57,6 @@ async function convertRegion(input: Input, index: number, start: number, end: nu
   const conversion = await Conversion.init({ input, output, audio: { discard: true }, trim: { start, end } })
   if (!conversion.isValid) throw new Error('invalid conversion: ' + conversion.discardedTracks.map((t) => t.reason).join(','))
   await conversion.execute()
-  // The durations come from the region's own playlist.
   const lines = playlist.split('\n')
   for (let i = 0; i < lines.length; i += 1) {
     const m = /^#EXTINF:([\d.]+)/.exec(lines[i])
@@ -66,9 +65,8 @@ async function convertRegion(input: Input, index: number, start: number, end: nu
   return region
 }
 
-// One playlist over every region: gaps between them are EXT-X-GAP
-// segments of `fill` seconds (the last one shorter), so cumulative time
-// on the playlist equals absolute time in the file.
+// Gaps between regions are EXT-X-GAP segments, so cumulative time on the
+// playlist equals absolute time in the file.
 function compose(regionsOut: RegionOut[]): string {
   const lines = ['#EXTM3U', '#EXT-X-VERSION:7', `#EXT-X-TARGETDURATION:${Math.max(4, fill)}`, '#EXT-X-MEDIA-SEQUENCE:0', '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-INDEPENDENT-SEGMENTS']
   let cursor = 0
@@ -118,8 +116,8 @@ async function main() {
   texts.set('master.m3u8', '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=4000000,CODECS="avc1.640028"\nmedia.m3u8\n')
   render()
 
-  // The driver serves these over http://mem/ (Playwright route.fulfill), so
-  // hls.js runs with its own loader and its real behaviour.
+  // Served over http://mem/ (Playwright route.fulfill) so hls.js uses its own
+  // loader and its real behaviour.
   ;(window as unknown as { __objects: () => Record<string, string> }).__objects = () => {
     const out: Record<string, string> = {}
     for (const [name, bytes] of objects) out[name] = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))

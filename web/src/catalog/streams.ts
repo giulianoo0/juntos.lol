@@ -1,7 +1,5 @@
 import type { MetaType } from './cinemeta'
 
-// The magnet alone identifies the torrent; these public trackers are the same
-// kind the manual magnet flow relies on for peer discovery.
 const TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://open.demonii.com:1337/announce',
@@ -11,34 +9,20 @@ const TRACKERS = [
 
 export type StreamResolution = '2160p' | '1080p' | '720p' | 'sd'
 
-/**
- * Where a stream's bytes actually are.
- *
- * A plugin points at them one of two ways, and the two travel very different
- * paths afterwards: a torrent goes through the swarm, a url is fetched by
- * whoever can reach it.
- */
 export type StreamLocation =
   | { kind: 'torrent'; infoHash: string; fileIdx: number | null; fileName: string }
   | { kind: 'url'; url: string }
 
 export interface CatalogStream {
-  // First line of the addon's name field, e.g. "Torrentio 1080p".
   quality: string
   resolution: StreamResolution
-  // The release name, cleaned of the stats and language lines.
   label: string
   seeders: number | null
   size: string
   source: string
-  // Flag emojis for the languages the release carries — Torrentio lists a
-  // flag whether the language comes as audio or as subtitles, which is
-  // exactly what the language filter wants.
   languages: string[]
   location: StreamLocation
-  /** The registry key of the plugin that produced this. Opaque. */
   pluginId: string
-  /** What that plugin calls itself, which is what a person can act on. */
   pluginName: string
 }
 
@@ -50,17 +34,9 @@ export interface StreamTarget {
 }
 
 const FLAG_PATTERN = /\p{Regional_Indicator}\p{Regional_Indicator}/gu
-// `test` on a global regex advances lastIndex between calls; detection needs
-// its own stateless copy.
 const FLAG_TEST = /\p{Regional_Indicator}\p{Regional_Indicator}/u
-// Release-name markers for Brazilian dubbed/dual audio; those releases often
-// skip the flag line, and the language filter must still find them.
 const PT_BR_MARKERS = /dublado|dual[\s.]?(audio|áudio)?|nacional|dublagem/i
 
-// Torrentio packs the release name plus a stats line ("👤 12 💾 1.4 GB ⚙️ x")
-// and sometimes a language line ("Multi Subs / 🇧🇷 / 🇪🇸") into `title`,
-// newline-separated. Pull those apart so the list can render fields and
-// filters instead of emoji soup.
 export function parseStreamTitle(title: string): { label: string; seeders: number | null; size: string; source: string; languages: string[] } {
   const lines = title.split('\n')
   const statsLine = lines.find((line) => line.includes('👤') || line.includes('💾')) ?? ''
@@ -80,8 +56,6 @@ export function parseStreamTitle(title: string): { label: string; seeders: numbe
   }
 }
 
-// The resolution bucket comes from the addon's own quality tag, falling back
-// to the release name.
 export function streamResolution(quality: string, label: string): StreamResolution {
   const haystack = `${quality} ${label}`.toLowerCase()
   if (/\b(2160p|4k)\b/.test(haystack)) return '2160p'
@@ -91,11 +65,8 @@ export function streamResolution(quality: string, label: string): StreamResoluti
 }
 
 /**
- * Reads where a stream points, or null if it points nowhere usable.
- *
- * A torrent wins over a url when a stream carries both: the swarm costs
- * nobody's server anything. `http:` is refused outright — the page is https,
- * and a url the server would later have to fetch gets checked again there.
+ * Where a stream points, or null if nowhere usable. A torrent wins over a url
+ * when a stream carries both, and `http:` is refused outright.
  */
 function readLocation(stream: Record<string, unknown>): StreamLocation | null {
   if (typeof stream.infoHash === 'string' && /^[0-9a-f]{40}$/i.test(stream.infoHash)) {
@@ -114,22 +85,15 @@ function readLocation(stream: Record<string, unknown>): StreamLocation | null {
   if (typeof stream.url === 'string') {
     try {
       const url = new URL(stream.url)
-      // Credentials here would have the server send Basic auth to an address
-      // a plugin chose — the same reason parseManifest refuses them in
-      // updateUrl. And what gets stored is the form that was checked, not
-      // the form that was written: `https:\n//host` parses fine and would
-      // carry the newline all the way to whoever builds the request.
       if (url.protocol === 'https:' && !url.username && !url.password) {
         return { kind: 'url', url: url.href }
       }
-    } catch { /* not a url at all */ }
+    } catch { }
   }
   return null
 }
 
-/** A list nobody scrolls to the end of. */
 const MAX_STREAMS = 500
-/** A release name, not a document. */
 const MAX_TITLE = 2_000
 
 export function parseStreams(payload: unknown, pluginId: string, pluginName = ''): CatalogStream[] {
@@ -138,8 +102,6 @@ export function parseStreams(payload: unknown, pluginId: string, pluginName = ''
   if (!Array.isArray(streams)) return []
   const result: CatalogStream[] = []
   for (const value of streams) {
-    // Ten thousand streams is five regexes and an allocation each, on the
-    // main thread, over data a plugin chose.
     if (result.length >= MAX_STREAMS) break
     if (typeof value !== 'object' || value === null) continue
     const stream = value as Record<string, unknown>
@@ -171,13 +133,7 @@ export function buildMagnet(location: Extract<StreamLocation, { kind: 'torrent' 
   return `magnet:?xt=urn:btih:${location.infoHash}${dn}${trackers}`
 }
 
-/**
- * Identifies one stream among the ones on screen, for React keys.
- *
- * The plugin is part of it: two plugins returning the same torrent is the
- * normal case — having more than one is the point — and without it they
- * collide.
- */
+/** A React key; the plugin is part of it, since two plugins may return one torrent. */
 export function streamKey(stream: CatalogStream): string {
   const { location } = stream
   const where = location.kind === 'torrent'
@@ -186,15 +142,7 @@ export function streamKey(stream: CatalogStream): string {
   return `${stream.pluginId}:${where}`
 }
 
-/**
- * Whether this build can open a source at all.
- *
- * Both kinds are openable now: a torrent through the swarm, a url through the
- * server-side ingest. The function stays because the two paths are wired at
- * three separate call sites, and a fourth source kind arriving would otherwise
- * be listed as playable and throw on click — which is what url streams did
- * before Task 14 existed.
- */
+/** Both kinds open today; the check stays so a new source kind is not listed as playable. */
 export function isPlayable(stream: CatalogStream): boolean {
   return stream.location.kind === 'torrent' || stream.location.kind === 'url'
 }

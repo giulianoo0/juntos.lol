@@ -15,7 +15,6 @@
 
 /** A read was aborted by its gate — the seek moved on, or the session closed. */
 export class ReadAbortedError extends Error {
-  /** True when the gate is closed for good: no read will ever run again. */
   readonly closed: boolean
   constructor(closed = false) {
     super(closed ? 'reads closed' : 'read aborted')
@@ -37,10 +36,6 @@ export class ReadFailedError extends Error {
 /** Nothing usable came back within the retry budget or the deadline. */
 export class ReadUnreachableError extends Error {
   readonly cause: unknown
-  // The reason travels in the message, not only in the cause: this is the
-  // error a failure screen prints, and "origin unreachable" on its own says
-  // nothing about whether the swarm was slow, the worker refused, or the
-  // network dropped — which are three different bugs.
   constructor(cause: unknown) {
     super(typeof cause === 'string' ? cause : 'origin unreachable')
     this.name = 'ReadUnreachableError'
@@ -73,34 +68,22 @@ export class ReadGate {
 }
 
 export interface RangeReaderOptions {
-  /** Read at call time so a rotated ticket applies to the next request. */
   url: () => string
   size: number
   gate: ReadGate
-  /** Consecutive attempts that delivered nothing before giving up. */
   maxAttempts?: number
-  /** Wall-clock a single request may take to show its first byte. */
   firstByteMs?: number
-  /** Wall-clock a body may go without a byte before it is given up on. */
   stallMs?: number
-  /** How many "alive but slow" answers (504) are tolerated per read. */
   maxSlowRetries?: number
-  /** Base of the exponential backoff between failed attempts. */
   backoffMs?: number
-  /** Called on 401/403 once per read; a true return means "try again". */
   refresh?: () => Promise<boolean>
-  /** Bytes delivered, for throughput accounting. */
   onBytes?: (n: number) => void
-  /** Extra request headers, e.g. a priority class. */
   headers?: Record<string, string>
 }
 
 const DEFAULT_ATTEMPTS = 8
 const DEFAULT_FIRST_BYTE_MS = 45_000
 const DEFAULT_STALL_MS = 30_000
-// A 504 is the origin saying "alive, still waiting on the swarm". It does
-// not spend the failure budget, but a swarm that never delivers must not
-// spin forever either.
 const DEFAULT_SLOW_RETRIES = 60
 const BACKOFF_BASE_MS = 250
 const BACKOFF_CAP_MS = 8_000
@@ -120,8 +103,6 @@ function sleep(ms: number, gate: ReadGate, signal: AbortSignal): Promise<void> {
   })
 }
 
-// The Content-Range an origin answered with, or null when it is not the
-// single-range form.
 function contentRangeStart(response: Response): number | null {
   const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(response.headers.get('Content-Range') ?? '')
   return match ? Number(match[1]) : null
@@ -140,12 +121,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
   let attempts = 0
   let slowRetries = 0
   let refreshed = false
-  // Bytes the current body delivered: a body that ends after some is the
-  // origin's cap or stall policy; one that ends after none is a failure.
   let deliveredByBody = 0
-  // The last thing the origin actually said, for the error if it comes to
-  // one. A run of 503s and a run of dropped connections both end as "no
-  // progress", and only this tells them apart afterwards.
   let lastStatus = 0
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   let requestAbort: AbortController | null = null
@@ -180,7 +156,6 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
     clearTimeout(firstByte)
     lastStatus = response.status
     if (response.status === 504) {
-      // Alive, waiting on pieces nobody has yet. Not a failure, not free.
       response.body?.cancel().catch(() => {})
       slowRetries += 1
       if (slowRetries > (opts.maxSlowRetries ?? DEFAULT_SLOW_RETRIES)) {
@@ -199,13 +174,10 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
       return null
     }
     if (response.status === 200 && cursor !== 0) {
-      // An origin that ignored Range would make us skip ahead; refuse it.
       response.body?.cancel().catch(() => {})
       throw new ReadFailedError(200, 'origin ignored Range')
     }
     if (response.status === 206) {
-      // Bytes from any other offset would land at the cursor and corrupt
-      // the read silently; an origin that does that is broken, not slow.
       const answered = contentRangeStart(response)
       if (answered !== null && answered !== cursor) {
         response.body?.cancel().catch(() => {})
@@ -217,8 +189,6 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
     return response.body.getReader()
   }
 
-  // One chunk, or a stall: a body silent for too long is abandoned and the
-  // read resumes on a fresh request from wherever it got to.
   const readChunk = (reader: ReadableStreamDefaultReader<Uint8Array>) => {
     let timer: ReturnType<typeof setTimeout> | undefined
     const stall = new Promise<never>((_, reject) => {
@@ -251,9 +221,6 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
             result = await readChunk(reader)
           } catch {
             if (signal.aborted) throw gate.aborted()
-            // The body died under us — network, the origin ending it early,
-            // or our own stall deadline. Progress made means the next request
-            // is a resume, not a retry.
             reader = null
             if (deliveredByBody === 0) {
               attempts += 1
@@ -262,9 +229,6 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
             continue
           }
           if (result.done) {
-            // The origin closed the body. With progress made this is the
-            // worker's cap or stall policy and costs nothing; without it the
-            // origin gave up before a single byte, which is a failed attempt.
             reader = null
             if (deliveredByBody === 0) {
               attempts += 1
@@ -274,7 +238,6 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
           }
           let chunk = result.value
           if (chunk.byteLength === 0) continue
-          // An origin that over-delivers is truncated, never trusted.
           const room = target - cursor
           if (chunk.byteLength > room) chunk = chunk.subarray(0, room)
           cursor += chunk.byteLength

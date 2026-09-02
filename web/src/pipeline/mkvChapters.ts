@@ -30,7 +30,6 @@ const CHAPTER_TIME_END = 0x92
 const CHAPTER_DISPLAY = 0x80
 const CHAP_STRING = 0x85
 
-/** How much of the head is scanned before giving up on finding Chapters. */
 const HEAD_SCAN_BYTES = 4 << 20
 const MAX_CHAPTERS = 512
 
@@ -69,14 +68,11 @@ class Reader {
   }
 }
 
-/** The two reads this needs, so a torrent or a url can answer as well as a File. */
 export interface ChapterReader {
   size: number
   read(start: number, end: number, hint?: { prio?: 'head' | 'playhead' | 'scan' }): Promise<Uint8Array>
 }
 
-// The head reads are urgent and tiny; a seek that aborts one (a resumed
-// room seeks the moment it starts) gets one retry rather than no chapters.
 export async function readMkvChapters(file: ChapterReader): Promise<MkvChapter[]> {
   const head = (start: number, end: number) => file.read(start, end, { prio: 'head' })
   try {
@@ -102,8 +98,6 @@ async function walkChapters(size: number, read: (start: number, end: number) => 
   if (reader.vint(false) === null) return []
   const segmentStart = reader.pos
 
-  // Walk the segment's top level. Chapters either appear here directly or
-  // the SeekHead says where they are; a Cluster means the head is over.
   let chaptersAt = -1
   while (reader.pos < reader.length) {
     const id = reader.vint(true)
@@ -119,7 +113,6 @@ async function walkChapters(size: number, read: (start: number, end: number) => 
   }
   if (chaptersAt < 0) return []
 
-  // The SeekHead pointed past what was read; fetch just that element.
   const idProbe = new Reader(await read(chaptersAt, Math.min(chaptersAt + 12, size)))
   if (idProbe.vint(true) !== CHAPTERS_ID) return []
   const bodySize = idProbe.vint(false)
@@ -174,8 +167,6 @@ function parseChapters(reader: Reader): MkvChapter[] {
   }
   walk(reader)
   chapters.sort((a, b) => a.startMs - b.startMs)
-  // End times are optional in the container; a missing one runs to the next
-  // chapter's start, matching what ffprobe reports.
   for (let i = 0; i < chapters.length; i += 1) {
     if (chapters[i].endMs <= chapters[i].startMs && i + 1 < chapters.length) {
       chapters[i].endMs = chapters[i + 1].startMs

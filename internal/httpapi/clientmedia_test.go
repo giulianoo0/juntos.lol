@@ -61,11 +61,9 @@ func TestClientMediaClaimIsExclusive(t *testing.T) {
 	claim := claimRoom(t, e, "r1")
 	require.True(t, strings.HasPrefix(claim, "client:"))
 
-	// The room has one producer; a second claim is turned away.
 	w := postJSON(t, e, "/api/rooms/r1/client-media/claim", `{}`)
 	require.Equal(t, http.StatusConflict, w.Code)
 
-	// Releasing hands the room back, and a new claim succeeds.
 	rel := httptest.NewRequest(http.MethodDelete, "/api/rooms/r1/client-media?claim="+claim, nil)
 	relW := httptest.NewRecorder()
 	e.ServeHTTP(relW, rel)
@@ -92,15 +90,12 @@ func TestClientMediaPresignSignsOnlyTheGrammar(t *testing.T) {
 	require.Equal(t, media.ClientSegmentContentType, resp.Objects[1].Headers["Content-Type"])
 	require.Equal(t, media.ClientObjectCacheControl, resp.Objects[1].Headers["Cache-Control"])
 
-	// A name outside the grammar is never signed: the grammar is the
-	// authorization.
 	for _, name := range []string{"../evil.m4s", "master.m3u8", "stream_0_000.m4s", "cs_1_1.m4s/x"} {
 		w := postJSON(t, e, "/api/rooms/r1/client-media/presign",
 			`{"claim":"`+claim+`","objects":[{"name":"`+name+`","size":10}]}`)
 		require.Equal(t, http.StatusBadRequest, w.Code, name)
 	}
 
-	// A wrong claim gets nothing.
 	w = postJSON(t, e, "/api/rooms/r1/client-media/presign",
 		`{"claim":"client:deadbeef","objects":[{"name":"cs_1_2.m4s","size":10}]}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
@@ -112,8 +107,6 @@ func TestClientMediaPresignEnforcesTheBudget(t *testing.T) {
 	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// testCfg's MaxUploadMB is small; a single huge declaration blows the
-	// budget and is refused.
 	w := postJSON(t, e, "/api/rooms/r1/client-media/presign",
 		`{"claim":"`+claim+`","objects":[{"name":"cs_1_1.m4s","size":`+
 			`268435455},{"name":"cs_1_2.m4s","size":268435455}]}`)
@@ -134,7 +127,6 @@ func TestClientMediaPublishOnlyTrustsTheBucket(t *testing.T) {
 	})
 	claim := claimRoom(t, e, "r1")
 
-	// Two segments claimed; only one actually landed in the bucket.
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_1.mp4",
 		strings.NewReader("init"), 4, media.ClientInitContentType, media.ClientObjectCacheControl))
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_1_1.m4s",
@@ -158,12 +150,9 @@ func TestClientMediaPublishOnlyTrustsTheBucket(t *testing.T) {
 		Ready     bool     `json:"ready"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	// The bucket vouched for two of the three claims.
 	require.ElementsMatch(t, []string{"cinit_1.mp4", "cs_1_1.m4s"}, resp.Confirmed)
 	require.True(t, resp.Ready)
 
-	// The stored playlist is cut at the segment that never landed, carries
-	// bucket URLs, and never names cs_1_2.
 	stored, err := store.Playlist(t.Context(), "r1", "client_stream_1.m3u8")
 	require.NoError(t, err)
 	require.Contains(t, stored, "https://media.example.test/rooms/r1/g0/hls/cs_1_1.m4s")
@@ -172,7 +161,6 @@ func TestClientMediaPublishOnlyTrustsTheBucket(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, masterStored, "client_stream_1.m3u8")
 
-	// The room went ready and said so.
 	select {
 	case id := <-ready:
 		require.Equal(t, "r1", id)
@@ -205,7 +193,6 @@ func TestClientMediaPublishRefusesASmuggledMediaPlaylistTag(t *testing.T) {
 	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// An EXT-X-KEY would make every viewer's player fetch an attacker URL.
 	evil := "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://evil/k\"\n#EXTINF:4.0,\ncs_1_1.m4s\n"
 	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","playlists":{"client_stream_1.m3u8":`+strconvQuote(evil)+`}}`)
@@ -218,13 +205,10 @@ func TestClientMediaEarlyMasterIsNotFatal(t *testing.T) {
 	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// The master names a variant with no confirmed segments yet — the state
-	// every run's first tick is in. It must not 400.
 	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nclient_stream_1.m3u8\n"
 	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","confirm":[],"playlists":{"master.m3u8":`+strconvQuote(master)+`}}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	// The master was withheld, not stored.
 	_, err := store.Playlist(t.Context(), "r1", "master.m3u8")
 	require.Error(t, err)
 }
@@ -235,15 +219,13 @@ func TestClientMediaCompleteWithoutPlayableMediaFails(t *testing.T) {
 	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// Nothing was ever confirmed; completing must report failure so the
-	// client falls back, and must free the claim so tus can proceed.
 	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","complete":true}`)
 	require.Equal(t, http.StatusConflict, w.Code)
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
 	require.Equal(t, "uploading", got.Status)
-	claimRoom(t, e, "r1") // the reservation is free
+	claimRoom(t, e, "r1")
 }
 
 func TestClientMediaPublishRejectsAStaleGeneration(t *testing.T) {
@@ -264,7 +246,6 @@ func TestClientMediaCompleteReleasesTheClaim(t *testing.T) {
 	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// A complete run that actually produced playable media.
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_1.mp4",
 		strings.NewReader("i"), 1, media.ClientInitContentType, media.ClientObjectCacheControl))
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_1_1.m4s",
@@ -276,7 +257,6 @@ func TestClientMediaCompleteReleasesTheClaim(t *testing.T) {
 			`"playlists":{"master.m3u8":`+strconvQuote(master)+`,"client_stream_1.m3u8":`+strconvQuote(playlist)+`},"complete":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// The room is ready and the reservation is gone.
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
 	require.Equal(t, "ready", got.Status)
@@ -295,8 +275,6 @@ func TestClientMediaTimelineFollowsTheMaster(t *testing.T) {
 	})
 	claim := claimRoom(t, e, "r1")
 
-	// Region 1's objects landed; region 0 never existed (a seek can arrive
-	// before the first segment of the initial region confirms).
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/r1_cinit_1.mp4",
 		strings.NewReader("init"), 4, media.ClientInitContentType, media.ClientObjectCacheControl))
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/r1_cs_1_1.m4s",
@@ -305,8 +283,6 @@ func TestClientMediaTimelineFollowsTheMaster(t *testing.T) {
 		"#EXT-X-MAP:URI=\"r1_cinit_1.mp4\"\n#EXTINF:4.0,\nr1_cs_1_1.m4s\n"
 	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028,mp4a.40.2\"\nr1_client_stream_1.m3u8\n"
 
-	// A publish whose master cannot render yet (its variant has no confirmed
-	// segments) stores the duration but must not move the offset.
 	early := `{"claim":"` + claim + `","mediaGeneration":0,` +
 		`"playlists":{"master.m3u8":` + strconvQuote(master) + `,"r1_client_stream_1.m3u8":` + strconvQuote(playlist) + `},` +
 		`"timeline":{"durationMs":1440000,"offsetMs":1080000}}`
@@ -318,8 +294,6 @@ func TestClientMediaTimelineFollowsTheMaster(t *testing.T) {
 	require.Zero(t, got.MediaOffsetMs)
 	baseVersion := got.MediaVersion
 
-	// Once the bucket vouches for the region and the master renders, the
-	// offset lands and the media version moves with it, atomically.
 	confirmed := `{"claim":"` + claim + `","mediaGeneration":0,` +
 		`"confirm":["r1_cinit_1.mp4","r1_cs_1_1.m4s"],` +
 		`"playlists":{"master.m3u8":` + strconvQuote(master) + `,"r1_client_stream_1.m3u8":` + strconvQuote(playlist) + `},` +
@@ -337,14 +311,12 @@ func TestClientMediaTimelineFollowsTheMaster(t *testing.T) {
 		t.Fatal("room update notification never fired")
 	}
 
-	// Republishing the same offset is a no-op: no bump, no reload storm.
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", confirmed)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	got, err = store.Get(t.Context(), "r1")
 	require.NoError(t, err)
 	require.Equal(t, baseVersion+1, got.MediaVersion)
 
-	// Negative values are refused outright.
 	bad := `{"claim":"` + claim + `","mediaGeneration":0,"timeline":{"durationMs":-1,"offsetMs":0}}`
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", bad)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
@@ -357,9 +329,6 @@ func TestClientMediaReadyWaitsForTheMaster(t *testing.T) {
 	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// One rendition is playable, but the master also names an audio variant
-	// that has nothing confirmed yet: the master cannot render, and a ready
-	// room without a master serves the player's first request a 404.
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_1.mp4",
 		strings.NewReader("i"), 1, media.ClientInitContentType, media.ClientObjectCacheControl))
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_1_1.m4s",
@@ -375,8 +344,6 @@ func TestClientMediaReadyWaitsForTheMaster(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, "ready", got.Status)
 
-	// The audio's first segment lands, the master renders, and only now the
-	// room says ready.
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cinit_2.mp4",
 		strings.NewReader("i"), 1, media.ClientInitContentType, media.ClientObjectCacheControl))
 	require.NoError(t, bucket.Put(t.Context(), "rooms/r1/g0/hls/cs_2_1.m4s",
@@ -408,8 +375,6 @@ func TestClientMediaPublishKeepsARegionMap(t *testing.T) {
 		"#EXT-X-MAP:URI=\"r1_cinit_1.mp4\"\n#EXTINF:4.0,\nr1_cs_1_1.m4s\n"
 	master := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS=\"avc1.640028,mp4a.40.2\"\nr1_client_stream_1.m3u8\n"
 
-	// Region 0 is reported but its master never rendered: the map must not
-	// send a player to a playlist that is not there.
 	body := `{"claim":"` + claim + `","mediaGeneration":0,` +
 		`"confirm":["r1_cinit_1.mp4","r1_cs_1_1.m4s"],` +
 		`"playlists":{"master.m3u8":` + strconvQuote(master) + `,"r1_master.m3u8":` + strconvQuote(master) + `,"r1_client_stream_1.m3u8":` + strconvQuote(playlist) + `},` +
@@ -424,7 +389,6 @@ func TestClientMediaPublishKeepsARegionMap(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, has, "the region's own master is stored")
 
-	// Growth changes the map without moving the media version.
 	grown := strings.Replace(body, `"producedMs":4000`, `"producedMs":8000`, 1)
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", grown)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -433,7 +397,6 @@ func TestClientMediaPublishKeepsARegionMap(t *testing.T) {
 	require.Equal(t, int64(8000), got.MediaRegions[0].ProducedMs)
 	require.Equal(t, version, got.MediaVersion)
 
-	// Too many regions, or a duplicate, is refused.
 	dup := strings.Replace(body, `{"n":0,"startMs":0`, `{"n":1,"startMs":0`, 1)
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish", dup)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
@@ -464,7 +427,6 @@ func TestClientMediaPublishCarriesWhatMoved(t *testing.T) {
 	w := postJSON(t, e, "/api/rooms/r1/client-media/publish", body)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// Regions and offset both moved in this publish: one update, with both.
 	select {
 	case snap := <-snapshots:
 		require.Equal(t, int64(1080000), snap.MediaOffsetMs)
@@ -484,7 +446,6 @@ func TestClientMediaCompleteRetryFindsReceipt(t *testing.T) {
 	e := clientMediaEngine(t, store, bucket, ClientMediaHooks{})
 	claim := claimRoom(t, e, "r1")
 
-	// One confirmed segment and a rendered pair make the room playable.
 	require.NoError(t, bucket.Put(t.Context(), media.HLSObjectKey("r1", 0, "cinit_1.mp4"), strings.NewReader("x"), 1, "video/mp4", ""))
 	require.NoError(t, bucket.Put(t.Context(), media.HLSObjectKey("r1", 0, "cs_1_1.m4s"), strings.NewReader("x"), 1, "video/iso.segment", ""))
 	variant := "#EXTM3U\n#EXT-X-MAP:URI=\"cinit_1.mp4\"\n#EXTINF:4.0,\ncs_1_1.m4s\n"
@@ -493,8 +454,6 @@ func TestClientMediaCompleteRetryFindsReceipt(t *testing.T) {
 		`{"claim":"`+claim+`","runId":"run1","seq":1,"confirm":["cinit_1.mp4","cs_1_1.m4s"],"playlists":{"client_stream_1.m3u8":`+strconvQuote(variant)+`,"master.m3u8":`+strconvQuote(master)+`},"complete":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// The response was lost; the retry hits a released claim and must get
-	// the same answer, not a claim_mismatch that reads as a source swap.
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","runId":"run1","seq":2,"complete":true}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -516,7 +475,6 @@ func TestClientMediaLateMetadataEndpoint(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &claimResp))
 	require.NotEmpty(t, claimResp.MetadataToken)
 
-	// The claim is released (media completed); chapters still land.
 	require.NoError(t, store.ReleaseUpload(t.Context(), "r1", claimResp.Claim))
 	w = postJSON(t, e, "/api/rooms/r1/client-media/metadata",
 		`{"token":"`+claimResp.MetadataToken+`","mediaGeneration":0,"chapters":[{"startMs":0,"endMs":90000,"title":"Opening"}]}`)
@@ -525,7 +483,6 @@ func TestClientMediaLateMetadataEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got.Chapters, 1)
 
-	// A wrong token is refused; a swapped source revokes the right one.
 	w = postJSON(t, e, "/api/rooms/r1/client-media/metadata",
 		`{"token":"meta:wrong","chapters":[{"startMs":0,"endMs":1000,"title":"x"}]}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
@@ -553,8 +510,6 @@ func TestClientMediaPublishStaleSeqDoesNotRegress(t *testing.T) {
 		`{"claim":"`+claim+`","runId":"run1","seq":2,"confirm":["cinit_1.mp4","cs_1_1.m4s","cs_1_2.m4s"],"playlists":{"client_stream_1.m3u8":`+strconvQuote(long)+`}}`)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// The older publish lands late: refused whole, the playlist keeps both
-	// segments.
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","runId":"run1","seq":1,"confirm":["cs_1_1.m4s"],"playlists":{"client_stream_1.m3u8":`+strconvQuote(short)+`}}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())

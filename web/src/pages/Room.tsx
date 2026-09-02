@@ -67,16 +67,10 @@ import {
 import { expectedPositionMs } from '../player/position'
 import type { TorrentStats } from '../torrent'
 
-// How long the copied tick stands before the button offers the copy again.
 const COPIED_MS = 1_800
-// How often a room still being prepared re-reads its own progress, as a
-// fallback for the live updates rather than a replacement for them.
 const PREPARING_POLL_MS = 3_000
-// How long a pipeline may go quiet before the room counts as unproduced.
-// Every publish is a heartbeat and those run every couple of seconds, but a
-// cold seek spends its time snapping to a keyframe rather than publishing —
-// so this has to outlast the longest of those waits. Well short of the
-// server's own claim sweep, which is what finally hands the room over.
+// How long a pipeline may go quiet before the room counts as unproduced: long
+// enough to outlast a cold seek, well short of the server's claim sweep.
 const PRODUCER_ALIVE_MS = 90_000
 
 export function RoomPage() {
@@ -86,8 +80,8 @@ export function RoomPage() {
   const [missing, setMissing] = useState(false)
 
   useEffect(() => {
-    // Old shared links may still contain ?nick=. Remove every query parameter
-    // before it can linger in browser history, referrers, or screenshots.
+    // Old shared links may still contain ?nick=, which must not linger in
+    // history, referrers or screenshots.
     if (window.location.search) window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`)
   }, [])
 
@@ -103,9 +97,6 @@ export function RoomPage() {
     return () => controller.abort()
   }, [id])
 
-  // Everything before the room can play is one surface changing what it says,
-  // so arriving, being asked for a name and watching the file land read as one
-  // continuous wait instead of three screens replacing each other.
   const waiting: GateStep = missing ? 'expired' : !room ? 'connecting' : !nickname ? 'join' : null
   if (waiting !== null) {
     return (
@@ -118,28 +109,19 @@ export function RoomPage() {
   return <ConnectedRoom room={room!} nickname={nickname} />
 }
 
-/** Every state the room passes through before there is a picture to show. */
 type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'buffering' | 'failed' | 'error' | null
 
-/**
- * The room's waiting room: one panel that changes what it is asking for or
- * reporting, travelling between the sizes each state needs and dissolving
- * between them, rather than swapping whole screens.
- */
+/** One panel that changes what it asks for, rather than swapping screens. */
 function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, overlay = false, leaving = false, failure, errorMessage }: {
   step: GateStep
-  /** The room as last read, for the report a failure screen can hand over. */
   room?: RoomInfo
   onJoin?: (nickname: string) => void
   progress?: RoomUploadProgress | null
   preparation?: RoomInfo['preparation']
   swarm?: TorrentStats | null
-  /** The opening buffer, for the last stage of preparing. */
   wait?: OpeningWait | null
-  /** Laid over the room rather than in place of it: the player underneath is
-   * what is building the buffer this card reports on. */
+  /** Laid over the room rather than in place of it. */
   overlay?: boolean
-  /** The overlay's last beat: it fades while the panel dissolves. */
   leaving?: boolean
   failure?: string | null
   errorMessage?: string
@@ -158,8 +140,6 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
         ) : null}
 
         {shown === 'join' ? (
-          // The room link is the whole invitation: whoever opens it is already
-          // in, and the only thing still missing is what to call them.
           <form className="join-card" onSubmit={(event) => {
             event.preventDefault()
             onJoin?.(draft.trim() || guestName())
@@ -217,8 +197,7 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
   )
 }
 
-// Mirrors the guest name the server hands out when a room is created, so a
-// blank field is a valid answer here too.
+// Mirrors the guest name the server hands out, so a blank field is valid.
 function guestName(): string {
   const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   const random = crypto.getRandomValues(new Uint8Array(6))
@@ -228,23 +207,13 @@ function guestName(): string {
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
-  // The region clock, read by the sync socket handlers through a ref so a
-  // region switch never re-opens the socket.
+  // Read through a ref so a region switch never re-opens the socket.
   const mediaOffsetMsRef = useRef(0)
-  // The Player's own seek, for jumps that start outside it (chapter list):
-  // it parks a playing room on a cold target and resumes it on publish.
   const playerSeekRef = useRef<((seconds: number) => void) | null>(null)
-  // Raised by the player while the room points at media still being built;
-  // the sync layer stops steering the element until the region lands.
   const coldWaitRef = useRef(false)
   const coldForRef = useRef<((ms: number) => boolean) | null>(null)
-  // When a server frame last steered the element, so the player can tell a
-  // remote pause from one the viewer performed.
   const remoteSteerAtRef = useRef(0)
   const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef, coldForRef)
-  // Nobody answered the room's question: this person is out of it, the
-  // picture stops, and a dialog says why. The socket is what membership is,
-  // so closing it is leaving.
   const { leave } = sync
   const leaveIdle = useCallback(() => {
     videoRef.current?.pause()
@@ -252,20 +221,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [leave])
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
-  // A refusal from the server is the answer to "I pressed it and nothing
-  // happened". Keyed on the sequence so the same refusal twice still shows.
+  // Keyed on the sequence so the same refusal twice still shows.
   useEffect(() => {
     if (!sync.errorSeq) return
     if (sync.lastError === 'not_controller') toast(t('room.notController'))
   }, [sync.errorSeq, sync.lastError, t, toast])
-  // With a region map the Player owns this ref (the offset is its region
-  // choice); the room's scalar only seeds it while there is no map.
   if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
     mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
   }
-  // The swarm behind this room's torrent. The host's own session refreshes
-  // it every second; everyone else reads what the worker reported through
-  // the room, a heartbeat behind. Either way the preparing screen shows it.
   const [localSwarm, setLocalSwarm] = useState<TorrentStats | null>(null)
   useEffect(() => {
     const read = () => setLocalSwarm(torrentStatsFor(room.id))
@@ -274,8 +237,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return () => window.clearInterval(timer)
   }, [room.id])
   const reported = liveRoom.preparation?.swarm
-  // Kept by identity, not rebuilt: this is a player prop, and a new object on
-  // every render of the room is a new render of the player.
   const swarmStats: TorrentStats | null = useMemo(() => localSwarm ?? (reported ? {
     peers: reported.peers,
     downloadSpeed: reported.downSpeed,
@@ -283,26 +244,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     diskBytes: reported.diskBytes,
     progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
   } : null), [localSwarm, reported])
-  // Retomar o preparo: the pipeline died with this tab's last life (a reload,
-  // a crash), but the source survives in localStorage. Reopen it and point
-  // the room at a fresh generation; the playhead-following pipeline then
-  // jumps to wherever the room is. One attempt per mount — a failure means
-  // the fleet is gone or someone else controls the room now, and retrying
-  // would just swap generations in a loop.
-  //
-  // It waits until the room actually needs it. A fresh generation is a fresh
-  // start: nothing produced survives it. Firing on mount meant reloading a
-  // room that played perfectly threw the whole episode away and rebuilt it
-  // from zero — so the trigger is the room pointing somewhere no region
-  // holds, which is the one thing a dead pipeline cannot fix by itself.
+  // Retomar o preparo: the pipeline died with this tab's last life, but the
+  // source survives in localStorage. One attempt per mount, and only once the
+  // room points somewhere no region holds — a fresh generation throws away
+  // everything already produced.
   const resumeWanted = sync.state ? expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs) : null
   const liveRegions = liveRoom.mediaRegions ?? []
-  // A running pipeline is already on its way to wherever the room points, so
-  // a position no region holds is a cold seek, not a dead room. The claim's
-  // heartbeat is the only signal that sees past this tab: the guards below
-  // know about a pipeline living here, and a seek is exactly the moment a
-  // second tab — or a viewer who once hosted this room — would otherwise
-  // decide the room was broken and swap it for a fresh, empty generation.
+  // The claim's heartbeat is the only signal that sees past this tab: with a
+  // live one, a position no region holds is a cold seek, not a dead room.
   const producing = liveRoom.producerHeartbeatMs !== undefined
     && (Date.now() + sync.serverOffsetMs) - liveRoom.producerHeartbeatMs < PRODUCER_ALIVE_MS
   const needsPreparo = !producing
@@ -310,10 +259,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       || (resumeWanted !== null && liveRegions.length > 0
         && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
         && !liveRegions.some((region) => regionHolds(region, resumeWanted))))
-  // The fleet keeps producing across the host's reload, but the subtitle
-  // scan lived in the tab that died. While a producer heartbeat is alive and
-  // nothing runs here, the ex-host quietly restarts it; everyone else has no
-  // resumable source and this is a no-op.
+  // The fleet keeps producing across the host's reload, but the subtitle scan
+  // died with the tab; only the ex-host can restart it.
   useEffect(() => {
     if (!producing || room.sourceKind !== 'upload') return
     void resumeSubtitleScan(room.id, liveRoom.mediaGeneration)
@@ -323,9 +270,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (resumeTried.current || !sync.memberId || !sync.capability) return
     if (!needsPreparo) return
     if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
-    // A pipeline already running here is the preparo; nothing to resume
-    // yet. The try is not spent: once that run is over, a seek into a
-    // stretch it never produced still gets to bring it back.
+    // A pipeline running here is the preparo; the one try is not spent.
     if (uploadActive(room.id) || remuxHandleFor(room.id)) return
     const source = resumableSourceFor(room.id)
     if (!source) { resumeTried.current = true; return }
@@ -355,15 +300,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       } catch (error) {
         console.error('resume preparation failed', error)
         toast(t('room.resumeFailed'))
-        // A fleet that is missing or full right now keeps the entry for the
-        // next visit; a torrent the fleet refused, or a room that moved on,
-        // will fail every time.
         if (!torrentErrorRetryable(error)) clearResumableSource(room.id)
       }
     })()
   }, [needsPreparo, room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
-  // The dock on the right holds one thing at a time: the chat, or the
-  // chapter list, which replaces it rather than stacking beside it.
   const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')
   const chatOpen = sidePanel === 'chat'
   const setChatOpen = (value: boolean | ((open: boolean) => boolean)) => {
@@ -377,30 +317,23 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
   const [sourcePanel, setSourcePanel] = useState<'torrent' | null>(null)
-  // Messages that arrived while the chat was shut. Counting from a mark rather
-  // than incrementing a tally keeps it right when history arrives at once.
+  // Counted from a mark rather than tallied, so history arriving at once is
+  // still counted right.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
-  // The fleet as measured while a source swap opens its torrent.
   const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isScreenRoom = liveRoom.sourceKind === 'screen'
-  // The in-room catalog. Everyone browses their own copy; `catalogFocus` is
-  // how the host lands straight on a requested title's episode.
   const [catalogOpen, setCatalogOpen] = useState(false)
-  // The controller handing the controls to someone while the video lives in
-  // this browser: asked first, because the room still ends if they leave.
   const [transferTo, setTransferTo] = useState<Member | null>(null)
   const transferControls = (member: Member) => {
     if (liveRoom.sourceOrigin === 'file' && liveRoom.sourceMemberId === sync.memberId) setTransferTo(member)
     else sync.send('transfer', { targetId: member.id })
   }
-  // The browser running the pipeline tells the room what it feeds from, so
-  // everyone can see whose computer the video depends on. Re-announced on
-  // every reconnect (a new member id) and every new generation.
+  // Re-announced on every reconnect (a new member id) and every generation.
   useEffect(() => {
     if (!sync.memberId || !sync.connected) return
     const origin = sourceOriginFor(room.id)
@@ -409,8 +342,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [room.id, sync.memberId, sync.connected, sync.send, liveRoom.mediaGeneration])
   const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
   const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
-  // What this tab believes the room is playing (catalog picks only). Kept in
-  // localStorage so a reload does not lose the next-episode chain.
   const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(() => {
     try {
       return JSON.parse(localStorage.getItem(nowPlayingKey(room.id)) ?? 'null') as NowPlaying | null
@@ -418,18 +349,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       return null
     }
   })
-  // The room is still waiting on something, or it is not. Running the last of
-  // those states through the same step machine is what lets the panel dissolve
-  // before the picture arrives, instead of the two cutting over each other.
   const gate: GateStep = uploadFailed !== null ? 'failed'
     : mediaStatus === 'processing' || mediaStatus === 'uploading' ? 'preparing'
     : mediaStatus === 'error' ? 'error'
     : null
   const { shown: shownGate } = useMorphingStep(gate)
-  // The opening: the room has media, and the player is building the buffer
-  // it starts with. The preparing card stays over it for that — "montando
-  // buffer" is the last stage of preparing, not the first of playing — and
-  // lifts once the gate opens. Every fresh source opens again.
+  // The preparing card stays over the player while it builds the opening
+  // buffer, and lifts once the gate opens. Every fresh source opens again.
   const [opening, setOpening] = useState(true)
   const [openingWait, setOpeningWait] = useState<OpeningWait | null>(null)
   useEffect(() => {
@@ -442,8 +368,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const openingGate: GateStep = opening && !isScreenRoom && mediaStatus === 'ready' ? 'buffering' : null
   const { shown: shownOpening } = useMorphingStep(openingGate)
 
-  // Repointing the room is the controller's call alone; the server enforces it
-  // too, so a stale client cannot swap what everyone is watching.
   const swapSource = async (run: () => Promise<void>) => {
     setSourceError('')
     setSourcePanel(null)
@@ -471,7 +395,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       try {
         next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
       } catch (error) {
-        // The worker is holding a lease for a room that will not take it.
         session.destroy()
         throw error
       }
@@ -479,8 +402,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })
   }
 
-  // A catalog pick swaps the room's source through the torrent path: open the
-  // addon's torrent, point the room at it, start the transfer.
   const chooseCatalogStream = (pick: TitlePick) => {
     setCatalogOpen(false)
     setCatalogFocus(null)
@@ -489,7 +410,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     try {
       if (playing) localStorage.setItem(nowPlayingKey(room.id), JSON.stringify(playing))
       else localStorage.removeItem(nowPlayingKey(room.id))
-    } catch { /* private mode: the chain just will not survive a reload */ }
+    } catch {}
     void swapSource(async () => {
       if (pick.stream.location.kind === 'url') {
         const { url } = pick.stream.location
@@ -524,8 +445,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })
   }
 
-  // Presence is woven into the chat timeline so someone who was away can still
-  // read who arrived while the toast was on screen.
   const chatEntries = useMemo((): ChatEntry[] => [
     ...sync.messages,
     ...sync.presence.map((event) => ({
@@ -534,18 +453,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       at: event.at,
       system: true,
     })),
-    // Server timestamps carry an offset and client ones are UTC, so the two
-    // are only comparable once parsed.
   ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [sync.messages, sync.presence, t])
 
-  // While a room is being prepared its numbers move on the server, and the
-  // only signal that they moved is a WebSocket frame. A connection that drops
-  // during a long download would otherwise leave the waiting screen frozen on
-  // whatever it last heard, which reads exactly like a transfer that died.
-  // Only while the socket is down, though: connected, every one of those
-  // numbers already arrives as a frame, and polling on top of it refetches
-  // the whole room — chapters, tracks, members — several times a minute for
-  // every viewer watching a preparo.
+  // Only while the socket is down: a dropped connection would otherwise
+  // freeze the waiting screen, and polling while connected refetches the whole
+  // room several times a minute for every viewer.
   const preparing = mediaStatus === 'uploading' || mediaStatus === 'processing'
   useEffect(() => {
     if (!preparing || sync.connected) return
@@ -558,23 +470,17 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return () => { window.clearInterval(timer); controller.abort() }
   }, [preparing, sync.connected, room.id])
 
-  // Media and subtitle updates carry the current media status; each signal
-  // means fresh room metadata is available. The refetch in flight is never
-  // cancelled by the next signal: during a download the signals arrive every
-  // second or so, and on a connection where each round trip is slower than
-  // that, cancelling would throw away every response and freeze the room —
-  // and its subtitles — at whatever the viewer joined with. Signals that land
-  // mid-fetch coalesce into a single trailing refetch instead.
+  // The refetch in flight is never cancelled by the next signal: on a slow
+  // link that would throw away every response and freeze the room. Signals
+  // landing mid-fetch coalesce into a single trailing refetch.
   const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
-  // The host's pipeline follows the shared playhead: a position outside what
-  // it has produced restarts the conversion there. Every other member has no
-  // handle here and this is a no-op.
+  // The host's pipeline follows the shared playhead; for everyone else, whose
+  // tab has no handle, this is a no-op.
   useEffect(() => {
     remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs))
   }, [room.id, sync.state, sync.serverOffsetMs])
 
-  // A publish says what it moved; applied here without a round trip. A
-  // patch from another generation, or older than what is held, means the
+  // A patch from another generation, or older than what is held, means the
   // room changed under it — fetch the whole thing instead.
   const { mediaPatch, refreshRoom } = sync
   useEffect(() => {
@@ -631,7 +537,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (chatOpen) setReadMark(sync.messages.length)
   }, [chatOpen, sync.messages.length])
 
-  // Show this tab's own background upload progress while it is running.
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {
     setUploadFailed(null)
@@ -641,7 +546,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })
   }, [room.id, liveRoom.mediaGeneration])
 
-  // Only the controller can actually swap the source, so only it counts down.
   const nextEpisode = useNextEpisode(
     nowPlaying,
     videoRef,
@@ -650,16 +554,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   )
 
   const closeChat = useCallback(() => setChatOpen(false), [])
-  // Through the local binding so the dependency is the function itself, which
-  // the sync layer keeps stable — depending on `sync` would rebuild this on
-  // every frame the room receives and undo the chat's memo.
+  // Through the local binding, which the sync layer keeps stable: depending
+  // on `sync` would rebuild this on every frame and undo the chat's memo.
   const send = sync.send
   const sendChat = useCallback((text: string) => send('chat', { text }), [send])
 
   const copyLink = async () => {
-    // The clipboard is refused outright on an insecure origin and can be
-    // denied on a secure one. Confirming a copy that did not happen is worse
-    // than saying nothing, so the tick is only shown once the write resolves.
+    // The clipboard can be refused, so the tick waits for the write.
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
     } catch (error) {
@@ -669,17 +570,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     toast(t('room.copiedToast'))
     setCopied(true)
   }
-  // The tick stands for a moment and then the button goes back to offering the
-  // copy, so a link can be shared twice without wondering whether it took.
   useEffect(() => {
     if (!copied) return
     const timer = window.setTimeout(() => setCopied(false), COPIED_MS)
     return () => window.clearTimeout(timer)
   }, [copied])
 
-  // Held one beat past the moment the room became playable: the panel spends
-  // it dissolving, so the picture arrives into an empty screen rather than
-  // over the top of what was still being said.
+  // Held one beat past the moment the room became playable, so the panel can
+  // dissolve before the picture arrives.
   if (shownGate !== null) {
     return (
       <RoomGate
@@ -696,7 +594,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   const visibleRequests = sync.titleRequests.filter((request) => !dismissedRequests.includes(request.id)).slice(-3)
 
-  // The host lands straight on the asked-for title, episode included.
   const openRequestedTitle = (request: TitleRequest) => {
     setCatalogFocus({
       open: { meta: { id: request.metaId, type: request.metaType, name: request.name, poster: request.poster, releaseInfo: '' } },
@@ -723,9 +620,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
-          {/* Everyone in the room, not only the host: a viewer waiting on a
-              cold seek wants to see the source arriving and their own
-              buffer just as much. */}
           {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
@@ -739,8 +633,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               role="switch"
               aria-checked={sync.gatingEnabled}
               onClick={() => {
-                // The switch only moves when the server says so, so a frame
-                // that never left the tab reads exactly like a dead toggle.
                 if (!sync.send('gating', { enabled: !sync.gatingEnabled })) toast(t('room.offlineCommand'))
               }}
             >
@@ -766,8 +658,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           )}
           <IconButton
             icon={
-              // The glyph is what confirms the copy; the button keeps naming
-              // itself, so a lone tick never has to be worked out.
               <span className="morph-fade" data-morphing={copyMorphing}>
                 {copiedShown ? <Check size={16} /> : <Link2 size={16} />}
               </span>
@@ -1008,11 +898,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   )
 }
 
-// One person in the room. For the controller, every other chip opens on
-// right-click into the two things they can do to that person — hand them the
-// controls, or put them out — on the app's one menu surface. The film icon
-// marks whose computer the video is on: the room ends if they leave, whoever
-// holds the controls.
+// The film icon marks whose computer the video is on; for the controller, a
+// right-click opens what can be done to that person.
 function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKick, t }: {
   member: Member
   isController: boolean
@@ -1060,12 +947,7 @@ function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKic
   )
 }
 
-/**
- * The controller's one entry point for putting something else on: a single
- * "change media" pill that morphs downward into the four ways of doing it —
- * catalog, torrent, file, screen — on the app's one menu surface
- * (MorphingMenu), same as the catalog's dropdowns.
- */
+/** The one entry point for putting something else on, as a MorphingMenu. */
 function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
   onOpen: () => void
   onCatalog: () => void
@@ -1105,9 +987,6 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
   )
 }
 
-// While the server holds a gated start, everyone sees the same picture of who
-// is ready and who is still buffering, instead of a play that quietly ignores
-// the people it left behind.
 function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
   waiting: RoomWaiting
   members: Member[]
@@ -1127,8 +1006,7 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
             {member.ignored
               ? t('room.waitingIgnored')
               : member.ready ? t('room.waitingReady') : t('room.waitingBuffering')}
-            {/* Only offered for whoever is actually holding the room up, and
-                never for the controller themselves: a room that stopped
+            {/* Never for the controller themselves: a room that stopped
                 waiting for the person driving it would wait for nobody. */}
             {isController && !member.ignored && !member.ready && member.memberId !== selfId ? (
               <Button variant="ghost" size="small" onClick={() => onIgnore(member.memberId)}>
@@ -1143,12 +1021,9 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
 }
 
 /**
- * The room's picture when its source is a shared screen.
- *
- * Everyone joins the WebRTC session as a subscriber. The controller publishes
- * from inside its own click, so the browser still sees a user gesture when the
- * screen picker opens, and attaches its own track locally since a publisher is
- * never subscribed to itself.
+ * Everyone joins the WebRTC session as a subscriber; the controller publishes
+ * from inside its own click and attaches its own track locally, since a
+ * publisher is never subscribed to itself.
  */
 function ScreenStage({ roomId, memberId, capability, isController, t }: {
   roomId: string
@@ -1164,8 +1039,6 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
   const [sharing, setSharing] = useState(false)
   const [failed, setFailed] = useState(false)
 
-  // Keeps the last thing everyone saw as a blurred still. Going straight to an
-  // empty surface reads as a fault; a frozen frame reads as an ending.
   const freezeLastFrame = useCallback(() => {
     const surface = surfaceRef.current
     const video = surface?.querySelector('video')
@@ -1194,8 +1067,6 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
     setSharing(false)
   }, [freezeLastFrame])
 
-  // Watches for the browser's own stop-sharing control, which ends the track
-  // without ever going through this component.
   const adopt = useCallback((stream: MediaStream) => {
     streamRef.current = stream
     showLocally(stream)
@@ -1207,8 +1078,6 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
     if (!memberId || !capability) return
     let disposed = false
     let joined: LiveKitRoom | null = null
-    // A screen granted before this room existed is published on arrival, so
-    // the picker is never shown twice for the same share.
     const granted = takeScreenStream(roomId)
     void startScreenShare(roomId, memberId, capability, (element) => {
       surfaceRef.current?.replaceChildren(element)
@@ -1232,8 +1101,7 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
 
   const startSharing = () => {
     setFailed(false)
-    // Straight out of the click: no await may come first or the picker is
-    // refused for want of user activation.
+    // No await may come first or the picker loses its user activation.
     void requestScreenStream().then(async (stream) => {
       const live = liveRef.current
       if (!live) {
@@ -1271,15 +1139,7 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
   )
 }
 
-/**
- * Announces arrivals and departures through the same notifications everything
- * else uses, and gives an arrival a sound.
- *
- * A room is watched, not read: whoever just joined is looking at the picture,
- * not at a corner of the screen, so the arrival has to be audible as well as
- * visible. Departures stay silent — nobody needs calling back to the screen
- * because somebody left.
- */
+/** An arrival is audible as well as visible; a departure stays silent. */
 function usePresenceNotices(presence: PresenceEvent[], t: Translator): void {
   const { toast } = useToast()
   const lastSeenRef = useRef(0)

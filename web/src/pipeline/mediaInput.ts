@@ -27,34 +27,17 @@ export interface MediaInput {
   size: number
   /** Reads `[start, end)`, like `Blob.slice`. */
   read(start: number, end: number, hint?: ReadHint): Promise<Uint8Array>
-  /** A fresh mediabunny source over the same bytes. */
   source(): Source
   /** Rejects every read in flight with ReadAbortedError; later reads run. */
   abortReads(): void
-  /** Aborts and refuses every read from now on. */
   dispose(): void
-  /** Where a sibling file of this input is read from right now, if anywhere. */
   sidecarUrl?(index: number): string
-  /**
-   * Says where reading is about to resume, before anything reads there. A
-   * seek otherwise reaches the origin only once the old region has finished
-   * tearing down and the keyframe probe issues its first read — and for a
-   * torrent that is the whole latency, because the swarm spends that time
-   * still fetching around the position we just left. The offset is a guess
-   * from the timeline, which is all a prefetch needs; the exact one follows
-   * from the reads themselves. Only remote inputs have anywhere to say it to.
-   */
+  /** Says where reading is about to resume, before anything reads there, so a
+   * remote origin can move its window ahead of the seek's first read. */
   prefetchAt?(offset: number): void
-  /**
-   * Mirrors the remux's reads so a sequential pass can ride along instead of
-   * asking the origin for the same bytes again. Only remote inputs carry
-   * one: reading a local file twice costs nothing worth avoiding.
-   */
   tap?: ByteTap
 }
 
-/** The cache a remote source keeps: larger than the prefetch extent, or the
- * two fight and every sequential pass rereads what it just dropped. */
 const REMOTE_CACHE_BYTES = 96 * 2 ** 20
 
 export function fileInput(file: File): MediaInput {
@@ -68,11 +51,8 @@ export function fileInput(file: File): MediaInput {
   }
 }
 
-/**
- * A torrent file behind a session's own `read` (mocks, tests): the read
- * takes no signal, so an abort here rejects the caller and lets the
- * underlying read finish on its own.
- */
+/** A torrent file behind a session's own `read`: that read takes no signal,
+ * so an abort here rejects the caller and lets the read finish on its own. */
 export function torrentInput(file: TorrentVideoFile): MediaInput {
   const gate = new ReadGate()
   const read = async (start: number, end: number): Promise<Uint8Array> => {
@@ -104,14 +84,9 @@ export function torrentInput(file: TorrentVideoFile): MediaInput {
   }
 }
 
-/**
- * Bytes at a url that answers Range requests: a plugin's stream, or the
- * dev fixture standing in for a worker. Every read streams the body as it
- * arrives, resumes across capped or truncated responses, and retries
- * blips — mediabunny only ever sees the bytes it asked for, or an abort.
- * The priority rides in the query string so the request stays a simple
- * GET with no preflight.
- */
+/** Bytes at a url that answers Range requests. Every read streams the body as
+ * it arrives, resumes across capped or truncated responses, and retries blips;
+ * the priority rides in the query string so the GET needs no preflight. */
 export function rangeInput(url: string, name: string, size: number): MediaInput {
   const gate = new ReadGate()
   const tap = new ByteTap()
@@ -136,37 +111,21 @@ export function rangeInput(url: string, name: string, size: number): MediaInput 
   }
 }
 
-// How far the remux's read offset may drift from the last hint before the
-// worker is told again. Hints move the swarm's priority window; too many
-// would move it for nothing.
 const HINT_STRIDE_BYTES = 8 * 1024 * 1024
-// A ticket is renewed at two thirds of its life, so a read never starts
-// with one about to expire.
 const RENEW_FRACTION = 2 / 3
 
-// Generations are compared against a floor the worker keeps per reader, and
-// a torrent outlives the pipeline that warmed it: the same room reaching the
-// same torrent a second time — a source swap, a reload, a resumed preparo —
-// meets the floor its own predecessor left behind. A count that restarted at
-// one would sit under that floor and have every playhead read refused before
-// a byte moved, while the swarm downloaded on at full speed. So generations
-// never restart: they carry on from the wall clock, above anything an earlier
-// pipeline can have reached, and above each other within a tab.
+// Generations never restart: the worker keeps a floor per reader and a torrent
+// outlives the pipeline that warmed it, so a count starting at one again would
+// have every playhead read refused. They carry on from the wall clock instead.
 let lastGeneration = 0
 function nextGeneration(): number {
   lastGeneration = Math.max(Date.now(), lastGeneration + 1)
   return lastGeneration
 }
 
-/**
- * A file a remote worker serves. Reads carry the ticket in the path and
- * the priority class in the query; the ticket renews itself through the
- * server for as long as the input lives, and playhead reads tell the
- * worker where the remux actually is — its read offset, not the room's
- * playhead — so the swarm fetches the pieces the reader is blocked on.
- * Each seek bumps the generation, and the worker stops feeding responses
- * from before it.
- */
+/** A file a remote worker serves. Reads carry the ticket in the path and the
+ * priority in the query; the ticket renews itself for as long as the input
+ * lives, and playhead reads tell the worker the remux's own read offset. */
 export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   const gate = new ReadGate()
   const tap = new ByteTap()
@@ -176,11 +135,6 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   let renewTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
-  // Every renewal names the room this job feeds; the first one, sent right
-  // away, is what attaches the job to it — after the room exists, so the
-  // source swap that made the room cannot cancel the job it is for.
-  // A renewal that fails is tried again soon rather than never: the room
-  // attachment rides on the first one, and the ticket's life on the rest.
   const RETRY_MS = 15_000
   const renew = async (): Promise<boolean> => {
     try {
@@ -212,14 +166,9 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
   if (roomID) void renew()
   else scheduleRenewal()
 
-  // `seek` says the reader jumped, as opposed to drifting forward through
-  // what it was already reading. The worker narrows its window to what the
-  // first byte is waiting on only for a jump; a stride hint that looked like
-  // one kept the swarm on a startup window most of the time.
   const hint = (offset: number, seek: boolean) => {
     if (!seek && Math.abs(offset - lastHintAt) < HINT_STRIDE_BYTES) return
     lastHintAt = offset
-    // text/plain keeps the POST a simple request: no preflight per hint.
     void fetch(`${current.readBase}/v1/hint/${current.ticket}`, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
@@ -259,8 +208,6 @@ export function workerInput(grant: WorkerGrant, roomID = ''): MediaInput {
       gate.close()
     },
     sidecarUrl: (index) => `${current.readBase}/v1/file/${current.ticket}/${index}`,
-    // Sent with the generation the abort just minted, so the worker treats it
-    // as the seek's own cursor and lets the responses behind it go.
     prefetchAt: (offset) => hint(Math.min(Math.max(offset, 0), Math.max(grant.size - 1, 0)), true),
   }
 }

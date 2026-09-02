@@ -1,4 +1,4 @@
-// Torrentio speaks in flag emojis; the filter wants readable names. Map each
+// Stream addons speak in flag emojis; the filter wants readable names. Map each
 // flag to the language it stands for, then let Intl name it in the UI locale.
 const FLAG_TO_LANGUAGE: Record<string, string> = {
   '🇧🇷': 'pt', '🇵🇹': 'pt', '🇬🇧': 'en', '🇺🇸': 'en', '🇪🇸': 'es', '🇲🇽': 'es',
