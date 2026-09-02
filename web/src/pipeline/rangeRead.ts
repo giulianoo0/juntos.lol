@@ -135,8 +135,6 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
     requestAbort?.abort()
   }
 
-  // Opens one request at the cursor. Resolves with a body reader, or null
-  // when the attempt failed recoverably and the caller should retry.
   const open = async (): Promise<ReadableStreamDefaultReader<Uint8Array> | null> => {
     requestAbort = new AbortController()
     if (signal.aborted) throw gate.aborted()

@@ -81,8 +81,6 @@ export function RoomPage() {
   const [missing, setMissing] = useState(false)
 
   useEffect(() => {
-    // Old shared links may still contain ?nick=, which must not linger in
-    // history, referrers or screenshots.
     if (window.location.search) window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`)
   }, [])
 
@@ -209,7 +207,6 @@ function guestName(): string {
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
-  // Read through a ref so a region switch never re-opens the socket.
   const mediaOffsetMsRef = useRef(0)
   const playerSeekRef = useRef<((seconds: number) => void) | null>(null)
   const coldWaitRef = useRef(false)
@@ -223,7 +220,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [leave])
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
-  // Keyed on the sequence so the same refusal twice still shows.
   useEffect(() => {
     if (!sync.errorSeq) return
     if (sync.lastError === 'not_controller') toast(t('room.notController'))
@@ -246,14 +242,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     diskBytes: reported.diskBytes,
     progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
   } : null), [localSwarm, reported])
-  // Retomar o preparo: the pipeline died with this tab's last life, but the
-  // source survives in localStorage. One attempt per mount, and only once the
-  // room points somewhere no region holds — a fresh generation throws away
-  // everything already produced.
   const resumeWanted = sync.state ? expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs) : null
   const liveRegions = liveRoom.mediaRegions ?? []
-  // The claim's heartbeat is the only signal that sees past this tab: with a
-  // live one, a position no region holds is a cold seek, not a dead room.
   const producing = liveRoom.producerHeartbeatMs !== undefined
     && (Date.now() + sync.serverOffsetMs) - liveRoom.producerHeartbeatMs < PRODUCER_ALIVE_MS
   const needsPreparo = !producing
@@ -261,8 +251,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       || (resumeWanted !== null && liveRegions.length > 0
         && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
         && !liveRegions.some((region) => regionHolds(region, resumeWanted))))
-  // The fleet keeps producing across the host's reload, but the subtitle scan
-  // died with the tab; only the ex-host can restart it.
   useEffect(() => {
     if (!producing || room.sourceKind !== 'upload') return
     void resumeSubtitleScan(room.id, liveRoom.mediaGeneration)
@@ -272,7 +260,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (resumeTried.current || !sync.memberId || !sync.capability) return
     if (!needsPreparo) return
     if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
-    // A pipeline running here is the preparo; the one try is not spent.
     if (uploadActive(room.id) || remuxHandleFor(room.id)) return
     const source = resumableSourceFor(room.id)
     if (!source) { resumeTried.current = true; return }
@@ -319,8 +306,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
   const [sourcePanel, setSourcePanel] = useState<'torrent' | null>(null)
-  // Counted from a mark rather than tallied, so history arriving at once is
-  // still counted right.
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
@@ -335,7 +320,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (liveRoom.sourceOrigin === 'file' && liveRoom.sourceMemberId === sync.memberId) setTransferTo(member)
     else sync.send('transfer', { targetId: member.id })
   }
-  // Re-announced on every reconnect (a new member id) and every generation.
   useEffect(() => {
     if (!sync.memberId || !sync.connected) return
     const origin = sourceOriginFor(room.id)
@@ -356,8 +340,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     : mediaStatus === 'error' ? 'error'
     : null
   const { shown: shownGate } = useMorphingStep(gate)
-  // The preparing card stays over the player while it builds the opening
-  // buffer, and lifts once the gate opens. Every fresh source opens again.
   const [opening, setOpening] = useState(true)
   const [openingWait, setOpeningWait] = useState<OpeningWait | null>(null)
   useEffect(() => {
@@ -457,9 +439,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })),
   ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [sync.messages, sync.presence, t])
 
-  // Only while the socket is down: a dropped connection would otherwise
-  // freeze the waiting screen, and polling while connected refetches the whole
-  // room several times a minute for every viewer.
   const preparing = mediaStatus === 'uploading' || mediaStatus === 'processing'
   useEffect(() => {
     if (!preparing || sync.connected) return
@@ -472,18 +451,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return () => { window.clearInterval(timer); controller.abort() }
   }, [preparing, sync.connected, room.id])
 
-  // The refetch in flight is never cancelled by the next signal: on a slow
-  // link that would throw away every response and freeze the room. Signals
-  // landing mid-fetch coalesce into a single trailing refetch.
   const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
-  // The host's pipeline follows the shared playhead; for everyone else, whose
-  // tab has no handle, this is a no-op.
   useEffect(() => {
     remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs))
   }, [room.id, sync.state, sync.serverOffsetMs])
 
-  // A patch from another generation, or older than what is held, means the
-  // room changed under it — fetch the whole thing instead.
   const { mediaPatch, refreshRoom } = sync
   useEffect(() => {
     if (!mediaPatch) return
@@ -556,13 +528,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   )
 
   const closeChat = useCallback(() => setChatOpen(false), [])
-  // Through the local binding, which the sync layer keeps stable: depending
-  // on `sync` would rebuild this on every frame and undo the chat's memo.
   const send = sync.send
   const sendChat = useCallback((text: string) => send('chat', { text }), [send])
 
   const copyLink = async () => {
-    // The clipboard can be refused, so the tick waits for the write.
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
     } catch (error) {
@@ -578,8 +547,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     return () => window.clearTimeout(timer)
   }, [copied])
 
-  // Held one beat past the moment the room became playable, so the panel can
-  // dissolve before the picture arrives.
   if (shownGate !== null) {
     return (
       <RoomGate
@@ -710,7 +677,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               onBuffering={sync.reportBuffering}
               onWait={onWait}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
-              // Inside the wrap, so both survive fullscreen.
               overlay={
                 <>
                   {sync.waiting !== null ? (
@@ -1008,8 +974,6 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
             {member.ignored
               ? t('room.waitingIgnored')
               : member.ready ? t('room.waitingReady') : t('room.waitingBuffering')}
-            {/* Never for the controller themselves: a room that stopped
-                waiting for the person driving it would wait for nobody. */}
             {isController && !member.ignored && !member.ready && member.memberId !== selfId ? (
               <Button variant="ghost" size="small" onClick={() => onIgnore(member.memberId)}>
                 {t('room.ignore')}
@@ -1103,7 +1067,6 @@ function ScreenStage({ roomId, memberId, capability, isController, t }: {
 
   const startSharing = () => {
     setFailed(false)
-    // No await may come first or the picker loses its user activation.
     void requestScreenStream().then(async (stream) => {
       const live = liveRef.current
       if (!live) {

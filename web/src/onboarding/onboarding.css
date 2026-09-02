@@ -17,14 +17,9 @@
   color: var(--text);
   background: #171923;
   box-shadow: inset 0 1px rgba(255, 255, 255, .08), 0 30px 90px #000;
-  /* The step slides in from off the edge; without this it is visible outside
-     the panel on its way in and the page grows a horizontal scrollbar. */
   overflow: hidden;
 }
 
-/* Both steps occupy this one grid cell (grid-area: 1 / 1), so the outgoing
-   and incoming ones overlap rather than queue, and the panel travels between
-   their heights instead of collapsing to nothing for a frame. */
 .onboard-stage { display: grid; }
 .onboard-stage > * { grid-area: 1 / 1; }
 

@@ -9,7 +9,6 @@ export function hasSeenOnboarding(): boolean {
   try {
     return localStorage.getItem(SEEN_KEY) === '1'
   } catch {
-    // Storage refused: showing it on every visit is worse than never.
     return true
   }
 }

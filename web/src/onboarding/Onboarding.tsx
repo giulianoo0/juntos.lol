@@ -74,14 +74,9 @@ export function Onboarding({ onDone }: { onDone?: () => void }) {
 
   return (
     <div className="onboard-backdrop" role="dialog" aria-modal="true" aria-label={t('onboard.title')}>
-      {/* morphing stays false: MorphPanel's own dissolve stacked on the
-          steps' cross-fade made the panel vanish and come back. */}
       <MorphPanel sizeKey={step} morphing={false} className="onboard-morph">
         <div className="onboard-panel">
           <div className="onboard-stage">
-          {/* Both steps share one grid cell (see .onboard-stage) so they
-              overlap; `popLayout` took the leaver out of flow and the panel
-              collapsed for a frame. */}
           <AnimatePresence initial={false} custom={direction}>
             <motion.div
               key={step}

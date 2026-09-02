@@ -2,8 +2,6 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import useEmblaCarousel from 'embla-carousel-react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
-// A wheel tick in lines (Firefox with a plain mouse) or pages, scaled to
-// pixels; sixteen a line is what the browsers themselves assume.
 const LINE_PX = 16
 
 interface CarouselProps {
@@ -41,20 +39,6 @@ export function Carousel({ children, className, prevLabel, nextLabel }: Carousel
     }
   }, [embla, refresh])
 
-  // Sideways wheel and trackpad swipes move the strip; vertical ones are the
-  // page's and never touch it.
-  //
-  // This used to be embla-carousel-wheel-gestures, which binds a non-passive
-  // `wheel` listener on every viewport so it can preventDefault a sideways
-  // gesture. A non-passive listener means the browser cannot scroll until the
-  // main thread has run the handler — for every tick over any row, vertical
-  // ones included — and Firefox parks the scroll until content answers. With
-  // five rows of forty posters, a React commit or a style flush in the way
-  // turned a plain wheel scroll into a stutter. This listener is passive: the
-  // browser scrolls the page on its own thread, and a sideways delta goes to
-  // Embla's target the way a drag does. What the old preventDefault bought —
-  // keeping a swipe over a strip from becoming the browser's back gesture —
-  // is done in CSS with overscroll-behavior on the board's scrollers.
   useEffect(() => {
     if (!embla) return
     const engine = embla.internalEngine()
@@ -65,11 +49,8 @@ export function Carousel({ children, className, prevLabel, nextLabel }: Carousel
       if (engine.dragHandler.pointerDown()) return
       const scale = event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? engine.containerRect.width : 1
       const current = engine.target.get()
-      // Clamped at the edges: the end of the strip is a stop, not a rubber
-      // band pulling back after every over-eager swipe.
       const distance = engine.limit.constrain(current + engine.axis.direction(-deltaX * scale)) - current
       if (distance === 0) return
-      // The same body a drag uses, so wheel and pointer feel alike.
       engine.scrollBody.useFriction(0.3).useDuration(0.75)
       engine.scrollTo.distance(distance, false)
     }

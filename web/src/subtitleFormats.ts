@@ -70,7 +70,6 @@ export function subtitleIdentity(path: string): { language: string; title: strin
   ))
 
   let language = 'und'
-  // Later tokens win: an early one is far more likely part of the title.
   for (const token of tokens) {
     const lower = token.toLowerCase()
     if (LANGUAGE_NAMES[lower]) language = LANGUAGE_NAMES[lower]
@@ -129,8 +128,6 @@ export function srtToWebVTT(text: string): string {
       output.push(timing)
       continue
     }
-    // A lone number opening a cue block is the SubRip counter, dropped so the
-    // output matches the muxed tracks.
     if (/^\d+$/.test(line.trim()) && (output.length === 0 || output[output.length - 1] === '')) continue
     output.push(line)
   }

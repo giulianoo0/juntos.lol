@@ -198,7 +198,6 @@ export async function changeRoomSource(
 // A File is a snapshot of a path, invalidated the moment the bytes underneath
 // change. Reading one byte up front answers that before a room exists.
 export async function assertReadable(file: File): Promise<void> {
-  // The tail is what moves while a file is still being written.
   const probe = file.size > 0 ? file.slice(file.size - 1, file.size) : file.slice(0, 1)
   try {
     await probe.arrayBuffer()
@@ -220,8 +219,6 @@ function createEntry(bytesTotal: number): UploadEntry {
 
 function updateEntry(entry: UploadEntry, bytesUploaded: number) {
   const pct = entry.progress.bytesTotal > 0 ? Math.round((bytesUploaded / entry.progress.bytesTotal) * 100) : 0
-  // The remux posts many times a second and the readout is rounded, so most
-  // emissions carry the numbers already on screen.
   if (pct === entry.progress.pct && bytesUploaded === entry.progress.bytesUploaded) return
   entry.progress = { ...entry.progress, pct, bytesUploaded }
   for (const listener of entry.progressListeners) listener(entry.progress)
@@ -318,7 +315,6 @@ export function startTorrentUpload(
       return
     }
     remoteProductions.add(roomID)
-    // The fleet's FFmpeg never extracts subtitles; this browser still does.
     if (file.worker) startSubtitleScan(scanJob(roomID, mediaGeneration, file.worker, session))
     lastFailureDetail = null
     finishEntry(roomID, entry, null, () => { release(); session.detach?.() })
@@ -451,8 +447,6 @@ export function startRoomUpload(
   const entry = createEntry(size)
   uploads.set(roomID, entry)
   if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
-  // Deleted by identity, never by key alone: a source swap starts the next
-  // pipeline before this one notices it lost the room.
   let ownHandle: ClientRemuxHandle | null = null
   const dropHandle = () => {
     if (ownHandle && remuxHandles.get(roomID) === ownHandle) remuxHandles.delete(roomID)
@@ -462,7 +456,6 @@ export function startRoomUpload(
     lastFailureDetail = error === null ? null : detail ?? null
     finishEntry(roomID, entry, error, cleanup)
   }
-  // The controller swapped the source: not a failure of this upload.
   const movedOn = () => {
     if (uploads.get(roomID) === entry) uploads.delete(roomID)
     dropHandle()
@@ -470,9 +463,6 @@ export function startRoomUpload(
   }
   const onProgressPct = (pct: number) => updateEntry(entry, Math.round((pct / 100) * size))
 
-  // In its own thread whenever the job is plain data, or the page stutters
-  // for the whole preparo. The page-thread path stays for jobs that cannot
-  // cross (mocks, tests) and environments without workers.
   if (typeof Worker !== 'undefined' && jobIsCloneable(job)) {
     const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
     ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
@@ -493,7 +483,6 @@ export function startRoomUpload(
   }
 
   void (async () => {
-    // Dynamic so the remuxer and its WASM decoders live in their own chunk.
     const [{ runRemuxJob, PlanFailedError, UnsupportedMediaError }, pipeline] = await Promise.all([
       import('./pipeline/remuxJob'),
       import('./pipeline/clientMedia'),
@@ -514,8 +503,6 @@ export function startRoomUpload(
       if (error instanceof PlanFailedError) {
         const cause = error.failure
         const why = cause instanceof Error ? `plan failed: ${cause.name}: ${cause.message}` : `plan failed: ${String(cause)}`
-        // Planning reads the source, so a swarm that stopped answering must
-        // not be reported as media this browser cannot play.
         finish(readFailureCode(cause, source.kind)
           ?? (source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA), why)
         return

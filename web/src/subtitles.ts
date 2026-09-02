@@ -69,8 +69,6 @@ let parserBundlePromise: Promise<MatroskaSubtitlesGlobal> | null = null
 
 function loadParserBundle(): Promise<MatroskaSubtitlesGlobal> {
   if (globalThis.MatroskaSubtitles) return Promise.resolve(globalThis.MatroskaSubtitles)
-  // A worker has no document for a script tag, and importing the UMD bundle
-  // would trap its `var` in module scope; indirect eval lands it on globalThis.
   if (typeof document === 'undefined') {
     parserBundlePromise ??= fetch(parserBundleUrl)
       .then((response) => {
@@ -78,7 +76,6 @@ function loadParserBundle(): Promise<MatroskaSubtitlesGlobal> {
         return response.text()
       })
       .then((code) => {
-        // The bundle reaches for `window` at parse time.
         ;(globalThis as { window?: unknown }).window ??= globalThis
         ;(0, eval)(code)
         if (!globalThis.MatroskaSubtitles) throw new Error('matroska-subtitles bundle did not initialize')
@@ -128,8 +125,6 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
   const { SubtitleParser } = await loadParserBundle()
   const parser = new SubtitleParser()
   const tracks = new Map<number, ExtractedTrack>()
-  // Publishing in header order keeps a track at the same position across
-  // progressive updates.
   const order: number[] = []
 
   const finished = new Promise<void>((resolve, reject) => {
@@ -162,7 +157,6 @@ export async function createMatroskaSubtitleStream(): Promise<MatroskaSubtitleSt
     fontBytes += data.byteLength
     fonts.push({ filename: file.filename ?? `font_${fonts.length}`, data })
   })
-  // Drain the Transform's readable side so its buffer never fills up.
   parser.resume()
 
   const collect = (requireCues: boolean): VttTrack[] => order
@@ -230,8 +224,6 @@ function cleanCueText(text: string): string {
         out += `<${style}>`
         continue
       }
-      // VTT ignores an end tag that is not the innermost one, so closing a
-      // style closes everything above it and reopens what should survive.
       const depth = open.lastIndexOf(style)
       for (let index = open.length - 1; index >= depth; index -= 1) out += `</${open[index]}>`
       for (const kept of open.splice(depth).slice(1)) {
@@ -270,8 +262,6 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
   let pending: Promise<void> = Promise.resolve()
   let lastPostAt = 0
   let dirty = false
-  // Keyed by position *and* name: a track can inherit a neighbour's slot, and
-  // must then resend its bytes rather than leave the previous file there.
   const sent = new Map<string, string>()
   const slot = (track: VttTrack, index: number) => `${index}\u0000${track.language}\u0000${track.title}`
   const payloadOf = (track: VttTrack) => `${track.vtt}\u0000${track.ass ?? ''}`
@@ -282,8 +272,6 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     order.push(source)
   }
 
-  // The server refuses a post that exceeds its ceiling rather than trimming
-  // it, so the cut happens here, embedded tracks first.
   const union = (): VttTrack[] => order.flatMap((source) => sources.get(source)?.tracks ?? []).slice(0, MAX_SUBTITLE_TRACKS)
   const allComplete = (): boolean => order.every((source) => sources.get(source)?.complete === true)
 
@@ -293,7 +281,6 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
     if (tracks.length === 0) return
     const complete = allComplete()
     lastPostAt = Date.now()
-    // A track whose text the server already has travels as its name alone.
     const body = tracks.map((track, index) => (
       sent.get(slot(track, index)) === payloadOf(track)
         ? { language: track.language, title: track.title }
@@ -305,7 +292,6 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tracks: body, complete, mediaGeneration }),
       })
-      // 409 means the room moved on to another video; nothing to retry.
       if (response.status === 409) return
       if (!response.ok) {
         console.warn(`subtitle upload failed with status ${response.status}`)
@@ -333,8 +319,6 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
       schedule(complete)
     },
     flush: async () => {
-      // Re-check when the link runs, not when it is queued: an unconditional
-      // post here would duplicate one already scheduled.
       pending = pending.then(() => (dirty ? post() : Promise.resolve()))
       await pending
     },
@@ -362,7 +346,6 @@ export async function postSubtitleFonts(
         headers: { 'Content-Type': 'application/octet-stream' },
         body: font.data as unknown as BodyInit,
       })
-      // 409 is a source swap; nothing later will want these fonts either.
       if (response.status === 409) return
       if (!response.ok) {
         console.warn(`subtitle font upload failed with status ${response.status}`, font.filename)

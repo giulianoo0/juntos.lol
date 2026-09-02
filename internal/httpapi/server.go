@@ -28,7 +28,6 @@ type serverOptions struct {
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
-// Without it the hop still exists, open to whoever reaches the server.
 func WithPluginFetch(sessions *Sessions, quota *Quota) ServerOption {
 	return func(o *serverOptions) {
 		o.pluginSessions = sessions
@@ -97,8 +96,6 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
-		// Members come from the live sockets, rooms from the store: a room outlives
-		// its last tab for the reclaim window and while a pipeline still produces.
 		r.GET("/api/live", func(c *gin.Context) {
 			_, members := hub.Live()
 			census, err := store.Census(c.Request.Context())
@@ -123,9 +120,6 @@ func privacyHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
-		// The plugin worker's sandbox: default-src 'none' strips every network API
-		// (including import('https://…')), blob: only so its own module can load.
-		// Matched by directory so no worker chunk can land on a path with no policy.
 		if strings.HasPrefix(c.Request.URL.Path, "/assets/plugin-worker/") {
 			c.Header("Content-Security-Policy", "default-src 'none'; script-src blob:")
 		}

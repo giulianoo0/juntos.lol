@@ -155,8 +155,6 @@ export interface FleetMember {
   torrents: number
   maxTorrents?: number
   diskUsed: number
-  // What the volume actually carries; diskUsed is the reservation admission
-  // counts on, not the bytes on disk.
   diskReal?: number
   diskQuota?: number
   transferUsedBps: number
@@ -234,8 +232,6 @@ async function probeOne(target: { id: string; readBase: string; holds: boolean; 
         break
       }
     }
-    // From the first byte, not from the request: the round trip is already
-    // the ttfb this returns, and counting it twice punishes a distant path.
     const seconds = (performance.now() - firstByteAt) / 1000
     if (received === 0 || seconds <= 0) throw new Error('empty probe')
     return {
@@ -414,7 +410,6 @@ export async function openRemoteTorrent(
     },
     destroy,
     detach: () => {
-      // No DELETE: the job now feeds the worker's own remux.
       if (destroyed) return
       destroyed = true
       if (statsTimer !== null) clearInterval(statsTimer)

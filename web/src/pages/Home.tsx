@@ -53,7 +53,6 @@ type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'screen'; stream: MediaStream }
-  // A catalog pick: the torrent only opens after the nickname is confirmed.
   | { kind: 'stream'; pick: TitlePick }
 
 // Router state must be serializable, so the morph origin travels as numbers.
@@ -71,7 +70,6 @@ function readHistory(): RoomHistoryEntry[] {
       typeof entry.id === 'string' && typeof entry.fileName === 'string' &&
       typeof entry.createdAt === 'number'
     )).map(({ id, fileName, createdAt }) => ({ id, fileName, createdAt })).slice(0, 12)
-    // Migrates old entries that included the nickname.
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history))
     return history
   } catch {
@@ -99,35 +97,26 @@ export function Home() {
   const [draftNickname, setDraftNickname] = useState(nickname)
   const reduceMotion = useReducedMotion()
   const { toast } = useToast()
-  // Read once, at mount: it must not flip under a re-render.
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
   const [joinDraft, setJoinDraft] = useState('')
   const [joinError, setJoinError] = useState('')
-  // The URL says which way in is on screen: an open title is the catalogue
-  // with a panel over it, and "/" is the manual side.
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
     : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
       : 'manual'
 
   const showView = (next: HomeView) => {
     if (next === view) return
-    // The sides scroll independently, so without this the browser clamps the
-    // scroll on the swap and the background slides up under the new content.
     window.scrollTo({ top: 0 })
     navigate(next === 'manual' ? '/' : `/${next}`, { state: null })
   }
 
-  // Following the route, not the click, so back and forward land in the same
-  // shape a tap on the tab would.
   useEffect(() => {
     setError('')
     setManualOpen(view === 'manual' ? 'menu' : false)
   }, [view])
   const [pluginsOpen, setPluginsOpen] = useState(false)
   const { shown: shownManual, morphing: morphingManual } = useMorphingStep(manualOpen)
-  // The panel arrives before its contents do, so the two do not slide in at
-  // once.
   const [panelFilled, setPanelFilled] = useState(false)
   useEffect(() => {
     if (manualOpen === false) {
@@ -142,8 +131,6 @@ export function Home() {
   const [startingLabel, setStartingLabel] = useState('')
   const [streamProbes, setStreamProbes] = useState<WorkerProbe[]>([])
 
-  // URL-driven, so every title is deep-linkable; a click also stashes the
-  // poster's rect in router state, which the morph grows out of.
   const state = (location.state ?? {}) as TitleLocationState
   const detailsOpen: TitleOpen | null = isMetaType(params.type) && params.id
     ? {
@@ -152,7 +139,6 @@ export function Home() {
     }
     : null
 
-  // The picker has to open inside this click, and before any room exists.
   const startScreenRoom = () => {
     setManualOpen(false)
     void requestScreenStream().then((stream) => {
@@ -181,9 +167,6 @@ export function Home() {
     setPendingMedia({ kind: 'local', file })
   }
 
-  // Stable on purpose: it is the one prop every poster card receives, and a
-  // fresh function per render re-rendered all two hundred of them each time
-  // this page did — on every keystroke in the nickname dialog, for one.
   const openTitle = useCallback((open: TitleOpen) => {
     const rect = open.rect
       ? { top: open.rect.top, left: open.rect.left, width: open.rect.width, height: open.rect.height }
@@ -223,7 +206,6 @@ export function Home() {
       } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
         closeTitle()
         const { url } = media.pick.stream.location
-        // Size zero is how the server is told to ask the origin instead.
         room = await createRoomAndUploadUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
         fileName = media.pick.displayName
         const playing = nowPlayingFromPick(media.pick)
@@ -232,8 +214,6 @@ export function Home() {
         } catch {}
       } else if (media.kind === 'stream') {
         closeTitle()
-        // The torrent opens before the room, so a dead stream never leaves an
-        // empty room behind.
         setProgress({ phase: 'converting', pct: 0 })
         setStreamProbes([])
         const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
@@ -270,8 +250,6 @@ export function Home() {
           : isTorrentError(error) ? torrentErrorKey(error)
             : 'home.failed',
       )
-      // On the catalogue side the error card would sit below a page of
-      // posters, where nobody scrolls to find it.
       if (view === 'catalog') {
         playError()
         toast(message)
@@ -293,8 +271,6 @@ export function Home() {
     selectFile(event.target.files?.[0])
   }
 
-  // Lifted out of the JSX so the stage can render them where the catalog
-  // would be.
   const MANUAL_STEPS = (<>
       {shownManual === 'menu' ? (
         <div className="morph-step" data-step="menu">
@@ -502,8 +478,6 @@ export function Home() {
 
       <PluginsPanel open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
 
-      {/* Outside the panel: the click that opens it must survive the step it
-          was made in dissolving. */}
       <input ref={inputRef} hidden type="file" accept="video/*,.mkv" onChange={onChange} />
 
       <Dialog

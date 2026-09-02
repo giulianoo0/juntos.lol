@@ -20,11 +20,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 )
 
-// upstreamRig is a TLS upstream reachable as https://addon.test, the way a
-// real addon would be: the hop resolves the name itself, so the test hands
-// it a resolver that answers with the loopback the server listens on, and a
-// guard that lets loopback through — the one address the real guard exists
-// to refuse.
+// upstreamRig is a TLS upstream reachable as https://addon.test through a resolver that answers loopback.
 type upstreamRig struct {
 	server *httptest.Server
 	hits   []*http.Request
@@ -46,8 +42,7 @@ func (u *upstreamRig) port() string {
 	return port
 }
 
-// newHopRig mounts the hop over the upstream, with a resolver that maps every
-// name onto the upstream's loopback and a guard that admits it.
+// newHopRig mounts the hop over the upstream, resolving every name onto its loopback.
 func newHopRig(t *testing.T, upstream *upstreamRig, opts ...func(*PluginFetcher)) *gin.Engine {
 	t.Helper()
 	fetcher := NewPluginFetcher(config.Config{PublicOrigin: "https://ss.test"})
@@ -55,7 +50,6 @@ func newHopRig(t *testing.T, upstream *upstreamRig, opts ...func(*PluginFetcher)
 		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
 	}
 	fetcher.allowAddr = func(netip.Addr) bool { return true }
-	// The httptest certificate is for 127.0.0.1, not for addon.test.
 	fetcher.tlsInsecureForTests(upstream.server.Client())
 	for _, apply := range opts {
 		apply(fetcher)
@@ -87,8 +81,6 @@ func TestPluginFetchRelaysTheAddonAnswerWithoutABrowserOrigin(t *testing.T) {
 	require.Equal(t, http.StatusTeapot, w.Code, "the addon's status travels back verbatim")
 	require.Equal(t, `{"streams":[]}`, w.Body.String())
 	require.Equal(t, target, w.Header().Get("X-Final-Url"))
-	// Never the upstream's type: a page served as text/html from this origin
-	// would run as this origin.
 	require.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
 	require.Len(t, upstream.hits, 1)
 	hit := upstream.hits[0]
@@ -171,9 +163,6 @@ func TestPluginFetchRefusesANameThatResolvesIntoPrivateSpace(t *testing.T) {
 }
 
 func TestPluginFetchDoesNotWaitOnAnAddressThatNeverAnswers(t *testing.T) {
-	// The resolver's first answer is a black hole, the way an IPv6 address
-	// is on a host with no IPv6 route. Queued dialing would spend the
-	// dialer's whole timeout on it before trying the second.
 	upstream := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok")
 	})
@@ -191,8 +180,7 @@ func TestPluginFetchDoesNotWaitOnAnAddressThatNeverAnswers(t *testing.T) {
 	require.Less(t, time.Since(started), 3*time.Second)
 }
 
-// connectProxy is the smallest CONNECT proxy: it tunnels to whatever host
-// the client names, and records what it was asked for.
+// connectProxy is the smallest CONNECT proxy: it tunnels wherever the client names and records the asks.
 func connectProxy(t *testing.T) (*httptest.Server, *[]string) {
 	t.Helper()
 	asked := &[]string{}
@@ -202,7 +190,6 @@ func connectProxy(t *testing.T) (*httptest.Server, *[]string) {
 			return
 		}
 		*asked = append(*asked, r.Host)
-		// The proxy is what resolves the name; here every name is loopback.
 		_, port, _ := net.SplitHostPort(r.Host)
 		upstream, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", port))
 		if err != nil {
@@ -227,9 +214,6 @@ func TestPluginFetchLeavesThroughTheConfiguredProxy(t *testing.T) {
 		_, _ = io.WriteString(w, "via proxy")
 	})
 	proxy, asked := connectProxy(t)
-	// The production guard stays: the proxy is on loopback and the addon
-	// resolves to loopback, and neither is this fetcher's to refuse — the
-	// dial goes to the proxy, the name goes with the CONNECT.
 	fetcher := NewPluginFetcher(config.Config{PublicOrigin: "https://ss.test", PluginFetchProxy: proxy.URL})
 	fetcher.tlsInsecureForTests(upstream.server.Client())
 	r := gin.New()
@@ -243,7 +227,6 @@ func TestPluginFetchLeavesThroughTheConfiguredProxy(t *testing.T) {
 	require.Len(t, upstream.hits, 1)
 	require.Empty(t, upstream.hits[0].Header.Get("Origin"))
 
-	// The url policy does not move with the guard.
 	for _, target := range []string{"http://addon.test/x", "https://localhost/x", "https://ss.test/api", "https://127.0.0.1/x"} {
 		require.Equal(t, http.StatusBadRequest, hop(r, target).Code, target)
 	}

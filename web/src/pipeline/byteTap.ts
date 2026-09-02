@@ -141,7 +141,6 @@ export class ByteTap {
     }
   }
 
-  // Resolves true when a chunk landed on the cursor, false on timeout or close.
   private idle(): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       this.waiter = resolve

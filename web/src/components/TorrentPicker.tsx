@@ -103,8 +103,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
     }
   }
 
-  // From the list, drops the swarm but keeps the magnet typed; from the magnet
-  // there is nothing left to retreat to, so it leaves the flow.
   const back = () => {
     if (!session) { onExit?.(); return }
     session.destroy()

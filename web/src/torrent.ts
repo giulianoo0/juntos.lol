@@ -39,7 +39,6 @@ export interface TorrentStats {
   downloadSpeed: number
   downloaded: number
   progress: number
-  // What the disk holds now, unlike `downloaded`, which only ever grows.
   diskBytes?: number
 }
 

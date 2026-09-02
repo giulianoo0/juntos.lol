@@ -17,7 +17,6 @@ function audio(): AudioContext | null {
     context = new Available()
     return context
   } catch {
-    // Silence is a fine outcome; a throw in a click handler is not.
     return null
   }
 }
@@ -43,7 +42,6 @@ function play({ from, to, duration, gain, type }: Blip): void {
   oscillator.frequency.setValueAtTime(from, now)
   oscillator.frequency.exponentialRampToValueAtTime(to, now + duration)
 
-  // A zero attack clicks in the speaker rather than in the design.
   envelope.gain.setValueAtTime(0.0001, now)
   envelope.gain.exponentialRampToValueAtTime(gain, now + 0.008)
   envelope.gain.exponentialRampToValueAtTime(0.0001, now + duration)
