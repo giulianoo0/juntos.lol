@@ -1,7 +1,7 @@
 import { memo, type RefObject, useEffect, useRef, useState } from 'react'
 import type JASSUB from 'jassub'
 
-import jassubWorkerUrl from 'jassub/dist/wasm/jassub-worker.js?url'
+import jassubWorkerUrl from 'jassub/dist/worker/worker.js?worker&url'
 import jassubWasmUrl from 'jassub/dist/wasm/jassub-worker.wasm?url'
 import jassubModernWasmUrl from 'jassub/dist/wasm/jassub-worker-modern.wasm?url'
 import jassubDefaultFont from 'jassub/dist/default.woff2?url'
