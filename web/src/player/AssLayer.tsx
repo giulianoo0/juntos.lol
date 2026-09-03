@@ -2,6 +2,23 @@ import { memo, type RefObject, useEffect, useRef, useState } from 'react'
 import type JASSUB from 'jassub'
 
 import jassubDefaultFont from 'jassub/dist/default.woff2?url'
+import jassubWorkerUrl from 'jassub/dist/worker/worker.js?worker&url'
+
+const READY_TIMEOUT_MS = 20_000
+
+// The bundled worker only initialises when a same-origin module imports it:
+// spawned by its own URL, the renderer's constructor fails inside the worker
+// (abslink reports "Unserializable return value") — cause not pinned down,
+// the wrapper is what works in production.
+let wrappedWorkerUrl: string | null = null
+function workerUrl(): string {
+  if (wrappedWorkerUrl === null) {
+    const absolute = new URL(jassubWorkerUrl, location.href).href
+    const source = `import ${JSON.stringify(absolute)};`
+    wrappedWorkerUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
+  }
+  return wrappedWorkerUrl
+}
 
 interface AssLayerProps {
   videoRef: RefObject<HTMLVideoElement | null>
@@ -38,16 +55,17 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
           canvas,
           subUrl,
           fonts: fontUrls,
-          // The worker and its wasm resolve from jassub's own `new URL(...,
-          // import.meta.url)` so Vite bundles the comlink wrapper with its
-          // dependencies; a raw `?url` of the wasm glue never answers.
+          workerUrl: workerUrl(),
           availableFonts: { 'liberation sans': jassubDefaultFont },
           defaultFont: 'liberation sans',
           timeOffset: offsetRef.current,
         })
         rendererRef.current = renderer
         renderer.timeOffset = offsetRef.current
-        await renderer.ready
+        await Promise.race([
+          renderer.ready,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('ASS renderer never became ready')), READY_TIMEOUT_MS)),
+        ])
         if (dead) return
         onFailed?.(false)
       } catch (error) {
