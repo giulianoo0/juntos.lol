@@ -1,9 +1,6 @@
 import { memo, type RefObject, useEffect, useRef, useState } from 'react'
 import type JASSUB from 'jassub'
 
-import jassubWorkerUrl from 'jassub/dist/wasm/jassub-worker.js?url'
-import jassubWasmUrl from 'jassub/dist/wasm/jassub-worker.wasm?url'
-import jassubModernWasmUrl from 'jassub/dist/wasm/jassub-worker-modern.wasm?url'
 import jassubDefaultFont from 'jassub/dist/default.woff2?url'
 
 interface AssLayerProps {
@@ -41,9 +38,9 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
           canvas,
           subUrl,
           fonts: fontUrls,
-          workerUrl: jassubWorkerUrl,
-          wasmUrl: jassubWasmUrl,
-          modernWasmUrl: jassubModernWasmUrl,
+          // The worker and its wasm resolve from jassub's own `new URL(...,
+          // import.meta.url)` so Vite bundles the comlink wrapper with its
+          // dependencies; a raw `?url` of the wasm glue never answers.
           availableFonts: { 'liberation sans': jassubDefaultFont },
           defaultFont: 'liberation sans',
           timeOffset: offsetRef.current,
