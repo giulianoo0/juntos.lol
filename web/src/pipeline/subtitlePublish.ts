@@ -43,14 +43,13 @@ export interface SubtitleSideFile {
   read?: () => Promise<ArrayBuffer>
 }
 
-/** `solo` walks the source on its own reads; otherwise the scan rides the
- * remux's byte tap and only reads for itself when the tap runs dry. */
+/** The scan rides the remux's byte tap and only reads for itself when the
+ * tap runs dry. */
 export async function publishSubtitles(
   input: SubtitleSource,
   sideFiles: SubtitleSideFile[],
   roomID: string,
   mediaGeneration: number,
-  solo = false,
 ): Promise<void> {
   const collector = createSubtitleCollector(roomID, mediaGeneration)
   const external = sideFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
@@ -61,12 +60,12 @@ export async function publishSubtitles(
   if (external.length === 0 && !embedded) return
   await Promise.all([
     external.length > 0 ? loadExternalSubtitles(external, collector, input) : Promise.resolve(),
-    embedded ? extractEmbeddedSubtitles(input, collector, roomID, mediaGeneration, solo) : Promise.resolve(),
+    embedded ? extractEmbeddedSubtitles(input, collector, roomID, mediaGeneration) : Promise.resolve(),
   ])
 }
 
 async function extractEmbeddedSubtitles(input: SubtitleSource, collector: SubtitleCollector,
-  roomID: string, mediaGeneration: number, solo: boolean): Promise<void> {
+  roomID: string, mediaGeneration: number): Promise<void> {
   const sentFonts = new Set<string>()
   try {
     const stream = await createMatroskaSubtitleStream()
@@ -75,31 +74,9 @@ async function extractEmbeddedSubtitles(input: SubtitleSource, collector: Subtit
     let published = false
     let lastProgressAt = Date.now()
     let offset = 0
-    let ahead: { at: number; read: Promise<Uint8Array> } | null = null
-    const readAt = (at: number): Promise<Uint8Array> =>
-      input.read(at, Math.min(at + SUBTITLE_SLICE_BYTES, input.size), { prio: 'scan' })
     while (offset < input.size) {
-      let slice: Uint8Array | null = null
-      if (solo) {
-        try {
-          slice = ahead && ahead.at === offset ? await ahead.read : await readAt(offset)
-        } catch (error) {
-          ahead = null
-          if (!(error instanceof ReadAbortedError) || error.closed) throw error
-          await new Promise((resolve) => setTimeout(resolve, 250))
-          continue
-        }
-        ahead = null
-        const nextAt: number = offset + slice.length
-        if (slice.length > 0 && nextAt < input.size) {
-          const read = readAt(nextAt)
-          read.catch(() => undefined)
-          ahead = { at: nextAt, read }
-        }
-      } else {
-        slice = tap ? await tap.pull() : null
-      }
-      if (!slice && !solo) {
+      let slice: Uint8Array | null = tap ? await tap.pull() : null
+      if (!slice) {
         const { cold, forMs } = input.cold?.() ?? { cold: false, forMs: 0 }
         if (tap && cold && forMs < SCAN_HOLDOFF_MAX_MS) {
           await new Promise((resolve) => setTimeout(resolve, 500))

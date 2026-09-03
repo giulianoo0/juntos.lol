@@ -20,12 +20,24 @@ pub struct AudioTrack {
     pub action: AudioAction,
 }
 
+/// One text subtitle stream, addressed as `0:s:{input_index}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubtitleTrack {
+    pub input_index: usize,
+    pub codec: String,
+    pub language: String,
+    pub title: String,
+}
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SourcePlan {
     pub video_codec: String,
     pub audios: Vec<AudioTrack>,
     pub duration_ms: u64,
+    pub subtitles: Vec<SubtitleTrack>,
+    pub bitmap_subtitles: usize,
+    pub attachments: usize,
 }
 
 #[derive(Deserialize)]
@@ -58,9 +70,14 @@ struct ProbeStream {
 struct ProbeTags {
     #[serde(default)]
     language: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
     #[serde(default, rename = "DURATION")]
     duration: Option<String>,
 }
+
+const TEXT_SUBTITLE_CODECS: &[&str] = &["ass", "ssa", "subrip", "srt", "webvtt", "mov_text", "text"];
+const BITMAP_SUBTITLE_CODECS: &[&str] = &["hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"];
 
 const MAX_AUDIO_CHANNELS: u32 = 8;
 
@@ -92,6 +109,10 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     let mut video_codec = None;
     let mut audios = Vec::new();
     let mut audio_index = 0usize;
+    let mut subtitles = Vec::new();
+    let mut subtitle_index = 0usize;
+    let mut bitmap_subtitles = 0usize;
+    let mut attachments = 0usize;
     let mut duration_ms = doc
         .format
         .and_then(|f| f.duration)
@@ -124,6 +145,25 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
                 });
                 audio_index += 1;
             }
+            Some("subtitle") => {
+                let codec = stream.codec_name.clone().unwrap_or_default();
+                if TEXT_SUBTITLE_CODECS.contains(&codec.as_str()) {
+                    subtitles.push(SubtitleTrack {
+                        input_index: subtitle_index,
+                        codec,
+                        language: stream
+                            .tags
+                            .as_ref()
+                            .and_then(|t| t.language.clone())
+                            .unwrap_or_else(|| "und".into()),
+                        title: stream.tags.as_ref().and_then(|t| t.title.clone()).unwrap_or_default(),
+                    });
+                } else if BITMAP_SUBTITLE_CODECS.contains(&codec.as_str()) {
+                    bitmap_subtitles += 1;
+                }
+                subtitle_index += 1;
+            }
+            Some("attachment") => attachments += 1,
             _ => {}
         }
         if duration_ms == 0 {
@@ -141,7 +181,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     if duration_ms == 0 {
         bail!("source reports no usable duration");
     }
-    Ok(SourcePlan { video_codec, audios, duration_ms })
+    Ok(SourcePlan { video_codec, audios, duration_ms, subtitles, bitmap_subtitles, attachments })
 }
 
 /// Output names mirror the client pipeline's grammar exactly: the server's
@@ -301,6 +341,27 @@ mod tests {
         assert!(joined.contains("v:0,agroup:aud a:0,agroup:aud,language:eng,default:yes a:1,agroup:aud,language:por"));
         assert!(joined.contains("-c:a:0 copy"));
         assert!(joined.contains("-c:a:1 aac -b:a:1 384000"));
+    }
+
+    #[test]
+    fn subtitle_streams_keep_their_stream_order() {
+        let probe = r#"{
+          "streams": [
+            {"codec_type":"video","codec_name":"h264"},
+            {"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"eng"}},
+            {"codec_type":"subtitle","codec_name":"ass","tags":{"language":"por","title":"Português"}},
+            {"codec_type":"subtitle","codec_name":"subrip"},
+            {"codec_type":"attachment","codec_name":"ttf","tags":{"filename":"a.ttf"}}
+          ],
+          "format": {"duration":"10"}
+        }"#;
+        let plan = plan_streams(probe).unwrap();
+        assert_eq!(plan.bitmap_subtitles, 1);
+        assert_eq!(plan.attachments, 1);
+        assert_eq!(plan.subtitles.len(), 2);
+        assert_eq!(plan.subtitles[0], SubtitleTrack { input_index: 1, codec: "ass".into(), language: "por".into(), title: "Português".into() });
+        assert_eq!(plan.subtitles[1].input_index, 2);
+        assert_eq!(plan.subtitles[1].language, "und");
     }
 
     #[test]

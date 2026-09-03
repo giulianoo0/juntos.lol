@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -448,4 +449,37 @@ func TestStoreSubtitleFont(t *testing.T) {
 
 	w = post("evil.exe", "MZ")
 	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestStoreFleetSubtitlesNeedsTheProducerClaim(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	stored := make(chan string, 1)
+	e := gin.New()
+	api := e.Group("/api")
+	RegisterClientMediaRoutes(api, store, cfg, objectstore.NewFake(), ClientMediaHooks{})
+	RegisterSubtitlesRoute(api, store, cfg, nil, func(id string) { stored <- id })
+	claim := claimRoom(t, e, "r1")
+
+	track := `{"language":"por","title":"Português","vtt":` + strconvQuote(validVTT) +
+		`,"ass":` + strconvQuote("[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,olá\n") + `}`
+
+	w := postJSON(t, e, "/api/rooms/r1/subtitles/fleet",
+		`{"claim":"client:wrong","mediaGeneration":0,"complete":false,"tracks":[`+track+`]}`)
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+
+	w = postJSON(t, e, "/api/rooms/r1/subtitles/fleet",
+		`{"claim":`+strconvQuote(claim)+`,"mediaGeneration":1,"complete":false,"tracks":[`+track+`]}`)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+
+	w = postJSON(t, e, "/api/rooms/r1/subtitles/fleet",
+		`{"claim":`+strconvQuote(claim)+`,"mediaGeneration":0,"complete":false,"tracks":[`+track+`]}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	require.Equal(t, "r1", <-stored)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleTracks, 1)
+	require.Equal(t, "ass", got.SubtitleTracks[0].Codec)
+	require.Equal(t, "por", got.SubtitleTracks[0].Language)
 }

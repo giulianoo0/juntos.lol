@@ -61,7 +61,6 @@ import {
   torrentStatsFor,
   uploadActive,
   resumableSourceFor,
-  resumeSubtitleScan,
   clearResumableSource,
   sourceOriginFor,
 } from '../upload'
@@ -251,10 +250,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       || (resumeWanted !== null && liveRegions.length > 0
         && resumeWanted < (liveRoom.durationMs || Number.POSITIVE_INFINITY)
         && !liveRegions.some((region) => regionHolds(region, resumeWanted))))
-  useEffect(() => {
-    if (!producing || room.sourceKind !== 'upload') return
-    void resumeSubtitleScan(room.id, liveRoom.mediaGeneration)
-  }, [producing, room.sourceKind, room.id, liveRoom.mediaGeneration])
   const resumeTried = useRef(false)
   useEffect(() => {
     if (resumeTried.current || !sync.memberId || !sync.capability) return

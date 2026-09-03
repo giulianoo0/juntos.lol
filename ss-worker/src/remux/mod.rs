@@ -4,6 +4,7 @@ pub mod process;
 pub mod protocol;
 pub mod publish;
 pub mod sink;
+pub mod subs;
 pub mod upload;
 
 use std::collections::HashMap;
@@ -32,6 +33,7 @@ pub struct Remux {
     slots: Arc<Semaphore>,
     global_puts: Arc<Semaphore>,
     runs: Mutex<HashMap<String, Arc<RunEntry>>>,
+    subtitle_rooms: subs::Rooms,
 }
 
 struct RunEntry {
@@ -39,6 +41,7 @@ struct RunEntry {
     status: Mutex<RunStatus>,
     sink: Mutex<Option<Arc<sink::Sink>>>,
     process: Mutex<Option<process::Supervised>>,
+    subtitles: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[derive(Clone)]
@@ -69,6 +72,7 @@ impl Remux {
                 .expect("reqwest client"),
             bridge: tokio::sync::OnceCell::new(),
             runs: Mutex::new(HashMap::new()),
+            subtitle_rooms: subs::new_rooms(),
             ffmpeg_version,
             cfg,
             engine,
@@ -160,6 +164,7 @@ impl Remux {
             status: Mutex::new(RunStatus { state: state::ACCEPTED, produced_ms: 0, error: None }),
             sink: Mutex::new(None),
             process: Mutex::new(None),
+            subtitles: Mutex::new(None),
         });
         self.runs.lock().insert(spec.run_id.clone(), entry.clone());
         let this = self.clone();
@@ -186,7 +191,14 @@ impl Remux {
             let this = this.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(120)).await;
-                this.runs.lock().remove(&run_id);
+                let room = {
+                    let mut runs = this.runs.lock();
+                    let room = runs.remove(&run_id).map(|entry| entry.room.clone());
+                    room.filter(|room| !runs.values().any(|entry| entry.room == *room))
+                };
+                if let Some(room) = room {
+                    subs::forget_room(&this.subtitle_rooms, &room);
+                }
             });
         });
         Ok(())
@@ -208,6 +220,9 @@ impl Remux {
         let process = entry.process.lock().take();
         if let Some(mut process) = process {
             process.kill().await;
+        }
+        if let Some(handle) = entry.subtitles.lock().take() {
+            handle.abort();
         }
         true
     }
@@ -297,6 +312,35 @@ impl Remux {
         *entry.sink.lock() = Some(run_sink.clone());
         let (output_base, output_cap) = bridge.register_output(run_sink.clone());
 
+        let (subs_url, subs_cap) = bridge.register_input(InputTarget {
+            engine: self.engine.clone(),
+            infohash: infohash.into(),
+            file_index,
+            reader: format!("remux-subs:{}", spec.run_id),
+            size,
+        });
+        if !source.subtitles.is_empty() {
+            let extractor = subs::Extractor {
+                ffmpeg_path: self.cfg.ffmpeg_path.clone(),
+                client: self.client.clone(),
+                api_base: spec.api_base.clone(),
+                room_id: spec.room_id.clone(),
+                run_id: spec.run_id.clone(),
+                media_generation: spec.media_generation,
+                claim: spec.claim.clone(),
+                input_url: subs_url,
+                dir: self.cfg.data_dir.join("remux").join(&spec.run_id).join("subs"),
+                state: subs::room_state(&self.subtitle_rooms, &spec.room_id, spec.media_generation, &source),
+            };
+            let plan_for_subs = source.clone();
+            let (run_id, start_ms, end_ms) = (spec.run_id.clone(), spec.start_ms, spec.end_ms);
+            *entry.subtitles.lock() = Some(tokio::spawn(async move {
+                if let Err(e) = extractor.run(&plan_for_subs, start_ms, end_ms).await {
+                    tracing::warn!(run = %run_id, error = %e, "subtitle pass failed");
+                }
+            }));
+        }
+
         let (uploaded_tx, mut uploaded_rx) = tokio::sync::mpsc::unbounded_channel();
         let uploader = upload::Uploader {
             client: self.client.clone(),
@@ -330,6 +374,10 @@ impl Remux {
 
         let cleanup = |bridge: &Bridge| {
             bridge.revoke(&input_cap, &output_cap);
+            if let Some(handle) = entry.subtitles.lock().take() {
+                handle.abort();
+            }
+            bridge.revoke(&subs_cap, "");
         };
 
         const STALL: Duration = Duration::from_secs(90);
@@ -437,6 +485,12 @@ impl Remux {
         let covers_all = spec.start_ms == 0 && spec.end_ms == 0;
         publisher.round(&run_sink, false, covers_all).await?;
         entry.status.lock().produced_ms = publisher.produced_ms(&run_sink);
+        let subtitles = entry.subtitles.lock().take();
+        if let Some(handle) = subtitles {
+            if tokio::time::timeout(Duration::from_secs(180), handle).await.is_err() {
+                tracing::warn!(run = %spec.run_id, "subtitle pass outlived the run; dropped");
+            }
+        }
         cleanup(&bridge);
         run_sink.destroy().await;
         Ok(())

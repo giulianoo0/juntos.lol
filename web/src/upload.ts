@@ -8,8 +8,7 @@
  */
 import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
 import { mockCreateRoom, mocksEnabled } from './mocks'
-import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerGrant } from './torrent'
-import type { SubtitleScanJob } from './pipeline/subtitleScan'
+import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // From the leaf module, never from remuxJob: a value import of remuxJob here
 // pulls mediabunny into the first-paint chunk and defeats the dynamic import.
@@ -315,71 +314,9 @@ export function startTorrentUpload(
       return
     }
     remoteProductions.add(roomID)
-    if (file.worker) startSubtitleScan(scanJob(roomID, mediaGeneration, file.worker, session))
     lastFailureDetail = null
     finishEntry(roomID, entry, null, () => { release(); session.detach?.() })
   })
-}
-
-function scanJob(roomID: string, mediaGeneration: number, grant: WorkerGrant, session: TorrentSession): SubtitleScanJob {
-  return {
-    roomID,
-    mediaGeneration,
-    grant,
-    sideFiles: session.subtitleFiles.flatMap((side) => side.index === undefined ? []
-      : [{ name: side.name, path: side.path, size: side.size, index: side.index }]),
-  }
-}
-
-// In a worker of its own: no media, no progress entry, and a failure costs
-// the room its subtitles but never its video.
-function startSubtitleScan(job: SubtitleScanJob): void {
-  if (typeof Worker === 'undefined') return
-  scanningRooms.add(job.roomID)
-  const worker = new Worker(new URL('./pipeline/subtitleWorker.ts', import.meta.url), { type: 'module' })
-  const over = () => { scanningRooms.delete(job.roomID); worker.terminate() }
-  worker.onmessage = (event: MessageEvent<{ type: string; detail?: string }>) => {
-    const message = event.data
-    if (message.type === 'trouble') console.error('[subtitle-scan]', message.detail)
-    else if (message.type === 'failed') { console.error('[subtitle-scan]', message.detail); over() }
-    else if (message.type === 'done') { markSubsDone(job.roomID, job.mediaGeneration); over() }
-  }
-  worker.onerror = (event) => { console.error('[subtitle-scan]', event.message); over() }
-  worker.postMessage({ type: 'start', job })
-}
-
-// Completion is remembered per generation so a finished scan is never walked
-// twice after a reload.
-const scanningRooms = new Set<string>()
-const subsDoneKey = (roomID: string, generation: number) => `ss.subs-done.${roomID}.g${generation}`
-
-function markSubsDone(roomID: string, generation: number): void {
-  try { localStorage.setItem(subsDoneKey(roomID, generation), '1') } catch {}
-}
-
-/**
- * A no-op for anyone but the ex-host, who alone has a resumable source saved.
- * Publishing is idempotent, so a restarted scan costs viewers nothing.
- */
-export async function resumeSubtitleScan(roomID: string, mediaGeneration: number): Promise<void> {
-  if (scanningRooms.has(roomID) || uploadActive(roomID) || remuxHandleFor(roomID)) return
-  try { if (localStorage.getItem(subsDoneKey(roomID, mediaGeneration))) return } catch {}
-  const saved = resumableSourceFor(roomID)
-  if (!saved || saved.kind !== 'torrent' || !saved.magnet) return
-  scanningRooms.add(roomID)
-  try {
-    const session = await openTorrent(saved.magnet)
-    const file = session.files.find((candidate) => candidate.path === saved.filePath) ?? session.files[0]
-    if (!file) { session.destroy(); scanningRooms.delete(roomID); return }
-    await session.select(file.path)
-    if (!file.worker) { session.destroy(); scanningRooms.delete(roomID); return }
-    remoteProductions.add(roomID)
-    startSubtitleScan(scanJob(roomID, mediaGeneration, file.worker, session))
-    session.detach?.()
-  } catch (error) {
-    scanningRooms.delete(roomID)
-    console.error('[subtitle-scan] resume failed', error)
-  }
 }
 
 // Resolves null on an accepted handoff, or with the reason the fleet said no.

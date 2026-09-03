@@ -73,7 +73,43 @@ type SubtitlePublisher interface {
 func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
 	publisher SubtitlePublisher, onSubsStored func(roomID string)) {
 	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, publisher, onSubsStored))
+	rg.POST("/rooms/:id/subtitles/fleet", storeFleetSubtitles(store, cfg, publisher, onSubsStored))
 	rg.POST("/rooms/:id/subtitles/fonts", storeSubtitleFont(store, cfg, publisher, onSubsStored))
+}
+
+// fleetSubtitlesRequest is a worker's publish of the tracks its FFmpeg pass
+// extracted: the producer claim is the authorization, as for media.
+type fleetSubtitlesRequest struct {
+	Claim string `json:"claim" binding:"required"`
+	clientSubtitlesRequest
+}
+
+// storeFleetSubtitles takes the worker's merged tracks for the room. The claim
+// must be the room's live producer reservation; the generation must be current.
+func storeFleetSubtitles(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
+	onSubsStored func(roomID string)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSubtitlesBodyBytes)
+		var req fleetSubtitlesRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		storedRoom, ok := authorizeClaimValue(c, store, roomID, req.Claim)
+		if !ok {
+			return
+		}
+		if req.MediaGeneration == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		persistSubtitles(c, store, cfg, publisher, onSubsStored, roomID, storedRoom, req.clientSubtitlesRequest)
+	}
 }
 
 // fontExtensions is what a subtitle font upload may claim to be; the extension only
@@ -188,6 +224,15 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
+		persistSubtitles(c, store, cfg, publisher, onSubsStored, roomID, storedRoom, req)
+	}
+}
+
+// persistSubtitles validates, writes and announces one publish of tracks,
+// whoever extracted them.
+func persistSubtitles(c *gin.Context, store *room.Store, cfg config.Config, publisher SubtitlePublisher,
+	onSubsStored func(roomID string), roomID string, storedRoom *room.Room, req clientSubtitlesRequest) {
+	{
 		if len(req.Tracks) == 0 || len(req.Tracks) > maxSubtitleTracks {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
