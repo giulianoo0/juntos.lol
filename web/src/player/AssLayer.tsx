@@ -73,7 +73,9 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
           video,
           canvas,
           subUrl: initialUrl,
-          fonts: fontUrls,
+          // availableFonts alone never reaches libass in this version; the
+          // default font must go through fonts as an absolute URL.
+          fonts: [new URL(jassubDefaultFont, location.href).href, ...fontUrls],
           workerUrl: workerUrl(),
           availableFonts: { 'liberation sans': jassubDefaultFont },
           defaultFont: 'liberation sans',
