@@ -87,6 +87,8 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
         if (dead) return
         rendererRef.current = renderer
         loadedUrlRef.current = initialUrl
+        // A region switch during init changed the offset while nothing could take it.
+        renderer.timeOffset = offsetRef.current
         onFailed?.(false)
         if (subUrlRef.current !== initialUrl) swapTrack(renderer, subUrlRef.current)
       } catch (error) {
