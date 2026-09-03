@@ -284,8 +284,10 @@ const followBehindMs = 1_500
 const followDebounce = 3 * time.Second
 
 // Follow tracks the room's authoritative position. Covered positions do
-// nothing; an uncovered one replaces the run at the target. Buffer reports
-// never reach here — only controller state changes do.
+// nothing; an uncovered one replaces the run at the target — a completed run
+// included, since a region that reached the end of the file leaves every
+// earlier gap for the next seek to fill. Buffer reports never reach here —
+// only controller state changes do.
 func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	if positionMs < 0 {
 		return
@@ -306,7 +308,7 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	defer lock.Unlock()
 
 	run, err := o.LoadRun(ctx, roomID)
-	if err != nil || run == nil || remux.TerminalState(run.State) {
+	if err != nil || run == nil || (remux.TerminalState(run.State) && run.State != remux.RunCompleted) {
 		return
 	}
 	storedRoom, err := o.Store.Get(ctx, roomID)
@@ -329,7 +331,9 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	if err := o.saveRun(ctx, &replaced); err != nil {
 		return
 	}
-	o.dispatchCancel(run)
+	if !remux.TerminalState(run.State) {
+		o.dispatchCancel(run)
+	}
 	startErr := o.dispatchStart(ctx, &replaced)
 	for tries := 0; startErr != nil && strings.Contains(startErr.Error(), "remux_busy") && tries < 3; tries++ {
 		select {
@@ -355,7 +359,7 @@ func coveredByRegions(regions []room.MediaRegion, run *RemuxRun, positionMs int6
 	for _, region := range regions {
 		end := region.StartMs + region.ProducedMs
 		forward := end
-		if region.Growing || region.N == run.Region {
+		if region.Growing || (region.N == run.Region && !remux.TerminalState(run.State)) {
 			forward = maxInt64(end, run.StartMs+run.ProducedMs) + followAheadMs
 		}
 		if positionMs >= region.StartMs-followBehindMs && positionMs <= forward {

@@ -260,7 +260,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (resumeTried.current || !sync.memberId || !sync.capability) return
     if (!needsPreparo) return
     if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
-    if (uploadActive(room.id) || remuxHandleFor(room.id)) return
+    // The fleet's first heartbeat lands seconds after the handoff; the tab that
+    // made it must not read that silence as a preparo to resume.
+    if (uploadActive(room.id) || remuxHandleFor(room.id) || isRemoteProduction(room.id)) return
     const source = resumableSourceFor(room.id)
     if (!source) { resumeTried.current = true; return }
     resumeTried.current = true

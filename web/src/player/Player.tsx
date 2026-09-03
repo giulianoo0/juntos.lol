@@ -460,7 +460,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const subtitleCount = subtitleTracks.length
   const chosenSubtitleTrack = subtitleTracks.find((track) => track.index === subtitle) ?? null
   const assChosen = chosenSubtitleTrack !== null && chosenSubtitleTrack.codec === 'ass' && !!room.mediaBaseUrl
-  const [assActive, setAssActive] = useState(false)
+  const [assFailed, setAssFailed] = useState(false)
   const assFontUrls = useMemo(
     () => (room.mediaBaseUrl ? (room.subtitleFonts ?? []).map((font) => `${room.mediaBaseUrl}/subs/${font.file}`) : []),
     [room.mediaBaseUrl, room.subtitleFonts],
@@ -1081,7 +1081,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       >
         {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track) => (
           <track
-            key={`${track.index}-${track.language}-${room.mediaGeneration}-${mediaReload}-${track.digest ?? room.subsVersion ?? 0}`}
+            key={`${track.index}-${track.language}-${room.mediaGeneration}-${mediaReload}-${mediaOffsetMs}-${track.digest ?? room.subsVersion ?? 0}`}
             kind="subtitles"
             onLoad={(event) => shiftTrackCues(event.currentTarget.track, mediaOffsetSec)}
             src={subtitleSource(room, track)}
@@ -1092,7 +1092,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       </video>
       <SubtitleLayer
         videoRef={videoRef}
-        position={assActive ? -1 : subtitleTracks.findIndex((track) => track.index === subtitle)}
+        position={assChosen && !assFailed ? -1 : subtitleTracks.findIndex((track) => track.index === subtitle)}
         revision={`${room.mediaGeneration}-${mediaReload}-${room.subsVersion ?? 0}-${subtitleCount}`}
       />
       {assChosen && chosenSubtitleTrack ? (
@@ -1102,7 +1102,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           subUrl={assSource(room, chosenSubtitleTrack)}
           fontUrls={assFontUrls}
           timeOffsetSec={mediaOffsetSec}
-          onActive={setAssActive}
+          onFailed={setAssFailed}
         />
       ) : null}
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}

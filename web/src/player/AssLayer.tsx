@@ -11,7 +11,7 @@ interface AssLayerProps {
   subUrl: string
   fontUrls: string[]
   timeOffsetSec: number
-  onActive?: (active: boolean) => void
+  onFailed?: (failed: boolean) => void
 }
 
 /**
@@ -19,9 +19,11 @@ interface AssLayerProps {
  * fonts, positioning and karaoke exactly as authored, all of which the VTT
  * conversion flattens. One renderer instance per document.
  */
-export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, timeOffsetSec, onActive }: AssLayerProps) {
+export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, timeOffsetSec, onFailed }: AssLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<JASSUB | null>(null)
+  const offsetRef = useRef(timeOffsetSec)
+  offsetRef.current = timeOffsetSec
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
@@ -44,24 +46,26 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
           modernWasmUrl: jassubModernWasmUrl,
           availableFonts: { 'liberation sans': jassubDefaultFont },
           defaultFont: 'liberation sans',
-          timeOffset: timeOffsetSec,
+          timeOffset: offsetRef.current,
         })
         rendererRef.current = renderer
+        renderer.timeOffset = offsetRef.current
         await renderer.ready
         if (dead) return
-        onActive?.(true)
+        onFailed?.(false)
       } catch (error) {
         console.warn('ASS renderer unavailable, falling back to VTT', error)
-        if (!dead) setFailed(true)
+        if (dead) return
+        setFailed(true)
+        onFailed?.(true)
       }
     })()
     return () => {
       dead = true
-      onActive?.(false)
       rendererRef.current = null
       void renderer?.destroy().catch(() => undefined)
     }
-  }, [videoRef, canvasRef, subUrl, fontUrls, failed, onActive])
+  }, [videoRef, canvasRef, subUrl, fontUrls, failed, onFailed])
 
   useEffect(() => {
     if (rendererRef.current) rendererRef.current.timeOffset = timeOffsetSec
