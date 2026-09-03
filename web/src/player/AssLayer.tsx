@@ -31,13 +31,20 @@ interface AssLayerProps {
 /**
  * Draws an ASS subtitle track over the video with libass (JASSUB): styles,
  * fonts, positioning and karaoke exactly as authored, all of which the VTT
- * conversion flattens. One renderer instance per document.
+ * conversion flattens. One renderer per track; a republished document swaps
+ * in through the renderer instead of restarting the worker, which takes
+ * longer than the fleet's publish cadence.
  */
 export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, timeOffsetSec, onFailed }: AssLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<JASSUB | null>(null)
   const offsetRef = useRef(timeOffsetSec)
   offsetRef.current = timeOffsetSec
+  const subUrlRef = useRef(subUrl)
+  subUrlRef.current = subUrl
+  const loadedUrlRef = useRef<string | null>(null)
+  const swapChainRef = useRef<Promise<void>>(Promise.resolve())
+  const swapRef = useRef<((target: JASSUB, url: string) => void) | null>(null)
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
@@ -46,28 +53,42 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
     if (!video || !canvas || failed) return
     let dead = false
     let renderer: JASSUB | null = null
+    const swapTrack = (target: JASSUB, url: string) => {
+      swapChainRef.current = swapChainRef.current
+        .then(async () => {
+          if (dead || rendererRef.current !== target || loadedUrlRef.current === url) return
+          await target.renderer.setTrackByUrl(url)
+          loadedUrlRef.current = url
+          await target.resize(true)
+        })
+        .catch((error) => console.warn('ASS track swap failed', error))
+    }
+    swapRef.current = swapTrack
     void (async () => {
       try {
         const { default: Jassub } = await import('jassub')
         if (dead) return
+        const initialUrl = subUrlRef.current
         renderer = new Jassub({
           video,
           canvas,
-          subUrl,
+          subUrl: initialUrl,
           fonts: fontUrls,
           workerUrl: workerUrl(),
           availableFonts: { 'liberation sans': jassubDefaultFont },
           defaultFont: 'liberation sans',
           timeOffset: offsetRef.current,
         })
-        rendererRef.current = renderer
         renderer.timeOffset = offsetRef.current
         await Promise.race([
           renderer.ready,
           new Promise((_, reject) => setTimeout(() => reject(new Error('ASS renderer never became ready')), READY_TIMEOUT_MS)),
         ])
         if (dead) return
+        rendererRef.current = renderer
+        loadedUrlRef.current = initialUrl
         onFailed?.(false)
+        if (subUrlRef.current !== initialUrl) swapTrack(renderer, subUrlRef.current)
       } catch (error) {
         console.warn('ASS renderer unavailable, falling back to VTT', error)
         if (dead) return
@@ -77,10 +98,17 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
     })()
     return () => {
       dead = true
+      swapRef.current = null
       rendererRef.current = null
+      loadedUrlRef.current = null
       void renderer?.destroy().catch(() => undefined)
     }
-  }, [videoRef, canvasRef, subUrl, fontUrls, failed, onFailed])
+  }, [videoRef, canvasRef, fontUrls, failed, onFailed])
+
+  useEffect(() => {
+    const renderer = rendererRef.current
+    if (renderer && swapRef.current) swapRef.current(renderer, subUrl)
+  }, [subUrl])
 
   useEffect(() => {
     if (rendererRef.current) rendererRef.current.timeOffset = timeOffsetSec

@@ -1097,7 +1097,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       />
       {assChosen && chosenSubtitleTrack ? (
         <AssLayer
-          key={`ass-${chosenSubtitleTrack.index}-${room.mediaGeneration}-${chosenSubtitleTrack.digest ?? room.subsVersion ?? 0}`}
+          key={`ass-${chosenSubtitleTrack.index}-${room.mediaGeneration}`}
           videoRef={videoRef}
           subUrl={assSource(room, chosenSubtitleTrack)}
           fontUrls={assFontUrls}
