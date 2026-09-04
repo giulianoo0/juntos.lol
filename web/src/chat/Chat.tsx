@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type KeyboardEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type UIEvent } from 'react'
 import { SendHorizontal, X } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import type { ChatEntry } from '../types'
@@ -6,6 +6,8 @@ import { Button } from '../ui/Button'
 import type { Translator } from '../i18n/useT'
 
 const mobileMediaQuery = '(max-width: 900px)'
+/** How far above the bottom a reader can be and still count as following the conversation. */
+const FOLLOW_SLACK_PX = 48
 
 interface ChatProps {
   messages: ChatEntry[]
@@ -19,6 +21,21 @@ export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: C
   const [text, setText] = useState('')
   const [mobile, setMobile] = useState(() => matchMedia(mobileMediaQuery).matches)
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
+  const listRef = useRef<HTMLDivElement>(null)
+  // Whether the reader is at the bottom: a new message keeps them there, and
+  // a reader who scrolled up to reread something is left where they are.
+  const followingRef = useRef(true)
+
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    const list = event.currentTarget
+    followingRef.current = list.scrollHeight - list.scrollTop - list.clientHeight <= FOLLOW_SLACK_PX
+  }
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || !open || !followingRef.current) return
+    list.scrollTop = list.scrollHeight
+  }, [messages, open])
 
   useEffect(() => {
     const mobileQuery = matchMedia(mobileMediaQuery)
@@ -36,6 +53,7 @@ export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: C
   const submit = () => {
     const value = text.trim()
     if (!value) return
+    followingRef.current = true
     onSend(value)
     setText('')
   }
@@ -54,7 +72,7 @@ export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: C
           <X size={15} aria-hidden="true" />
         </Button>
       </header>
-      <div className="chat-messages">
+      <div className="chat-messages" ref={listRef} onScroll={onScroll}>
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
           <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ '--i': index } as CSSProperties}>
             {message.system

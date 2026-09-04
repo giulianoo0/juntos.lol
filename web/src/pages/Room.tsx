@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useParams } from 'react-router-dom'
 import type { Room as LiveKitRoom } from 'livekit-client'
 import { Chat } from '../chat/Chat'
+import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
@@ -305,6 +306,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
+  useMessageChime(sync.messages, sync.connected, nickname)
   const [sourcePanel, setSourcePanel] = useState<'torrent' | null>(null)
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
