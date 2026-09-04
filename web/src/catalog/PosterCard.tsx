@@ -1,6 +1,6 @@
 import { memo, useRef, type KeyboardEvent, type MouseEvent } from 'react'
 import { Film, Tv } from 'lucide-react'
-import type { CatalogMeta } from './cinemeta'
+import type { CatalogMeta } from './tmdb'
 import { FadeImg } from './FadeImg'
 
 export interface TitleOpen {

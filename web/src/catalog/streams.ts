@@ -1,4 +1,4 @@
-import type { MetaType } from './cinemeta'
+import type { MetaType } from './tmdb'
 
 const TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
@@ -28,6 +28,7 @@ export interface CatalogStream {
 
 export interface StreamTarget {
   type: MetaType
+  /** Always the IMDb id when the catalog knows one: that is what stream sources answer to. */
   id: string
   season?: number
   episode?: number

@@ -2,10 +2,10 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MetaDetails } from './MetaDetails'
 import { resolveStreams } from '../plugins/resolve'
-import type { CatalogMeta } from './cinemeta'
+import type { CatalogMeta } from './tmdb'
 
-vi.mock('./cinemeta', async () => {
-  const actual = await vi.importActual<typeof import('./cinemeta')>('./cinemeta')
+vi.mock('./tmdb', async () => {
+  const actual = await vi.importActual<typeof import('./tmdb')>('./tmdb')
   return {
     ...actual,
     fetchMeta: vi.fn(async () => ({

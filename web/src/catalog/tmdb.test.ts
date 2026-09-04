@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCatalogMetas, parseMetaDetail } from './cinemeta'
+import { parseCatalogMetas, parseMetaDetail } from './tmdb'
 
 describe('parseCatalogMetas', () => {
   it('keeps only entries a poster card can render', () => {
@@ -55,5 +55,17 @@ describe('parseMetaDetail', () => {
   it('rejects payloads without an identifiable meta', () => {
     expect(parseMetaDetail({})).toBeNull()
     expect(parseMetaDetail({ meta: { id: 'tt1', type: 'movie' } })).toBeNull()
+  })
+})
+
+describe('imdbId', () => {
+  it('comes from imdb_id when the catalog id is a tmdb one', () => {
+    const detail = parseMetaDetail({ meta: { id: 'tmdb:125988', type: 'series', name: 'Silo', imdb_id: 'tt14688458' } })
+    expect(detail?.imdbId).toBe('tt14688458')
+  })
+
+  it('falls back to an IMDb-shaped id and is null otherwise', () => {
+    expect(parseMetaDetail({ meta: { id: 'tt0903747', type: 'series', name: 'BB' } })?.imdbId).toBe('tt0903747')
+    expect(parseMetaDetail({ meta: { id: 'tmdb:1', type: 'movie', name: 'X', imdb_id: 'nope' } })?.imdbId).toBeNull()
   })
 })

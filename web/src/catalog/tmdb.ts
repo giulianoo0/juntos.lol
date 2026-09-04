@@ -1,8 +1,17 @@
-// Cinemeta is Stremio's public metadata addon. Catalogs and search live under
-// v3-cinemeta.strem.io (the popular catalogs redirect to a static mirror, which
-// fetch follows), and every response is CORS-open, so the browser talks to it
+// The TMDB addon (tmdb.elfhosted.com) is the metadata source: it speaks the
+// Stremio addon protocol like Cinemeta did, but answers in the viewer's
+// language and knows the IMDb id of everything, which is what the stream
+// plugins need. Every response is CORS-open, so the browser talks to it
 // directly — the server never proxies catalog traffic.
-const CINEMETA = 'https://v3-cinemeta.strem.io'
+const TMDB = 'https://tmdb.elfhosted.com'
+
+function metadataBase(): string {
+  let language = 'en-US'
+  try {
+    if ((localStorage.getItem('ss.language') ?? navigator.language).toLowerCase().startsWith('pt')) language = 'pt-BR'
+  } catch {}
+  return `${TMDB}/${encodeURIComponent(JSON.stringify({ language }))}`
+}
 
 export type MetaType = 'movie' | 'series'
 
@@ -25,6 +34,8 @@ export interface MetaVideo {
 }
 
 export interface MetaDetail extends CatalogMeta {
+  /** The id Torrentio-style stream sources answer to; the catalog's own id may be a tmdb: one. */
+  imdbId: string | null
   background: string
   logo: string
   description: string
@@ -42,7 +53,7 @@ async function getJSON<T>(url: string): Promise<T> {
   let pending = cache.get(url)
   if (!pending) {
     pending = fetch(url).then((response) => {
-      if (!response.ok) throw new Error(`cinemeta ${response.status}`)
+      if (!response.ok) throw new Error(`tmdb ${response.status}`)
       return response.json() as Promise<unknown>
     })
     cache.set(url, pending)
@@ -102,10 +113,14 @@ export function parseMetaDetail(payload: unknown): MetaDetail | null {
       })
     }
   }
+  const imdbId = typeof value.imdb_id === 'string' && /^tt\d+$/.test(value.imdb_id)
+    ? value.imdb_id
+    : (/^tt\d+$/.test(value.id) ? value.id : null)
   return {
     id: value.id,
     type: value.type,
     name: value.name,
+    imdbId,
     poster: typeof value.poster === 'string' ? value.poster : '',
     releaseInfo: typeof value.releaseInfo === 'string' ? value.releaseInfo : (typeof value.year === 'string' ? value.year : ''),
     background: typeof value.background === 'string' ? value.background : '',
@@ -122,12 +137,12 @@ export function parseMetaDetail(payload: unknown): MetaDetail | null {
 
 export async function fetchCatalog(type: MetaType, genre?: string): Promise<CatalogMeta[]> {
   const extra = genre ? `/genre=${encodeURIComponent(genre)}` : ''
-  const payload = await getJSON<unknown>(`${CINEMETA}/catalog/${type}/top${extra}.json`)
+  const payload = await getJSON<unknown>(`${metadataBase()}/catalog/${type}/tmdb.top${extra}.json`)
   return parseCatalogMetas(payload, type)
 }
 
 export async function fetchMeta(type: MetaType, id: string): Promise<MetaDetail | null> {
-  const payload = await getJSON<unknown>(`${CINEMETA}/meta/${type}/${encodeURIComponent(id)}.json`)
+  const payload = await getJSON<unknown>(`${metadataBase()}/meta/${type}/${encodeURIComponent(id)}.json`)
   return parseMetaDetail(payload)
 }
 
@@ -139,7 +154,7 @@ export async function searchCatalog(query: string): Promise<CatalogMeta[]> {
   const [movies, series] = await Promise.all(
     (['movie', 'series'] as const).map(async (type) => {
       try {
-        const payload = await getJSON<unknown>(`${CINEMETA}/catalog/${type}/top/${search}.json`)
+        const payload = await getJSON<unknown>(`${metadataBase()}/catalog/${type}/tmdb.search/${search}.json`)
         return parseCatalogMetas(payload, type)
       } catch {
         return []

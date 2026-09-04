@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from 'motion/react'
 import { Play, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
-import type { MetaVideo } from './cinemeta'
+import type { MetaVideo } from './tmdb'
 import { FadeImg } from './FadeImg'
 
 interface NextEpisodeCardProps {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import { fetchMeta, type MetaVideo } from './cinemeta'
+import { fetchMeta, type MetaVideo } from './tmdb'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitlePick } from './MetaDetails'
 import type { StreamResolution } from './streams'

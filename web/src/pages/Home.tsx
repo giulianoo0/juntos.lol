@@ -30,7 +30,7 @@ import { openCatalogStream } from '../catalog/openStream'
 import { WorkerProbes } from '../components/WorkerProbes'
 import { FleetStatus } from '../components/FleetStatus'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
-import type { CatalogMeta, MetaType } from '../catalog/cinemeta'
+import type { CatalogMeta, MetaType } from '../catalog/tmdb'
 import type { TitleOpen } from '../catalog/PosterCard'
 
 import { MAX_UPLOAD_BYTES } from '../limits'

@@ -7,7 +7,7 @@ import { openTorrent } from '../torrent'
 
 vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn(), createRoomAndUploadTorrent: vi.fn() }))
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
-vi.mock('../catalog/cinemeta', () => ({
+vi.mock('../catalog/tmdb', () => ({
   fetchCatalog: vi.fn().mockResolvedValue([]),
   searchCatalog: vi.fn().mockResolvedValue([]),
   fetchMeta: vi.fn().mockResolvedValue(null),

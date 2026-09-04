@@ -8,7 +8,7 @@ import { languageName } from './languages'
 import { Carousel } from './Carousel'
 import { FadeImg } from './FadeImg'
 import { useT } from '../i18n/useT'
-import { fetchMeta, type MetaDetail, type MetaVideo } from './cinemeta'
+import { fetchMeta, type MetaDetail, type MetaVideo } from './tmdb'
 import { isPlayable, streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
@@ -106,10 +106,12 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   }, [meta.id, meta.type, detailRetry])
 
   const target: StreamTarget | null = useMemo(() => {
-    if (meta.type === 'movie') return { type: 'movie', id: meta.id }
-    if (selected) return { type: 'series', id: meta.id, season: selected.season, episode: selected.episode }
+    const id = detail?.imdbId ?? (/^tt\d+$/.test(meta.id) ? meta.id : null)
+    if (!id) return null
+    if (meta.type === 'movie') return { type: 'movie', id }
+    if (selected) return { type: 'series', id, season: selected.season, episode: selected.episode }
     return null
-  }, [meta.id, meta.type, selected])
+  }, [detail?.imdbId, meta.id, meta.type, selected])
 
   useEffect(() => {
     if (!target || mode === 'viewer') return
