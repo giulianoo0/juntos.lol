@@ -297,6 +297,30 @@ describe('useSync', () => {
     unmount()
   })
 
+  it('drops a stall report once the buffer has grown past the gate', () => {
+    vi.useFakeTimers()
+    vi.spyOn(Date, 'now').mockReturnValue(100_000)
+    const video = document.createElement('video')
+    Object.defineProperty(video, 'paused', { value: true, configurable: true })
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 130 } })
+    video.currentTime = 10
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    act(() => result.current.reportBuffering(true))
+    expect(result.current.buffering).toBe(true)
+
+    act(() => { vi.advanceTimersByTime(5_000) })
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: 'ready', positionMs: 10_000, bufferAheadMs: 120_000, stalled: false,
+    }))
+    expect(result.current.buffering).toBe(false)
+    unmount()
+    vi.useRealTimers()
+  })
+
   it('leaves a stopped element alone when buffering ends', () => {
     const video = document.createElement('video')
     Object.defineProperty(video, 'paused', { value: true, configurable: true })

@@ -13,6 +13,9 @@ const (
 	GateMaxWait               = 20 * time.Second
 	gatePositionSlackMs int64 = 2000
 	stallRegateCooldown       = 20 * time.Second
+	// A stall reported with this much media ready is the browser's idle-network
+	// event, not playback running dry; the room does not stop for it.
+	stallCredibleBufferMs int64 = 5000
 )
 
 // memberReport is the latest readiness a client reported. Only the room
@@ -22,6 +25,12 @@ type memberReport struct {
 	bufferAheadMs int64
 	stalled       bool
 	received      bool
+}
+
+// runningDry reports whether a member's playback has actually stopped for
+// lack of media, as opposed to a stall flag raised over a full buffer.
+func (m memberReport) runningDry() bool {
+	return m.stalled && m.bufferAheadMs < stallCredibleBufferMs
 }
 
 // playGate is a pending synchronized start: the room is parked paused at the
@@ -98,7 +107,7 @@ func (r *roomConn) clientReady(connected *client) bool {
 		return true
 	}
 	report := connected.report
-	if !report.received || report.stalled {
+	if !report.received || report.runningDry() {
 		return false
 	}
 	drift := report.positionMs - r.gate.targetMs
@@ -198,7 +207,7 @@ func (r *roomConn) stalledMember() string {
 		if _, ignored := r.ignored[id]; ignored {
 			continue
 		}
-		if connected.report.received && connected.report.stalled {
+		if connected.report.received && connected.report.runningDry() {
 			return id
 		}
 	}

@@ -415,6 +415,27 @@ describe('Player', () => {
     expect(container.querySelector('.player-loading')).not.toBeInTheDocument()
   })
 
+  it('reports a stall to the room only when the buffer ahead is actually thin', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const onBuffering = vi.fn()
+    const { container } = render(
+      <Player room={room} isController videoRef={videoRef} send={vi.fn()} t={t} onBuffering={onBuffering} />,
+    )
+    const video = videoRef.current!
+    fireEvent.canPlay(video)
+    onBuffering.mockClear()
+
+    video.currentTime = 10
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 70 } })
+    fireEvent.waiting(video)
+    expect(container.querySelector('.player-loading')).toBeInTheDocument()
+    expect(onBuffering).not.toHaveBeenCalledWith(true)
+
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 10.2 } })
+    fireEvent.waiting(video)
+    expect(onBuffering).toHaveBeenCalledWith(true)
+  })
+
   it('offers no quality control when there is only one rendition', () => {
     render(<Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
     expect(screen.queryByLabelText(/quality|qualidade/i)).not.toBeInTheDocument()
