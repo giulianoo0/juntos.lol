@@ -54,6 +54,10 @@ type RemuxRun struct {
 
 func remuxRunKey(roomID string) string { return "room:" + roomID + ":remux" }
 
+// remuxRoomsKey indexes the rooms a worker is producing for, so a heartbeat
+// reaches their runs even when the torrent job never learned its room.
+func remuxRoomsKey(workerID string) string { return "worker:" + workerID + ":remux_rooms" }
+
 // RemuxOrchestrator drives remote runs. All state that must survive a
 // restart lives in Redis; the in-memory locks only serialize this process.
 type RemuxOrchestrator struct {
@@ -95,7 +99,13 @@ func (o *RemuxOrchestrator) saveRun(ctx context.Context, run *RemuxRun) error {
 	if err != nil {
 		return err
 	}
-	return o.rdb().Set(ctx, remuxRunKey(run.RoomID), raw, time.Duration(o.Cfg.RoomTTLHours)*time.Hour).Err()
+	ttl := time.Duration(o.Cfg.RoomTTLHours) * time.Hour
+	pipe := o.rdb().TxPipeline()
+	pipe.Set(ctx, remuxRunKey(run.RoomID), raw, ttl)
+	pipe.SAdd(ctx, remuxRoomsKey(run.WorkerID), run.RoomID)
+	pipe.Expire(ctx, remuxRoomsKey(run.WorkerID), ttl)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // LoadRun answers the room's remux record, nil when there is none.
@@ -115,6 +125,9 @@ func (o *RemuxOrchestrator) LoadRun(ctx context.Context, roomID string) (*RemuxR
 }
 
 func (o *RemuxOrchestrator) deleteRun(ctx context.Context, roomID string) {
+	if run, err := o.LoadRun(ctx, roomID); err == nil && run != nil {
+		_ = o.rdb().SRem(ctx, remuxRoomsKey(run.WorkerID), roomID).Err()
+	}
 	_ = o.rdb().Del(ctx, remuxRunKey(roomID)).Err()
 }
 
@@ -139,6 +152,10 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	}
 	if job.State != JobServing || job.FileIndex == nil {
 		return nil, ErrNotListed
+	}
+	if job.RoomID != req.RoomID {
+		job.RoomID = req.RoomID
+		_ = o.Service.Registry.SaveJob(ctx, job, o.Service.JobTTL)
 	}
 	storedRoom, err := o.Store.Get(ctx, req.RoomID)
 	if errors.Is(err, room.ErrNotFound) {
@@ -418,10 +435,7 @@ func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ids, err := o.Service.Registry.JobsForWorker(ctx, workerID)
-	if err != nil {
-		return
-	}
+	ids, _ := o.Service.Registry.JobsForWorker(ctx, workerID)
 	rooms := map[string]struct{}{}
 	for _, id := range ids {
 		job, err := o.Service.Registry.LoadJob(ctx, id)
@@ -429,6 +443,11 @@ func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
 			continue
 		}
 		rooms[job.RoomID] = struct{}{}
+	}
+	if indexed, err := o.rdb().SMembers(ctx, remuxRoomsKey(workerID)).Result(); err == nil {
+		for _, roomID := range indexed {
+			rooms[roomID] = struct{}{}
+		}
 	}
 	for roomID := range rooms {
 		run, err := o.LoadRun(ctx, roomID)
@@ -452,9 +471,9 @@ const runLostError = "run lost by the worker"
 
 const maxRunRestarts = 2
 
-// restartLostRun redispatches a production its worker lost, resuming at the
-// produced edge of the run's own region. False hands the failure back to the
-// ordinary path. Caller holds the room lock.
+// restartLostRun redispatches a production its worker lost or gave up on,
+// resuming at the produced edge of the run's own region. False hands the
+// failure back to the ordinary path. Caller holds the room lock.
 func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRun) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Minute)
 	defer cancel()
@@ -512,6 +531,17 @@ func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRu
 	return true
 }
 
+// failRoom gives the room's upload back and surfaces the failure to the host.
+func (o *RemuxOrchestrator) failRoom(ctx context.Context, run *RemuxRun) {
+	_ = o.Store.ReleaseUpload(ctx, run.RoomID, run.Claim)
+	if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == "uploading" {
+		_ = o.Store.SetError(ctx, run.RoomID, "remote remux failed")
+	}
+	run.State = remux.RunFailed
+	run.UpdatedAt = time.Now()
+	_ = o.saveRun(ctx, run)
+}
+
 func findRun(runs []remux.RunReport, runID string) *remux.RunReport {
 	for i := range runs {
 		if runs[i].RunID == runID {
@@ -555,8 +585,9 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 			}
 		}
 	case remux.RunFailed:
-		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error)
-		if report.Error == runLostError && current.Restarts < maxRunRestarts {
+		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error,
+			"restarts", current.Restarts)
+		if current.Restarts < maxRunRestarts {
 			_ = o.saveRun(ctx, current)
 			restart := *current
 			go func() {
@@ -568,15 +599,13 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 				if err != nil || latest == nil || latest.RunID != restart.RunID {
 					return
 				}
-				o.restartLostRun(bg, &restart)
+				if !o.restartLostRun(bg, &restart) {
+					o.failRoom(bg, &restart)
+				}
 			}()
 			return
 		}
-		_ = o.Store.ReleaseUpload(ctx, run.RoomID, current.Claim)
-		if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == "uploading" {
-			_ = o.Store.SetError(ctx, run.RoomID, "remote remux failed")
-		}
-		_ = o.saveRun(ctx, current)
+		o.failRoom(ctx, current)
 	default:
 		_ = o.saveRun(ctx, current)
 		_ = o.Store.TouchClientClaim(ctx, run.RoomID)

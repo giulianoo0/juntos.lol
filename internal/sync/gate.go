@@ -58,6 +58,7 @@ func (r *roomConn) openGate(ctx context.Context, sender *client, targetMs int64,
 		r.send(sender, Outbound{Type: "error", ErrCode: "internal_error"})
 		return
 	}
+	r.playing = false
 	stateCopy := state
 	r.broadcast(Outbound{Type: "state", State: &stateCopy})
 	if r.gate == nil {
@@ -132,6 +133,7 @@ func (r *roomConn) releaseGate() {
 	if err := r.hub.store.SetState(ctx, r.id, state); err != nil {
 		slog.ErrorContext(ctx, "persist gate release failed", "room_id", r.id, "error", err)
 	}
+	r.playing = true
 	stateCopy := state
 	r.broadcast(Outbound{Type: "state", State: &stateCopy})
 }

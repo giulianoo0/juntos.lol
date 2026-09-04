@@ -73,6 +73,7 @@ type roomConn struct {
 	stallGateReadyAt time.Time
 	lastActivity     time.Time
 	asked            bool
+	playing          bool
 	progressMu       stdsync.Mutex
 	lastProgressAt   time.Time
 
@@ -719,6 +720,7 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 		r.send(sender, Outbound{Type: "error", ErrCode: "internal_error"})
 		return
 	}
+	r.playing = state.Playing
 	stateCopy := state
 	r.broadcast(Outbound{Type: "state", State: &stateCopy})
 	switch message.Type {
@@ -808,9 +810,14 @@ func (r *roomConn) touch() {
 
 // sweepIdle asks a quiet room whether anyone is still there, and closes it if
 // the question went unanswered. It reports whether the room is gone. Only
-// rooms with someone in them; an empty one belongs to the reclaim timer.
+// rooms with someone in them; an empty one belongs to the reclaim timer. A
+// room that is playing is watching, not idle: the clock only runs while paused.
 func (r *roomConn) sweepIdle() bool {
 	if len(r.clients) == 0 {
+		return false
+	}
+	if r.playing {
+		r.touch()
 		return false
 	}
 	quiet := time.Since(r.lastActivity)

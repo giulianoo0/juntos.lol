@@ -7,7 +7,20 @@ import type { Translator } from '../i18n/useT'
  * Idle prompt whose countdown runs against the server's deadline, corrected by
  * the sync layer's offset, so every member watches the same clock. Any member
  * answering keeps the room open for everybody; dismissing it also answers.
+ * It mounts inside the fullscreen element when there is one, since a portal to
+ * the body would sit behind the player nobody can see past.
  */
+function useFullscreenElement(): HTMLElement | null {
+  const [element, setElement] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    const read = () => setElement(document.fullscreenElement as HTMLElement | null)
+    read()
+    document.addEventListener('fullscreenchange', read)
+    return () => document.removeEventListener('fullscreenchange', read)
+  }, [])
+  return element
+}
+
 export function StillThere({ deadlineMs, serverOffsetMs, onStay, onExpired, t }: {
   deadlineMs: number | null
   serverOffsetMs: number
@@ -16,6 +29,7 @@ export function StillThere({ deadlineMs, serverOffsetMs, onStay, onExpired, t }:
   t: Translator
 }) {
   const [left, setLeft] = useState(0)
+  const fullscreenElement = useFullscreenElement()
 
   useEffect(() => {
     if (deadlineMs === null) return
@@ -38,6 +52,7 @@ export function StillThere({ deadlineMs, serverOffsetMs, onStay, onExpired, t }:
       {deadlineMs !== null ? (
         <DialogContent
           className="still-there-dialog"
+          container={fullscreenElement}
           closeLabel={t('room.stillHere')}
           title={t('room.stillThereTitle')}
           description={t('room.stillThereGuide')}

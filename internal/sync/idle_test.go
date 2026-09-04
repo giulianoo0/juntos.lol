@@ -61,3 +61,26 @@ func TestAnsweringTakesTheQuestionBack(t *testing.T) {
 	require.False(t, r.sweepIdle())
 	require.False(t, r.asked)
 }
+
+func TestAPlayingRoomIsNeverAskedAndItsClockRestarts(t *testing.T) {
+	r := roomAt(idleClose+time.Hour, 1)
+	r.playing = true
+
+	require.False(t, r.sweepIdle())
+	require.False(t, r.asked)
+	require.Less(t, time.Since(r.lastActivity), time.Second)
+
+	r.playing = false
+	require.False(t, r.sweepIdle())
+	require.False(t, r.asked)
+}
+
+func TestPlayTakesBackAnOutstandingQuestion(t *testing.T) {
+	r := roomAt(idleAsk+time.Second, 1)
+	require.False(t, r.sweepIdle())
+	require.True(t, r.asked)
+
+	r.playing = true
+	require.False(t, r.sweepIdle())
+	require.False(t, r.asked)
+}

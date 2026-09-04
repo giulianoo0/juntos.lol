@@ -381,6 +381,8 @@ impl Remux {
         };
 
         const STALL: Duration = Duration::from_secs(90);
+        const UPLOAD_STALL: Duration = Duration::from_secs(600);
+        let slab = object_cap.min(16 * 1024 * 1024);
         let mut attempts = 0u32;
         let exit = 'attempts: loop {
             attempts += 1;
@@ -393,6 +395,7 @@ impl Remux {
             let mut ticker = tokio::time::interval(Duration::from_secs(2));
             let mut last_move = (0u64, std::time::Instant::now());
             let mut last_closed = run_sink.closed_count();
+            let mut starved_since: Option<std::time::Instant> = None;
             loop {
                 if Self::cancelled(entry) {
                     cleanup(&bridge);
@@ -428,9 +431,28 @@ impl Remux {
 
                 let moved = progress.load(std::sync::atomic::Ordering::Relaxed);
                 let closed = run_sink.closed_count();
+                // A full spool means ffmpeg is waiting on the uploads, not the
+                // other way round: that is the R2 link's stall, and it gets
+                // far longer before the run is given up.
+                let starved = run_sink.free_bytes() < slab;
                 if moved != last_move.0 || closed != last_closed {
                     last_move = (moved, std::time::Instant::now());
                     last_closed = closed;
+                    starved_since = None;
+                } else if starved {
+                    let since = *starved_since.get_or_insert_with(|| {
+                        tracing::warn!(run = %spec.run_id, "remux output waiting on uploads");
+                        std::time::Instant::now()
+                    });
+                    if since.elapsed() > UPLOAD_STALL {
+                        let mut process = entry.process.lock().take();
+                        if let Some(process) = process.as_mut() {
+                            process.kill().await;
+                        }
+                        cleanup(&bridge);
+                        run_sink.destroy().await;
+                        bail!("uploads stalled for {}s with the spool full", since.elapsed().as_secs());
+                    }
                 } else if last_move.1.elapsed() > STALL {
                     let mut process = entry.process.lock().take();
                     if let Some(process) = process.as_mut() {

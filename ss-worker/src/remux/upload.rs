@@ -34,7 +34,7 @@ struct PresignedObject {
 }
 
 const PRESIGN_BATCH: usize = 16;
-const PUT_RETRIES: usize = 2;
+const PUT_RETRIES: usize = 5;
 
 impl Uploader {
     pub async fn run(self, sink: Arc<Sink>, mut closed_rx: mpsc::UnboundedReceiver<ClosedObject>) -> anyhow::Result<()> {
@@ -120,7 +120,7 @@ async fn put_with_retry(
     object: &ClosedObject,
 ) -> anyhow::Result<()> {
     let mut last = None;
-    for _ in 0..=PUT_RETRIES {
+    for attempt in 0..=PUT_RETRIES {
         let bytes = tokio::fs::read(&object.path).await.context("read spool")?;
         let mut request = client.put(url).body(bytes);
         for (name, value) in headers {
@@ -131,7 +131,8 @@ async fn put_with_retry(
             Ok(r) => last = Some(anyhow::anyhow!("PUT {} failed: {}", object.name, r.status())),
             Err(e) => last = Some(e.into()),
         }
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        tracing::warn!(name = %object.name, attempt, error = %last.as_ref().map(|e| e.to_string()).unwrap_or_default(), "PUT failed; retrying");
+        tokio::time::sleep(Duration::from_millis(400 << attempt.min(5))).await;
     }
     Err(last.unwrap_or_else(|| anyhow::anyhow!("PUT failed")))
 }

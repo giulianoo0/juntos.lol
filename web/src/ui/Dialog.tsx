@@ -17,6 +17,7 @@ export function DialogContent({
   closeLabel = 'Close',
   hideTitle = false,
   onCloseClick,
+  container,
 }: {
   children: ReactNode
   className?: string
@@ -25,9 +26,11 @@ export function DialogContent({
   closeLabel?: string
   hideTitle?: boolean
   onCloseClick?: () => void
+  /** Where the modal mounts; a fullscreen element, or it stays hidden behind it. */
+  container?: HTMLElement | null
 }) {
   return (
-    <DialogPrimitive.Portal>
+    <DialogPrimitive.Portal container={container ?? undefined}>
       <DialogPrimitive.Overlay className="ui-dialog-overlay" />
       <DialogPrimitive.Content className={`ui-dialog ${className}`.trim()}>
         <div className="ui-dialog-body">
