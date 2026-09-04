@@ -5,25 +5,31 @@
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/animate/SKILL.md",
-      "computedHash": "5c7094be3a84f8083dc081d15467d0199836a7ca43891bc83f6ce22bcf23de08"
+      "computedHash": "609e30351bf518b21a8cfe87cd1111554855527075d6563605bafe61963252f7"
+    },
+    "animate-expo": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/animate-expo/SKILL.md",
+      "computedHash": "c9eaf6603b97ca61b05c7561e1045b2f58b6d84cdf8d67565bff23a9ff94ce8a"
     },
     "animation-vocabulary": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/animation-vocabulary/SKILL.md",
-      "computedHash": "d718b48fe3c7898804d588f050a2e266d82c9f5ef51da256c8cb8b5951527757"
+      "computedHash": "39319fc9a33c15be08666b3685f58666f042ff36bb902b7814c0834a5ba99df4"
     },
     "apple-design": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/apple-design/SKILL.md",
-      "computedHash": "11840b24a11d7f94f39c6aaab074750ae4e4de4ef54ee4b1dd97e16ebd485e61"
+      "computedHash": "8b94db67cb9edaad5f1501010804caa610131f1d2dfda0a27664b2e858deade3"
     },
     "ask-sonner": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/ask-sonner/SKILL.md",
-      "computedHash": "be1b04511aadb4d7d81aa8cd2b55c260a626aae534983bc8ae3fbe26bbf48632"
+      "computedHash": "23f724e97247b2003ccc479f3a9b3af8e4191a0e133b94ee6b73f8405349687f"
     },
     "composition-patterns": {
       "source": "vercel-labs/agent-skills",
@@ -35,13 +41,13 @@
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/emil-design-eng/SKILL.md",
-      "computedHash": "e71de849347050c2c573c1cf24d742d5a13459557ecffa6e562f08006f46b5b7"
+      "computedHash": "41b0a4dc1a27164fe297845a6c6850a39e9242c42c9be999967fcee9df2c5974"
     },
     "find-animation-opportunities": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/find-animation-opportunities/SKILL.md",
-      "computedHash": "91c1243164057fbf824088d12faea937878a757a7ac653e8288b775e8b27b882"
+      "computedHash": "8fb8492eb8fbed1313cb430b5831d925d9b8964ca24f3c41a6244cbd1fd98732"
     },
     "golang-benchmark": {
       "source": "samber/cc-skills-golang",
@@ -319,23 +325,35 @@
       "skillPath": "skills/golang-uber-fx/SKILL.md",
       "computedHash": "4b77c609828aa3de034247b1c19d2ed2230be89015cc930dfe1ee0bfe2be1b48"
     },
+    "gpui": {
+      "source": "longbridge/gpui-component",
+      "sourceType": "github",
+      "skillPath": "skills/gpui/SKILL.md",
+      "computedHash": "9cd5f4cfa1eb49f5b17e7b209010420f2caf97c4ca93f79910bb449a5a988a1b"
+    },
+    "gpui-component": {
+      "source": "longbridge/gpui-component",
+      "sourceType": "github",
+      "skillPath": "skills/gpui-component/SKILL.md",
+      "computedHash": "9a1eac4f97da5ad22cdccb4b6fd6c4f18b8a3943018ef698978e06907bb92e0a"
+    },
     "improve-animations": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/improve-animations/SKILL.md",
-      "computedHash": "68f17bbc4671593d2f43dba26a679243e2153ba5f26965fb7d59df52842534ff"
+      "computedHash": "eeb219a407e325b687af88db25771cc3018e3148245604112f5ac6990b6fd79c"
     },
     "pick-ui-library": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/pick-ui-library/SKILL.md",
-      "computedHash": "4b889bd6c08358499ac4a7202b8af71ffbd3485d2468f7b09d0613bbe7b24bf4"
+      "computedHash": "f8d4d2cf4677bf54b14f35f62a741add93541bfcb67863315a40164365161b49"
     },
     "prototype": {
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/prototype/SKILL.md",
-      "computedHash": "2ad8401c4deaddb54947fb65247f790e7b3d8784e35312bcbedbfb1d59cd89ce"
+      "computedHash": "f246d1f47566481d9207e1aa574bdee5454257d862919a6591283e9af2f57eab"
     },
     "react-view-transitions": {
       "source": "vercel-labs/agent-skills",
@@ -347,7 +365,7 @@
       "source": "emilkowalski/skills",
       "sourceType": "github",
       "skillPath": "skills/review-animations/SKILL.md",
-      "computedHash": "61cf8ac0c4c8e1f63385298c546b16c65ca9aec34abddcd04e821c16712d671d"
+      "computedHash": "b9f669af5ae280c19a592a94611520335a81de25c88f225bf60ae4b2d66c8c7c"
     },
     "vercel-react-best-practices": {
       "source": "vercel-labs/agent-skills",
@@ -360,6 +378,12 @@
       "sourceType": "github",
       "skillPath": "skills/web-design-guidelines/SKILL.md",
       "computedHash": "f4647ca866a3accf763777f83e7682954f0187cd6bea7eea0399796652414e8f"
+    },
+    "write-swift": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/write-swift/SKILL.md",
+      "computedHash": "ccbb74cac81765fcf2912ceba8d188fddbd75393ecb808aa1a4f6f58d9c2c828"
     }
   }
 }

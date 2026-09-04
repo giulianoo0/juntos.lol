@@ -6,9 +6,10 @@
 const TMDB = 'https://tmdb.elfhosted.com'
 
 function metadataBase(): string {
-  let language = 'en-US'
+  // Mirrors useT: pt-BR unless the viewer picked English.
+  let language = 'pt-BR'
   try {
-    if ((localStorage.getItem('ss.language') ?? navigator.language).toLowerCase().startsWith('pt')) language = 'pt-BR'
+    if (localStorage.getItem('ss.language') === 'en') language = 'en-US'
   } catch {}
   return `${TMDB}/${encodeURIComponent(JSON.stringify({ language }))}`
 }
