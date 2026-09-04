@@ -136,9 +136,23 @@ export function parseMetaDetail(payload: unknown): MetaDetail | null {
   }
 }
 
+// The addon names genres in the configured language, so the English names
+// the rows are written with get translated before they go on the URL.
+const GENRES_PT: Record<string, string> = {
+  Action: 'Ação', Comedy: 'Comédia', Animation: 'Animação', Drama: 'Drama', Crime: 'Crime',
+  Horror: 'Terror', Romance: 'Romance', Family: 'Família', Fantasy: 'Fantasia', Mystery: 'Mistério',
+  Documentary: 'Documentário', Adventure: 'Aventura', 'Science Fiction': 'Ficção científica', War: 'Guerra',
+  History: 'História', Music: 'Música', Western: 'Faroeste', Thriller: 'Thriller',
+}
+
+function localizeGenre(genre: string, base: string): string {
+  return base.includes('pt-BR') ? (GENRES_PT[genre] ?? genre) : genre
+}
+
 export async function fetchCatalog(type: MetaType, genre?: string): Promise<CatalogMeta[]> {
-  const extra = genre ? `/genre=${encodeURIComponent(genre)}` : ''
-  const payload = await getJSON<unknown>(`${metadataBase()}/catalog/${type}/tmdb.top${extra}.json`)
+  const base = metadataBase()
+  const extra = genre ? `/genre=${encodeURIComponent(localizeGenre(genre, base))}` : ''
+  const payload = await getJSON<unknown>(`${base}/catalog/${type}/tmdb.top${extra}.json`)
   return parseCatalogMetas(payload, type)
 }
 
