@@ -12,6 +12,7 @@ import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
+import { plog } from './playerLog'
 import { Settings, type SettingGroup } from './Settings'
 import { AssLayer } from './AssLayer'
 import { SubtitleLayer } from './SubtitleLayer'
@@ -222,6 +223,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
   const [unplayable, setUnplayable] = useState<{ cause: 'codec' | 'playback'; reason: string } | null>(null)
   const recoveriesRef = useRef<Recoveries>({ spent: 0, atMs: 0 })
+  // Bumped to tear the player down and build it again from the room's
+  // position, the cure for a decoder that stopped producing frames.
+  const [rebuildSeq, setRebuildSeq] = useState(0)
   const resumeRef = useRef({ generation: -1, time: 0 })
 
   const lastRevealRef = useRef(0)
@@ -323,6 +327,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         starvedSeconds = 0
         return
       }
+      // A hidden tab or a covered window keeps the clock running and stops
+      // decoding on purpose; that is the browser saving power, not a fault.
+      if (document.visibilityState !== 'visible') {
+        starvedSeconds = 0
+        return
+      }
       if (video.paused || advanced <= 0 || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
       starvedSeconds += advanced
       if (starvedSeconds < VIDEO_STARVATION_SECONDS) return
@@ -334,6 +344,15 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       }
       window.clearInterval(watchdog)
       plog('error', `clock advanced ${starvedSeconds.toFixed(1)}s with no new video frames (total ${frames}, videoWidth ${video.videoWidth})`)
+      // A decoder that went quiet after a sleep or a GPU reset comes back
+      // with a fresh player; only one that keeps going quiet is given up on.
+      const next = nextRecovery(recoveriesRef.current, Date.now())
+      if (next !== null) {
+        recoveriesRef.current = next
+        plog('warn', `rebuilding the player ${next.spent}/${MAX_RECOVERIES}`)
+        setRebuildSeq((seq) => seq + 1)
+        return
+      }
       failPlayback('video frames stopped while playback advanced')
     }, FRAME_WATCH_INTERVAL_MS)
 
@@ -463,7 +482,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, mediaReload, mediaOffsetSec, masterName, videoRef])
+  }, [room.id, room.mediaGeneration, mediaReload, mediaOffsetSec, masterName, videoRef, rebuildSeq])
 
   useEffect(() => { resumeAfterReloadRef.current = false }, [room.mediaGeneration])
 
@@ -1368,10 +1387,6 @@ function safeLanguage(language: string): string {
 }
 
 type HlsModule = typeof import('hls.js')
-
-function plog(level: 'info' | 'warn' | 'error', ...parts: unknown[]): void {
-  console[level]('[ss-player]', ...parts)
-}
 
 function codecStrippingLoader(Base: HlsModule['default']['DefaultConfig']['loader']): HlsConfig['pLoader'] {
   return class extends Base {

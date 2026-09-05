@@ -207,8 +207,58 @@ describe('Player HLS lifecycle', () => {
     expect(view.getByRole('alert')).toHaveTextContent(unplayableMessage)
   })
 
-  it('gives up when the clock advances but no video frames are displayed', async () => {
+  it('rebuilds the player when the clock advances with no video frames, and gives up only when that keeps happening', async () => {
     vi.useFakeTimers()
+    try {
+      const videoRef = createRef<HTMLVideoElement>()
+      const view = render(
+        <Player room={room} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+      )
+      const video = videoRef.current!
+      let clock = 0
+      const events: string[] = []
+      vi.mocked(console.warn).mockImplementation((...args: unknown[]) => { events.push(String(args[1])) })
+      Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
+      Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA })
+      Object.defineProperty(video, 'getVideoPlaybackQuality', {
+        configurable: true,
+        value: () => ({ totalVideoFrames: 0 }),
+      })
+
+      await act(async () => {
+        for (let tick = 0; tick < 8; tick += 1) {
+          clock += 1
+          await vi.advanceTimersByTimeAsync(1000)
+        }
+      })
+      expect(events.some((event) => event.includes('rebuilding the player 1/'))).toBe(true)
+      expect(view.queryByRole('alert')).toBeNull()
+
+      // The rebuild lands on React's own schedule; give it a turn between rounds.
+      for (let round = 0; round < 3; round += 1) {
+        await act(async () => {
+          for (let tick = 0; tick < 8; tick += 1) {
+            clock += 1
+            await vi.advanceTimersByTimeAsync(1000)
+          }
+        })
+      }
+
+      expect(events.some((event) => event.includes('rebuilding the player 2/'))).toBe(true)
+      expect(view.getByRole('alert')).toHaveTextContent(playbackFailedMessage)
+      expect(view.getByRole('alert')).not.toHaveTextContent(unplayableMessage)
+      expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('no new video frames'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not count frames the browser skips while the tab is hidden', async () => {
+    vi.useFakeTimers()
+    vi.mocked(console.warn).mockClear()
+    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
     try {
       const videoRef = createRef<HTMLVideoElement>()
       const view = render(
@@ -225,16 +275,17 @@ describe('Player HLS lifecycle', () => {
       })
 
       await act(async () => {
-        for (let tick = 0; tick < 8; tick += 1) {
+        for (let tick = 0; tick < 30; tick += 1) {
           clock += 1
           await vi.advanceTimersByTimeAsync(1000)
         }
       })
 
-      expect(view.getByRole('alert')).toHaveTextContent(playbackFailedMessage)
-      expect(view.getByRole('alert')).not.toHaveTextContent(unplayableMessage)
-      expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('no new video frames'))
+      expect(view.queryByRole('alert')).toBeNull()
+      expect(console.warn).not.toHaveBeenCalledWith('[ss-player]', expect.stringContaining('rebuilding the player'))
     } finally {
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else delete (document as { visibilityState?: unknown }).visibilityState
       vi.useRealTimers()
     }
   })

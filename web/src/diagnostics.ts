@@ -12,6 +12,7 @@
  * plain text with stable headings rather than JSON.
  */
 import type { RoomInfo } from './types'
+import { recentPlayerLog } from './player/playerLog'
 
 const VIDEO_PROBES: { label: string; config: VideoDecoderConfig }[] = [
   { label: 'H.264 (avc1.640028)', config: { codec: 'avc1.640028', codedWidth: 1920, codedHeight: 1080 } },
@@ -114,5 +115,6 @@ export async function buildDiagnostics({ room, failure, detail }: DiagnosticsInp
     section('Browser', browserLines()),
     section('Video codecs this browser decodes', video),
     section('Audio codecs this browser decodes', audio),
+    section('Player log', recentPlayerLog().length > 0 ? recentPlayerLog() : ['(empty)']),
   ].join('\n')
 }
