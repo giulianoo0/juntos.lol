@@ -126,6 +126,7 @@ export interface RoomInfo {
   chapters?: RoomChapter[] | null
   bitmapSubsSkipped: number
   producerHeartbeatMs?: number
+  screenLive?: boolean
   preparation?: RoomPreparation
   memberCount: number
   expiresAt: string

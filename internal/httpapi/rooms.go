@@ -193,6 +193,7 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"chapters":            r.Chapters,
 			"bitmapSubsSkipped":   r.BitmapSubsSkipped,
 			"producerHeartbeatMs": r.ProducerHeartbeatMs,
+			"screenLive":          r.ScreenLive,
 			"preparation":         r.Preparation,
 			"memberCount":         len(members),
 			"createdAt":           r.CreatedAt,

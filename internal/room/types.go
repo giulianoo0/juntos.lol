@@ -81,6 +81,7 @@ type Room struct {
 	ClientSubs          bool           `json:"clientSubs,omitempty"`
 	Preparation         Preparation    `json:"preparation"`
 	ProducerHeartbeatMs int64          `json:"producerHeartbeatMs,omitempty"`
+	ScreenLive          bool           `json:"screenLive,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	ExpiresAt           time.Time      `json:"expiresAt"`
 }

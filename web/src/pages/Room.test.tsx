@@ -8,7 +8,11 @@ import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '
 
 const screenStream = { getTracks: () => [], getVideoTracks: () => [] } as unknown as MediaStream
 vi.mock('../screenshare', () => ({
-  startScreenShare: vi.fn().mockResolvedValue({ disconnect: vi.fn() }),
+  screenShareSupported: vi.fn().mockReturnValue(true),
+  fetchScreenRelay: vi.fn().mockResolvedValue({ url: 'https://relay.test/token', path: 'juntos/abc123/secret.hang', publish: true }),
+  publishScreen: vi.fn().mockResolvedValue({ status: { peek: () => 'connected', subscribe: () => () => undefined }, ready: Promise.resolve(), close: vi.fn() }),
+  watchScreen: vi.fn().mockResolvedValue({ status: { peek: () => 'offline', subscribe: () => () => undefined }, close: vi.fn() }),
+  setScreenLive: vi.fn().mockResolvedValue(undefined),
   requestScreenStream: vi.fn(),
   stashScreenStream: vi.fn(),
   takeScreenStream: vi.fn().mockReturnValue(null),

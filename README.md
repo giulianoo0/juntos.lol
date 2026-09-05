@@ -17,7 +17,7 @@
 - tela de espera com a fase da preparação e uma estimativa de quando dá para começar a assistir;
 - torrents com seleção de arquivo, sem nenhum download no servidor;
 - entrada por link pedindo apenas o apelido, com aviso de quem entra e quem sai da sala;
-- compartilhamento de tela com LiveKit;
+- compartilhamento de tela ao vivo por MoQ (Media over QUIC) através de um relay da Cloudflare, com o áudio da tela quando o navegador o oferece;
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
 - catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [juntos.lol/docs](https://juntos.lol/docs).
@@ -33,7 +33,8 @@ flowchart LR
     A -->|"legendas WebVTT"| O
     B <-->|"bytes por Range, HTTPS direto"| T["ss-worker (VPS)"]
     T <-->|"DHT + trackers + peers"| P["Swarm BitTorrent"]
-    B <-->|"WebRTC"| L["LiveKit"]
+    B -->|"WebTransport (MoQ)"| L["Relay MoQ (Cloudflare)"]
+    L -->|"WebTransport (MoQ)"| V["Navegadores dos viewers"]
 ```
 
 ### Preparação do vídeo, no navegador do host
@@ -68,7 +69,7 @@ O primeiro membro criado com a sala é o controlador da reprodução. Somente el
 
 Quem abre o link da sala só precisa informar o apelido; o link já é o convite e nenhum código adicional é pedido. Deixar o campo vazio gera um nome de convidado. Entradas e saídas aparecem como um aviso temporário e como uma linha no chat, comparando a lista de participantes que o servidor transmite.
 
-O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacidades sensíveis, como a autorização do LiveKit, são aleatórias, mantidas em memória e não são persistidas em query strings ou `localStorage`.
+O apelido é enviado no primeiro frame WebSocket e não aparece na URL. Capacidades sensíveis, como a que autoriza o pedido de acesso ao relay de tela, são aleatórias, mantidas em memória e não são persistidas em query strings ou `localStorage`.
 
 ### Áudio e legendas
 
@@ -97,8 +98,7 @@ docker compose up --build
 Acesse [http://localhost:8099](http://localhost:8099). O Compose inicia:
 
 - `app`: frontend compilado, API Go e WebSocket;
-- `redis`: salas, participantes e estado sincronizado;
-- `livekit`: servidor WebRTC em modo de desenvolvimento.
+- `redis`: salas, participantes e estado sincronizado.
 
 Para encerrar:
 
@@ -153,10 +153,9 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
 | `ROOM_IDLE_SECONDS` | `90` | Tempo sem participantes até a sala ser recolhida: registro no Redis, diretório em disco e mídia no bucket. |
 | `UPLOAD_IDLE_MINUTES` | `10` | Tempo sem atividade até o claim de um remux ser devolvido. |
-| `LIVEKIT_URL` | vazio | URL WebSocket entregue aos navegadores, normalmente `wss://...`. |
-| `LIVEKIT_API_KEY` | vazio | Chave para emitir tokens LiveKit. |
-| `LIVEKIT_API_SECRET` | vazio | Segredo para emitir tokens LiveKit. |
-| `LIVEKIT_ARGS` | `--dev` no Compose | Argumentos do servidor LiveKit. |
+| `MOQ_RELAY_URL` | vazio | Relay MoQ da Cloudflare, por exemplo `https://draft-16.cloudflare.mediaoverquic.com`. Sem ele o compartilhamento de tela fica desligado. |
+| `MOQ_PUBLISH_TOKEN` | vazio | Token do relay com `publish` e `subscribe`, entregue só ao controlador da sala. |
+| `MOQ_SUBSCRIBE_TOKEN` | vazio | Token do relay só com `subscribe`, entregue aos demais participantes. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 
@@ -164,26 +163,25 @@ Valores inválidos em variáveis numéricas impedem a inicialização, em vez de
 
 ## Produção
 
-O container `app` publica apenas em loopback por padrão. Coloque um proxy TLS, como Caddy ou nginx, na frente de `127.0.0.1:8099`. Para compartilhamento de tela, configure um endereço LiveKit público e exponha as portas RTC definidas no Compose (`7881/TCP` e `50000-50100/UDP`). Não use as credenciais de desenvolvimento em produção.
+O container `app` publica apenas em loopback por padrão. Coloque um proxy TLS, como Caddy ou nginx, na frente de `127.0.0.1:8099`. Para compartilhamento de tela, crie um relay MoQ na conta Cloudflare (Media › Realtime › MoQ Relay, ou `POST /accounts/{id}/moq/relays`) e coloque a URL do relay e o par de tokens padrão nas variáveis `MOQ_*`. O relay faz o fan-out para os viewers; a VPS não carrega mídia nem expõe porta nova. Um relay aceita no máximo 10 tokens, por isso os tokens são por instalação e não por sala: o que isola uma sala da outra é o segredo no caminho do broadcast.
 
 Exemplo mínimo de variáveis:
 
 ```dotenv
 APP_BIND=127.0.0.1:8099
-LIVEKIT_URL=wss://livekit.example.com
-LIVEKIT_API_KEY=uma-chave-forte
-LIVEKIT_API_SECRET=um-segredo-forte
-LIVEKIT_ARGS=--config /etc/livekit.yaml
+MOQ_RELAY_URL=https://draft-16.cloudflare.mediaoverquic.com
+MOQ_PUBLISH_TOKEN=eyJ...
+MOQ_SUBSCRIBE_TOKEN=eyJ...
 ```
 
-O arquivo de configuração do LiveKit e segredos deve ser montado com um override do Compose mantido fora do repositório.
+Segredos e ajustes locais de deploy ficam num override do Compose mantido fora do repositório.
 
-Atualização manual da aplicação. O diretório no servidor **não é um clone git** — é uma cópia publicada via `rsync`, então `git pull` lá não existe. Os excludes protegem os três arquivos que só existem no servidor (`.env`, `docker-compose.override.yml`, `livekit.yaml`); sem eles o `--delete` os apagaria e a stack subiria sem credenciais:
+Atualização manual da aplicação. O diretório no servidor **não é um clone git** — é uma cópia publicada via `rsync`, então `git pull` lá não existe. Os excludes protegem os dois arquivos que só existem no servidor (`.env` e `docker-compose.override.yml`); sem eles o `--delete` os apagaria e a stack subiria sem credenciais:
 
 ```bash
 rsync -az --delete \
   --exclude .git/ --exclude web/node_modules/ --exclude web/dist/ --exclude data/ \
-  --exclude .env --exclude docker-compose.override.yml --exclude livekit.yaml \
+  --exclude .env --exclude docker-compose.override.yml \
   ./ usuario@servidor:/opt/ss/
 ssh usuario@servidor 'cd /opt/ss \
   && docker compose build app \
@@ -204,7 +202,8 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 | `GET` | `/media/:id/hls/*` | Playlists e segmentos HLS. |
 | `GET` | `/media/:id/subs/*` | Legendas WebVTT. |
 | `POST` | `/api/rooms/:id/subtitles` | Recebe legendas extraídas pelo navegador. |
-| `POST` | `/api/rooms/:id/screenshare/token` | Emite credencial LiveKit para um membro conectado. |
+| `POST` | `/api/rooms/:id/screenshare/token` | Entrega a URL do relay MoQ com o token do papel do membro e o caminho do broadcast da sala. |
+| `POST` | `/api/rooms/:id/screenshare/live` | O controlador avisa que começou ou parou de publicar a tela. |
 | `GET` | `/api/plugins/fetch?url=` | Faz, em nome de um plugin, a requisição que o navegador não consegue fazer sem carimbar a própria origem. Só `https`, só nomes que resolvem para endereço público, corpo limitado, com sessão e cota por hora. |
 
 ## Persistência e segurança
@@ -215,7 +214,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 - Nomes de arquivo, apelidos, IDs, caminhos de mídia, legendas e ranges são validados e limitados.
 - Rotas de API usam `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` e bloqueio de framing.
 - O Gin não confia em cabeçalhos de proxy enviados pelo cliente.
-- Tokens LiveKit só são emitidos para membros que apresentem a capacidade efêmera recebida pelo WebSocket.
+- O acesso ao relay MoQ só é entregue a membros que apresentem a capacidade efêmera recebida pelo WebSocket; o token de publicação vai só ao controlador.
 
 ## Limitações conhecidas
 
@@ -229,7 +228,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 ```text
 cmd/server/          entrada do servidor Go
 internal/config/     configuração por ambiente
-internal/httpapi/    rotas HTTP, mídia, legendas e LiveKit
+internal/httpapi/    rotas HTTP, mídia, legendas e relay de tela
 internal/media/      o lado servidor do pipeline do cliente: validação e render de playlists, publicação de legendas
 internal/objectstore/ bucket R2
 internal/room/       modelo, Redis e expiração

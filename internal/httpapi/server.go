@@ -75,7 +75,6 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
-	RegisterScreenshareRoute(r.Group("/api"), store, cfg, hub)
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
 	options.clientMediaHooks.NotifyPlaylists = waiter.Notify
@@ -86,6 +85,11 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if hub != nil {
 		onSubsStored = hub.NotifyRoomUpdated
 	}
+	var screenAuthorizer memberAuthorizer
+	if hub != nil {
+		screenAuthorizer = hub
+	}
+	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
 	var authorizer memberAuthorizer
 	if hub != nil {

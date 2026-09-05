@@ -21,9 +21,9 @@ type Config struct {
 	MaxParticipants   int
 	RoomIdleSeconds   int
 	UploadIdleMinutes int
-	LivekitURL        string
-	LivekitAPIKey     string
-	LivekitAPISecret  string
+	MoqRelayURL       string
+	MoqPublishToken   string
+	MoqSubscribeToken string
 	R2AccountID       string
 	R2Bucket          string
 	R2AccessKeyID     string
@@ -62,9 +62,6 @@ func Load() (Config, error) {
 		MaxParticipants:   20,
 		RoomIdleSeconds:   60,
 		UploadIdleMinutes: 10,
-		LivekitURL:        "",
-		LivekitAPIKey:     "",
-		LivekitAPISecret:  "",
 
 		SessionTTLDays:         7,
 		SessionsPerIPPerHour:   20,
@@ -101,9 +98,12 @@ func Load() (Config, error) {
 	if cfg.RoomIdleSeconds, err = envInt("ROOM_IDLE_SECONDS", cfg.RoomIdleSeconds); err != nil {
 		return Config{}, err
 	}
-	cfg.LivekitURL = os.Getenv("LIVEKIT_URL")
-	cfg.LivekitAPIKey = os.Getenv("LIVEKIT_API_KEY")
-	cfg.LivekitAPISecret = os.Getenv("LIVEKIT_API_SECRET")
+	cfg.MoqRelayURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("MOQ_RELAY_URL")), "/")
+	cfg.MoqPublishToken = strings.TrimSpace(os.Getenv("MOQ_PUBLISH_TOKEN"))
+	cfg.MoqSubscribeToken = strings.TrimSpace(os.Getenv("MOQ_SUBSCRIBE_TOKEN"))
+	if err := cfg.validateScreenshare(); err != nil {
+		return Config{}, err
+	}
 
 	cfg.R2Endpoint = os.Getenv("R2_ENDPOINT")
 	cfg.R2Insecure = os.Getenv("R2_INSECURE") == "1"
@@ -153,6 +153,28 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ScreenshareEnabled reports whether screen sharing has a relay to run on.
+// Rooms of every other kind work without one.
+func (c Config) ScreenshareEnabled() bool {
+	return c.MoqRelayURL != "" && c.MoqPublishToken != "" && c.MoqSubscribeToken != ""
+}
+
+// validateScreenshare accepts no relay at all or a complete one: a partial
+// setting would hand out a URL nobody can connect to.
+func (c Config) validateScreenshare() error {
+	if c.MoqRelayURL == "" && c.MoqPublishToken == "" && c.MoqSubscribeToken == "" {
+		return nil
+	}
+	if !c.ScreenshareEnabled() {
+		return fmt.Errorf("config: screen sharing needs MOQ_RELAY_URL, MOQ_PUBLISH_TOKEN and MOQ_SUBSCRIBE_TOKEN together")
+	}
+	u, err := url.Parse(c.MoqRelayURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("config: MOQ_RELAY_URL must be an https url")
+	}
+	return nil
 }
 
 // validateMedia fails the boot on incomplete object storage settings: media

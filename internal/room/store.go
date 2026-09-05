@@ -2,6 +2,8 @@ package room
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -251,6 +253,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		r.SubsVersion = n
 	}
 	r.GatingEnabled = fields["gating_disabled"] != "1"
+	r.ScreenLive = fields["screen_live"] == "1"
 	r.ClientSubs = fields["client_subs"] == "1"
 	for field, target := range map[string]*int64{
 		"duration_ms":          &r.DurationMs,
@@ -373,6 +376,44 @@ func (s *Store) SetGatingDisabled(ctx context.Context, id string, disabled bool)
 		value = "1"
 	}
 	return s.mutateRoom(ctx, id, false, "gating_disabled", value)
+}
+
+// SetScreenLive records whether the host is publishing a screen right now, so a
+// viewer knows when to subscribe instead of probing a relay that keeps no
+// history and announces nothing.
+func (s *Store) SetScreenLive(ctx context.Context, id string, live bool) error {
+	value := "0"
+	if live {
+		value = "1"
+	}
+	return s.mutateRoom(ctx, id, false, "screen_live", value)
+}
+
+// ScreenSecret returns the secret that makes the room's broadcast path
+// unguessable, minting one the first time it is asked for. The relay's tokens
+// are shared by every room, so the path is the only thing keeping one room's
+// viewers out of another's broadcast.
+func (s *Store) ScreenSecret(ctx context.Context, id string) (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("mint screen secret: %w", err)
+	}
+	result, err := s.rdb.Eval(ctx, `
+if redis.call('EXISTS', KEYS[1]) == 0 then return false end
+redis.call('HSETNX', KEYS[1], 'screen_secret', ARGV[1])
+return redis.call('HGET', KEYS[1], 'screen_secret')
+`, []string{roomKey(id)}, hex.EncodeToString(raw[:])).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get screen secret: %w", err)
+	}
+	secret, _ := result.(string)
+	if secret == "" {
+		return "", ErrNotFound
+	}
+	return secret, nil
 }
 
 // SetError marks a room as failed and stores a user-visible processing error.
@@ -604,7 +645,7 @@ redis.call('HSET', KEYS[1],
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
-  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token')
+  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token', 'screen_live')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

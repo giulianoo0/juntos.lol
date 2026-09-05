@@ -17,9 +17,9 @@ services:
       DATA_DIR: /data
       WEB_DIR: /web
       GIN_MODE: release
-      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      MOQ_RELAY_URL: ${MOQ_RELAY_URL:-}
+      MOQ_PUBLISH_TOKEN: ${MOQ_PUBLISH_TOKEN:-}
+      MOQ_SUBSCRIBE_TOKEN: ${MOQ_SUBSCRIBE_TOKEN:-}
       R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
       R2_BUCKET: ${R2_BUCKET}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
@@ -42,23 +42,11 @@ services:
       - ./web-docs:/web/docs:ro
     depends_on:
       - redis
-      - livekit
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --maxmemory-policy volatile-ttl
-
-  livekit:
-    image: livekit/livekit-server:latest
-    restart: unless-stopped
-    # For production, set LIVEKIT_ARGS=--config /etc/livekit.yaml and add the
-    # configuration through a Compose override (kept outside version control).
-    command: ${LIVEKIT_ARGS:---dev}
-    ports:
-      - "127.0.0.1:7880:7880"
-      - "7881:7881"
-      - "50000-50100:50000-50100/udp"
 
   # The torrent worker: joins swarms and serves the bytes straight to the
   # host's browser over HTTPS on its own port — never through the site's

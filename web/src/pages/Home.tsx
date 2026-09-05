@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
-import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
+import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
@@ -141,6 +141,7 @@ export function Home() {
 
   const startScreenRoom = () => {
     setManualOpen(false)
+    if (!screenShareSupported()) { setError(t('error.screenUnsupported')); return }
     void requestScreenStream().then((stream) => {
       setError('')
       setDraftNickname(nickname)
