@@ -38,6 +38,14 @@ pub struct SourcePlan {
     pub subtitles: Vec<SubtitleTrack>,
     pub bitmap_subtitles: usize,
     pub attachments: usize,
+    pub chapters: Vec<Chapter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chapter {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub title: String,
 }
 
 #[derive(Deserialize)]
@@ -46,6 +54,40 @@ struct ProbeDoc {
     streams: Vec<ProbeStream>,
     #[serde(default)]
     format: Option<ProbeFormat>,
+    #[serde(default)]
+    chapters: Vec<ProbeChapter>,
+}
+
+#[derive(Deserialize)]
+struct ProbeChapter {
+    #[serde(default)]
+    start_time: Option<String>,
+    #[serde(default)]
+    end_time: Option<String>,
+    #[serde(default)]
+    tags: Option<ProbeTags>,
+}
+
+/// ffprobe's chapter list as the room stores it: ordered, non-empty spans,
+/// titled by the file or by their number.
+fn plan_chapters(raw: &[ProbeChapter]) -> Vec<Chapter> {
+    let seconds = |v: &Option<String>| v.as_deref().and_then(|s| s.parse::<f64>().ok()).map(|s| (s.max(0.0) * 1000.0) as u64);
+    let mut out = Vec::new();
+    for (index, chapter) in raw.iter().enumerate() {
+        let (Some(start_ms), Some(end_ms)) = (seconds(&chapter.start_time), seconds(&chapter.end_time)) else { continue };
+        if end_ms <= start_ms {
+            continue;
+        }
+        let title = chapter
+            .tags
+            .as_ref()
+            .and_then(|t| t.title.clone())
+            .map(|t| t.trim().chars().take(200).collect::<String>())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| format!("{}", index + 1));
+        out.push(Chapter { start_ms, end_ms, title });
+    }
+    out
 }
 
 #[derive(Deserialize)]
@@ -106,6 +148,7 @@ fn parse_mkv_duration(tag: &str) -> Option<u64> {
 
 pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     let doc: ProbeDoc = serde_json::from_str(probe_json).context("ffprobe output")?;
+    let chapters = plan_chapters(&doc.chapters);
     let mut video_codec = None;
     let mut audios = Vec::new();
     let mut audio_index = 0usize;
@@ -181,7 +224,9 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     if duration_ms == 0 {
         bail!("source reports no usable duration");
     }
-    Ok(SourcePlan { video_codec, audios, duration_ms, subtitles, bitmap_subtitles, attachments })
+    Ok(SourcePlan { video_codec, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
+        chapters,
+    })
 }
 
 /// Output names mirror the client pipeline's grammar exactly: the server's
@@ -368,5 +413,23 @@ mod tests {
     fn region_prefixes() {
         assert_eq!(region_prefix(0), "");
         assert_eq!(region_prefix(3), "r3_");
+    }
+}
+
+#[cfg(test)]
+mod chapter_tests {
+    use super::*;
+
+    #[test]
+    fn chapters_come_from_ffprobe_in_order_with_fallback_titles() {
+        let json = r#"{"streams":[{"codec_type":"video","codec_name":"h264"}],"format":{"duration":"100"},
+            "chapters":[{"start_time":"0.000000","end_time":"10.5","tags":{"title":" Intro "}},
+                        {"start_time":"10.5","end_time":"10.5"},
+                        {"start_time":"10.5","end_time":"99.0"}]}"#;
+        let plan = plan_streams(json).unwrap();
+        assert_eq!(plan.chapters, vec![
+            Chapter { start_ms: 0, end_ms: 10_500, title: "Intro".into() },
+            Chapter { start_ms: 10_500, end_ms: 99_000, title: "3".into() },
+        ]);
     }
 }

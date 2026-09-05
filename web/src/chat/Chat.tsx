@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type KeyboardEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { SendHorizontal, X } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import type { ChatEntry } from '../types'
@@ -19,6 +19,20 @@ export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: C
   const [text, setText] = useState('')
   const [mobile, setMobile] = useState(() => matchMedia(mobileMediaQuery).matches)
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
+  // The list follows new messages only while the reader is already at the
+  // bottom; scrolling up to read history pins the view until they come back.
+  const listRef = useRef<HTMLDivElement>(null)
+  const stuckToBottom = useRef(true)
+  const onListScroll = () => {
+    const list = listRef.current
+    if (!list) return
+    stuckToBottom.current = list.scrollHeight - list.scrollTop - list.clientHeight < 48
+  }
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || !stuckToBottom.current) return
+    list.scrollTop = list.scrollHeight
+  }, [messages, open])
 
   useEffect(() => {
     const mobileQuery = matchMedia(mobileMediaQuery)
@@ -54,7 +68,7 @@ export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: C
           <X size={15} aria-hidden="true" />
         </Button>
       </header>
-      <div className="chat-messages">
+      <div className="chat-messages" ref={listRef} onScroll={onListScroll}>
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
           <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ '--i': index } as CSSProperties}>
             {message.system

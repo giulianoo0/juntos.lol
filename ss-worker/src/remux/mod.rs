@@ -255,7 +255,7 @@ impl Remux {
             size,
         });
         let probe_args: Vec<String> = [
-            "-v", "error", "-print_format", "json", "-show_format", "-show_streams", &probe_url,
+            "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", &probe_url,
         ]
         .iter()
         .map(|s| s.to_string())
@@ -366,6 +366,7 @@ impl Remux {
             source.duration_ms,
             size,
             source.audios.iter().map(|a| a.language.clone()).collect(),
+            source.chapters.iter().map(|c| serde_json::json!({ "startMs": c.start_ms, "endMs": c.end_ms, "title": c.title })).collect(),
         );
 
         let prefix = plan::region_prefix(spec.region);
@@ -509,7 +510,7 @@ impl Remux {
         entry.status.lock().produced_ms = publisher.produced_ms(&run_sink);
         let subtitles = entry.subtitles.lock().take();
         if let Some(handle) = subtitles {
-            if tokio::time::timeout(Duration::from_secs(180), handle).await.is_err() {
+            if tokio::time::timeout(Duration::from_secs(900), handle).await.is_err() {
                 tracing::warn!(run = %spec.run_id, "subtitle pass outlived the run; dropped");
             }
         }

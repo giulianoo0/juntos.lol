@@ -440,6 +440,7 @@ mod tests {
             video_codec: "h264".into(),
             audios: vec![],
             duration_ms: 1_000_000,
+            chapters: vec![],
             subtitles: vec![
                 SubtitleTrack { input_index: 2, codec: "ass".into(), language: "por".into(), title: "Português".into() },
                 SubtitleTrack { input_index: 3, codec: "subrip".into(), language: "eng".into(), title: String::new() },

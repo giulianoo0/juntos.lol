@@ -483,3 +483,27 @@ func TestStoreFleetSubtitlesNeedsTheProducerClaim(t *testing.T) {
 	require.Equal(t, "ass", got.SubtitleTracks[0].Codec)
 	require.Equal(t, "por", got.SubtitleTracks[0].Language)
 }
+
+func TestStoreFleetSubtitlesOutliveTheCompletedMedia(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	e := gin.New()
+	api := e.Group("/api")
+	RegisterClientMediaRoutes(api, store, cfg, objectstore.NewFake(), ClientMediaHooks{})
+	RegisterSubtitlesRoute(api, store, cfg, nil, func(string) {})
+	claim := claimRoom(t, e, "r1")
+
+	// The media completed: the claim is released, but its receipt stays.
+	require.NoError(t, store.StoreCompleteReceipt(t.Context(), "r1", claim, room.CompleteReceipt{Ready: true}, time.Hour))
+	require.NoError(t, store.ReleaseUpload(t.Context(), "r1", claim))
+
+	track := `{"language":"por","title":"Português","vtt":` + strconvQuote(validVTT) + `}`
+	w := postJSON(t, e, "/api/rooms/r1/subtitles/fleet",
+		`{"claim":`+strconvQuote(claim)+`,"mediaGeneration":0,"complete":true,"tracks":[`+track+`]}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	w = postJSON(t, e, "/api/rooms/r1/subtitles/fleet",
+		`{"claim":"client:other","mediaGeneration":0,"complete":true,"tracks":[`+track+`]}`)
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+}

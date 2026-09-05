@@ -62,6 +62,7 @@ pub struct Publisher {
     pub source_bytes: u64,
     pub prefix: String,
     pub audio_langs: Vec<String>,
+    chapters: Vec<serde_json::Value>,
 
     seq: u64,
     uploaded_bytes: u64,
@@ -102,6 +103,7 @@ impl Publisher {
         duration_ms: u64,
         source_bytes: u64,
         audio_langs: Vec<String>,
+        chapters: Vec<serde_json::Value>,
     ) -> Self {
         Self {
             client,
@@ -116,6 +118,7 @@ impl Publisher {
             source_bytes,
             prefix: super::plan::region_prefix(region),
             audio_langs,
+            chapters,
             seq: 0,
             uploaded_bytes: 0,
             pending: Vec::new(),
@@ -159,6 +162,7 @@ impl Publisher {
             "confirm": confirm.iter().map(|o| o.name.clone()).collect::<Vec<_>>(),
             "playlists": playlists,
             "complete": complete,
+            "chapters": self.chapters,
             "progress": { "receivedBytes": self.uploaded_bytes, "sourceBytes": self.source_bytes },
             "timeline": {
                 "durationMs": self.duration_ms,
@@ -269,7 +273,7 @@ mod master_tests {
     fn publisher(langs: Vec<String>, prefix_region: u64) -> Publisher {
         let mut p = Publisher::new(
             reqwest::Client::new(), "http://a".into(), "r".into(), "c".into(),
-            "run".into(), 0, prefix_region, 0, 60_000, 0, langs,
+            "run".into(), 0, prefix_region, 0, 60_000, 0, langs, Vec::new(),
         );
         p.uploaded_bytes = 8_000_000;
         p

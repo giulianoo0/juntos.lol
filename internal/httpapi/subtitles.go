@@ -85,7 +85,9 @@ type fleetSubtitlesRequest struct {
 }
 
 // storeFleetSubtitles takes the worker's merged tracks for the room. The claim
-// must be the room's live producer reservation; the generation must be current.
+// must be the room's producer reservation — live, or the one whose media just
+// completed: the subtitle pass walks the whole file and outlives the media by
+// minutes, and completing must not cut it off. The generation must be current.
 func storeFleetSubtitles(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
 	onSubsStored func(roomID string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -100,7 +102,7 @@ func storeFleetSubtitles(store *room.Store, cfg config.Config, publisher Subtitl
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		storedRoom, ok := authorizeClaimValue(c, store, roomID, req.Claim)
+		storedRoom, ok := authorizeSubtitleClaim(c, store, roomID, req.Claim)
 		if !ok {
 			return
 		}
@@ -404,4 +406,22 @@ func invokeSubsStoredCallback(onSubsStored func(string), roomID string) {
 		}
 	}()
 	onSubsStored(roomID)
+}
+
+// authorizeSubtitleClaim is authorizeClaimValue that also honours a claim whose
+// complete was already accepted, for as long as its receipt lives.
+func authorizeSubtitleClaim(c *gin.Context, store *room.Store, roomID, claim string) (*room.Room, bool) {
+	storedRoom, ok := loadLiveRoom(c, store, roomID)
+	if !ok {
+		return nil, false
+	}
+	held, err := store.UploadID(c.Request.Context(), roomID)
+	if err == nil && held != "" && held == claim {
+		return storedRoom, true
+	}
+	if receipt, err := store.CompleteReceiptFor(c.Request.Context(), roomID, claim); err == nil && receipt != nil {
+		return storedRoom, true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "claim_mismatch"})
+	return nil, false
 }
