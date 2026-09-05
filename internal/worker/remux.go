@@ -68,7 +68,18 @@ type RemuxOrchestrator struct {
 
 	mu      sync.Mutex
 	byRoom  map[string]*sync.Mutex
-	follows map[string]time.Time
+	follows map[string]*followState
+	// followDebounce is how long after a dispatch a further position waits
+	// before it may replace the run; a test shortens it.
+	followDebounce time.Duration
+}
+
+// followState is one room's place in the debounce: when it last moved, and
+// the position still waiting for its turn, if any.
+type followState struct {
+	last    time.Time
+	pending *int64
+	timer   *time.Timer
 }
 
 func NewRemuxOrchestrator(service *Service, store *room.Store, cfg config.Config) *RemuxOrchestrator {
@@ -77,7 +88,9 @@ func NewRemuxOrchestrator(service *Service, store *room.Store, cfg config.Config
 		Store:   store,
 		Cfg:     cfg,
 		byRoom:  map[string]*sync.Mutex{},
-		follows: map[string]time.Time{},
+		follows: map[string]*followState{},
+
+		followDebounce: followDebounce,
 	}
 }
 
@@ -297,7 +310,11 @@ func (o *RemuxOrchestrator) dispatchCancel(run *RemuxRun) {
 }
 
 const followAheadMs = 45_000
-const followBehindMs = 1_500
+
+// followBehindMs must not exceed the player's REGION_BEHIND_MS
+// (web/src/player/Player.tsx): a position the server calls covered but the
+// player will not load from an existing region is a room that waits forever.
+const followBehindMs = 1_000
 const followDebounce = 3 * time.Second
 
 // Follow tracks the room's authoritative position. Covered positions do
@@ -305,18 +322,17 @@ const followDebounce = 3 * time.Second
 // included, since a region that reached the end of the file leaves every
 // earlier gap for the next seek to fill. Buffer reports never reach here —
 // only controller state changes do.
+//
+// A position that arrives inside the debounce window is held, not dropped:
+// the newest one is replayed when the window closes, so a second seek made
+// while the first is still being prepared lands where the room actually is.
 func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	if positionMs < 0 {
 		return
 	}
-	o.mu.Lock()
-	last := o.follows[roomID]
-	if time.Since(last) < followDebounce {
-		o.mu.Unlock()
+	if !o.admitFollow(roomID, positionMs) {
 		return
 	}
-	o.follows[roomID] = time.Now()
-	o.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -370,6 +386,39 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 		replaced.UpdatedAt = time.Now()
 		_ = o.saveRun(ctx, &replaced)
 	}
+}
+
+// admitFollow says whether this position may act now. Inside the debounce
+// window it is parked as the room's pending position and a timer replays the
+// latest pending one once the window closes.
+func (o *RemuxOrchestrator) admitFollow(roomID string, positionMs int64) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	state, ok := o.follows[roomID]
+	if !ok {
+		state = &followState{}
+		o.follows[roomID] = state
+	}
+	if since := time.Since(state.last); since < o.followDebounce {
+		position := positionMs
+		state.pending = &position
+		if state.timer == nil {
+			state.timer = time.AfterFunc(o.followDebounce-since, func() {
+				o.mu.Lock()
+				state.timer = nil
+				pending := state.pending
+				state.pending = nil
+				o.mu.Unlock()
+				if pending != nil {
+					o.Follow(roomID, *pending)
+				}
+			})
+		}
+		return false
+	}
+	state.last = time.Now()
+	state.pending = nil
+	return true
 }
 
 func coveredByRegions(regions []room.MediaRegion, run *RemuxRun, positionMs int64) bool {

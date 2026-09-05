@@ -54,7 +54,6 @@ export const ptBR: Record<string, string> = {
   'room.audio': 'Áudio',
   'room.subtitles': 'Legendas',
   'room.off': 'Desligadas',
-  'room.seekBusy': 'Espera o pulo terminar antes de mexer',
   'room.controllerOnly': 'Só o líder pode controlar a reprodução',
   'room.offlineCommand': 'Reconectando à sala. Tente de novo num instante',
   'room.notController': 'A sala passou o controle para outra pessoa',

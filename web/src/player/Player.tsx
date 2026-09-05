@@ -54,6 +54,9 @@ interface PlayerProps {
 const REGION_AHEAD_MS = 30_000
 const PLAY_INTENT_TTL_MS = 5_000
 const REMOTE_ECHO_MS = 500
+// The server's followBehindMs (internal/worker/remux.go) must not exceed
+// this: a position it calls covered that no region here holds is a room that
+// waits forever.
 const REGION_BEHIND_MS = 1_000
 
 export function regionHolds(region: MediaRegion, ms: number): boolean {
@@ -544,7 +547,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 
   const notReadyRef = useRef(false)
   const [opened, setOpened] = useState(false)
-  const seekBusyRef = useRef(false)
 
   useEffect(() => { catchUp() }, [catchUp, syncState, coldWait])
 
@@ -623,10 +625,6 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const seek = useCallback((seconds: number) => {
     const video = videoRef.current
     if (!video || !isController) return
-    if (seekBusyRef.current) {
-      toast(t('room.seekBusy'))
-      return
-    }
     pendingSentServerMs.current = Date.now() + serverOffsetMs
     setPendingSeekSec(seconds)
     send('seek', { positionMs: Math.round(seconds * 1000) })
@@ -636,7 +634,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       playRequestedRef.current = false
       send('pause', { positionMs: Math.round(seconds * 1000), rate: video.playbackRate })
     }
-  }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, t, toast, videoRef])
+  }, [duration, isController, mediaOffsetSec, regions, send, serverOffsetMs, syncState, videoRef])
   if (seekRef) seekRef.current = seek
 
   useEffect(() => {
@@ -681,9 +679,12 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       return false
     }
     const ceiling = timelineEnd > 0 ? timelineEnd : Number.POSITIVE_INFINITY
-    seek(Math.min(Math.max(video.currentTime + mediaOffsetSec + delta, 0), ceiling))
+    // A step taken while a seek is still landing counts from where that seek
+    // is going, so two quick presses add up instead of the second undoing the first.
+    const from = pendingSeekSec ?? video.currentTime + mediaOffsetSec
+    seek(Math.min(Math.max(from + delta, 0), ceiling))
     return true
-  }, [timelineEnd, mediaOffsetSec, isController, refuseControl, seek, videoRef])
+  }, [timelineEnd, mediaOffsetSec, isController, pendingSeekSec, refuseControl, seek, videoRef])
 
   const applyVolume = useCallback((value: number) => {
     const video = videoRef.current
@@ -976,9 +977,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
     const timer = window.setTimeout(() => setStalledLong(true), 3_000)
     return () => window.clearTimeout(timer)
   }, [loading])
-  const seekBusy = coldWait || pendingSeekSec !== null
-  seekBusyRef.current = seekBusy
-  const controlsBlocked = seekBusy || stalledLong
+  // Play and pause wait for a region to obey them; a seek never waits, it
+  // only moves where the room is going.
+  const controlsBlocked = coldWait || pendingSeekSec !== null || stalledLong
   notReadyRef.current = controlsBlocked
 
   const expectedMs = !isController && syncState ? expectedPositionMs(syncState, Date.now() + serverOffsetMs) : null
@@ -1176,7 +1177,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
             min="0"
             max={seekMax}
             value={Math.min(scrubSec ?? pendingSeekSec ?? shownSec, seekMax)}
-            disabled={!isController || seekBusy}
+            disabled={!isController}
             onPointerDown={() => { scrubbingRef.current = true }}
             onPointerUp={(event) => {
               if (scrubbingRef.current) {

@@ -655,13 +655,14 @@ describe('Player', () => {
     fireEvent.keyDown(document, { key: 'ArrowRight' })
     expect(send).toHaveBeenCalledWith('seek', { positionMs: 35_000 })
 
-    fireEvent.keyDown(document, { key: 'ArrowLeft' })
-    expect(send).toHaveBeenCalledTimes(1)
-    video.currentTime = 35
+    // A second press before the first lands steps from where the first is going.
+    fireEvent.keyDown(document, { key: 'ArrowRight' })
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 40_000 })
+    video.currentTime = 40
     fireEvent.timeUpdate(video)
 
     fireEvent.keyDown(document, { key: 'ArrowLeft' })
-    expect(send).toHaveBeenCalledWith('seek', { positionMs: 30_000 })
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 35_000 })
     video.currentTime = 30
     fireEvent.timeUpdate(video)
 
@@ -916,6 +917,24 @@ describe('scrubbing', () => {
     fireEvent.progress(video)
     fireEvent.timeUpdate(video)
     expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
+  })
+
+  it('lets the controller seek again while a cold seek is still being prepared', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const parked = { playing: false, positionMs: 1_220_000, rate: 1, serverTimeMs: Date.now() }
+    const { container } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={parked} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    Object.defineProperty(video, 'duration', { configurable: true, value: 300 })
+    fireEvent.durationChange(video)
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    expect(scrubber).not.toBeDisabled()
+    fireEvent.pointerDown(scrubber)
+    fireEvent.change(scrubber, { target: { value: '900' } })
+    fireEvent.pointerUp(scrubber)
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 900_000 })
   })
 
   it('a play behind a cold seek resumes at the room\'s position, not the element\'s', () => {
