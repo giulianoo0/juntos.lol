@@ -5,7 +5,7 @@ import "testing"
 func TestVideoPolicy(t *testing.T) {
 	for codec, want := range map[string]VideoVerdict{
 		"h264": VideoCopy, "avc": VideoCopy, "hevc": VideoCopy, "h265": VideoCopy,
-		"vp9": VideoReject, "av1": VideoReject, "mpeg2video": VideoReject, "": VideoReject,
+		"vp9": VideoCopy, "av1": VideoCopy, "mpeg2video": VideoReject, "": VideoReject,
 	} {
 		if got := VideoPolicy(codec); got != want {
 			t.Errorf("VideoPolicy(%q) = %v, want %v", codec, got, want)

@@ -366,6 +366,7 @@ impl Remux {
             source.duration_ms,
             size,
             source.audios.iter().map(|a| a.language.clone()).collect(),
+            source.video_codecs.clone(),
             source.chapters.iter().map(|c| serde_json::json!({ "startMs": c.start_ms, "endMs": c.end_ms, "title": c.title })).collect(),
         );
 

@@ -119,13 +119,16 @@ const (
 	VideoReject
 )
 
-// VideoPolicy copies H264 and HEVC — whether a device decodes HEVC is the
-// player's problem — and rejects everything else: no hidden video transcode.
+// VideoPolicy copies H264, HEVC, AV1 and VP9 — whether a device decodes them
+// is the player's problem — and rejects everything else: no hidden video
+// transcode. Mirrored by the worker's plan.rs.
 func VideoPolicy(codec string) VideoVerdict {
 	switch codec {
 	case "h264", "avc":
 		return VideoCopy
 	case "hevc", "h265":
+		return VideoCopy
+	case "av1", "vp9":
 		return VideoCopy
 	default:
 		return VideoReject

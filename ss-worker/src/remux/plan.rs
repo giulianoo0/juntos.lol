@@ -33,6 +33,11 @@ pub struct SubtitleTrack {
 #[allow(dead_code)]
 pub struct SourcePlan {
     pub video_codec: String,
+    /// The RFC 6381 string for the video track, when the player cannot read
+    /// it off the init segment itself: hls.js infers avc1/hvc1 from the
+    /// sample entry but not av01/vp09, and without CODECS in the master it
+    /// opens the SourceBuffers wrong and fails on the first audio append.
+    pub video_codecs: Option<String>,
     pub audios: Vec<AudioTrack>,
     pub duration_ms: u64,
     pub subtitles: Vec<SubtitleTrack>,
@@ -101,6 +106,12 @@ struct ProbeStream {
     codec_type: Option<String>,
     codec_name: Option<String>,
     #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    level: Option<i64>,
+    #[serde(default)]
+    pix_fmt: Option<String>,
+    #[serde(default)]
     channels: Option<u32>,
     #[serde(default)]
     tags: Option<ProbeTags>,
@@ -138,6 +149,42 @@ fn audio_action(codec: &str, channels: u32) -> anyhow::Result<AudioAction> {
     }
 }
 
+fn bit_depth(pix_fmt: &str) -> u32 {
+    if pix_fmt.contains("12") {
+        12
+    } else if pix_fmt.contains("10") {
+        10
+    } else {
+        8
+    }
+}
+
+/// The CODECS entry for AV1 and VP9, from what ffprobe knows. The level is
+/// advisory to every browser that matters, so an unknown one gets a
+/// plausible value rather than blocking the room.
+fn video_codec_attr(codec: &str, profile: Option<&str>, level: Option<i64>, pix_fmt: Option<&str>) -> Option<String> {
+    let depth = bit_depth(pix_fmt.unwrap_or(""));
+    match codec {
+        "av1" => {
+            let profile = match profile.unwrap_or("") {
+                "High" => 1,
+                "Professional" => 2,
+                _ => 0,
+            };
+            let level = level.filter(|l| (0..=31).contains(l)).unwrap_or(8);
+            Some(format!("av01.{profile}.{level:02}M.{depth:02}"))
+        }
+        "vp9" => {
+            let profile = profile
+                .and_then(|p| p.trim_start_matches("Profile").trim().parse::<u32>().ok())
+                .unwrap_or(0);
+            let level = level.filter(|l| (10..=62).contains(l)).unwrap_or(10);
+            Some(format!("vp09.{profile:02}.{level:02}.{depth:02}"))
+        }
+        _ => None,
+    }
+}
+
 fn parse_mkv_duration(tag: &str) -> Option<u64> {
     let mut parts = tag.split(':');
     let h: u64 = parts.next()?.parse().ok()?;
@@ -150,6 +197,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     let doc: ProbeDoc = serde_json::from_str(probe_json).context("ffprobe output")?;
     let chapters = plan_chapters(&doc.chapters);
     let mut video_codec = None;
+    let mut video_codecs = None;
     let mut audios = Vec::new();
     let mut audio_index = 0usize;
     let mut subtitles = Vec::new();
@@ -167,7 +215,15 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
             Some("video") if video_codec.is_none() => {
                 let codec = stream.codec_name.clone().unwrap_or_default();
                 match codec.as_str() {
-                    "h264" | "hevc" => video_codec = Some(codec),
+                    "h264" | "hevc" | "av1" | "vp9" => {
+                        video_codecs = video_codec_attr(
+                            &codec,
+                            stream.profile.as_deref(),
+                            stream.level,
+                            stream.pix_fmt.as_deref(),
+                        );
+                        video_codec = Some(codec);
+                    }
                     other => bail!("video codec {other:?} has no matrix entry"),
                 }
             }
@@ -224,7 +280,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     if duration_ms == 0 {
         bail!("source reports no usable duration");
     }
-    Ok(SourcePlan { video_codec, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
+    Ok(SourcePlan { video_codec, video_codecs, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
         chapters,
     })
 }
@@ -354,12 +410,33 @@ mod tests {
 
     #[test]
     fn refuses_unlisted_codecs_clearly() {
-        let vp9 = PROBE.replace("h264", "vp9");
-        assert!(plan_streams(&vp9).unwrap_err().to_string().contains("matrix"));
+        let mpeg2 = PROBE.replace("h264", "mpeg2video");
+        assert!(plan_streams(&mpeg2).unwrap_err().to_string().contains("matrix"));
         let truehd = PROBE.replace("\"ac3\"", "\"truehd\"");
         assert!(plan_streams(&truehd).unwrap_err().to_string().contains("matrix"));
         let wide = PROBE.replace("\"channels\":6", "\"channels\":10");
         assert!(plan_streams(&wide).unwrap_err().to_string().contains("channels"));
+    }
+
+    #[test]
+    fn av1_and_vp9_copy_and_carry_a_codecs_string() {
+        let av1 = PROBE.replace(
+            r#"{"codec_type":"video","codec_name":"h264"}"#,
+            r#"{"codec_type":"video","codec_name":"av1","profile":"Main","level":1,"pix_fmt":"yuv420p10le"}"#,
+        );
+        let plan = plan_streams(&av1).unwrap();
+        assert_eq!(plan.video_codec, "av1");
+        assert_eq!(plan.video_codecs.as_deref(), Some("av01.0.01M.10"));
+
+        let vp9 = PROBE.replace(
+            r#"{"codec_type":"video","codec_name":"h264"}"#,
+            r#"{"codec_type":"video","codec_name":"vp9","profile":"Profile0","level":-99,"pix_fmt":"yuv420p"}"#,
+        );
+        let plan = plan_streams(&vp9).unwrap();
+        assert_eq!(plan.video_codecs.as_deref(), Some("vp09.00.10.08"));
+
+        let plan = plan_streams(PROBE).unwrap();
+        assert_eq!(plan.video_codecs, None, "avc is read off the init segment; the master stays as it was");
     }
 
     #[test]

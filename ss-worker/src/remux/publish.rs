@@ -62,6 +62,8 @@ pub struct Publisher {
     pub source_bytes: u64,
     pub prefix: String,
     pub audio_langs: Vec<String>,
+    /// CODECS for the video variant, when the player cannot infer it (AV1, VP9).
+    video_codecs: Option<String>,
     chapters: Vec<serde_json::Value>,
 
     seq: u64,
@@ -103,6 +105,7 @@ impl Publisher {
         duration_ms: u64,
         source_bytes: u64,
         audio_langs: Vec<String>,
+        video_codecs: Option<String>,
         chapters: Vec<serde_json::Value>,
     ) -> Self {
         Self {
@@ -118,6 +121,7 @@ impl Publisher {
             source_bytes,
             prefix: super::plan::region_prefix(region),
             audio_langs,
+            video_codecs,
             chapters,
             seq: 0,
             uploaded_bytes: 0,
@@ -219,8 +223,13 @@ impl Publisher {
             ));
         }
         let audio_attr = if self.audio_langs.is_empty() { String::new() } else { ",AUDIO=\"aud\"".into() };
+        let codecs_attr = match &self.video_codecs {
+            Some(video) if self.audio_langs.is_empty() => format!(",CODECS=\"{video}\""),
+            Some(video) => format!(",CODECS=\"{video},mp4a.40.2\""),
+            None => String::new(),
+        };
         out.push_str(&format!(
-            "#EXT-X-STREAM-INF:BANDWIDTH={bandwidth}{audio_attr}\n{}client_stream_0.m3u8\n",
+            "#EXT-X-STREAM-INF:BANDWIDTH={bandwidth}{codecs_attr}{audio_attr}\n{}client_stream_0.m3u8\n",
             self.prefix,
         ));
         out
@@ -271,9 +280,13 @@ mod master_tests {
     use super::*;
 
     fn publisher(langs: Vec<String>, prefix_region: u64) -> Publisher {
+        publisher_with_codecs(langs, prefix_region, None)
+    }
+
+    fn publisher_with_codecs(langs: Vec<String>, prefix_region: u64, video_codecs: Option<&str>) -> Publisher {
         let mut p = Publisher::new(
             reqwest::Client::new(), "http://a".into(), "r".into(), "c".into(),
-            "run".into(), 0, prefix_region, 0, 60_000, 0, langs, Vec::new(),
+            "run".into(), 0, prefix_region, 0, 60_000, 0, langs, video_codecs.map(str::to_string), Vec::new(),
         );
         p.uploaded_bytes = 8_000_000;
         p
@@ -288,6 +301,17 @@ mod master_tests {
         assert!(m.contains("URI=\"r2_client_stream_2.m3u8\""));
         assert!(m.ends_with("r2_client_stream_0.m3u8\n"));
         assert!(m.contains("DEFAULT=YES"));
+    }
+
+    #[test]
+    fn master_declares_codecs_the_player_cannot_infer() {
+        let m = publisher(vec!["eng".into()], 0).synthesize_master(8_000);
+        assert!(!m.contains("CODECS"), "avc stays undeclared, as it always was");
+        let m = publisher_with_codecs(vec!["eng".into()], 0, Some("av01.0.08M.10")).synthesize_master(8_000);
+        assert!(m.contains("CODECS=\"av01.0.08M.10,mp4a.40.2\""));
+        let m = publisher_with_codecs(vec![], 0, Some("vp09.00.10.08")).synthesize_master(8_000);
+        assert!(m.contains("CODECS=\"vp09.00.10.08\""));
+        assert!(!m.contains("mp4a"));
     }
 
     #[test]

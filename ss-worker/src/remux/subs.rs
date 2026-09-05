@@ -438,6 +438,7 @@ mod tests {
     fn plan() -> SourcePlan {
         SourcePlan {
             video_codec: "h264".into(),
+            video_codecs: None,
             audios: vec![],
             duration_ms: 1_000_000,
             chapters: vec![],
