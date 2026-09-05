@@ -276,6 +276,7 @@ export const ptBR: Record<string, string> = {
   'fleet.liveRooms': 'Salas abertas',
   'fleet.liveMembers': 'Pessoas assistindo',
   'fleet.disk': 'Disco',
+  'fleet.diskReserved': 'reservados para torrents',
   'fleet.transfer': 'Servindo',
   'fleet.noCap': 'sem teto',
   'fleet.limit.leases': 'leituras',

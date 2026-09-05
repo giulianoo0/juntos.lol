@@ -130,7 +130,7 @@ export function FleetStatus() {
                   value={speedLabel(speeds.get(member.id), probing, t)}
                   pending={isMeasuring(speeds.get(member.id), probing)}
                 />
-                <Fact label={t('fleet.disk')} value={diskLabel(member)} />
+                <Fact label={t('fleet.disk')} value={diskLabel(member)} note={diskNote(member, t)} />
                 <Fact
                   label={t('fleet.transfer')}
                   value={member.transferCapBps
@@ -227,6 +227,15 @@ function FleetSkeleton() {
 function diskLabel(member: FleetMember): string {
   const held = member.diskReal ?? member.diskUsed
   return member.diskQuota ? `${gib(held)} / ${gib(member.diskQuota)}` : gib(held)
+}
+
+// The meter runs on what the worker has promised to torrents, which is what
+// admits or refuses the next one; the label shows what the disk really holds.
+// When the two drift apart, say so, or a half-full meter over a near-empty
+// disk reads as a bug.
+function diskNote(member: FleetMember, t: (key: string) => string): string | undefined {
+  if (member.diskReal === undefined || member.diskUsed <= member.diskReal) return undefined
+  return `${gib(member.diskUsed)} ${t('fleet.diskReserved')}`
 }
 
 function busiest(member: FleetMember): { key: string; used: number; cap: number; ratio: number } {

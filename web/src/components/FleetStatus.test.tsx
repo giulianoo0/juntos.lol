@@ -173,6 +173,7 @@ describe('FleetStatus', () => {
     render(<FleetStatus />)
 
     await waitFor(() => expect(screen.getByText('0.3 GB / 100.0 GB')).toBeInTheDocument())
+    expect(screen.getByText(/10\.0 GB (reserved for torrents|reservados para torrents)/)).toBeInTheDocument()
   })
 
   it('names the resource the busy percentage actually came from', async () => {

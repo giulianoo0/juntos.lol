@@ -276,6 +276,7 @@ export const en: Record<string, string> = {
   'fleet.liveRooms': 'Rooms open',
   'fleet.liveMembers': 'People watching',
   'fleet.disk': 'Disk',
+  'fleet.diskReserved': 'reserved for torrents',
   'fleet.transfer': 'Serving',
   'fleet.noCap': 'no ceiling',
   'fleet.limit.leases': 'reads',
