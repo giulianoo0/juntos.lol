@@ -89,6 +89,14 @@ export function reloadVersion(region: { growing?: boolean } | null, version: num
 
 const TAP_TOGGLE_DELAY_MS = 200
 
+/**
+ * How thin the buffer must be for a `waiting` event to count as a stall the
+ * room should stop for. Chrome also raises `waiting` around seeks and decoder
+ * hiccups with a minute of media ready, and never raises it for the room's
+ * sake; the `stalled` event is not wired at all, since it only means bytes
+ * stopped arriving, which a full buffer does all the time.
+ */
+const STALL_BUFFER_SEC = 1
 const NO_SUBTITLE_TRACKS: NonNullable<RoomInfo['subtitleTracks']> = []
 
 const SEEK_STEP_SECONDS = 5
@@ -1043,8 +1051,11 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           setPlaying(false)
           reportNativeToggle(false)
         }}
-        onWaiting={() => { setLoading(true); onBuffering?.(true) }}
-        onStalled={() => { setLoading(true); onBuffering?.(true) }}
+        onWaiting={(event) => {
+          setLoading(true)
+          const video = event.currentTarget
+          if (bufferAhead(readBufferedRanges(video), video.currentTime) < STALL_BUFFER_SEC) onBuffering?.(true)
+        }}
         onSeeking={() => setLoading(true)}
         onPlaying={() => { setLoading(false); onBuffering?.(false) }}
         onSeeked={() => setLoading(false)}

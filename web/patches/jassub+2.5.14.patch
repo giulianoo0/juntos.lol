@@ -1,0 +1,48 @@
+diff --git a/node_modules/jassub/dist/worker/renderers/2d-renderer.js b/node_modules/jassub/dist/worker/renderers/2d-renderer.js
+index 512c189..75a02d1 100644
+--- a/node_modules/jassub/dist/worker/renderers/2d-renderer.js
++++ b/node_modules/jassub/dist/worker/renderers/2d-renderer.js
+@@ -4,7 +4,7 @@ export class Canvas2DRenderer {
+     bufferCanvas = new OffscreenCanvas(1, 1);
+     bufferCtx = this.bufferCanvas.getContext('2d', {
+         alpha: true,
+-        desynchronized: true,
++        desynchronized: false,
+         willReadFrequently: false
+     });
+     _scheduledResize;
+@@ -19,7 +19,7 @@ export class Canvas2DRenderer {
+         this.canvas = canvas;
+         this.ctx = canvas.getContext('2d', {
+             alpha: true,
+-            desynchronized: true,
++            desynchronized: false,
+             willReadFrequently: false
+         });
+         if (!this.ctx)
+diff --git a/node_modules/jassub/dist/worker/renderers/webgl1-renderer.js b/node_modules/jassub/dist/worker/renderers/webgl1-renderer.js
+index c4c319d..f64d30e 100644
+--- a/node_modules/jassub/dist/worker/renderers/webgl1-renderer.js
++++ b/node_modules/jassub/dist/worker/renderers/webgl1-renderer.js
+@@ -125,7 +125,7 @@ export class WebGL1Renderer {
+             depth: false,
+             preserveDrawingBuffer: false,
+             stencil: false,
+-            desynchronized: true,
++            desynchronized: false,
+             powerPreference: 'high-performance'
+         });
+         if (!this.gl) {
+diff --git a/node_modules/jassub/dist/worker/renderers/webgl2-renderer.js b/node_modules/jassub/dist/worker/renderers/webgl2-renderer.js
+index 491c112..134c754 100644
+--- a/node_modules/jassub/dist/worker/renderers/webgl2-renderer.js
++++ b/node_modules/jassub/dist/worker/renderers/webgl2-renderer.js
+@@ -134,7 +134,7 @@ export class WebGL2Renderer {
+             depth: false,
+             preserveDrawingBuffer: false,
+             stencil: false,
+-            desynchronized: true,
++            desynchronized: false,
+             powerPreference: 'high-performance'
+         });
+         if (!this.gl) {

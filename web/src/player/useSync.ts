@@ -137,6 +137,12 @@ export function useSync(
       }
       break
     }
+    // A stall the buffer has since outgrown is over, whether or not the
+    // element fired a playing event to say so: a stopped element never does.
+    if (bufferingRef.current && bufferAheadMs >= GATE_READY_BUFFER_MS) {
+      bufferingRef.current = false
+      setBuffering(false)
+    }
     send('ready', { positionMs, bufferAheadMs, stalled: bufferingRef.current })
   }, [send, videoRef])
 

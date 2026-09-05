@@ -13,8 +13,10 @@ ENV VITE_DISCORD_URL=$DISCORD_URL
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 # The install hook that keeps public/matroska-subtitles.min.js in step with
-# the package runs as part of `npm ci`, so its script has to be here already.
+# the package runs as part of `npm ci`, so its script has to be here already,
+# and so do the patches it applies to node_modules.
 COPY web/scripts ./scripts
+COPY web/patches ./patches
 RUN npm ci
 COPY web/ ./
 RUN npm run build

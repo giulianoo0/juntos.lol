@@ -3,6 +3,8 @@ import type JASSUB from 'jassub'
 
 import jassubDefaultFont from 'jassub/dist/default.woff2?url'
 import jassubWorkerUrl from 'jassub/dist/worker/worker.js?worker&url'
+import jassubWasmUrl from 'jassub/dist/wasm/jassub-worker.wasm?url'
+import jassubModernWasmUrl from 'jassub/dist/wasm/jassub-worker-modern.wasm?url'
 
 const READY_TIMEOUT_MS = 20_000
 
@@ -77,6 +79,8 @@ export const AssLayer = memo(function AssLayer({ videoRef, subUrl, fontUrls, tim
           // default font must go through fonts as an absolute URL.
           fonts: [new URL(jassubDefaultFont, location.href).href, ...fontUrls],
           workerUrl: workerUrl(),
+          wasmUrl: jassubWasmUrl,
+          modernWasmUrl: jassubModernWasmUrl,
           availableFonts: { 'liberation sans': jassubDefaultFont },
           defaultFont: 'liberation sans',
           timeOffset: offsetRef.current,

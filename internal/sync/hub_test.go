@@ -545,6 +545,21 @@ func TestHubStopsTheRoomWhenSomeoneStallsMidPlayback(t *testing.T) {
 	}
 }
 
+func TestHubDoesNotStopForAStallReportedOverAFullBuffer(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	host, guest := startedRoom(t, server)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 45_000, BufferAheadMs: 120_000, Stalled: true}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(300*time.Millisecond)))
+		var event Outbound
+		require.Error(t, conn.ReadJSON(&event), "the room stopped for a stall over %d ms of buffer: %+v", 120_000, event)
+	}
+}
+
 func TestHubIgnoreLetsTheRoomCarryOnWithoutTheStalledMember(t *testing.T) {
 	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.gateTimeout = time.Minute
