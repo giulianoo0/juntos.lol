@@ -4,6 +4,7 @@ import { Chat } from '../chat/Chat'
 import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
+import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
@@ -595,6 +596,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       <header className="room-header">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
+          <JLocalStatus />
           {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
@@ -651,8 +653,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             aria-pressed={chatOpen}
             onClick={() => setChatOpen((open) => !open)}
           />
+          <JLocalDownload />
         </div>
       </header>
+      <JLocalModal />
       <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
         <section className="media-column">
           {isScreenRoom ? (

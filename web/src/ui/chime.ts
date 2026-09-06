@@ -1,6 +1,7 @@
 /**
- * The room's small sounds: a two-note blip for someone arriving and a single
- * softer one for a message from someone else.
+ * The room's small sounds: a two-note blip for someone arriving, a single
+ * softer one for a message from someone else, and a short rising triad for
+ * the moment the J Local companion app connects.
  *
  * Synthesised rather than fetched: each is an oscillator or two and an
  * envelope, so a sound file would be a network request, a hosting decision and
@@ -54,4 +55,12 @@ export function playJoinChime(): void {
 
 export function playMessageChime(): void {
   playNotes([{ frequency: 880, startMs: 0, durationMs: 70, peak: 0.035 }])
+}
+
+export function playJLocalChime(): void {
+  playNotes([
+    { frequency: 1046.5, startMs: 0, durationMs: 70, peak: 0.04 },
+    { frequency: 1318.5, startMs: 70, durationMs: 70, peak: 0.04 },
+    { frequency: 1568, startMs: 140, durationMs: 110, peak: 0.04 },
+  ])
 }
