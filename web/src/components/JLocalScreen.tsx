@@ -50,9 +50,11 @@ const FRAME_RATES = [30, 60] as const
 
 /** Whatever GET /capture/displays answers, a usable list or nothing. Never throws. */
 function parseDisplays(body: unknown): JLocalDisplay[] {
-  if (!Array.isArray(body)) return []
+  // The app wraps the list: {displays: [...]}. A bare array still parses.
+  const list = Array.isArray(body) ? body : (body as { displays?: unknown } | null)?.displays
+  if (!Array.isArray(list)) return []
   const displays: JLocalDisplay[] = []
-  for (const entry of body) {
+  for (const entry of list) {
     if (typeof entry !== 'object' || entry === null) continue
     const { id, name, width, height } = entry as Record<string, unknown>
     if ((typeof id !== 'string' && typeof id !== 'number') || typeof name !== 'string') continue

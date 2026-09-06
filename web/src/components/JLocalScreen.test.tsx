@@ -16,10 +16,11 @@ const CAPS = {
   },
 }
 
-const DISPLAYS = [
-  { id: '1', name: 'Main', width: 2560, height: 1440 },
-  { id: '2', name: 'Side', width: 1920, height: 1080 },
-]
+// Real app shape: numeric ids inside the {displays} envelope.
+const DISPLAYS = { displays: [
+  { id: 1, name: 'Main', width: 2560, height: 1440 },
+  { id: 2, name: 'Side', width: 1920, height: 1080 },
+] }
 
 /** Routes /health and /capabilities to the gate; the displays list answers from overrides. */
 function stubFetch(displays: unknown, displaysOk = true): void {
