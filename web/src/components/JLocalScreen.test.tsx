@@ -232,4 +232,58 @@ describe('jlocal screen panel', () => {
     fireEvent.keyDown(document.body, { key: 'Escape' })
     await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
   })
+
+  it('polls a per-display snapshot, shimmering until the first frame', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+
+    // Decorative frame (alt="") has no img role: query the pane directly.
+    const frame = document.querySelector('.jscreen-preview')
+    expect(frame).not.toBeNull()
+    expect(frame?.getAttribute('src')).toContain('display_id=1')
+    expect(frame?.getAttribute('src')).toContain('width=960')
+    // No void while the poll is in flight: shimmer until a frame lands.
+    expect(document.querySelector('.jscreen-preview-shimmer')).not.toBeNull()
+    if (frame) fireEvent.load(frame)
+    expect(document.querySelector('.jscreen-preview-shimmer')).toBeNull()
+  })
+
+  it('previews the picked window on the Apps tab', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: /^Apps$/i }))
+    expect(await screen.findByRole('radio', { name: /Terminal/ })).toBeInTheDocument()
+    // First window is auto-selected; picking another remounts the preview.
+    expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toContain('window_id=7')
+    fireEvent.click(screen.getByRole('radio', { name: /Terminal/ }))
+    const frame = document.querySelector('.jscreen-preview')
+    expect(frame).not.toBeNull()
+    expect(frame?.getAttribute('src')).toContain('window_id=9')
+    expect(frame?.getAttribute('src')).toContain('width=960')
+  })
+
+  it('shows the permission hint in the pane on 503', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const target = String(url)
+      if (target.endsWith('/health')) return { ok: true, json: async () => ({ name: 'jlocal', version: 'v0.0.1' }) }
+      if (target.endsWith('/capabilities')) return { ok: true, status: 200, json: async () => CAPS }
+      if (target.endsWith('/capture/displays')) return { ok: true, status: 200, json: async () => DISPLAYS }
+      if (target.includes('/capture/snapshot')) return { ok: false, status: 503 }
+      return { ok: true, json: async () => ({}) }
+    }))
+    await openWithCaps()
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+
+    const frame = document.querySelector('.jscreen-preview')
+    expect(frame).not.toBeNull()
+    if (frame) fireEvent.error(frame)
+    expect(await screen.findByText(/Screen Recording|Gravação de Tela/i)).toBeInTheDocument()
+    expect(document.querySelector('.jscreen-preview-pane img')).toBeNull()
+  })
 })

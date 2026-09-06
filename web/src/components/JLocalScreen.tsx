@@ -10,29 +10,53 @@ import { Dropdown } from '../catalog/Dropdown'
 import './jlocalScreen.css'
 
 /**
- * Live thumbnail of what the app sees. Polls /capture/preview.jpg once a
- * second while the cached caps advertise capture, and hides itself on the
- * first 404 — the app answers 404 while idle, so no preview exists yet.
- * The pane holds a 16:9 box; without a frame there is no box at all.
+ * Live snapshot of the picked target. Polls GET
+ * /capture/snapshot?display_id=<id>&width=960 (window_id on the Apps tab)
+ * every second with a cache-buster; the parent remounts per target via key,
+ * so switching targets restarts polling, shimmer, and denial from scratch.
+ * Until the first frame lands the pane shows a 16:9 shimmer skeleton, never
+ * a void; a 503 (permission or capture unavailable) swaps the pane for the
+ * inline permission hint, while anything else is transient and keeps the
+ * shimmer polling. The pane is capped (16:9, 320px) so tall content never
+ * balloons the panel.
  */
-function JLocalPreview() {
-  const allowed = getCachedJLocalCapabilities()?.screen.capture === true
-  const [frame, setFrame] = useState(0)
-  const [failed, setFailed] = useState(false)
+function JLocalPreview({ target }: { target: { kind: 'display' | 'window'; id: string } }) {
+  const t = useT()
+  const idParam = target.kind === 'window' ? 'window_id' : 'display_id'
+  const base = `${JLOCAL_ORIGIN}/capture/snapshot?${idParam}=${encodeURIComponent(target.id)}&width=960`
+  const [tick, setTick] = useState(0)
+  const [loaded, setLoaded] = useState(false)
+  const [denied, setDenied] = useState(false)
   useEffect(() => {
-    if (!allowed || failed) return
-    const timer = window.setInterval(() => setFrame((value) => value + 1), 1000)
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000)
     return () => window.clearInterval(timer)
-  }, [allowed, failed])
-  if (!allowed || failed) return null
+  }, [base])
+  if (denied) {
+    return (
+      <div className="jscreen-preview-pane is-denied">
+        <p role="alert">{t('jlocal.screenStartError')}</p>
+      </div>
+    )
+  }
   return (
     <div className="jscreen-preview-pane">
+      {loaded ? null : (
+        <div className="jscreen-preview-shimmer" role="status" aria-label={t('jlocal.screenDisplayLoading')} />
+      )}
       <img
-        alt=""
+        key={tick}
         className="jscreen-preview"
-        key={frame}
-        src={`${JLOCAL_ORIGIN}/capture/preview.jpg`}
-        onError={() => setFailed(true)}
+        src={`${base}&t=${tick}`}
+        alt=""
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          // An <img> hides the status, so probe it: only a 503 (permission
+          // or capture unavailable) turns the pane into the hint — anything
+          // else is transient and keeps the shimmer polling.
+          void fetch(base)
+            .then((response) => { if (response.status === 503) setDenied(true) })
+            .catch(() => undefined)
+        }}
       />
     </div>
   )
@@ -251,7 +275,9 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
               ))}
             </div>
           ) : null}
-          {canPickDisplay ? <JLocalPreview /> : null}
+          {canPickDisplay && displayId ? (
+            <JLocalPreview key={`display-${displayId}`} target={{ kind: 'display', id: displayId }} />
+          ) : null}
         </>
       ) : (
         <>
@@ -280,6 +306,9 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
                 </button>
               ))}
             </div>
+          ) : null}
+          {canPickWindow && windowId ? (
+            <JLocalPreview key={`window-${windowId}`} target={{ kind: 'window', id: windowId }} />
           ) : null}
         </>
       )}
