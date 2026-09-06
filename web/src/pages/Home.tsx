@@ -384,6 +384,7 @@ export function Home() {
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
+          <JLocalStatus />
         </div>
         <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
           {(['catalog', 'manual', 'status'] as const).map((value) => (
@@ -409,7 +410,6 @@ export function Home() {
           ))}
         </div>
         <div className="header-end">
-          <JLocalStatus />
           <BuildInfo label={t('home.source')} />
           <DiscordLink label={t('home.discord')} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>

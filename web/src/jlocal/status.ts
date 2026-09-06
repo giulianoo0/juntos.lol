@@ -3,7 +3,7 @@ import { playJLocalChime } from '../ui/chime'
 
 // The companion app's fixed loopback origin. One port, never scanned:
 // the web UI probes exactly this, and the app refuses to hop.
-export const JLOCAL_ORIGIN = 'http://127.0.0.1:4173'
+export const JLOCAL_ORIGIN = 'http://127.0.0.1:40392'
 const PROBE_TIMEOUT_MS = 1500
 const POLL_MS = 10000
 

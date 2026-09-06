@@ -594,9 +594,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     ) : null}
     <main className="room-shell room-enter">
       <header className="room-header">
-        <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
+        <div className="room-heading"><JLocalStatus /><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
         <div className="header-actions">
-          <JLocalStatus />
           {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}

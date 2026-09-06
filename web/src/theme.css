@@ -83,6 +83,7 @@ h1, h2, p { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .prep-bar > span, .prep-bar.is-indeterminate::after { animation: none; } }
 .room-shell { height: 100dvh; padding: 12px; overflow: hidden; }.room-header { height: 56px; width: 100%; padding: 0 14px 0 18px; border: 0; background: transparent; position: relative; z-index: 20; }
 .room-heading { min-width: 0; flex: 1; }.room-header > div, .header-actions { display: flex; align-items: center; gap: 8px; }.room-file { color: var(--text-dim); max-width: min(52vw, 720px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.header-actions { flex: 0 0 auto; }.header-actions button:not(.icon-button) { padding: 7px 11px; }.header-actions button { border: 0; border-radius: 999px; background: rgba(255,255,255,.055); }
+.room-heading .jlocal-status { flex: 0 0 auto; }
 .media-switch-menu { display: grid; gap: 2px; padding: 4px 6px 6px; }
 .media-switch-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 11px; border: 0; border-radius: 10px; background: transparent; text-align: left; font-size: 12.5px; white-space: nowrap; }
 .media-switch-menu button:hover { background: rgba(255,255,255,.06); }
