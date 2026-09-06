@@ -13,7 +13,7 @@ function detectOS(): 'win' | 'mac' | 'linux' {
   return 'linux'
 }
 
-/** Left side of the header's right container: connected or not, opens the modal. Silent. */
+/** Header status pill: connected or not, opens the download modal. Silent. */
 export function JLocalStatus() {
   const { connected, setModal } = useJLocal()
   const t = useT()
@@ -70,27 +70,31 @@ export function JLocalModal() {
         <ul className="jlocal-os-list">
           {OS_ROWS.map((row) => (
             <li key={row.id} className={`jlocal-os ${os === row.id ? 'is-current' : ''}`}>
-              <span className="jlocal-os-name">{t(`jlocal.${row.id}`)}</span>
-              <span className="jlocal-os-file">{t(row.file)}</span>
+              <span className="jlocal-os-text">
+                <span className="jlocal-os-name">{t(`jlocal.${row.id}`)}</span>
+                <span className="jlocal-os-file">{t(row.file)}</span>
+              </span>
               <a className="jlocal-os-link" href={RELEASES_URL} target="_blank" rel="noreferrer">{t('jlocal.get')}</a>
             </li>
           ))}
         </ul>
         <p className="jlocal-step">{t('jlocal.stepOpen')}</p>
         <p className="jlocal-step">{t('jlocal.stepConnect')}</p>
-        <div className="jlocal-actions">
+        <div className="torrent-actions">
           {connected ? (
             <span className="jlocal-connected">
               <Check size={15} aria-hidden="true" />{t('jlocal.connected')}{version ? ` · ${version}` : ''}
             </span>
           ) : (
-            <button type="button" className="primary-button" disabled={connecting} onClick={() => connect()}>
-              {connecting ? t('jlocal.connecting') : t('jlocal.connect')}
-            </button>
+            <>
+              <button type="button" className="primary-button" disabled={connecting} onClick={() => connect()}>
+                {connecting ? t('jlocal.connecting') : t('jlocal.connect')}
+              </button>
+              <button type="button" className="jlocal-probe" onClick={() => connect()}>
+                {t('jlocal.retry')}
+              </button>
+            </>
           )}
-          <button type="button" className="jlocal-probe" onClick={() => connect()}>
-            {t('jlocal.retry')}
-          </button>
         </div>
         <p className="jlocal-origin">{JLOCAL_ORIGIN}</p>
       </DialogContent>

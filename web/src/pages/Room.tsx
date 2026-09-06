@@ -5,11 +5,14 @@ import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
+import { JLocalScreenModal } from '../components/JLocalScreen'
+import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
+import { useJLocal } from '../jlocal/status'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
+import { Check, Compass, Crown, Download, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -315,6 +318,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
+  const [screenOpen, setScreenOpen] = useState(false)
+  const screenFallbackRef = useRef<(() => void) | null>(null)
+  const openJLocalScreen = (fallback: () => void) => { screenFallbackRef.current = fallback; setScreenOpen(true) }
+  const useBrowserForScreen = () => { setScreenOpen(false); screenFallbackRef.current?.(); screenFallbackRef.current = null }
   const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
@@ -419,7 +426,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })
   }
 
-  const chooseScreen = () => {
+  const chooseScreenNative = () => {
     if (!screenShareSupported()) { setSourceError('error.screenUnsupported'); return }
     void requestScreenStream().then((stream) => {
       stashScreenStream(room.id, stream)
@@ -434,6 +441,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     }).catch((error: unknown) => {
       if (!isScreenShareCancelled(error)) setSourceError('changeFailed')
     })
+  }
+
+  const chooseScreen = () => {
+    if (isJLocalCaptureAvailable()) { openJLocalScreen(chooseScreenNative); return }
+    chooseScreenNative()
   }
 
   const chatEntries = useMemo((): ChatEntry[] => [
@@ -656,6 +668,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         </div>
       </header>
       <JLocalModal />
+      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={useBrowserForScreen} />
       <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
         <section className="media-column">
           {isScreenRoom ? (
@@ -666,6 +679,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               isController={sync.isController}
               screenLive={liveRoom.screenLive === true}
               t={t}
+              onJLocalScreen={openJLocalScreen}
             />
           ) : (
             <Player
@@ -935,6 +949,7 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
   t: Translator
 }) {
   const pick = (close: () => void, action: () => void) => () => { close(); action() }
+  const { setModal } = useJLocal()
   return (
     <MorphingMenu
       align="end"
@@ -958,6 +973,9 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
           </button>
           <button type="button" onClick={pick(close, onScreen)}>
             <MonitorUp size={15} aria-hidden="true" />{t('room.switchScreen')}
+          </button>
+          <button type="button" onClick={pick(close, () => setModal(true))}>
+            <Download size={15} aria-hidden="true" />{t('jlocal.screenUpsell')}
           </button>
         </div>
       )}
@@ -1006,13 +1024,14 @@ const SCREEN_WATCH_RETRY_MS = 4_000
  * announces nothing, so "live" comes from the room, not from the relay, and a
  * subscription that stays silent is retried rather than trusted.
  */
-function ScreenStage({ roomId, memberId, capability, isController, screenLive, t }: {
+function ScreenStage({ roomId, memberId, capability, isController, screenLive, t, onJLocalScreen }: {
   roomId: string
   memberId: string
   capability: string
   isController: boolean
   screenLive: boolean
   t: Translator
+  onJLocalScreen: (fallback: () => void) => void
 }) {
   const previewRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1111,7 +1130,7 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
     return () => clearTimeout(timer)
   }, [isController, screenLive, watchStatus, attempt])
 
-  const startSharing = () => {
+  const startSharingNative = () => {
     setFailed(false)
     void requestScreenStream().then(async (stream) => {
       try {
@@ -1123,6 +1142,11 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
     }).catch((error: unknown) => {
       if (!isScreenShareCancelled(error)) setFailed(true)
     })
+  }
+
+  const startSharing = () => {
+    if (isJLocalCaptureAvailable()) { onJLocalScreen(startSharingNative); return }
+    startSharingNative()
   }
 
   const hint = !supported ? t('room.screenUnsupported')

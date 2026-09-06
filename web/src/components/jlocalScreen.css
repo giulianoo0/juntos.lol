@@ -1,0 +1,63 @@
+/* The companion-app screen modal.
+ *
+ * Kept in its own file rather than in theme.css: it is one screen's worth of
+ * styling, and the tokens it borrows are read with fallbacks so it looks right
+ * whether or not the theme has grown them yet. The start button reuses the
+ * global .primary-button; everything else here wears the .jscreen- prefix.
+ */
+
+.ui-dialog.jscreen-dialog { width: min(480px, calc(100vw - 32px)); }
+
+.jscreen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.jscreen-field { display: grid; gap: 7px; }
+.jscreen-field span { color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
+.jscreen-field select {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: var(--r-field, 14px);
+  background: var(--well, rgba(255, 255, 255, .05));
+  color: var(--text, #fff);
+  font-size: 14px;
+}
+
+.jscreen-audio { display: grid; gap: 8px; margin: 16px 0 0; padding: 0; border: 0; }
+.jscreen-audio label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text, #fff);
+  font-size: 13.5px;
+}
+.jscreen-audio input { width: auto; accent-color: var(--primary, #ff7a45); }
+
+.jscreen-apps {
+  margin-top: 12px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: var(--r-field, 14px);
+  background: rgba(255, 255, 255, .03);
+}
+.jscreen-apps p { margin: 0; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 13px; }
+
+.jscreen-error {
+  margin: 12px 0 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(239, 107, 115, .35);
+  border-radius: var(--r-field, 14px);
+  background: rgba(239, 107, 115, .1);
+  color: #ffc9cc;
+  font-size: 13px;
+}
+
+.jscreen-actions { margin-top: 18px; display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+
+@media (max-width: 620px) {
+  .ui-dialog.jscreen-dialog { width: 100%; }
+  .jscreen-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jscreen-actions .primary-button { box-shadow: none; }
+}

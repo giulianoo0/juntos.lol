@@ -876,17 +876,24 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .jlocal-download { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border: 0; border-radius: 999px; color: white; background: var(--primary); font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(255,122,69,.24), inset 0 1px rgba(255,255,255,.2); white-space: nowrap; }
 .jlocal-download:hover { background: #FF9366; }
 .header-actions .jlocal-download { padding: 7px 12px; font-size: 12.5px; }
-.jlocal-state { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--text); font-size: 13.5px; font-weight: 600; }
-.jlocal-step { margin: 12px 0 8px; color: var(--text-dim); font-size: 13px; font-weight: 600; }
-.jlocal-os-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
-.jlocal-os { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 12.5px; }
-.jlocal-os.is-current { border-color: rgba(255,122,69,.5); background: rgba(255,122,69,.07); }
-.jlocal-os-name { flex: 0 0 auto; color: var(--text); font-weight: 700; }
-.jlocal-os-file { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
-.jlocal-os-link { flex: 0 0 auto; color: #FFB794; font-weight: 600; }
-.jlocal-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.ui-dialog.jlocal-dialog { width: min(480px, calc(100vw - 32px)); }
+.jlocal-state { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 16px; padding: 6px 12px 6px 10px; border-radius: 999px; background: rgba(255,255,255,.05); color: var(--text); font-size: 13px; font-weight: 600; }
+.jlocal-state:has(.jlocal-dot.is-on) { background: rgba(52,211,153,.12); }
+.jlocal-step { margin: 14px 0 8px; color: var(--text-dim); font-size: 13px; font-weight: 600; }
+.jlocal-os-list { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 8px; }
+.jlocal-os { display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 14px; border-radius: 14px; background: rgba(255,255,255,.04); font-size: 12.5px; animation: jlocal-row-in 420ms var(--ease) backwards; }
+.jlocal-os:nth-child(2) { animation-delay: 80ms; }
+.jlocal-os:nth-child(3) { animation-delay: 160ms; }
+@keyframes jlocal-row-in { from { opacity: 0; transform: translateY(8px); filter: blur(6px); } }
+.jlocal-os.is-current { background: rgba(255,122,69,.07); box-shadow: inset 0 0 0 1px rgba(255,122,69,.5); }
+.jlocal-os-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.jlocal-os-name { color: var(--text); font-size: 14px; font-weight: 700; }
+.jlocal-os-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 12px; }
+.jlocal-os-link { flex: 0 0 auto; padding: 8px 16px; border-radius: 999px; background: rgba(255,122,69,.14); color: #FFB794; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.jlocal-os-link:hover { background: rgba(255,122,69,.26); color: #fff; }
 .jlocal-connected { display: inline-flex; align-items: center; gap: 6px; color: #34d399; font-size: 13.5px; font-weight: 700; }
-.jlocal-probe { border: 0; background: transparent; color: var(--text-dim); font-size: 12.5px; padding: 8px 4px; }
+.jlocal-probe { border: 0; background: transparent; color: var(--text-dim); font-size: 13px; font-weight: 600; padding: 10px 6px; }
 .jlocal-probe:hover { color: var(--text); }
-.jlocal-origin { margin: 14px 0 0; color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-@media (max-width: 620px) { .jlocal-label { display: none; } .jlocal-status { padding: 7px 10px; } }
+.jlocal-origin { margin: 14px 0 0; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; opacity: .7; }
+@media (max-width: 620px) { .jlocal-label { display: none; } .jlocal-status { padding: 7px 10px; } .ui-dialog.jlocal-dialog { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .jlocal-os { animation: none; } }

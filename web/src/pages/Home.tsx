@@ -7,6 +7,8 @@ import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stas
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
+import { JLocalScreenModal } from '../components/JLocalScreen'
+import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
 import { PluginsPanel } from '../plugins/PluginsPanel'
@@ -100,6 +102,7 @@ export function Home() {
   const { toast } = useToast()
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
+  const [screenOpen, setScreenOpen] = useState(false)
   const [joinDraft, setJoinDraft] = useState('')
   const [joinError, setJoinError] = useState('')
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
@@ -140,7 +143,7 @@ export function Home() {
     }
     : null
 
-  const startScreenRoom = () => {
+  const startScreenRoomNative = () => {
     setManualOpen(false)
     if (!screenShareSupported()) { setError(t('error.screenUnsupported')); return }
     void requestScreenStream().then((stream) => {
@@ -150,6 +153,11 @@ export function Home() {
     }).catch((error: unknown) => {
       if (!isScreenShareCancelled(error)) setError(t('error.screenshare'))
     })
+  }
+
+  const startScreenRoom = () => {
+    if (isJLocalCaptureAvailable()) { setScreenOpen(true); return }
+    startScreenRoomNative()
   }
 
   const discardPending = (media: PendingMedia | null) => {
@@ -419,6 +427,7 @@ export function Home() {
         </div>
       </header>
       <JLocalModal />
+      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={() => { setScreenOpen(false); startScreenRoomNative() }} />
 
       <section className="catalog-stage">
         {view === 'status' ? (

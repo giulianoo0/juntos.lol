@@ -10,7 +10,6 @@ function stubHealth(body: unknown, ok = true): void {
 describe('jlocal header', () => {
   beforeEach(() => {
     resetJLocalForTests()
-    localStorage.clear()
   })
 
   afterEach(() => vi.unstubAllGlobals())
