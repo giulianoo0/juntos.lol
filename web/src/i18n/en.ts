@@ -322,6 +322,8 @@ export const en: Record<string, string> = {
   'jlocal.screenNeedUpdate': 'This needs a newer J Local. Update the app, then try again, or use the browser picker for now.',
   'jlocal.screenUseBrowser': 'Use browser instead',
   'jlocal.screenUpsell': 'Share in 4K with J Local',
+  'jlocal.torrentLocal': 'Local via J Local',
+  'jlocal.torrentLocalHint': 'This torrent downloads in J Local on your PC; this browser reads the bytes straight from the app.',
   'home.uploadManually': 'Manual upload',
   'home.uploadGuide': 'Bring your own video or share your screen.',
   'home.uploadFile': 'Upload a file',

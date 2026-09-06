@@ -1,10 +1,36 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { Button } from '../ui/Button'
 import './jlocalScreen.css'
+
+/**
+ * Live thumbnail of what the app sees. Polls /capture/preview.jpg once a
+ * second while the cached caps advertise capture, and hides itself on the
+ * first 404 — the app answers 404 while idle, so no preview exists yet.
+ */
+function JLocalPreview() {
+  const allowed = getCachedJLocalCapabilities()?.screen.available === true
+  const [frame, setFrame] = useState(0)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!allowed || failed) return
+    const timer = window.setInterval(() => setFrame((value) => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [allowed, failed])
+  if (!allowed || failed) return null
+  return (
+    <img
+      alt=""
+      key={frame}
+      src={`${JLOCAL_ORIGIN}/capture/preview.jpg`}
+      onError={() => setFailed(true)}
+      style={{ maxWidth: '100%', borderRadius: '12px' }}
+    />
+  )
+}
 
 type AudioMode = 'all' | 'none' | 'custom'
 
@@ -113,6 +139,7 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser }: {
         <div className="jscreen-apps" role="status">
           <p>{t('jlocal.screenNoApps')}</p>
         </div>
+        <JLocalPreview />
         {needUpdate ? <p className="jscreen-error" role="alert">{t('jlocal.screenNeedUpdate')}</p> : null}
         <div className="jscreen-actions">
           <button type="button" className="primary-button" disabled={starting} onClick={start}>

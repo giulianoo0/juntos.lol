@@ -897,3 +897,4 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .jlocal-origin { margin: 14px 0 0; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; opacity: .7; }
 @media (max-width: 620px) { .jlocal-label { display: none; } .jlocal-status { padding: 7px 10px; } .ui-dialog.jlocal-dialog { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .jlocal-os { animation: none; } }
+.torrent-source-badge { padding: 4px 10px; border-radius: 999px; background: rgba(52,211,153,.12); color: #34d399; font-size: 11px; font-weight: 700; white-space: nowrap; }

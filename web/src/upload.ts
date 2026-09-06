@@ -257,6 +257,43 @@ export async function createRoomAndUploadTorrent(
   return { roomID: created.id, nickname: created.nickname }
 }
 
+export interface JLocalTorrentStream {
+  url: string
+  name: string
+  size: number
+}
+
+/**
+ * Creates a room the host remuxes itself, reading ranged bytes from the
+ * companion app over loopback. Same shape as the URL flow, but the source
+ * is the stream variant: the bytes are local, not a WAN fetch.
+ */
+export async function createRoomAndUploadJLocalTorrent(
+  stream: JLocalTorrentStream,
+  nickname: string,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(stream.name, nickname)
+  startJLocalStreamUpload(created.id, 0, stream, onProgress)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
+/**
+ * Points an existing room at companion-app bytes. The RemuxSource stays the
+ * existing stream variant — no new pipeline kinds — so rangeInput serves the
+ * loopback URL exactly like any other ranged origin. Resume reuses the url
+ * shape, which reads through the same rangeInput.
+ */
+export function startJLocalStreamUpload(
+  roomID: string,
+  mediaGeneration: number,
+  stream: JLocalTorrentStream,
+  onProgress?: (progress: UploadProgress) => void,
+): void {
+  saveResumableSource(roomID, { kind: 'url', fileName: stream.name, url: stream.url, size: stream.size })
+  startRoomUpload(roomID, mediaGeneration, { kind: 'stream', url: stream.url, name: stream.name, size: stream.size }, [], { onProgress })
+}
 export async function createRoomAndUploadUrl(
   url: string,
   fileName: string,

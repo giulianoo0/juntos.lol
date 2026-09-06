@@ -322,6 +322,8 @@ export const ptBR: Record<string, string> = {
   'jlocal.screenNeedUpdate': 'Isso precisa de um J Local mais novo. Atualize o app e tente de novo, ou use o seletor do navegador por enquanto.',
   'jlocal.screenUseBrowser': 'Usar o navegador',
   'jlocal.screenUpsell': 'Compartilhar em 4K com o J Local',
+  'jlocal.torrentLocal': 'Local via J Local',
+  'jlocal.torrentLocalHint': 'Este torrent baixa no J Local do seu PC; o navegador lê os bytes direto do app.',
   'home.uploadManually': 'Upload manualmente',
   'home.uploadGuide': 'Traga o seu próprio vídeo ou compartilhe a tela.',
   'home.uploadFile': 'Enviar um arquivo',

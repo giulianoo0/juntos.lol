@@ -5,6 +5,9 @@ import { Home, MAX_UPLOAD_BYTES } from './Home'
 import { createRoomAndUpload, createRoomAndUploadTorrent } from '../upload'
 import { openTorrent } from '../torrent'
 
+// NOTE: only the two legacy flows are mocked. The jlocal branch never runs
+// here (its gate needs a connected app), so its upload imports stay
+// undefined under this mock by design; jlocal-path tests use TorrentsJLocal.
 vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn(), createRoomAndUploadTorrent: vi.fn() }))
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
 vi.mock('../catalog/tmdb', () => ({

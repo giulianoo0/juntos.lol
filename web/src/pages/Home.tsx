@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
-import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
+import { createRoomAndUpload, createRoomAndUploadJLocalTorrent, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
 import { JLocalScreenModal } from '../components/JLocalScreen'
@@ -55,6 +55,7 @@ interface RoomHistoryEntry {
 type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
+  | { kind: 'jlocal'; url: string; name: string; size: number }
   | { kind: 'screen'; stream: MediaStream }
   | { kind: 'stream'; pick: TitlePick }
 
@@ -202,7 +203,8 @@ export function Home() {
     setStartingLabel(
       media.kind === 'screen' ? t('room.screenLabel')
         : media.kind === 'stream' ? media.pick.displayName
-          : media.file.name,
+          : media.kind === 'jlocal' ? media.name
+            : media.file.name,
     )
     try {
       let room
@@ -213,6 +215,9 @@ export function Home() {
       } else if (media.kind === 'torrent') {
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
         fileName = media.file.name
+      } else if (media.kind === 'jlocal') {
+        room = await createRoomAndUploadJLocalTorrent({ url: media.url, name: media.name, size: media.size }, draftNickname.trim(), setProgress)
+        fileName = media.name
       } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
         closeTitle()
         const { url } = media.pick.stream.location
@@ -374,6 +379,11 @@ export function Home() {
               setManualOpen(false)
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
+            }}
+            onPickedJLocal={(stream) => {
+              setManualOpen(false)
+              setDraftNickname(nickname)
+              setPendingMedia({ kind: 'jlocal', url: stream.url, name: stream.name, size: stream.size })
             }}
           />
         </div>

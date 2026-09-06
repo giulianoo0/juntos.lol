@@ -66,6 +66,7 @@ import {
   startFileUpload,
   isRemoteProduction,
   startTorrentUpload,
+  startJLocalStreamUpload,
   startUrlUpload,
   type RoomUploadProgress,
   remuxHandleFor,
@@ -881,6 +882,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               t={t}
               onExit={() => setSourcePanel(null)}
               onPicked={chooseTorrent}
+              onPickedJLocal={(stream) => {
+                void swapSource(async () => {
+                  const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', stream.name)
+                  startJLocalStreamUpload(room.id, next.mediaGeneration, stream)
+                })
+              }}
             />
           </DialogContent>
         ) : null}
