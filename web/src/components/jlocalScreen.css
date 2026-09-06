@@ -8,31 +8,89 @@
 
 .ui-dialog.jscreen-dialog { width: min(480px, calc(100vw - 32px)); }
 
-.jscreen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.jscreen-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--well, rgba(255, 255, 255, .05));
+}
+.jscreen-tabs button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim, rgba(255, 255, 255, .6));
+  font-size: 13px;
+  font-weight: 600;
+}
+.jscreen-tabs button[aria-selected="true"] {
+  background: var(--primary, #ff7a45);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(255, 122, 69, .3), inset 0 1px rgba(255, 255, 255, .2);
+}
 
-.jscreen-field { display: grid; gap: 7px; }
-.jscreen-field span { color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
-.jscreen-field select {
-  width: 100%;
-  padding: 13px 14px;
+.jscreen-cards { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.jscreen-card {
+  flex: 0 0 auto;
+  min-width: 132px;
+  padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: var(--r-field, 14px);
   background: var(--well, rgba(255, 255, 255, .05));
   color: var(--text, #fff);
-  font-size: 14px;
+  text-align: left;
+}
+.jscreen-card strong { display: block; font-size: 13px; }
+.jscreen-card small { color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
+.jscreen-card.is-selected {
+  border-color: var(--primary, #ff7a45);
+  box-shadow: 0 0 0 1px var(--primary, #ff7a45);
 }
 
+.jscreen-apps { display: grid; gap: 8px; max-height: min(38vh, 300px); overflow-y: auto; }
+.jscreen-app {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text, #fff);
+  text-align: left;
+}
+.jscreen-app span { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.jscreen-app small { flex: 0 0 auto; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
+.jscreen-app.is-selected {
+  border-color: var(--primary, #ff7a45);
+  box-shadow: 0 0 0 1px var(--primary, #ff7a45);
+}
+
+.jscreen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.jscreen-field { display: grid; gap: 7px; }
+.jscreen-field span { color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
 .jscreen-note {
-  margin-top: 12px;
+  margin-bottom: 12px;
   padding: 13px 14px;
   border: 1px solid rgba(255, 255, 255, .08);
   border-radius: var(--r-field, 14px);
   background: rgba(255, 255, 255, .03);
 }
 .jscreen-note p { margin: 0; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 13px; }
-.jscreen-field + .jscreen-grid, .jscreen-grid + .jscreen-note { margin-top: 12px; }
 
-.jscreen-preview { display: block; margin-top: 12px; max-width: 100%; border-radius: 12px; }
+.jscreen-preview-pane {
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #000;
+  aspect-ratio: 16 / 9;
+}
+.jscreen-preview { display: block; width: 100%; height: 100%; object-fit: cover; }
 
 .jscreen-error {
   margin: 12px 0 0;

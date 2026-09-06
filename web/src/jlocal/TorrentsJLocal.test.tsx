@@ -250,16 +250,25 @@ describe('jlocal capture preview', () => {
 
   afterEach(() => vi.unstubAllGlobals())
 
-  it('shows the preview image only when caps advertise capture, and hides it on error', async () => {
+  it('shows the preview once a display is picked, and hides it on error', async () => {
     await connectWithCaps(CAPS_SCREEN)
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('refused')))
+    // Displays resolve (first is auto-selected); preview frames then fail.
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if (String(url).endsWith('/capture/displays')) {
+        return {
+          ok: true,
+          json: async () => ({ displays: [{ id: 1, name: 'Main', width: 1512, height: 982 }] }),
+        }
+      }
+      throw new Error('refused')
+    }))
     // The dialog renders in a Radix portal on document.body, not in the
     // render container: query document-wide like screen.* does.
     const src = 'img[src="http://127.0.0.1:40392/capture/preview.jpg"]'
     render(
       <JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} onConfirm={() => undefined} />,
     )
-    const image = document.querySelector(src)
+    const image = await screen.findByRole('radio', { name: /Main/ }).then(() => document.querySelector(src))
     expect(image).not.toBeNull()
     if (image) fireEvent.error(image)
     expect(document.querySelector(src)).toBeNull()

@@ -27,22 +27,28 @@ function stopCapture(): void {
 }
 
 /**
- * Starts app-side capture for a display and returns a live MediaStream of its
- * frames. Throws Error('jlocal-capture-unavailable') when the app refuses or
- * the canvas cannot be set up. Frame poll failures skip that frame and keep
- * polling; only stop() ends the loop.
+ * Starts app-side capture for a display or a window and returns a live
+ * MediaStream of its frames. Throws Error('jlocal-capture-unavailable') when
+ * the app refuses or the canvas cannot be set up. Frame poll failures skip
+ * that frame and keep polling; only stop() ends the loop.
  */
+export interface JLocalScreenTarget {
+  kind: 'display' | 'window'
+  id: string
+}
+
 export async function startJLocalScreenFeed(
-  displayId: string,
+  target: JLocalScreenTarget,
   opts: JLocalScreenFeedOptions,
 ): Promise<JLocalScreenFeed> {
   const { width, height, fps } = opts
+  const idKey = target.kind === 'window' ? 'window_id' : 'display_id'
   let started: Response
   try {
     started = await fetch(`${JLOCAL_ORIGIN}/capture/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ display_id: displayId, width, height, fps }),
+      body: JSON.stringify({ [idKey]: target.id, width, height, fps }),
     })
   } catch {
     throw new Error('jlocal-capture-unavailable')

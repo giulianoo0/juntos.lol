@@ -80,7 +80,7 @@ describe('jlocal screen feed', () => {
 
   it('posts the start request with display, size, and fps', async () => {
     const fetchMock = stubFetch(true)
-    const feed = await startJLocalScreenFeed('display-1', { width: 1280, height: 720, fps: 5 })
+    const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 1280, height: 720, fps: 5 })
     expect(fetchMock).toHaveBeenCalledWith(
       `${JLOCAL_ORIGIN}/capture/start`,
       expect.objectContaining({ method: 'POST' }),
@@ -89,10 +89,17 @@ describe('jlocal screen feed', () => {
     expect(body).toEqual({ display_id: 'display-1', width: 1280, height: 720, fps: 5 })
     feed.stop()
   })
+  it('posts window_id for a window target', async () => {
+    const fetchMock = stubFetch(true)
+    const feed = await startJLocalScreenFeed({ kind: 'window', id: '42' }, { width: 1280, height: 720, fps: 30 })
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))
+    expect(body).toEqual({ window_id: '42', width: 1280, height: 720, fps: 30 })
+    feed.stop()
+  })
 
   it('paints preview frames onto the canvas stream without fetching them', async () => {
     const fetchMock = stubFetch(true)
-    const feed = await startJLocalScreenFeed('display-1', { width: 320, height: 200, fps: 5 })
+    const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
     expect(feed.stream).toBe(mockStream)
     await vi.advanceTimersByTimeAsync(400)
     expect(imageSrcs.length).toBeGreaterThanOrEqual(2)
@@ -111,7 +118,7 @@ describe('jlocal screen feed', () => {
   it('skips failed frames and keeps polling', async () => {
     stubFetch(true)
     imageOutcomes = ['error', 'load']
-    const feed = await startJLocalScreenFeed('display-1', { width: 320, height: 200, fps: 5 })
+    const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
     await vi.advanceTimersByTimeAsync(400)
     expect(imageSrcs.length).toBeGreaterThanOrEqual(2)
     expect(drawImage).toHaveBeenCalledTimes(1)
@@ -120,7 +127,7 @@ describe('jlocal screen feed', () => {
 
   it('stop halts polling, stops tracks, and posts capture stop once', async () => {
     const fetchMock = stubFetch(true)
-    const feed = await startJLocalScreenFeed('display-1', { width: 320, height: 200, fps: 5 })
+    const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
     await vi.advanceTimersByTimeAsync(200)
     expect(drawImage).toHaveBeenCalled()
     feed.stop()
@@ -145,7 +152,7 @@ describe('jlocal screen feed', () => {
         return { ok: true, status: 200, json: async () => ({}) }
       }),
     )
-    const feed = await startJLocalScreenFeed('display-1', { width: 320, height: 200, fps: 5 })
+    const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
     expect(() => feed.stop()).not.toThrow()
     await vi.advanceTimersByTimeAsync(0)
     expect(trackStop).toHaveBeenCalled()
@@ -153,7 +160,7 @@ describe('jlocal screen feed', () => {
 
   it("throws jlocal-capture-unavailable when start answers 501", async () => {
     stubFetch(false, 501)
-    await expect(startJLocalScreenFeed('display-1', { width: 320, height: 200, fps: 5 })).rejects.toThrow(
+    await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })).rejects.toThrow(
       'jlocal-capture-unavailable',
     )
   })
@@ -165,7 +172,7 @@ describe('jlocal screen feed', () => {
         throw new Error('refused')
       }),
     )
-    await expect(startJLocalScreenFeed('display-1', { width: 320, height: 200, fps: 5 })).rejects.toThrow(
+    await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })).rejects.toThrow(
       'jlocal-capture-unavailable',
     )
   })
