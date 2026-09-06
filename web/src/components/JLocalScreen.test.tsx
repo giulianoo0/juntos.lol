@@ -1,10 +1,22 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { JLocalScreenModal, JLocalScreenPanel } from './JLocalScreen'
+import { JLocalScreenModal, JLocalScreenPanel, appAvatarHue, appAvatarLetter } from './JLocalScreen'
 import { startJLocalScreenFeed } from '../jlocal/screenFeed'
 import { getCachedJLocalCapabilities, refreshJLocalCapabilities, resetJLocalCapabilitiesForTests } from '../jlocal/capabilities'
 import { connectJLocal, getJLocalSnapshot, resetJLocalForTests } from '../jlocal/status'
 vi.mock('../jlocal/screenFeed', () => ({ startJLocalScreenFeed: vi.fn() }))
+describe('app avatars', () => {
+  it('uses the owning app initial, falling back to the title', () => {
+    expect(appAvatarLetter('#anuncios | juntos.lol - Discord', 'Discord')).toBe('D')
+    expect(appAvatarLetter('Window 7', '')).toBe('W')
+  })
+
+  it('hashes deterministically into a hue', () => {
+    expect(appAvatarHue('Discord')).toBe(appAvatarHue('Discord'))
+    expect(appAvatarHue('Discord')).toBeGreaterThanOrEqual(0)
+    expect(appAvatarHue('Discord')).toBeLessThan(360)
+  })
+})
 
 const CAPS = {
   name: 'jlocal',
@@ -23,8 +35,8 @@ const DISPLAYS = { displays: [
 ] }
 
 const WINDOWS = { windows: [
-  { id: 7, name: 'Figma — Design', width: 1728, height: 1117 },
-  { id: 9, name: 'Terminal', width: 1440, height: 900 },
+  { id: 7, name: 'Figma — Design', app: 'Figma', width: 1728, height: 1117 },
+  { id: 9, name: 'Terminal', app: 'Ghostty', width: 1440, height: 900 },
 ] }
 
 /** Routes /health and /capabilities to the gate; the capture lists answer from overrides. */

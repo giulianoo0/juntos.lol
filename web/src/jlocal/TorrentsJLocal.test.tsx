@@ -200,7 +200,7 @@ describe('jlocal torrent picker', () => {
     fireEvent.change(screen.getByLabelText(/magnet link/i), { target: { value: MAGNET } })
     fireEvent.click(screen.getByRole('button', { name: /find files/i }))
 
-    expect(await screen.findByText('Local via J Local')).toBeInTheDocument()
+    expect(await screen.findByText('Local via JLocal')).toBeInTheDocument()
     expect(screen.getByTitle(/straight from the app/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /bunny\.mkv/i }))
 

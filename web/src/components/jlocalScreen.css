@@ -77,14 +77,13 @@
   box-shadow: 0 0 0 1px var(--primary, #ff7a45);
 }
 
-.jscreen-apps { display: grid; gap: 8px; max-height: min(38vh, 300px); overflow-y: auto; padding: 4px; }
+.jscreen-apps { display: grid; gap: 8px; max-height: min(30vh, 232px); overflow-y: auto; padding: 4px; }
 .jscreen-app {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
   box-sizing: border-box;
-  padding: 11px 13px;
+  padding: 9px 12px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 12px;
   background: transparent;
@@ -92,7 +91,19 @@
   text-align: left;
 }
 .jscreen-app:hover:not(:disabled), .jscreen-app:active:not(:disabled) { transform: none; }
-.jscreen-app span { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.jscreen-app-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: hsl(var(--app-hue, 20) 55% 42%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+.jscreen-app-label { min-width: 0; flex: 1 1 auto; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .jscreen-app small { flex: 0 0 auto; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
 .jscreen-app.is-selected {
   border-color: var(--primary, #ff7a45);
@@ -123,7 +134,7 @@
   border-radius: 12px;
   background: #000;
   aspect-ratio: 16 / 9;
-  max-height: 320px;
+  max-height: 240px;
 }
 .jscreen-preview { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; }
 /* Shimmer skeleton: fills the 16:9 box until the first frame lands, so the
