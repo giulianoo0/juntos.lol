@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { JLocalScreenModal } from './JLocalScreen'
+import { JLocalScreenModal, JLocalScreenPanel } from './JLocalScreen'
 import { startJLocalScreenFeed } from '../jlocal/screenFeed'
 import { getCachedJLocalCapabilities, refreshJLocalCapabilities, resetJLocalCapabilitiesForTests } from '../jlocal/capabilities'
 import { connectJLocal, getJLocalSnapshot, resetJLocalForTests } from '../jlocal/status'
@@ -147,5 +147,86 @@ describe('jlocal screen modal displays', () => {
     const fallback = screen.getByRole('button', { name: /navegador|browser/i })
     fireEvent.click(fallback)
     expect(onUseBrowser).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('jlocal screen panel', () => {
+  beforeEach(() => {
+    resetJLocalForTests()
+    resetJLocalCapabilitiesForTests()
+    localStorage.clear()
+    vi.mocked(startJLocalScreenFeed).mockReset()
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('renders no Dialog, title, guide, or close affordance', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText(/full quality|qualidade máxima/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/straight to the room|direto para a sala/i)).not.toBeInTheDocument()
+  })
+
+  it('selects a card by mouse click and enables confirm with that target', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    const stream = {} as MediaStream
+    const stop = vi.fn()
+    vi.mocked(startJLocalScreenFeed).mockResolvedValue({ stream, stop })
+    const onConfirm = vi.fn()
+    render(<JLocalScreenPanel onConfirm={onConfirm} onUseBrowser={() => undefined} onExit={() => undefined} />)
+
+    const main = await screen.findByRole('radio', { name: /Main/ })
+    const side = screen.getByRole('radio', { name: /Side/ })
+    // First display is auto-selected; clicking the other card moves it.
+    expect(main).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(side)
+    expect(side).toHaveAttribute('aria-checked', 'true')
+    expect(main).toHaveAttribute('aria-checked', 'false')
+
+    const confirm = screen.getByRole('button', { name: /sharing|compartilhar/i })
+    expect(confirm).toBeEnabled()
+    fireEvent.click(confirm)
+    expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
+      { kind: 'display', id: '2' },
+      { width: 3840, height: 2160, fps: 30 },
+    )
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
+  })
+  it('closes an open quality dropdown on outside pointer press', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+
+    const trigger = screen.getByRole('button', { name: '30 fps' })
+    fireEvent.click(trigger)
+    expect(await screen.findByRole('option', { name: '60 fps' })).toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    // Closed is the trigger's expanded state: the exit choreography keeps
+    // nodes mounted briefly in a real browser and forever under jsdom, where
+    // motion's animation clock never advances, so removal is not asserted.
+    fireEvent.pointerDown(document.body)
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
+  })
+
+  it('closes an open quality dropdown on Escape', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+
+    const trigger = screen.getByRole('button', { name: '30 fps' })
+    fireEvent.click(trigger)
+    expect(await screen.findByRole('option', { name: '60 fps' })).toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
   })
 })

@@ -1,22 +1,34 @@
-/* The companion-app screen modal.
+/* The companion-app screen picker.
  *
  * Kept in its own file rather than in theme.css: it is one screen's worth of
  * styling, and the tokens it borrows are read with fallbacks so it looks right
  * whether or not the theme has grown them yet. The start button reuses the
- * global .primary-button; everything else here wears the .jscreen- prefix.
+ * global .primary-button; everything else here wears the .jscreen- prefix,
+ * except the tab row, which reuses the header tab classes (.header-tabs,
+ * .season-pill, .season-tab-label) so it looks and animates exactly like the
+ * home header tabs — scoped here to static flow instead of the header's
+ * absolute centering.
  */
 
 .ui-dialog.jscreen-dialog { width: min(480px, calc(100vw - 32px)); }
 
-.jscreen-tabs {
+/* The panel itself never clips: focus and selected rings paint outside the
+ * card borders, so no overflow may hide them here — the scroll rows below
+ * carry their own ring-safe padding instead. */
+.jscreen-panel { display: flex; flex-direction: column; min-width: 0; box-sizing: border-box; padding: 2px; }
+
+.jscreen-panel .header-tabs {
   display: flex;
-  gap: 4px;
+  flex: 0 0 auto;
+  gap: 2px;
   margin-bottom: 12px;
-  padding: 4px;
+  padding: 3px;
   border-radius: 999px;
   background: var(--well, rgba(255, 255, 255, .05));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
 }
-.jscreen-tabs button {
+.jscreen-panel .header-tabs button {
+  position: relative;
   flex: 1;
   padding: 8px 12px;
   border: 0;
@@ -25,16 +37,23 @@
   color: var(--text-dim, rgba(255, 255, 255, .6));
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
+  transition: color 160ms var(--ease, ease);
 }
-.jscreen-tabs button[aria-selected="true"] {
-  background: var(--primary, #ff7a45);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(255, 122, 69, .3), inset 0 1px rgba(255, 255, 255, .2);
+.jscreen-panel .header-tabs button:not(.is-active):hover:not(:disabled) {
+  background: transparent;
+  color: var(--text, #fff);
+  transform: none;
 }
+.jscreen-panel .header-tabs button.is-active { color: #0C0A0B; font-weight: 650; transition-delay: 170ms; }
 
-.jscreen-cards { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+/* Both scroll rows are overflow containers, so the selected/focus ring would
+ * clip without inset padding: 4px clears the 2px outline plus its 2px offset
+ * on every side that can clip. */
+.jscreen-cards { display: flex; gap: 10px; overflow-x: auto; padding: 4px 4px 8px; }
 .jscreen-card {
   flex: 0 0 auto;
+  box-sizing: border-box;
   min-width: 132px;
   padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, .1);
@@ -43,6 +62,7 @@
   color: var(--text, #fff);
   text-align: left;
 }
+.jscreen-card:hover:not(:disabled), .jscreen-card:active:not(:disabled) { transform: none; }
 .jscreen-card strong { display: block; font-size: 13px; }
 .jscreen-card small { color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
 .jscreen-card.is-selected {
@@ -50,12 +70,13 @@
   box-shadow: 0 0 0 1px var(--primary, #ff7a45);
 }
 
-.jscreen-apps { display: grid; gap: 8px; max-height: min(38vh, 300px); overflow-y: auto; }
+.jscreen-apps { display: grid; gap: 8px; max-height: min(38vh, 300px); overflow-y: auto; padding: 4px; }
 .jscreen-app {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  box-sizing: border-box;
   padding: 11px 13px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 12px;
@@ -63,12 +84,17 @@
   color: var(--text, #fff);
   text-align: left;
 }
+.jscreen-app:hover:not(:disabled), .jscreen-app:active:not(:disabled) { transform: none; }
 .jscreen-app span { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .jscreen-app small { flex: 0 0 auto; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
 .jscreen-app.is-selected {
   border-color: var(--primary, #ff7a45);
   box-shadow: 0 0 0 1px var(--primary, #ff7a45);
 }
+
+/* The dropdown triggers live in the panel: keep the global press shrink off
+ * them so picking a quality never shifts layout. */
+.jscreen-panel .dropdown-pill:active:not(:disabled) { transform: none; }
 
 .jscreen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
@@ -103,6 +129,9 @@
 }
 
 .jscreen-actions { margin-top: 18px; display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+
+/* The inline home step gets the magnet step's width. */
+.upload-morph .morph-step[data-step='screen'] { --step-w: 560px; }
 
 @media (max-width: 620px) {
   .ui-dialog.jscreen-dialog { width: 100%; }

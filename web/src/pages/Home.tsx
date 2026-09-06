@@ -7,7 +7,7 @@ import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stas
 import { createRoomAndUpload, createRoomAndUploadJLocalTorrent, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
-import { JLocalScreenModal } from '../components/JLocalScreen'
+import { JLocalScreenPanel } from '../components/JLocalScreen'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
@@ -43,7 +43,7 @@ type HomeView = 'catalog' | 'manual' | 'status'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
-type ManualStep = false | 'menu' | 'file' | 'magnet' | 'join'
+type ManualStep = false | 'menu' | 'file' | 'magnet' | 'screen' | 'join'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -103,7 +103,6 @@ export function Home() {
   const { toast } = useToast()
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
-  const [screenOpen, setScreenOpen] = useState(false)
   const [joinDraft, setJoinDraft] = useState('')
   const [joinError, setJoinError] = useState('')
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
@@ -157,12 +156,12 @@ export function Home() {
   }
 
   const startScreenRoom = () => {
-    if (isJLocalCaptureAvailable()) { setScreenOpen(true); return }
+    if (isJLocalCaptureAvailable()) { setError(''); setManualOpen('screen'); return }
     startScreenRoomNative()
   }
 
   const confirmScreenFeed = (stream: MediaStream, stop: () => void) => {
-    setScreenOpen(false)
+    setManualOpen(false)
     // The feed dies with its stream: every teardown path stops the tracks
     // (discardPending here, endSharing after the room takes the grant), which
     // releases app capture — polling plus POST /capture/stop, best-effort.
@@ -399,6 +398,16 @@ export function Home() {
           />
         </div>
       ) : null}
+
+      {shownManual === 'screen' ? (
+        <div className="morph-step" data-step="screen">
+          <JLocalScreenPanel
+            onConfirm={confirmScreenFeed}
+            onUseBrowser={startScreenRoomNative}
+            onExit={() => setManualOpen('menu')}
+          />
+        </div>
+      ) : null}
     </>)
 
   return (
@@ -448,7 +457,6 @@ export function Home() {
         </div>
       </header>
       <JLocalModal />
-      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={() => { setScreenOpen(false); startScreenRoomNative() }} onConfirm={confirmScreenFeed} />
 
       <section className="catalog-stage">
         {view === 'status' ? (

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import { useT } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
@@ -73,26 +74,28 @@ function parseTargets(body: unknown, key: string): JLocalCaptureTarget[] {
   return targets
 }
 
-export interface JLocalScreenModalProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onUseBrowser: () => void
+export interface JLocalScreenPanelProps {
   onConfirm: (stream: MediaStream, stop: () => void) => void
+  onUseBrowser: () => void
+  onExit: () => void
 }
 
 /**
- * The companion-app path for screen sharing. It only ever opens when the
+ * The companion-app path for screen sharing, as a pure panel: no Dialog, no
+ * title, no guide paragraph, no close button. It only ever mounts when the
  * capability gate already saw screen.capture, so the cached caps are read
  * synchronously for the quality ceilings.
  *
  * Two tabs share one confirm path: Displays lists GET /capture/displays on
- * open as a scroll row of cards with the live preview under it; Apps lists
+ * mount as a scroll row of cards with the live preview under it; Apps lists
  * GET /capture/windows on first open as single-pick rows. Confirming hands
  * the feed's MediaStream to the parent, which publishes it through the
- * existing browser pipeline.
+ * existing browser pipeline. Escape backs out through onExit — an open
+ * dropdown swallows Escape first, so the two never fight.
  */
-export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm }: JLocalScreenModalProps) {
+export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScreenPanelProps) {
   const t = useT()
+  const reduceMotion = useReducedMotion()
   const caps = getCachedJLocalCapabilities()
   const resolutions = (() => {
     const allowed = RESOLUTIONS.filter(
@@ -117,23 +120,21 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
   const [starting, setStarting] = useState(false)
   const [startFailed, setStartFailed] = useState(false)
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  const onExitRef = useRef(onExit)
+  onExitRef.current = onExit
   useEffect(() => {
-    if (!open) {
-      setTab('displays')
-      setDisplays(null)
-      setDisplaysFailed(false)
-      setDisplayId(null)
-      setWindows(null)
-      setWindowsFailed(false)
-      setWindowsLoaded(false)
-      setWindowId(null)
-      setStartFailed(false)
-      return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (panelRef.current && !panelRef.current.contains(event.target as Node | null)) return
+      onExitRef.current()
     }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
-    setDisplays(null)
-    setDisplaysFailed(false)
-    setDisplayId(null)
     void (async () => {
       try {
         const response = await fetch(`${JLOCAL_ORIGIN}/capture/displays`)
@@ -148,12 +149,12 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
       }
     })()
     return () => { cancelled = true }
-  }, [open])
+  }, [])
 
   // The window list loads once, the first time the Apps tab opens — switching
   // back and forth must not refetch.
   useEffect(() => {
-    if (!open || tab !== 'windows' || windowsLoaded) return
+    if (tab !== 'windows' || windowsLoaded) return
     let cancelled = false
     void (async () => {
       try {
@@ -173,7 +174,7 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
       }
     })()
     return () => { cancelled = true }
-  }, [open, tab, windowsLoaded])
+  }, [tab, windowsLoaded])
 
   const canPickDisplay = !displaysFailed && displays !== null && displays.length > 0 && displayId !== null
   const canPickWindow = windowsLoaded && !windowsFailed && windows !== null && windows.length > 0 && windowId !== null
@@ -191,12 +192,144 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
     void startJLocalScreenFeed(target, { width: picked.width, height: picked.height, fps })
       .then(({ stream, stop }) => {
         onConfirm(stream, stop)
-        onOpenChange(false)
       })
       .catch(() => setStartFailed(true))
       .finally(() => setStarting(false))
   }
 
+  return (
+    <div ref={panelRef} className="jscreen-panel">
+      <div className="header-tabs" role="tablist" aria-label={t('jlocal.screenTitle')}>
+        {(['displays', 'windows'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={tab === value}
+            className={tab === value ? 'is-active' : ''}
+            onClick={() => setTab(value)}
+          >
+            {tab === value ? (
+              <motion.span
+                layoutId="jscreen-tab-pill"
+                className="season-pill"
+                transition={reduceMotion ? { duration: 0 } : { type: 'spring', duration: 0.45, bounce: 0.2 }}
+              />
+            ) : null}
+            <span className="season-tab-label">
+              {value === 'displays' ? t('jlocal.screenTabDisplays') : t('jlocal.screenTabApps')}
+            </span>
+          </button>
+        ))}
+      </div>
+      {tab === 'displays' ? (
+        <>
+          {displays === null && !displaysFailed ? (
+            <div className="jscreen-note" role="status">
+              <p>{t('jlocal.screenDisplayLoading')}</p>
+            </div>
+          ) : null}
+          {displaysFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenDisplayError')}</p> : null}
+          {displays !== null && !displaysFailed && displays.length === 0 ? (
+            <p className="jscreen-error" role="alert">{t('jlocal.screenDisplayEmpty')}</p>
+          ) : null}
+          {canPickDisplay ? (
+            <div className="jscreen-cards" role="radiogroup" aria-label={t('jlocal.screenDisplay')}>
+              {displays?.map((display) => (
+                <button
+                  key={display.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={display.id === displayId}
+                  className={`jscreen-card ${display.id === displayId ? 'is-selected' : ''}`}
+                  onClick={() => setDisplayId(display.id)}
+                >
+                  <strong>{display.name}</strong>
+                  <small>{display.width}×{display.height}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {canPickDisplay ? <JLocalPreview /> : null}
+        </>
+      ) : (
+        <>
+          {windows === null && !windowsFailed ? (
+            <div className="jscreen-note" role="status">
+              <p>{t('jlocal.screenWindowLoading')}</p>
+            </div>
+          ) : null}
+          {windowsFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenWindowError')}</p> : null}
+          {windows !== null && !windowsFailed && windows.length === 0 ? (
+            <p className="jscreen-error" role="alert">{t('jlocal.screenWindowEmpty')}</p>
+          ) : null}
+          {canPickWindow ? (
+            <div className="jscreen-apps" role="radiogroup" aria-label={t('jlocal.screenTabApps')}>
+              {windows?.map((window) => (
+                <button
+                  key={window.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={window.id === windowId}
+                  className={`jscreen-app ${window.id === windowId ? 'is-selected' : ''}`}
+                  onClick={() => setWindowId(window.id)}
+                >
+                  <span>{window.name}</span>
+                  <small>{window.width}×{window.height}</small>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
+      {canConfirm ? (
+        <div className="jscreen-grid">
+          <div className="jscreen-field">
+            <span>{t('jlocal.screenRes')}</span>
+            <Dropdown
+              label={t('jlocal.screenRes')}
+              value={resolution}
+              options={resolutions.map((option) => ({ value: option.id, label: option.id }))}
+              onChange={setResolution}
+            />
+          </div>
+          <div className="jscreen-field">
+            <span>{t('jlocal.screenFps')}</span>
+            <Dropdown
+              label={t('jlocal.screenFps')}
+              value={String(fps)}
+              options={frameRates.map((rate) => ({ value: String(rate), label: `${rate} fps` }))}
+              onChange={(value) => setFps(Number(value))}
+            />
+          </div>
+        </div>
+      ) : null}
+      {startFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenStartError')}</p> : null}
+      <div className="jscreen-actions">
+        {canConfirm ? (
+          <button type="button" className="primary-button" disabled={starting} onClick={confirm}>
+            {t('jlocal.screenStart')}
+          </button>
+        ) : null}
+        <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.screenUseBrowser')}</Button>
+      </div>
+    </div>
+  )
+}
+
+export interface JLocalScreenModalProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onUseBrowser: () => void
+  onConfirm: (stream: MediaStream, stop: () => void) => void
+}
+
+/**
+ * Thin Dialog wrapper around the panel, kept so the room's existing call
+ * sites keep working untouched. Home embeds the panel inline instead.
+ */
+export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm }: JLocalScreenModalProps) {
+  const t = useT()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -205,115 +338,9 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
         description={t('jlocal.screenGuide')}
         closeLabel={t('jlocal.close')}
       >
-        <div className="jscreen-tabs" role="tablist" aria-label={t('jlocal.screenTitle')}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'displays'}
-            onClick={() => setTab('displays')}
-          >
-            {t('jlocal.screenTabDisplays')}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'windows'}
-            onClick={() => setTab('windows')}
-          >
-            {t('jlocal.screenTabApps')}
-          </button>
-        </div>
-        {tab === 'displays' ? (
-          <>
-            {displays === null && !displaysFailed ? (
-              <div className="jscreen-note" role="status">
-                <p>{t('jlocal.screenDisplayLoading')}</p>
-              </div>
-            ) : null}
-            {displaysFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenDisplayError')}</p> : null}
-            {displays !== null && !displaysFailed && displays.length === 0 ? (
-              <p className="jscreen-error" role="alert">{t('jlocal.screenDisplayEmpty')}</p>
-            ) : null}
-            {canPickDisplay ? (
-              <div className="jscreen-cards" role="radiogroup" aria-label={t('jlocal.screenDisplay')}>
-                {displays?.map((display) => (
-                  <button
-                    key={display.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={display.id === displayId}
-                    className={`jscreen-card ${display.id === displayId ? 'is-selected' : ''}`}
-                    onClick={() => setDisplayId(display.id)}
-                  >
-                    <strong>{display.name}</strong>
-                    <small>{display.width}×{display.height}</small>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {canPickDisplay ? <JLocalPreview /> : null}
-          </>
-        ) : (
-          <>
-            {windows === null && !windowsFailed ? (
-              <div className="jscreen-note" role="status">
-                <p>{t('jlocal.screenWindowLoading')}</p>
-              </div>
-            ) : null}
-            {windowsFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenWindowError')}</p> : null}
-            {windows !== null && !windowsFailed && windows.length === 0 ? (
-              <p className="jscreen-error" role="alert">{t('jlocal.screenWindowEmpty')}</p>
-            ) : null}
-            {canPickWindow ? (
-              <div className="jscreen-apps" role="radiogroup" aria-label={t('jlocal.screenTabApps')}>
-                {windows?.map((window) => (
-                  <button
-                    key={window.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={window.id === windowId}
-                    className={`jscreen-app ${window.id === windowId ? 'is-selected' : ''}`}
-                    onClick={() => setWindowId(window.id)}
-                  >
-                    <span>{window.name}</span>
-                    <small>{window.width}×{window.height}</small>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </>
-        )}
-        {canConfirm ? (
-          <div className="jscreen-grid">
-            <div className="jscreen-field">
-              <span>{t('jlocal.screenRes')}</span>
-              <Dropdown
-                label={t('jlocal.screenRes')}
-                value={resolution}
-                options={resolutions.map((option) => ({ value: option.id, label: option.id }))}
-                onChange={setResolution}
-              />
-            </div>
-            <div className="jscreen-field">
-              <span>{t('jlocal.screenFps')}</span>
-              <Dropdown
-                label={t('jlocal.screenFps')}
-                value={String(fps)}
-                options={frameRates.map((rate) => ({ value: String(rate), label: `${rate} fps` }))}
-                onChange={(value) => setFps(Number(value))}
-              />
-            </div>
-          </div>
+        {open ? (
+          <JLocalScreenPanel onConfirm={(stream, stop) => { onConfirm(stream, stop); onOpenChange(false) }} onUseBrowser={onUseBrowser} onExit={() => onOpenChange(false)} />
         ) : null}
-        {startFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenStartError')}</p> : null}
-        <div className="jscreen-actions">
-          {canConfirm ? (
-            <button type="button" className="primary-button" disabled={starting} onClick={confirm}>
-              {t('jlocal.screenStart')}
-            </button>
-          ) : null}
-          <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.screenUseBrowser')}</Button>
-        </div>
       </DialogContent>
     </Dialog>
   )

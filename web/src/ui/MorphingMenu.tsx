@@ -156,6 +156,16 @@ export function MorphingMenu({
       event.stopPropagation()
       closePanel(true)
     }
+    // The backdrop catches most outside presses, but anything that bypasses
+    // it (a press straight on the body, another portal) still has to shut
+    // the menu: anything outside the trigger and the panel closes it. Both
+    // pointerdown (so the shut lands before the click) and click (so a bare
+    // click without a preceding pointer event still dismisses).
+    const onOutside = (event: Event) => {
+      const target = event.target as Node | null
+      if (target && (triggerRef.current?.contains(target) || panelRef.current?.contains(target))) return
+      closePanel(false)
+    }
     const onScroll = (event: Event) => {
       const panel = panelRef.current
       if (panel && event.target instanceof Node && panel.contains(event.target)) return
@@ -163,10 +173,14 @@ export function MorphingMenu({
     }
     const onResize = () => closePanel(false)
     document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('pointerdown', onOutside)
+    document.addEventListener('click', onOutside)
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', onResize)
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('pointerdown', onOutside)
+      document.removeEventListener('click', onOutside)
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', onResize)
     }
