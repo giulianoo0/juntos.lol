@@ -31,6 +31,82 @@ const trackStop = vi.fn()
 const bitmapClose = vi.fn()
 const mockTrack = { stop: trackStop } as unknown as MediaStreamTrack
 const mockStream = { getTracks: () => [mockTrack] } as unknown as MediaStream
+const AUDIO_FRAME_BYTES = 960 * 2 * 2
+
+/** One 20ms s16le stereo frame: left +0.5, right −0.5. */
+function pcmFrame(): Uint8Array {
+  const frame = new Uint8Array(AUDIO_FRAME_BYTES)
+  const view = new DataView(frame.buffer)
+  for (let i = 0; i < 960; i += 1) {
+    view.setInt16(i * 4, 16384, true)
+    view.setInt16(i * 4 + 2, -16384, true)
+  }
+  return frame
+}
+
+const fakeAudioTrack = { kind: 'audio', enabled: true, stop: vi.fn() }
+
+class FakeAudioContext {
+  static instances: FakeAudioContext[] = []
+  currentTime = 0
+  closed = false
+  buffers: Array<{ left: Float32Array; right: Float32Array }> = []
+  started = 0
+  destination = { stream: { getAudioTracks: () => [fakeAudioTrack] } }
+  constructor() {
+    FakeAudioContext.instances.push(this)
+  }
+  createMediaStreamDestination(): unknown {
+    return this.destination
+  }
+  createBuffer(_channels: number, length: number): unknown {
+    const left = new Float32Array(length)
+    const right = new Float32Array(length)
+    this.buffers.push({ left, right })
+    return { getChannelData: (channel: number) => (channel === 0 ? left : right) }
+  }
+  createBufferSource(): unknown {
+    return { connect: () => undefined, start: () => { this.started += 1 } }
+  }
+  async close(): Promise<void> {
+    this.closed = true
+  }
+}
+
+/** Infinite-body double: chunks drain, then done — or hang mid-stream when told to. */
+function pcmBody(chunks: Uint8Array[], onCancel: Mock, hang = false): unknown {
+  let index = 0
+  return {
+    cancel: async () => undefined,
+    getReader: () => ({
+      cancel: (...args: unknown[]) => {
+        onCancel(...args)
+        return Promise.resolve()
+      },
+      read: async () => {
+        if (hang) return new Promise<never>(() => undefined)
+        if (index < chunks.length) return { done: false, value: chunks[index++] as Uint8Array }
+        return { done: true, value: undefined }
+      },
+    }),
+  }
+}
+
+/** Routes start/stop plus an /audio/stream double into fetch. */
+function stubFetchWithAudio(stream: { ok: boolean; status: number; body?: unknown }): Mock {
+  const fetchMock = vi.fn(async (url: unknown) => {
+    const target = String(url)
+    if (target.endsWith('/capture/start')) return { ok: true, status: 200, json: async () => ({}) }
+    if (target.endsWith('/capture/stop')) return { ok: true, status: 200, json: async () => ({}) }
+    if (target.endsWith('/audio/stream')) {
+      if (!stream.ok) return { ok: false, status: stream.status, json: async () => ({}) }
+      return { ok: true, status: 200, body: stream.body, json: async () => ({}) }
+    }
+    throw new Error(`unexpected fetch ${target}`)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
 
 function stubGlobals(): void {
   vi.stubGlobal('Image', FakeImage)
@@ -194,5 +270,85 @@ describe('jlocal screen feed', () => {
     await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 2560, height: 1440, fps: 30 })).rejects.toThrow(
       'requested 2560x1440 exceeds display 1 size 1512x982',
     )
+  })
+  describe('system audio', () => {
+    const added: unknown[] = []
+    let addTrack: Mock
+    let readerCancel: Mock
+
+    beforeEach(() => {
+      added.length = 0
+      FakeAudioContext.instances.length = 0
+      fakeAudioTrack.enabled = true
+      readerCancel = vi.fn(async () => undefined)
+      addTrack = vi.fn((track: unknown) => {
+        added.push(track)
+      })
+      Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', {
+        configurable: true,
+        writable: true,
+        value: vi.fn().mockReturnValue({ getTracks: () => [mockTrack], getAudioTracks: () => added, addTrack }),
+      })
+      vi.stubGlobal('AudioContext', FakeAudioContext)
+    })
+
+    it('appends a decoded audio track when PCM frames arrive split across reads', async () => {
+      const frame = pcmFrame()
+      const fetchMock = stubFetchWithAudio({
+        ok: true,
+        status: 200,
+        body: pcmBody([frame.subarray(0, 1000), frame.subarray(1000)], readerCancel),
+      })
+      const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5, audio: true })
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchMock).toHaveBeenCalledWith(`${JLOCAL_ORIGIN}/audio/stream`)
+      expect(addTrack).toHaveBeenCalledWith(fakeAudioTrack)
+      const context = FakeAudioContext.instances[0]
+      expect(context).toBeDefined()
+      expect(context?.started).toBeGreaterThanOrEqual(1)
+      expect(context?.buffers.length).toBeGreaterThanOrEqual(1)
+      // s16le decode lands on float samples: left +0.5, right −0.5.
+      expect(context?.buffers[0]?.left[0]).toBeCloseTo(0.5, 5)
+      expect(context?.buffers[0]?.right[0]).toBeCloseTo(-0.5, 5)
+      feed.stop()
+    })
+
+    it('resolves video-only when the app answers 404 idle', async () => {
+      stubFetchWithAudio({ ok: false, status: 404 })
+      const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5, audio: true })
+      await vi.advanceTimersByTimeAsync(50)
+      expect(addTrack).not.toHaveBeenCalled()
+      expect(FakeAudioContext.instances).toHaveLength(0)
+      expect(feed.stream.getTracks()).toEqual([mockTrack])
+      feed.stop()
+    })
+
+    it('never opens the audio stream without the flag', async () => {
+      const fetchMock = stubFetchWithAudio({ ok: false, status: 501 })
+      const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/audio/stream'))).toBe(false)
+      expect(addTrack).not.toHaveBeenCalled()
+      feed.stop()
+    })
+
+    it('stop cancels the reader and closes the context', async () => {
+      const fetchMock = stubFetchWithAudio({
+        ok: true,
+        status: 200,
+        body: pcmBody([], readerCancel, true),
+      })
+      const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5, audio: true })
+      // The hanging read means the loop holds an open reader and context here.
+      await vi.advanceTimersByTimeAsync(50)
+      expect(addTrack).toHaveBeenCalledTimes(1)
+      const context = FakeAudioContext.instances[0]
+      expect(context?.closed).toBe(false)
+      feed.stop()
+      expect(readerCancel).toHaveBeenCalled()
+      expect(context?.closed).toBe(true)
+      expect(trackStop).toHaveBeenCalled()
+      expect(fetchMock).toHaveBeenCalledWith(`${JLOCAL_ORIGIN}/capture/stop`, expect.objectContaining({ method: 'POST' }))
+    })
   })
 })

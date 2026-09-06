@@ -4,6 +4,7 @@ import { useT } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
 import { startJLocalScreenFeed } from '../jlocal/screenFeed'
+import { setJLocalAudioMode } from '../jlocal/audio'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { Button } from '../ui/Button'
 import { Dropdown } from '../catalog/Dropdown'
@@ -179,6 +180,20 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
   const [fps, setFps] = useState<number>(() => (frameRates.includes(30) ? 30 : frameRates[frameRates.length - 1] ?? 30))
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<'permission' | string | null>(null)
+  // System-audio toggle, shown only while the app advertises audio.capture.
+  // Flipping persists live via POST /audio/mode and decides whether confirm
+  // asks the feed for an audio track; per-app mutes live in the room gear.
+  const audioCapture = caps?.audio.capture === true
+  const [soundOn, setSoundOn] = useState(true)
+  // Handoff reads the ref: a flip while the feed is still starting lands on
+  // the published stream instead of the stale render closure.
+  const soundRef = useRef(soundOn)
+  const toggleSound = () => {
+    const next = !soundOn
+    setSoundOn(next)
+    soundRef.current = next
+    void setJLocalAudioMode(next ? 'all' : 'none')
+  }
   // The default quality must fit the picked target, not the caps ceiling: a
   // 4K default on a 1512x982 display fails the start with a confusing error.
   // The target's exact size always works, so it rides along as a fallback
@@ -285,8 +300,12 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
     if (!target) return
     setStarting(true)
     setStartError(null)
-    void startJLocalScreenFeed(target, { width: picked.width, height: picked.height, fps })
+    void startJLocalScreenFeed(target, { width: picked.width, height: picked.height, fps, audio: audioCapture && soundOn })
       .then(({ stream, stop }) => {
+        // The toggle owns the local track flag at handoff: a late flip while
+        // starting still lands on the published stream. The optional call
+        // covers bare test doubles without getAudioTracks.
+        for (const track of stream.getAudioTracks?.() ?? []) track.enabled = soundRef.current
         onConfirm(stream, stop)
       })
       .catch((error: unknown) => {
@@ -402,6 +421,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
       )}
       </div>
       {canConfirm ? (
+        <>
         <div className="jscreen-grid">
           <div className="jscreen-field">
             <span>{t('jlocal.screenRes')}</span>
@@ -422,6 +442,13 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
             />
           </div>
         </div>
+        {audioCapture ? (
+          <label className="jscreen-sound">
+            <input type="checkbox" checked={soundOn} onChange={toggleSound} />
+            <span>{t('jlocal.screenSound')}</span>
+          </label>
+        ) : null}
+        </>
       ) : null}
       {startError !== null ? <p className="jscreen-error" role="alert">{startError === 'permission' ? t('jlocal.screenStartError') : startError}</p> : null}
       <div className="jscreen-actions">

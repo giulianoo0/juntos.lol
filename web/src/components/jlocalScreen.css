@@ -120,6 +120,8 @@ img.jscreen-app-icon.is-photo { padding: 0; object-fit: contain; background: tra
 
 .jscreen-field { display: grid; gap: 7px; }
 .jscreen-field span { color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
+.jscreen-sound { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.jscreen-sound input { accent-color: currentColor; width: 15px; height: 15px; margin: 0; }
 .jscreen-note {
   margin-bottom: 12px;
   padding: 13px 14px;

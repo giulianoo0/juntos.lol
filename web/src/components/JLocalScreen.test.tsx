@@ -93,7 +93,8 @@ describe('jlocal screen modal displays', () => {
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },
-      { width: 1920, height: 1080, fps: 30 },
+      // No audio.capture in these caps: the toggle stays hidden, audio off.
+      { width: 1920, height: 1080, fps: 30, audio: false },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -126,7 +127,7 @@ describe('jlocal screen modal displays', () => {
     fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'window', id: '9' },
-      { width: 1440, height: 900, fps: 30 },
+      { width: 1440, height: 900, fps: 30, audio: false },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
   })
@@ -224,9 +225,49 @@ describe('jlocal screen panel', () => {
     fireEvent.click(confirm)
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },
-      { width: 1920, height: 1080, fps: 30 },
+      { width: 1920, height: 1080, fps: 30, audio: false },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
+  })
+  it('shows a sound toggle with audio caps and passes it to the feed', async () => {
+    const audioCaps = {
+      ...CAPS,
+      capabilities: { ...CAPS.capabilities, audio: { appList: false, capture: true } },
+    }
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      const target = String(url)
+      if (target.endsWith('/health')) return { ok: true, json: async () => ({ name: 'jlocal', version: 'v0.0.1' }) }
+      if (target.endsWith('/capabilities')) return { ok: true, status: 200, json: async () => audioCaps }
+      if (target.endsWith('/capture/displays')) return { ok: true, status: 200, json: async () => DISPLAYS }
+      if (target.endsWith('/capture/windows')) return { ok: true, status: 200, json: async () => WINDOWS }
+      return { ok: true, json: async () => ({}) }
+    }))
+    await openWithCaps()
+    const stream = { getAudioTracks: () => [] } as unknown as MediaStream
+    vi.mocked(startJLocalScreenFeed).mockResolvedValue({ stream, stop: vi.fn() })
+    render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+    // Default on: confirm asks the feed for system audio.
+    const toggle = screen.getByRole('checkbox', { name: /system audio|áudio do sistema/i })
+    expect(toggle).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
+    await waitFor(() => expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
+      { kind: 'display', id: '1' },
+      expect.objectContaining({ audio: true }),
+    ))
+    // Flipping off persists mode none and the next confirm goes video-only.
+    fireEvent.click(toggle)
+    expect(toggle).not.toBeChecked()
+    await waitFor(() => expect(
+      vi.mocked(fetch).mock.calls.some(([url, init]) =>
+        String(url).endsWith('/audio/mode') && String((init as RequestInit)?.body).includes('"none"'),
+      ),
+    ).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
+    await waitFor(() => expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenLastCalledWith(
+      { kind: 'display', id: '1' },
+      expect.objectContaining({ audio: false }),
+    ))
   })
   it('closes an open quality dropdown on outside pointer press', async () => {
     stubFetch(DISPLAYS)

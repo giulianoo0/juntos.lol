@@ -6,7 +6,7 @@ import { JLOCAL_ORIGIN, getJLocalSnapshot, subscribeJLocal } from './status'
 // native browser flows keep working untouched.
 export interface JLocalCapabilities {
   screen: { available: boolean; capture: boolean; maxWidth: number; maxHeight: number; maxFps: number }
-  audio: { appList: boolean }
+  audio: { appList: boolean; capture: boolean }
   torrent: { available: boolean }
 }
 
@@ -32,6 +32,8 @@ function parseCapabilities(body: unknown): JLocalCapabilities | null {
   if (typeof screen.maxHeight !== 'number' || !Number.isFinite(screen.maxHeight)) return null
   if (typeof screen.maxFps !== 'number' || !Number.isFinite(screen.maxFps)) return null
   if (typeof audio.appList !== 'boolean') return null
+  // capture is new: old apps omit it and still parse, defaulting to silent.
+  if (audio.capture !== undefined && typeof audio.capture !== 'boolean') return null
   if (typeof torrent.available !== 'boolean') return null
   return {
     screen: {
@@ -41,7 +43,7 @@ function parseCapabilities(body: unknown): JLocalCapabilities | null {
       maxHeight: screen.maxHeight,
       maxFps: screen.maxFps,
     },
-    audio: { appList: audio.appList },
+    audio: { appList: audio.appList, capture: audio.capture === true },
     torrent: { available: torrent.available },
   }
 }

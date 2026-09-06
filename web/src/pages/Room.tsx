@@ -8,11 +8,19 @@ import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
 import { JLocalScreenModal } from '../components/JLocalScreen'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { useJLocal } from '../jlocal/status'
+import {
+  fetchJLocalWindows,
+  isJLocalAudioCaptureAvailable,
+  setJLocalAppMuted,
+  setJLocalAudioMode,
+  type JLocalAudioMode,
+  type JLocalWindowApp,
+} from '../jlocal/audio'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, Download, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
+import { Check, Compass, Crown, Download, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Settings, Upload, UserX, Volume2, VolumeX, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -1051,6 +1059,109 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
 
 /** A viewer that is still not seeing frames this long after the host went live subscribes again. */
 const SCREEN_WATCH_RETRY_MS = 4_000
+/**
+ * The controller's live screen controls: a gear next to the share button,
+ * opening through the same MorphingMenu surface as change-media. Switch
+ * source re-opens the JLocal picker while live; the sound master and the
+ * per-app mutes only render when the app advertises audio capture.
+ */
+function ScreenShareGear({ t, onSwitchSource, getStream }: {
+  t: Translator
+  onSwitchSource: () => void
+  getStream: () => MediaStream | null
+}) {
+  const [audioCapable, setAudioCapable] = useState(false)
+  const [soundOn, setSoundOn] = useState(true)
+  const [mode, setMode] = useState<JLocalAudioMode>('all')
+  const [apps, setApps] = useState<JLocalWindowApp[] | null>(null)
+  const [mutedApps, setMutedApps] = useState<ReadonlySet<string>>(() => new Set())
+
+  const handleOpen = () => {
+    if (!isJLocalAudioCaptureAvailable()) { setAudioCapable(false); return }
+    setAudioCapable(true)
+    setApps(null)
+    void fetchJLocalWindows().then((windows) => {
+      const seen = new Set<string>()
+      setApps(windows.filter((entry) => {
+        if (entry.app.length === 0 || seen.has(entry.app)) return false
+        seen.add(entry.app)
+        return true
+      }))
+    })
+  }
+
+  const toggleSound = () => {
+    const next = !soundOn
+    setSoundOn(next)
+    setMode(next ? 'all' : 'none')
+    getStream()?.getAudioTracks().forEach((track) => { track.enabled = next })
+    void setJLocalAudioMode(next ? 'all' : 'none')
+  }
+
+  const toggleApp = (app: string) => {
+    const nextMuted = !mutedApps.has(app)
+    setMutedApps((current) => {
+      const next = new Set(current)
+      if (nextMuted) next.add(app)
+      else next.delete(app)
+      return next
+    })
+    // The first per-app choice moves the server off the full mix; the mute
+    // set only means something in custom mode.
+    if (mode !== 'custom') {
+      setMode('custom')
+      void setJLocalAudioMode('custom')
+    }
+    void setJLocalAppMuted(app, nextMuted)
+  }
+
+  return (
+    <MorphingMenu
+      align="end"
+      haspopup="menu"
+      minWidth={0}
+      onOpen={handleOpen}
+      triggerClassName="screen-gear"
+      panelClassName="screen-gear-panel"
+      ariaLabel={t('room.screenSettings')}
+      trigger={() => <Settings size={16} aria-hidden="true" />}
+    >
+      {(close) => (
+        <div className="screen-gear-menu">
+          <button type="button" onClick={() => { close(); onSwitchSource() }}>
+            <MonitorUp size={15} aria-hidden="true" />{t('room.screenSwitchSource')}
+          </button>
+          {audioCapable ? (
+            <>
+              <button type="button" role="switch" aria-checked={soundOn} onClick={toggleSound}>
+                {soundOn
+                  ? <Volume2 size={15} aria-hidden="true" />
+                  : <VolumeX size={15} aria-hidden="true" />}
+                {t('room.screenSound')}
+              </button>
+              <p className="screen-gear-section">{t('room.screenAppSounds')}</p>
+              {apps === null ? (
+                <p className="screen-gear-empty">{t('jlocal.screenWindowLoading')}</p>
+              ) : apps.length === 0 ? (
+                <p className="screen-gear-empty">{t('room.screenAppsEmpty')}</p>
+              ) : apps.map((entry) => (
+                <button
+                  key={entry.app}
+                  type="button"
+                  role="switch"
+                  aria-checked={!mutedApps.has(entry.app)}
+                  onClick={() => toggleApp(entry.app)}
+                >
+                  <span className="screen-gear-dot" aria-hidden="true" />{entry.app}
+                </button>
+              ))}
+            </>
+          ) : null}
+        </div>
+      )}
+    </MorphingMenu>
+  )
+}
 
 /**
  * The controller publishes the picked surface to the relay from inside its
@@ -1074,6 +1185,7 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
   const streamRef = useRef<MediaStream | null>(null)
   const feedStopRef = useRef<(() => void) | null>(null)
   const [sharing, setSharing] = useState(false)
+  const [switching, setSwitching] = useState(false)
   const [failed, setFailed] = useState(false)
   const [watchStatus, setWatchStatus] = useState<ScreenWatchStatus>('offline')
   const [seenLive, setSeenLive] = useState(false)
@@ -1194,6 +1306,41 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
     // beginSharing failures already run endSharing, which calls the feed stop.
     void beginSharing(stream).catch(() => setFailed(true))
   }
+  // Repicking while live re-opens the JLocal dialog through the same prop
+  // the first pick uses. Confirming swaps the publish: the old feed releases
+  // app capture inside endSharing, the new stop lands before beginSharing so
+  // a failed republish still cleans up the new feed. The room sees a brief
+  // gap between the live-false and live-true marks; viewers resubscribe.
+  const swapFeed = useCallback(async (stream: MediaStream, stop: (() => void) | null) => {
+    setSwitching(true)
+    try {
+      endSharing()
+      if (stop) feedStopRef.current = stop
+      setFailed(false)
+      await beginSharing(stream)
+    } catch {
+      setFailed(true)
+    } finally {
+      setSwitching(false)
+    }
+  }, [beginSharing, endSharing])
+
+  const confirmSwapFeed = useCallback((stream: MediaStream, stop: () => void) => {
+    void swapFeed(stream, stop)
+  }, [swapFeed])
+
+  const repickNative = useCallback(() => {
+    setFailed(false)
+    void requestScreenStream().then(
+      (stream) => swapFeed(stream, null),
+      (error: unknown) => { if (!isScreenShareCancelled(error)) setFailed(true) },
+    )
+  }, [swapFeed])
+
+  const repickSource = useCallback(() => {
+    if (isJLocalCaptureAvailable()) { onJLocalScreen(repickNative, confirmSwapFeed); return }
+    repickNative()
+  }, [onJLocalScreen, repickNative, confirmSwapFeed])
 
   const hint = !supported ? t('room.screenUnsupported')
     : isController ? (sharing ? null : t('room.screenHostHint'))
@@ -1211,9 +1358,12 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
       <div className="screen-overlay">
         {hint ? <p>{hint}</p> : null}
         {isController && supported ? (
-          <button className="primary-button" disabled={!memberId} onClick={sharing ? endSharing : startSharing}>
-            {sharing ? t('room.screenStop') : t('room.screenStart')}
-          </button>
+          <div className="screen-actions">
+            <button className="primary-button" disabled={!memberId || switching} onClick={sharing ? endSharing : startSharing}>
+              {switching ? t('room.screenSwitching') : sharing ? t('room.screenStop') : t('room.screenStart')}
+            </button>
+            <ScreenShareGear t={t} onSwitchSource={repickSource} getStream={() => streamRef.current} />
+          </div>
         ) : null}
         {failed ? <span className="error-card compact">{t('error.screenshare')}</span> : null}
       </div>
