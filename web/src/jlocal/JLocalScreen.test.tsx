@@ -65,12 +65,11 @@ describe('jlocal capture gate', () => {
     }
   })
 
-  it('returns true when connected with cached caps advertising capture', async () => {
+  it('warms caps on connect so the first share click sees capture', async () => {
     stubFetch({ name: 'jlocal', version: 'v0.0.1' }, CONTRACT_CAPS)
     connectJLocal()
     await waitFor(() => expect(getJLocalSnapshot().connected).toBe(true))
-    expect(isJLocalCaptureAvailable()).toBe(false)
-    refreshJLocalCapabilities()
+    // No manual refresh: the connect transition warms the cache by itself.
     await waitFor(() => expect(getCachedJLocalCapabilities()).not.toBeNull())
     expect(isJLocalCaptureAvailable()).toBe(true)
   })

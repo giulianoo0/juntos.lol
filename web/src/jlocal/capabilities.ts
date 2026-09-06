@@ -1,4 +1,4 @@
-import { JLOCAL_ORIGIN, getJLocalSnapshot } from './status'
+import { JLOCAL_ORIGIN, getJLocalSnapshot, subscribeJLocal } from './status'
 
 // Phase 1 of the companion-app contract: the web UI only reads what the app
 // advertises. Every capability stays false until the app implements it, and a
@@ -89,6 +89,17 @@ export function isJLocalCaptureAvailable(): boolean {
   if (!available && snapshot.connected && fresh === null) refreshJLocalCapabilities()
   return available
 }
+
+// Warm the cache the moment the app connects, so the first share click per
+// page load already sees screen.capture instead of falling through to the
+// native picker while a background refresh is still in flight. One-way
+// dependency (capabilities -> status); the subscription lives for the session.
+let lastConnected = false
+subscribeJLocal(() => {
+  const connected = getJLocalSnapshot().connected
+  if (connected && !lastConnected) refreshJLocalCapabilities()
+  lastConnected = connected
+})
 
 /** Test-only reset for the module cache. */
 export function resetJLocalCapabilitiesForTests(): void {
