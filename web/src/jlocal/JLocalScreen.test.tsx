@@ -109,9 +109,7 @@ describe('jlocal capture gate', () => {
       vi.mocked(fetch).mock.calls.some((args) => String(args[0]).endsWith('/capabilities')),
     ).toBe(true))
     // The stub resolves at once; one macrotask flushes the refresh chain.
-    const { promise, resolve } = Promise.withResolvers<void>()
-    setTimeout(resolve, 0)
-    await promise
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
     expect(getCachedJLocalCapabilities()).toBeNull()
     expect(isJLocalCaptureAvailable()).toBe(false)
   })

@@ -53,10 +53,12 @@ export async function startJLocalScreenFeed(
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d')
-  if (!ctx) {
+  if (ctx === null) {
     stopCapture()
     throw new Error('jlocal-capture-unavailable')
   }
+  // Bound once: the poll closure below must not re-narrow a captured binding.
+  const g: CanvasRenderingContext2D = ctx
 
   let stopped = false
   const intervalMs = Math.max(1, Math.round(1000 / fps))
@@ -76,7 +78,7 @@ export async function startJLocalScreenFeed(
         bitmap.close()
         return
       }
-      ctx.drawImage(bitmap, 0, 0, width, height)
+      g.drawImage(bitmap, 0, 0, width, height)
       bitmap.close()
     } catch {
       // A missing or half-written JPEG skips this frame; the next tick tries again.
