@@ -521,7 +521,8 @@ export function Home() {
             <span className="dialog-file">
               {pendingMedia.kind === 'screen' ? t('home.screenDialog')
                 : pendingMedia.kind === 'stream' ? pendingMedia.pick.displayName
-                  : pendingMedia.file.name}
+                  : pendingMedia.kind === 'jlocal' ? pendingMedia.name
+                    : pendingMedia.file.name}
             </span>
             <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
               <label htmlFor="nickname">{t('home.nickname')}</label>
