@@ -53,7 +53,19 @@ export async function startJLocalScreenFeed(
   } catch {
     throw new Error('jlocal-capture-unavailable')
   }
-  if (!started.ok) throw new Error('jlocal-capture-unavailable')
+  if (started.status === 503) throw new Error('jlocal-capture-permission')
+  if (!started.ok) {
+    // Surface the server's reason (e.g. size exceeds the display) instead of
+    // a generic failure: the modal shows it verbatim.
+    let detail = ''
+    try {
+      const body = (await started.json()) as { error?: unknown }
+      if (typeof body.error === 'string' && body.error.length > 0) detail = body.error
+    } catch {
+      // Non-JSON refusal: fall through to the generic failure below.
+    }
+    throw new Error(detail.length > 0 ? `jlocal-capture-failed: ${detail}` : 'jlocal-capture-unavailable')
+  }
 
   const canvas = document.createElement('canvas')
   canvas.width = width

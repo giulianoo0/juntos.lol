@@ -250,10 +250,10 @@ describe('jlocal capture preview', () => {
 
   afterEach(() => vi.unstubAllGlobals())
 
-  it('shows the snapshot once a display is picked, shimmering until the first frame', async () => {
+  it('shows a shimmering snapshot pane once a display is picked', async () => {
     await connectWithCaps(CAPS_SCREEN)
-    // Displays resolve (first is auto-selected); anything else refuses, so
-    // the pane keeps its shimmer polling instead of denying.
+    // Displays resolve (first is auto-selected); frames preload offscreen and
+    // nothing ever lands under jsdom, so the pane holds its shimmer.
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       if (String(url).endsWith('/capture/displays')) {
         return {
@@ -265,16 +265,12 @@ describe('jlocal capture preview', () => {
     }))
     // The dialog renders in a Radix portal on document.body, not in the
     // render container: query document-wide like screen.* does.
-    const src = 'img[src^="http://127.0.0.1:40392/capture/snapshot?display_id=1"]'
     render(
       <JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} onConfirm={() => undefined} />,
     )
-    const image = await screen.findByRole('radio', { name: /Main/ }).then(() => document.querySelector(src))
-    expect(image).not.toBeNull()
-    expect(image?.getAttribute('src')).toContain('width=960')
+    await screen.findByRole('radio', { name: /Main/ })
+    expect(document.querySelector('.jscreen-preview')).toBeNull()
     expect(document.querySelector('.jscreen-preview-shimmer')).not.toBeNull()
-    if (image) fireEvent.load(image)
-    expect(document.querySelector('.jscreen-preview-shimmer')).toBeNull()
   })
 
   it('renders no preview when capture is not advertised', () => {

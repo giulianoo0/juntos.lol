@@ -11,25 +11,48 @@ import './jlocalScreen.css'
 
 /**
  * Live snapshot of the picked target. Polls GET
- * /capture/snapshot?display_id=<id>&width=960 (window_id on the Apps tab)
- * every second with a cache-buster; the parent remounts per target via key,
- * so switching targets restarts polling, shimmer, and denial from scratch.
- * Until the first frame lands the pane shows a 16:9 shimmer skeleton, never
- * a void; a 503 (permission or capture unavailable) swaps the pane for the
- * inline permission hint, while anything else is transient and keeps the
- * shimmer polling. The pane is capped (16:9, 320px) so tall content never
- * balloons the panel.
+ * /capture/snapshot?display_id=<id>&width=640 (window_id on the Apps tab)
+ * every 250ms — 640px is plenty for the ≤320px pane and cheaper to encode.
+ * Each frame preloads into an offscreen Image and the visible src only swaps
+ * inside its onload, so the current frame never unmounts into a gap; the
+ * parent remounts per target via key, restarting poll, shimmer, and denial
+ * from scratch. Until the first frame lands the pane shows a 16:9 shimmer
+ * skeleton, never a void; a 503 (permission or capture unavailable) swaps
+ * the pane for the inline permission hint, while anything else is transient
+ * and keeps the shimmer polling. The pane is capped (16:9, 320px) so tall
+ * content never balloons the panel.
  */
+const PREVIEW_WIDTH = 640
+const PREVIEW_POLL_MS = 250
+
 function JLocalPreview({ target }: { target: { kind: 'display' | 'window'; id: string } }) {
   const t = useT()
   const idParam = target.kind === 'window' ? 'window_id' : 'display_id'
-  const base = `${JLOCAL_ORIGIN}/capture/snapshot?${idParam}=${encodeURIComponent(target.id)}&width=960`
-  const [tick, setTick] = useState(0)
-  const [loaded, setLoaded] = useState(false)
+  const base = `${JLOCAL_ORIGIN}/capture/snapshot?${idParam}=${encodeURIComponent(target.id)}&width=${PREVIEW_WIDTH}`
+  const [src, setSrc] = useState<string | null>(null)
   const [denied, setDenied] = useState(false)
   useEffect(() => {
-    const timer = window.setInterval(() => setTick((value) => value + 1), 1000)
-    return () => window.clearInterval(timer)
+    let cancelled = false
+    let tick = 0
+    const poll = () => {
+      tick += 1
+      const url = `${base}&t=${tick}`
+      const probe = new Image()
+      probe.onload = () => { if (!cancelled) setSrc(url) }
+      probe.onerror = () => {
+        if (cancelled) return
+        // An <img> hides the status, so probe it: only a 503 (permission
+        // or capture unavailable) turns the pane into the hint — anything
+        // else is transient and keeps the shimmer polling.
+        void fetch(base)
+          .then((response) => { if (!cancelled && response.status === 503) setDenied(true) })
+          .catch(() => undefined)
+      }
+      probe.src = url
+    }
+    poll()
+    const timer = window.setInterval(poll, PREVIEW_POLL_MS)
+    return () => { cancelled = true; window.clearInterval(timer) }
   }, [base])
   if (denied) {
     return (
@@ -40,24 +63,11 @@ function JLocalPreview({ target }: { target: { kind: 'display' | 'window'; id: s
   }
   return (
     <div className="jscreen-preview-pane">
-      {loaded ? null : (
+      {src === null ? (
         <div className="jscreen-preview-shimmer" role="status" aria-label={t('jlocal.screenDisplayLoading')} />
+      ) : (
+        <img className="jscreen-preview" src={src} alt="" />
       )}
-      <img
-        key={tick}
-        className="jscreen-preview"
-        src={`${base}&t=${tick}`}
-        alt=""
-        onLoad={() => setLoaded(true)}
-        onError={() => {
-          // An <img> hides the status, so probe it: only a 503 (permission
-          // or capture unavailable) turns the pane into the hint — anything
-          // else is transient and keeps the shimmer polling.
-          void fetch(base)
-            .then((response) => { if (response.status === 503) setDenied(true) })
-            .catch(() => undefined)
-        }}
-      />
     </div>
   )
 }
@@ -142,7 +152,29 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
   const [resolution, setResolution] = useState<string>(resolutions[resolutions.length - 1]?.id ?? '1080p')
   const [fps, setFps] = useState<number>(() => (frameRates.includes(30) ? 30 : frameRates[frameRates.length - 1] ?? 30))
   const [starting, setStarting] = useState(false)
-  const [startFailed, setStartFailed] = useState(false)
+  const [startError, setStartError] = useState<'permission' | string | null>(null)
+  // The default quality must fit the picked target, not the caps ceiling: a
+  // 4K default on a 1512x982 display fails the start with a confusing error.
+  const selectedTarget =
+    tab === 'windows'
+      ? (windows?.find((entry) => entry.id === windowId) ?? null)
+      : (displays?.find((entry) => entry.id === displayId) ?? null)
+  useEffect(() => {
+    if (selectedTarget === null) return
+    const fitting = resolutions.filter(
+      (option) => option.width <= selectedTarget.width && option.height <= selectedTarget.height,
+    )
+    const wanted = fitting[fitting.length - 1] ?? resolutions[0]
+    if (wanted !== undefined) {
+      const current = resolutions.find((option) => option.id === resolution)
+      const fits =
+        current !== undefined &&
+        current.width <= selectedTarget.width &&
+        current.height <= selectedTarget.height
+      if (!fits) setResolution(wanted.id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTarget?.id, selectedTarget?.width, selectedTarget?.height, tab])
 
   const panelRef = useRef<HTMLDivElement>(null)
   const onExitRef = useRef(onExit)
@@ -212,12 +244,17 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
       : (displayId !== null ? { kind: 'display' as const, id: displayId } : null)
     if (!target) return
     setStarting(true)
-    setStartFailed(false)
+    setStartError(null)
     void startJLocalScreenFeed(target, { width: picked.width, height: picked.height, fps })
       .then(({ stream, stop }) => {
         onConfirm(stream, stop)
       })
-      .catch(() => setStartFailed(true))
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : ''
+        // Permission denials keep the dedicated hint; any other refusal shows
+        // the server's own reason (e.g. size exceeds the display) verbatim.
+        setStartError(message.includes('jlocal-capture-permission') ? 'permission' : message.replace(/^jlocal-capture-(failed|unavailable):?\s*/, '') || 'unavailable')
+      })
       .finally(() => setStarting(false))
   }
 
@@ -335,7 +372,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
           </div>
         </div>
       ) : null}
-      {startFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenStartError')}</p> : null}
+      {startError !== null ? <p className="jscreen-error" role="alert">{startError === 'permission' ? t('jlocal.screenStartError') : startError}</p> : null}
       <div className="jscreen-actions">
         <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.screenUseBrowser')}</Button>
         {canConfirm ? (

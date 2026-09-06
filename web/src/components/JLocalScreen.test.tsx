@@ -73,15 +73,15 @@ describe('jlocal screen modal displays', () => {
     expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Side/ })).toBeInTheDocument()
     expect(screen.getByText('2560×1440')).toBeInTheDocument()
-    // Quality dropdowns sit below the cards; 4K is the ceiling here.
-    expect(screen.getByRole('button', { name: '4K' })).toBeInTheDocument()
+    // Resolution defaults to the best fit for Main (2560x1440), not the 4K ceiling.
+    expect(screen.getByRole('button', { name: '1440p' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: /Side/ }))
     fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },
-      { width: 3840, height: 2160, fps: 30 },
+      { width: 1920, height: 1080, fps: 30 },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -110,7 +110,7 @@ describe('jlocal screen modal displays', () => {
     fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'window', id: '9' },
-      { width: 3840, height: 2160, fps: 30 },
+      { width: 1920, height: 1080, fps: 30 },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
   })
@@ -130,7 +130,7 @@ describe('jlocal screen modal displays', () => {
   it('shows a permission hint and the browser fallback when the feed fails to start', async () => {
     stubFetch(DISPLAYS)
     await openWithCaps()
-    vi.mocked(startJLocalScreenFeed).mockRejectedValue(new Error('refused'))
+    vi.mocked(startJLocalScreenFeed).mockRejectedValue(new Error('jlocal-capture-permission'))
     const onConfirm = vi.fn()
     const onOpenChange = vi.fn()
     const onUseBrowser = vi.fn()
@@ -147,6 +147,18 @@ describe('jlocal screen modal displays', () => {
     const fallback = screen.getByRole('button', { name: /navegador|browser/i })
     fireEvent.click(fallback)
     expect(onUseBrowser).toHaveBeenCalledTimes(1)
+  })
+  it('shows the server reason verbatim when the request is refused', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    vi.mocked(startJLocalScreenFeed).mockRejectedValue(
+      new Error('jlocal-capture-failed: requested 2560x1440 exceeds display 1 size 1512x982'),
+    )
+    render(<JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} onConfirm={() => undefined} />)
+
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
+    expect(await screen.findByText(/requested 2560x1440 exceeds display 1 size 1512x982/)).toBeInTheDocument()
   })
 })
 
@@ -196,7 +208,7 @@ describe('jlocal screen panel', () => {
     fireEvent.click(confirm)
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },
-      { width: 3840, height: 2160, fps: 30 },
+      { width: 1920, height: 1080, fps: 30 },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
   })
@@ -233,24 +245,53 @@ describe('jlocal screen panel', () => {
     await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
   })
 
-  it('polls a per-display snapshot, shimmering until the first frame', async () => {
+  it('preloads display snapshots offscreen and swaps without a gap at preview width', async () => {
+    const preloads: Array<{ url: string; fireLoad: () => void; fireError: () => void }> = []
+    vi.stubGlobal('Image', class {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      currentSrc = ''
+      set src(url: string) {
+        this.currentSrc = url
+        preloads.push({ url, fireLoad: () => this.onload?.(), fireError: () => this.onerror?.() })
+      }
+      get src() { return this.currentSrc }
+    })
     stubFetch(DISPLAYS)
     await openWithCaps()
     render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
     expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
 
-    // Decorative frame (alt="") has no img role: query the pane directly.
-    const frame = document.querySelector('.jscreen-preview')
-    expect(frame).not.toBeNull()
-    expect(frame?.getAttribute('src')).toContain('display_id=1')
-    expect(frame?.getAttribute('src')).toContain('width=960')
-    // No void while the poll is in flight: shimmer until a frame lands.
+    // First poll fires on mount: preview width, no visible frame yet.
+    expect(preloads.length).toBeGreaterThanOrEqual(1)
+    expect(preloads[0]?.url).toContain('display_id=1')
+    expect(preloads[0]?.url).toContain('width=640')
+    expect(document.querySelector('.jscreen-preview')).toBeNull()
     expect(document.querySelector('.jscreen-preview-shimmer')).not.toBeNull()
-    if (frame) fireEvent.load(frame)
+    // Frame lands offscreen → visible img appears with the preloaded src and
+    // the shimmer leaves together: never a gap, never a void.
+    preloads[0]?.fireLoad()
+    await waitFor(() => expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[0]?.url))
     expect(document.querySelector('.jscreen-preview-shimmer')).toBeNull()
+    // Later polls preload without touching the visible frame until loaded.
+    await waitFor(() => expect(preloads.length).toBeGreaterThanOrEqual(3), { timeout: 3000 })
+    expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[0]?.url)
+    preloads[2]?.fireLoad()
+    await waitFor(() => expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[2]?.url))
   })
 
   it('previews the picked window on the Apps tab', async () => {
+    const preloads: Array<{ url: string; fireLoad: () => void }> = []
+    vi.stubGlobal('Image', class {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      currentSrc = ''
+      set src(url: string) {
+        this.currentSrc = url
+        preloads.push({ url, fireLoad: () => this.onload?.() })
+      }
+      get src() { return this.currentSrc }
+    })
     stubFetch(DISPLAYS)
     await openWithCaps()
     render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
@@ -259,15 +300,26 @@ describe('jlocal screen panel', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^Apps$/i }))
     expect(await screen.findByRole('radio', { name: /Terminal/ })).toBeInTheDocument()
     // First window is auto-selected; picking another remounts the preview.
-    expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toContain('window_id=7')
+    expect(preloads.some((preload) => preload.url.includes('window_id=7'))).toBe(true)
     fireEvent.click(screen.getByRole('radio', { name: /Terminal/ }))
-    const frame = document.querySelector('.jscreen-preview')
-    expect(frame).not.toBeNull()
-    expect(frame?.getAttribute('src')).toContain('window_id=9')
-    expect(frame?.getAttribute('src')).toContain('width=960')
+    const picked = preloads.find((preload) => preload.url.includes('window_id=9'))
+    expect(picked?.url).toContain('width=640')
+    picked?.fireLoad()
+    await waitFor(() => expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(picked?.url))
   })
 
   it('shows the permission hint in the pane on 503', async () => {
+    const preloads: Array<{ fireError: () => void }> = []
+    vi.stubGlobal('Image', class {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      currentSrc = ''
+      set src(_url: string) {
+        this.currentSrc = _url
+        preloads.push({ fireError: () => this.onerror?.() })
+      }
+      get src() { return this.currentSrc }
+    })
     vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
       const target = String(url)
       if (target.endsWith('/health')) return { ok: true, json: async () => ({ name: 'jlocal', version: 'v0.0.1' }) }
@@ -280,9 +332,8 @@ describe('jlocal screen panel', () => {
     render(<JLocalScreenPanel onConfirm={() => undefined} onUseBrowser={() => undefined} onExit={() => undefined} />)
     expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
 
-    const frame = document.querySelector('.jscreen-preview')
-    expect(frame).not.toBeNull()
-    if (frame) fireEvent.error(frame)
+    expect(preloads.length).toBeGreaterThanOrEqual(1)
+    preloads[0]?.fireError()
     expect(await screen.findByText(/Screen Recording|Gravação de Tela/i)).toBeInTheDocument()
     expect(document.querySelector('.jscreen-preview-pane img')).toBeNull()
   })

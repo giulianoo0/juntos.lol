@@ -46,11 +46,11 @@ function stubGlobals(): void {
 }
 
 /** Routes /capture/start to ok/status and answers /capture/stop 200. */
-function stubFetch(startOk: boolean, startStatus = 200): Mock {
+function stubFetch(startOk: boolean, startStatus = 200, startBody: unknown = {}): Mock {
   const fetchMock = vi.fn(async (url: unknown) => {
     const target = String(url)
     if (target.endsWith('/capture/start')) {
-      return { ok: startOk, status: startStatus, json: async () => ({}) }
+      return { ok: startOk, status: startStatus, json: async () => startBody }
     }
     if (target.endsWith('/capture/stop')) {
       return { ok: true, status: 200, json: async () => ({}) }
@@ -174,6 +174,19 @@ describe('jlocal screen feed', () => {
     )
     await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })).rejects.toThrow(
       'jlocal-capture-unavailable',
+    )
+  })
+  it('throws jlocal-capture-permission when start answers 503', async () => {
+    stubFetch(false, 503, { error: 'permission' })
+    await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })).rejects.toThrow(
+      'jlocal-capture-permission',
+    )
+  })
+
+  it('carries the server reason when start refuses the request', async () => {
+    stubFetch(false, 400, { error: 'requested 2560x1440 exceeds display 1 size 1512x982' })
+    await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 2560, height: 1440, fps: 30 })).rejects.toThrow(
+      'requested 2560x1440 exceeds display 1 size 1512x982',
     )
   })
 })
