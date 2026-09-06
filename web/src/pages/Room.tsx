@@ -321,8 +321,22 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [sourceError, setSourceError] = useState<string>('')
   const [screenOpen, setScreenOpen] = useState(false)
   const screenFallbackRef = useRef<(() => void) | null>(null)
-  const openJLocalScreen = (fallback: () => void) => { screenFallbackRef.current = fallback; setScreenOpen(true) }
-  const useBrowserForScreen = () => { setScreenOpen(false); screenFallbackRef.current?.(); screenFallbackRef.current = null }
+  const screenConfirmRef = useRef<((stream: MediaStream, stop: () => void) => void) | null>(null)
+  const openJLocalScreen = (fallback: () => void, onConfirm?: (stream: MediaStream, stop: () => void) => void) => {
+    screenFallbackRef.current = fallback
+    screenConfirmRef.current = onConfirm ?? null
+    setScreenOpen(true)
+  }
+  const useBrowserForScreen = () => { setScreenOpen(false); screenFallbackRef.current?.(); screenFallbackRef.current = null; screenConfirmRef.current = null }
+  const confirmJLocalScreen = (stream: MediaStream, stop: () => void) => {
+    setScreenOpen(false)
+    // The feed dies with its stream: every teardown path stops the tracks,
+    // which releases app capture — polling plus POST /capture/stop, best-effort.
+    stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
+    screenConfirmRef.current?.(stream, stop)
+    screenFallbackRef.current = null
+    screenConfirmRef.current = null
+  }
   const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
@@ -445,8 +459,22 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }
 
   const chooseScreen = () => {
-    if (isJLocalCaptureAvailable()) { openJLocalScreen(chooseScreenNative); return }
+    if (isJLocalCaptureAvailable()) { openJLocalScreen(chooseScreenNative, confirmChooseScreen); return }
     chooseScreenNative()
+  }
+
+  const confirmChooseScreen = (stream: MediaStream) => {
+    stashScreenStream(room.id, stream)
+    void swapSource(async () => {
+      try {
+        await changeRoomSource(room.id, sync.memberId, sync.capability, 'screen')
+      } catch (error) {
+        dropScreenStream(room.id)
+        throw error
+      }
+    }).catch((error: unknown) => {
+      if (!isScreenShareCancelled(error)) setSourceError('changeFailed')
+    })
   }
 
   const chatEntries = useMemo((): ChatEntry[] => [
@@ -669,7 +697,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         </div>
       </header>
       <JLocalModal />
-      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={useBrowserForScreen} />
+      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={useBrowserForScreen} onConfirm={confirmJLocalScreen} />
       <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
         <section className="media-column">
           {isScreenRoom ? (
@@ -1038,12 +1066,13 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
   isController: boolean
   screenLive: boolean
   t: Translator
-  onJLocalScreen: (fallback: () => void) => void
+  onJLocalScreen: (fallback: () => void, onConfirm?: (stream: MediaStream, stop: () => void) => void) => void
 }) {
   const previewRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const publisherRef = useRef<ScreenPublisher | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const feedStopRef = useRef<(() => void) | null>(null)
   const [sharing, setSharing] = useState(false)
   const [failed, setFailed] = useState(false)
   const [watchStatus, setWatchStatus] = useState<ScreenWatchStatus>('offline')
@@ -1052,6 +1081,9 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
   const supported = useMemo(() => screenShareSupported(), [])
 
   const endSharing = useCallback(() => {
+    // Feed-backed streams release app capture here; native tracks just stop.
+    feedStopRef.current?.()
+    feedStopRef.current = null
     publisherRef.current?.close()
     publisherRef.current = null
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -1152,8 +1184,15 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
   }
 
   const startSharing = () => {
-    if (isJLocalCaptureAvailable()) { onJLocalScreen(startSharingNative); return }
+    if (isJLocalCaptureAvailable()) { onJLocalScreen(startSharingNative, confirmSharingFeed); return }
     startSharingNative()
+  }
+
+  const confirmSharingFeed = (stream: MediaStream, stop: () => void) => {
+    feedStopRef.current = stop
+    setFailed(false)
+    // beginSharing failures already run endSharing, which calls the feed stop.
+    void beginSharing(stream).catch(() => setFailed(true))
   }
 
   const hint = !supported ? t('room.screenUnsupported')

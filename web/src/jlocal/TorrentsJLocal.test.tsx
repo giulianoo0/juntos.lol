@@ -27,7 +27,7 @@ const CAPS_TORRENT = {
   name: 'jlocal',
   version: 'v0.0.1',
   capabilities: {
-    screen: { available: false, maxWidth: 1920, maxHeight: 1080, maxFps: 30 },
+    screen: { available: false, capture: false, maxWidth: 1920, maxHeight: 1080, maxFps: 30 },
     audio: { appList: false },
     torrent: { available: true },
   },
@@ -37,7 +37,7 @@ const CAPS_SCREEN = {
   name: 'jlocal',
   version: 'v0.0.1',
   capabilities: {
-    screen: { available: true, maxWidth: 3840, maxHeight: 2160, maxFps: 60 },
+    screen: { available: true, capture: true, maxWidth: 3840, maxHeight: 2160, maxFps: 60 },
     audio: { appList: false },
     torrent: { available: false },
   },
@@ -257,7 +257,7 @@ describe('jlocal capture preview', () => {
     // render container: query document-wide like screen.* does.
     const src = 'img[src="http://127.0.0.1:40392/capture/preview.jpg"]'
     render(
-      <JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} />,
+      <JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} onConfirm={() => undefined} />,
     )
     const image = document.querySelector(src)
     expect(image).not.toBeNull()
@@ -268,7 +268,7 @@ describe('jlocal capture preview', () => {
   it('renders no preview when capture is not advertised', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('refused')))
     render(
-      <JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} />,
+      <JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} onConfirm={() => undefined} />,
     )
     expect(document.querySelector('.jscreen-dialog img')).toBeNull()
   })

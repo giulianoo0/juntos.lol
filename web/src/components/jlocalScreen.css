@@ -22,24 +22,17 @@
   font-size: 14px;
 }
 
-.jscreen-audio { display: grid; gap: 8px; margin: 16px 0 0; padding: 0; border: 0; }
-.jscreen-audio label {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--text, #fff);
-  font-size: 13.5px;
-}
-.jscreen-audio input { width: auto; accent-color: var(--primary, #ff7a45); }
-
-.jscreen-apps {
+.jscreen-note {
   margin-top: 12px;
   padding: 13px 14px;
   border: 1px solid rgba(255, 255, 255, .08);
   border-radius: var(--r-field, 14px);
   background: rgba(255, 255, 255, .03);
 }
-.jscreen-apps p { margin: 0; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 13px; }
+.jscreen-note p { margin: 0; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 13px; }
+.jscreen-field + .jscreen-grid, .jscreen-grid + .jscreen-note { margin-top: 12px; }
+
+.jscreen-preview { display: block; margin-top: 12px; max-width: 100%; border-radius: 12px; }
 
 .jscreen-error {
   margin: 12px 0 0;

@@ -5,7 +5,7 @@ import { JLOCAL_ORIGIN, getJLocalSnapshot } from './status'
 // missing or malformed payload parses to null rather than throwing, so the
 // native browser flows keep working untouched.
 export interface JLocalCapabilities {
-  screen: { available: boolean; maxWidth: number; maxHeight: number; maxFps: number }
+  screen: { available: boolean; capture: boolean; maxWidth: number; maxHeight: number; maxFps: number }
   audio: { appList: boolean }
   torrent: { available: boolean }
 }
@@ -27,6 +27,7 @@ function parseCapabilities(body: unknown): JLocalCapabilities | null {
   const { screen, audio, torrent } = caps
   if (!isRecord(screen) || !isRecord(audio) || !isRecord(torrent)) return null
   if (typeof screen.available !== 'boolean') return null
+  if (typeof screen.capture !== 'boolean') return null
   if (typeof screen.maxWidth !== 'number' || !Number.isFinite(screen.maxWidth)) return null
   if (typeof screen.maxHeight !== 'number' || !Number.isFinite(screen.maxHeight)) return null
   if (typeof screen.maxFps !== 'number' || !Number.isFinite(screen.maxFps)) return null
@@ -35,6 +36,7 @@ function parseCapabilities(body: unknown): JLocalCapabilities | null {
   return {
     screen: {
       available: screen.available,
+      capture: screen.capture,
       maxWidth: screen.maxWidth,
       maxHeight: screen.maxHeight,
       maxFps: screen.maxFps,
@@ -81,7 +83,9 @@ export function refreshJLocalCapabilities(): void {
 export function isJLocalCaptureAvailable(): boolean {
   const snapshot = getJLocalSnapshot()
   const fresh = cache.data !== null && Date.now() - cache.at <= CACHE_TTL_MS ? cache.data : null
-  const available = snapshot.connected && fresh?.screen.available === true
+  // Capture is advertised separately from relay publish: the app can capture
+  // (capture true) long before it can publish (available stays false).
+  const available = snapshot.connected && fresh?.screen.capture === true
   if (!available && snapshot.connected && fresh === null) refreshJLocalCapabilities()
   return available
 }

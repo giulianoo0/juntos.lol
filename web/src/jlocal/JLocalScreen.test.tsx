@@ -13,7 +13,8 @@ const CONTRACT_CAPS = {
   name: 'jlocal',
   version: 'v0.0.1',
   capabilities: {
-    screen: { available: true, maxWidth: 3840, maxHeight: 2160, maxFps: 60 },
+    // Relay publish stays unwired while the app can already capture.
+    screen: { available: false, capture: true, maxWidth: 3840, maxHeight: 2160, maxFps: 60 },
     audio: { appList: false },
     torrent: { available: false },
   },
@@ -64,7 +65,7 @@ describe('jlocal capture gate', () => {
     }
   })
 
-  it('returns true when connected with cached caps advertising screen', async () => {
+  it('returns true when connected with cached caps advertising capture', async () => {
     stubFetch({ name: 'jlocal', version: 'v0.0.1' }, CONTRACT_CAPS)
     connectJLocal()
     await waitFor(() => expect(getJLocalSnapshot().connected).toBe(true))
@@ -72,6 +73,47 @@ describe('jlocal capture gate', () => {
     refreshJLocalCapabilities()
     await waitFor(() => expect(getCachedJLocalCapabilities()).not.toBeNull())
     expect(isJLocalCaptureAvailable()).toBe(true)
+  })
+
+  it('stays shut when the app cannot capture yet, even with relay publish advertised', async () => {
+    stubFetch({ name: 'jlocal', version: 'v0.0.1' }, {
+      name: 'jlocal',
+      version: 'v0.0.1',
+      capabilities: {
+        screen: { available: true, capture: false, maxWidth: 3840, maxHeight: 2160, maxFps: 60 },
+        audio: { appList: false },
+        torrent: { available: false },
+      },
+    })
+    connectJLocal()
+    await waitFor(() => expect(getJLocalSnapshot().connected).toBe(true))
+    refreshJLocalCapabilities()
+    await waitFor(() => expect(getCachedJLocalCapabilities()).not.toBeNull())
+    expect(isJLocalCaptureAvailable()).toBe(false)
+  })
+
+  it('parses a payload without screen.capture to null so the gate stays shut', async () => {
+    stubFetch({ name: 'jlocal', version: 'v0.0.1' }, {
+      name: 'jlocal',
+      version: 'v0.0.1',
+      capabilities: {
+        screen: { available: true, maxWidth: 3840, maxHeight: 2160, maxFps: 60 },
+        audio: { appList: false },
+        torrent: { available: false },
+      },
+    })
+    connectJLocal()
+    await waitFor(() => expect(getJLocalSnapshot().connected).toBe(true))
+    refreshJLocalCapabilities()
+    await waitFor(() => expect(
+      vi.mocked(fetch).mock.calls.some((args) => String(args[0]).endsWith('/capabilities')),
+    ).toBe(true))
+    // The stub resolves at once; one macrotask flushes the refresh chain.
+    const { promise, resolve } = Promise.withResolvers<void>()
+    setTimeout(resolve, 0)
+    await promise
+    expect(getCachedJLocalCapabilities()).toBeNull()
+    expect(isJLocalCaptureAvailable()).toBe(false)
   })
 })
 
@@ -87,17 +129,10 @@ describe('jlocal screen modal', () => {
   it('renders the title and calls onUseBrowser on click', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('refused')))
     const onUseBrowser = vi.fn()
-    render(<JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={onUseBrowser} />)
+    render(<JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={onUseBrowser} onConfirm={() => undefined} />)
     expect(screen.getByText(/qualidade máxima|full quality/i)).toBeInTheDocument()
     const fallback = screen.getByRole('button', { name: /navegador|browser/i })
     fireEvent.click(fallback)
     expect(onUseBrowser).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows the update hint when the app answers 501', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 501, json: async () => ({ error: 'not_implemented' }) })))
-    render(<JLocalScreenModal open onOpenChange={() => undefined} onUseBrowser={() => undefined} />)
-    fireEvent.click(screen.getByRole('button', { name: /j local/i }))
-    expect(await screen.findByText(/mais novo|newer/i)).toBeInTheDocument()
   })
 })

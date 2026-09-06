@@ -161,6 +161,17 @@ export function Home() {
     startScreenRoomNative()
   }
 
+  const confirmScreenFeed = (stream: MediaStream, stop: () => void) => {
+    setScreenOpen(false)
+    // The feed dies with its stream: every teardown path stops the tracks
+    // (discardPending here, endSharing after the room takes the grant), which
+    // releases app capture — polling plus POST /capture/stop, best-effort.
+    stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
+    setError('')
+    setDraftNickname(nickname)
+    setPendingMedia({ kind: 'screen', stream })
+  }
+
   const discardPending = (media: PendingMedia | null) => {
     if (media?.kind === 'torrent') media.session.destroy()
     if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
@@ -437,7 +448,7 @@ export function Home() {
         </div>
       </header>
       <JLocalModal />
-      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={() => { setScreenOpen(false); startScreenRoomNative() }} />
+      <JLocalScreenModal open={screenOpen} onOpenChange={setScreenOpen} onUseBrowser={() => { setScreenOpen(false); startScreenRoomNative() }} onConfirm={confirmScreenFeed} />
 
       <section className="catalog-stage">
         {view === 'status' ? (
