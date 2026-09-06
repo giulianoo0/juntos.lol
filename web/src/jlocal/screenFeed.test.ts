@@ -182,6 +182,12 @@ describe('jlocal screen feed', () => {
       'jlocal-capture-permission',
     )
   })
+  it('carries the grab reason when start answers 503 without permission', async () => {
+    stubFetch(false, 503, { error: 'capture failed (display 1): os denied the grab' })
+    await expect(startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })).rejects.toThrow(
+      'capture failed (display 1): os denied the grab',
+    )
+  })
 
   it('carries the server reason when start refuses the request', async () => {
     stubFetch(false, 400, { error: 'requested 2560x1440 exceeds display 1 size 1512x982' })

@@ -53,10 +53,10 @@ export async function startJLocalScreenFeed(
   } catch {
     throw new Error('jlocal-capture-unavailable')
   }
-  if (started.status === 503) throw new Error('jlocal-capture-permission')
   if (!started.ok) {
-    // Surface the server's reason (e.g. size exceeds the display) instead of
-    // a generic failure: the modal shows it verbatim.
+    // Surface the server's reason instead of a generic failure: the modal
+    // shows it verbatim, except `permission`, which keeps the dedicated
+    // Screen Recording hint.
     let detail = ''
     try {
       const body = (await started.json()) as { error?: unknown }
@@ -64,6 +64,7 @@ export async function startJLocalScreenFeed(
     } catch {
       // Non-JSON refusal: fall through to the generic failure below.
     }
+    if (started.status === 503 && detail === 'permission') throw new Error('jlocal-capture-permission')
     throw new Error(detail.length > 0 ? `jlocal-capture-failed: ${detail}` : 'jlocal-capture-unavailable')
   }
 
