@@ -190,6 +190,9 @@ describe('jlocal screen panel', () => {
 
     const confirm = screen.getByRole('button', { name: /sharing|compartilhar/i })
     expect(confirm).toBeEnabled()
+    // Browser fallback (ghost) comes first, confirm (primary) last.
+    const fallback = screen.getByRole('button', { name: /navegador|browser/i })
+    expect(fallback.compareDocumentPosition(confirm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     fireEvent.click(confirm)
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },

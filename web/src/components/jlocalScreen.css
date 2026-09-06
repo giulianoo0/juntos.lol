@@ -47,6 +47,13 @@
 }
 .jscreen-panel .header-tabs button.is-active { color: #0C0A0B; font-weight: 650; transition-delay: 170ms; }
 
+/* Stable tab content area: the Displays tab (cards + 16:9 preview, roughly
+ * 330–375px depending on dialog vs inline width) is far taller than a bare
+ * Apps note or a short window list, and the morph measures content height —
+ * without this floor, switching tabs collapses then re-expands the panel.
+ * Taller content (long app lists) still grows past it. */
+.jscreen-tabpanel { min-height: 360px; }
+
 /* Both scroll rows are overflow containers, so the selected/focus ring would
  * clip without inset padding: 4px clears the 2px outline plus its 2px offset
  * on every side that can clip. */

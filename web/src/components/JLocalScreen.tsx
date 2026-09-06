@@ -222,6 +222,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
           </button>
         ))}
       </div>
+      <div className="jscreen-tabpanel">
       {tab === 'displays' ? (
         <>
           {displays === null && !displaysFailed ? (
@@ -282,6 +283,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
           ) : null}
         </>
       )}
+      </div>
       {canConfirm ? (
         <div className="jscreen-grid">
           <div className="jscreen-field">
@@ -306,12 +308,12 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
       ) : null}
       {startFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenStartError')}</p> : null}
       <div className="jscreen-actions">
+        <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.screenUseBrowser')}</Button>
         {canConfirm ? (
           <button type="button" className="primary-button" disabled={starting} onClick={confirm}>
             {t('jlocal.screenStart')}
           </button>
         ) : null}
-        <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.screenUseBrowser')}</Button>
       </div>
     </div>
   )
