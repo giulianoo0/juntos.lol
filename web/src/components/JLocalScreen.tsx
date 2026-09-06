@@ -154,6 +154,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
     )
     return allowed.length > 0 ? allowed : [RESOLUTIONS[0] as (typeof RESOLUTIONS)[number]]
   })()
+  // (resolution options are built after the selection state below.)
   const frameRates = (() => {
     const allowed = FRAME_RATES.filter((fps) => fps <= (caps?.screen.maxFps ?? 30))
     return allowed.length > 0 ? allowed : [FRAME_RATES[0] as (typeof FRAME_RATES)[number]]
@@ -172,18 +173,32 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
   const [startError, setStartError] = useState<'permission' | string | null>(null)
   // The default quality must fit the picked target, not the caps ceiling: a
   // 4K default on a 1512x982 display fails the start with a confusing error.
+  // The target's exact size always works, so it rides along as a fallback
+  // option when no preset fits.
   const selectedTarget =
     tab === 'windows'
       ? (windows?.find((entry) => entry.id === windowId) ?? null)
       : (displays?.find((entry) => entry.id === displayId) ?? null)
+  const nativeOption =
+    selectedTarget !== null &&
+    !resolutions.some(
+      (option) => option.width === selectedTarget.width && option.height === selectedTarget.height,
+    )
+      ? {
+          id: `${selectedTarget.width}×${selectedTarget.height}`,
+          width: selectedTarget.width,
+          height: selectedTarget.height,
+        }
+      : null
+  const resolutionOptions = nativeOption !== null ? [...resolutions, nativeOption] : resolutions
   useEffect(() => {
     if (selectedTarget === null) return
-    const fitting = resolutions.filter(
+    const fitting = resolutionOptions.filter(
       (option) => option.width <= selectedTarget.width && option.height <= selectedTarget.height,
     )
-    const wanted = fitting[fitting.length - 1] ?? resolutions[0]
+    const wanted = fitting[fitting.length - 1] ?? nativeOption ?? resolutionOptions[0]
     if (wanted !== undefined) {
-      const current = resolutions.find((option) => option.id === resolution)
+      const current = resolutionOptions.find((option) => option.id === resolution)
       const fits =
         current !== undefined &&
         current.width <= selectedTarget.width &&
@@ -254,7 +269,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
   const canConfirm = tab === 'displays' ? canPickDisplay : canPickWindow
 
   const confirm = () => {
-    const picked = resolutions.find((option) => option.id === resolution) ?? resolutions[0]
+    const picked = resolutionOptions.find((option) => option.id === resolution) ?? resolutionOptions[0]
     if (!picked || starting) return
     const target = tab === 'windows'
       ? (windowId !== null ? { kind: 'window' as const, id: windowId } : null)
@@ -381,7 +396,7 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
             <Dropdown
               label={t('jlocal.screenRes')}
               value={resolution}
-              options={resolutions.map((option) => ({ value: option.id, label: option.id }))}
+              options={resolutionOptions.map((option) => ({ value: option.id, label: option.id }))}
               onChange={setResolution}
             />
           </div>

@@ -122,7 +122,7 @@ describe('jlocal screen modal displays', () => {
     fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'window', id: '9' },
-      { width: 1920, height: 1080, fps: 30 },
+      { width: 1440, height: 900, fps: 30 },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
   })
