@@ -76,6 +76,7 @@ interface JLocalCaptureTarget {
   id: string
   name: string
   app: string
+  icon: string
   width: number
   height: number
 }
@@ -117,10 +118,17 @@ function parseTargets(body: unknown, key: string): JLocalCaptureTarget[] {
   const targets: JLocalCaptureTarget[] = []
   for (const entry of list) {
     if (typeof entry !== 'object' || entry === null) continue
-    const { id, name, width, height, app } = entry as Record<string, unknown>
+    const { id, name, width, height, app, icon } = entry as Record<string, unknown>
     if ((typeof id !== 'string' && typeof id !== 'number') || typeof name !== 'string') continue
     if (typeof width !== 'number' || typeof height !== 'number') continue
-    targets.push({ id: String(id), name, app: typeof app === 'string' ? app : '', width, height })
+    targets.push({
+      id: String(id),
+      name,
+      app: typeof app === 'string' ? app : '',
+      icon: typeof icon === 'string' && icon.startsWith('data:image/') ? icon : '',
+      width,
+      height,
+    })
   }
   return targets
 }
@@ -370,13 +378,17 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
                   className={`jscreen-app ${window.id === windowId ? 'is-selected' : ''}`}
                   onClick={() => setWindowId(window.id)}
                 >
-                  <span
-                    className="jscreen-app-icon"
-                    aria-hidden="true"
-                    style={{ ['--app-hue' as string]: String(appAvatarHue(window.app || window.name)) }}
-                  >
-                    {appAvatarLetter(window.name, window.app)}
-                  </span>
+                  {window.icon.length > 0 ? (
+                    <img className="jscreen-app-icon is-photo" src={window.icon} alt="" aria-hidden="true" />
+                  ) : (
+                    <span
+                      className="jscreen-app-icon"
+                      aria-hidden="true"
+                      style={{ ['--app-hue' as string]: String(appAvatarHue(window.app || window.name)) }}
+                    >
+                      {appAvatarLetter(window.name, window.app)}
+                    </span>
+                  )}
                   <span className="jscreen-app-label">{window.name}</span>
                   <small>{window.width}×{window.height}</small>
                 </button>

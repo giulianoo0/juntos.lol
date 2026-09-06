@@ -104,6 +104,7 @@
   font-size: 14px;
   font-weight: 700;
 }
+img.jscreen-app-icon.is-photo { padding: 0; object-fit: contain; background: transparent; }
 .jscreen-app-label { min-width: 0; flex: 1 1 auto; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .jscreen-app small { flex: 0 0 auto; color: var(--text-dim, rgba(255, 255, 255, .6)); font-size: 12px; }
 .jscreen-app.is-selected {

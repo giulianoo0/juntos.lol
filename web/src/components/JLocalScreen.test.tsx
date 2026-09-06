@@ -35,8 +35,8 @@ const DISPLAYS = { displays: [
 ] }
 
 const WINDOWS = { windows: [
-  { id: 7, name: 'Figma — Design', app: 'Figma', width: 1728, height: 1117 },
-  { id: 9, name: 'Terminal', app: 'Ghostty', width: 1440, height: 900 },
+  { id: 7, name: 'Figma — Design', app: 'Figma', icon: 'data:image/png;base64,iVBORw0KGgo=', width: 1728, height: 1117 },
+  { id: 9, name: 'Terminal', app: 'Ghostty', icon: '', width: 1440, height: 900 },
 ] }
 
 /** Routes /health and /capabilities to the gate; the capture lists answer from overrides. */
@@ -113,6 +113,10 @@ describe('jlocal screen modal displays', () => {
     fireEvent.click(screen.getByRole('tab', { name: /^Apps$/i }))
     expect(await screen.findByRole('radio', { name: /Figma/ })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Terminal/ })).toBeInTheDocument()
+    // Real icon for Figma, letter avatar for icon-less Terminal.
+    const figma = screen.getByRole('radio', { name: /Figma/ })
+    expect(figma.querySelector('img.jscreen-app-icon')?.getAttribute('src')).toMatch(/^data:image\/png;base64,/)
+    expect(screen.getByRole('radio', { name: /Terminal/ }).querySelector('.jscreen-app-icon')?.textContent).toBe('G')
     // Back and forth: the list loads on first open only.
     fireEvent.click(screen.getByRole('tab', { name: /Displays|Telas/i }))
     fireEvent.click(screen.getByRole('tab', { name: /^Apps$/i }))
