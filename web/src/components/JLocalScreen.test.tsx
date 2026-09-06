@@ -64,8 +64,6 @@ describe('jlocal screen modal displays', () => {
 
     expect(await screen.findByText('Main · 2560×1440')).toBeInTheDocument()
     expect(screen.getByText('Side · 1920×1080')).toBeInTheDocument()
-    // Video comes from the app; the browser path keeps system audio.
-    expect(screen.getByText(/system audio|áudio do sistema/i)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText(/^(display|tela)$/i), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: /j local/i }))

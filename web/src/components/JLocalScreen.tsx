@@ -193,11 +193,6 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
             </label>
           </div>
         ) : null}
-        {canPick ? (
-          <div className="jscreen-note" role="note">
-            <p>{t('jlocal.screenAudioNote')}</p>
-          </div>
-        ) : null}
         <JLocalPreview />
         {startFailed ? <p className="jscreen-error" role="alert">{t('jlocal.screenStartError')}</p> : null}
         <div className="jscreen-actions">

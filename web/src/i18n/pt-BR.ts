@@ -325,7 +325,6 @@ export const ptBR: Record<string, string> = {
   'jlocal.screenDisplayLoading': 'Procurando suas telas…',
   'jlocal.screenDisplayError': 'Não foi possível listar suas telas. Use o navegador por enquanto.',
   'jlocal.screenDisplayEmpty': 'Nenhuma tela encontrada. Use o navegador por enquanto.',
-  'jlocal.screenAudioNote': 'O vídeo vem do app; o áudio do sistema fica com o navegador.',
   'jlocal.screenStartError': 'Não começou a compartilhar. Tente de novo ou use o navegador.',
   'jlocal.screenUpsell': 'Compartilhar em 4K com o J Local',
   'jlocal.torrentLocal': 'Local via J Local',

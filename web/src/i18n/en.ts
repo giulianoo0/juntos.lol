@@ -325,7 +325,6 @@ export const en: Record<string, string> = {
   'jlocal.screenDisplayLoading': 'Looking for your displays…',
   'jlocal.screenDisplayError': 'Could not list your displays. Use the browser picker for now.',
   'jlocal.screenDisplayEmpty': 'No displays found. Use the browser picker for now.',
-  'jlocal.screenAudioNote': 'Video comes from the app; system audio stays with the browser picker.',
   'jlocal.screenStartError': 'Sharing did not start. Try again, or use the browser picker.',
   'jlocal.screenUpsell': 'Share in 4K with J Local',
   'jlocal.torrentLocal': 'Local via J Local',
