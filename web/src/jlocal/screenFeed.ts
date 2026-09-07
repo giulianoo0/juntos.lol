@@ -37,30 +37,106 @@ const AUDIO_CHANNELS = 2
 const AUDIO_FRAME_SAMPLES = 960
 const AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * 2
 
-/** Byte search for the MJPEG boundary inside the reassembly buffer. */
-function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
-  outer: for (let i = 0; i + needle.length <= haystack.length; i += 1) {
-    for (let j = 0; j < needle.length; j += 1) {
-      if (haystack[i + j] !== needle[j]) continue outer
-    }
-    return i
-  }
-  return -1
-}
+const MJPEG_HEADER_END = new Uint8Array([13, 10, 13, 10])
+const MAX_MJPEG_FRAME_BYTES = 16 * 1024 * 1024
 
 /**
- * Slice the JPEG out of one multipart part (headers end at the blank line).
- * Null when the part is truncated — the next boundary resyncs the reader.
+ * Chunk queue for the multipart stream. The old parser concatenated the
+ * entire partial JPEG after every network read, turning a fragmented 4K
+ * frame into quadratic copying on the browser main thread. This queue copies
+ * headers (tiny) and each completed JPEG exactly once.
  */
-function extractMjpegFrame(part: Uint8Array): Uint8Array | null {
-  const head = [13, 10, 13, 10]
-  for (let i = 0; i + 4 <= part.length; i += 1) {
-    if (part[i] === head[0] && part[i + 1] === head[1] && part[i + 2] === head[2] && part[i + 3] === head[3]) {
-      const jpeg = part.slice(i + 4)
-      return jpeg.length > 0 ? jpeg : null
-    }
+class ByteQueue {
+  private chunks: Uint8Array[] = []
+  private headOffset = 0
+  length = 0
+
+  push(chunk: Uint8Array): void {
+    if (chunk.length === 0) return
+    this.chunks.push(chunk)
+    this.length += chunk.length
   }
-  return null
+
+  indexOf(needle: Uint8Array): number {
+    let matched = 0
+    let index = 0
+    for (let chunkIndex = 0; chunkIndex < this.chunks.length; chunkIndex += 1) {
+      const chunk = this.chunks[chunkIndex]
+      const start = chunkIndex === 0 ? this.headOffset : 0
+      for (let offset = start; offset < chunk.length; offset += 1) {
+        const byte = chunk[offset]
+        if (byte === needle[matched]) {
+          matched += 1
+          if (matched === needle.length) return index - needle.length + 1
+        } else {
+          matched = byte === needle[0] ? 1 : 0
+        }
+        index += 1
+      }
+    }
+    return -1
+  }
+
+  take(count: number): Uint8Array | null {
+    if (count < 0 || this.length < count) return null
+    const out = new Uint8Array(count)
+    let written = 0
+    while (written < count) {
+      const head = this.chunks[0]
+      if (!head) return null
+      const available = head.length - this.headOffset
+      const copy = Math.min(available, count - written)
+      out.set(head.subarray(this.headOffset, this.headOffset + copy), written)
+      written += copy
+      this.headOffset += copy
+      this.length -= copy
+      if (this.headOffset === head.length) {
+        this.chunks.shift()
+        this.headOffset = 0
+      }
+    }
+    return out
+  }
+
+  clear(): void {
+    this.chunks = []
+    this.headOffset = 0
+    this.length = 0
+  }
+}
+
+/** Content-Length-driven multipart decoder matching jlocal's stream. */
+class MjpegParser {
+  private readonly bytes = new ByteQueue()
+  private expectedBytes: number | null = null
+  private readonly decoder = new TextDecoder()
+
+  push(chunk: Uint8Array): Uint8Array[] {
+    this.bytes.push(chunk)
+    const frames: Uint8Array[] = []
+    for (;;) {
+      if (this.expectedBytes === null) {
+        const headerEnd = this.bytes.indexOf(MJPEG_HEADER_END)
+        if (headerEnd < 0) {
+          if (this.bytes.length > 4096) this.bytes.clear()
+          break
+        }
+        const header = this.bytes.take(headerEnd + MJPEG_HEADER_END.length)
+        const match = header ? /content-length:\s*(\d+)/i.exec(this.decoder.decode(header)) : null
+        const length = match ? Number(match[1]) : 0
+        if (!Number.isSafeInteger(length) || length <= 0 || length > MAX_MJPEG_FRAME_BYTES) {
+          this.bytes.clear()
+          break
+        }
+        this.expectedBytes = length
+      }
+      if (this.bytes.length < this.expectedBytes) break
+      const frame = this.bytes.take(this.expectedBytes)
+      this.expectedBytes = null
+      if (frame) frames.push(frame)
+    }
+    return frames
+  }
 }
 
 export interface JLocalScreenFeed {
@@ -69,9 +145,16 @@ export interface JLocalScreenFeed {
 }
 
 /** Best-effort capture release. Never throws: stop() must not fail. */
-function stopCapture(): void {
+function stopCapture(captureId: string | null): void {
   try {
-    Promise.resolve(fetch(`${JLOCAL_ORIGIN}/capture/stop`, { method: 'POST' })).catch(() => {})
+    const init: RequestInit = captureId === null
+      ? { method: 'POST' }
+      : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ capture_id: captureId }),
+        }
+    Promise.resolve(fetch(`${JLOCAL_ORIGIN}/capture/stop`, init)).catch(() => {})
   } catch {
     // The fetch itself threw synchronously (no network stack in tests): the
     // companion app leaves nothing else to clean up.
@@ -257,13 +340,24 @@ export async function startJLocalScreenFeed(
     if (started.status === 503 && detail === 'permission') throw new Error('jlocal-capture-permission')
     throw new Error(detail.length > 0 ? `jlocal-capture-failed: ${detail}` : 'jlocal-capture-unavailable')
   }
+  // New apps return an ownership token. Old apps omit it and keep the legacy
+  // unconditional stop contract; with a token, a delayed cleanup from the
+  // previous feed cannot kill a newly reconfigured session.
+  let captureId: string | null = null
+  try {
+    const body = (await started.json()) as { capture_id?: unknown }
+    if (typeof body.capture_id === 'string' && body.capture_id.length > 0) captureId = body.capture_id
+    else if (typeof body.capture_id === 'number' && Number.isSafeInteger(body.capture_id)) captureId = String(body.capture_id)
+  } catch {
+    // Compatibility with early app builds and minimal test doubles.
+  }
 
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
   const ctx = canvas.getContext('2d')
   if (ctx === null) {
-    stopCapture()
+    stopCapture(captureId)
     throw new Error('jlocal-capture-unavailable')
   }
   // Bound once: the poll closure below must not re-narrow a captured binding.
@@ -321,9 +415,35 @@ export async function startJLocalScreenFeed(
     onDead: () => void
   }): () => void {
     const controller = new AbortController()
-    const boundary = new TextEncoder().encode('--frame')
-    let buffer = new Uint8Array(0)
+    const parser = new MjpegParser()
     let live = false
+    let pendingFrame: Uint8Array | null = null
+    let decoding = false
+
+    const decodeLatest = async (): Promise<void> => {
+      if (decoding) return
+      decoding = true
+      try {
+        while (pendingFrame !== null && !stopped) {
+          const frame = pendingFrame
+          pendingFrame = null
+          try {
+            const bitmap = await createImageBitmap(new Blob([frame.buffer as ArrayBuffer], { type: 'image/jpeg' }))
+            // Prefer freshness over replaying backlog: if another complete
+            // frame arrived during decode, drop this stale bitmap.
+            if (pendingFrame !== null || stopped) bitmap.close()
+            else callbacks.onFrame(bitmap)
+          } catch {
+            // Corrupt/partial JPEG: the parser is length-framed, so the next
+            // part remains aligned and can render normally.
+          }
+        }
+      } finally {
+        decoding = false
+        if (pendingFrame !== null && !stopped) void decodeLatest()
+      }
+    }
+
     void (async () => {
       let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
       try {
@@ -343,25 +463,13 @@ export async function startJLocalScreenFeed(
             callbacks.onDead()
             return
           }
-          const merged = new Uint8Array(buffer.length + value.length)
-          merged.set(buffer)
-          merged.set(value, buffer.length)
-          buffer = merged
-          let boundaryAt = indexOfBytes(buffer, boundary)
-          while (boundaryAt >= 0) {
-            const frame = extractMjpegFrame(buffer.slice(0, boundaryAt))
-            buffer = buffer.slice(boundaryAt + boundary.length)
-            if (frame && !stopped) {
-              try {
-                callbacks.onFrame(await createImageBitmap(new Blob([frame.buffer as ArrayBuffer], { type: 'image/jpeg' })))
-              } catch {
-                // Half-written part: the next boundary resyncs.
-              }
-            }
-            boundaryAt = indexOfBytes(buffer, boundary)
+          const frames = parser.push(value)
+          // Keep at most one not-yet-decoded frame. This bounds latency and
+          // memory when JPEG decode is slower than capture (notably 4K/60).
+          if (frames.length > 0) {
+            pendingFrame = frames[frames.length - 1]
+            void decodeLatest()
           }
-          // Cap the resync buffer: a lost boundary must not grow it forever.
-          if (buffer.length > 8 * 1024 * 1024) buffer = new Uint8Array(0)
         }
       } catch {
         // Refused before going live, or ended mid-stream: polling covers both.
@@ -427,7 +535,7 @@ export async function startJLocalScreenFeed(
         // One wedged track must not block the rest or the capture release.
       }
     }
-    stopCapture()
+    stopCapture(captureId)
   }
 
   return { stream, stop }

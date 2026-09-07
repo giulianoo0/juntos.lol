@@ -277,10 +277,18 @@ export function endPlaylist(body: string, keep: number): string | null {
 }
 
 async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, metadataToken, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions & { claim: string; metadataToken?: string }): Promise<void> {
-  void readMkvChapters(file).then(async (found: MkvChapter[]) => {
-    if (found.length === 0 || !metadataToken) return
-    await postMetadataWithRetry(roomID, mediaGeneration, metadataToken, found)
-  }).catch(() => undefined)
+  let chaptersStarted = false
+  const startChapters = () => {
+    if (chaptersStarted || !metadataToken || (file.name && !/\.(mkv|webm)$/i.test(file.name))) return
+    chaptersStarted = true
+    // Chapter metadata is optional and may read a multi-megabyte MKV head.
+    // Keep it off the cold path: the first playable segment gets all source
+    // bandwidth, then chapters can arrive through the late metadata protocol.
+    void readMkvChapters(file).then(async (found: MkvChapter[]) => {
+      if (found.length === 0) return
+      await postMetadataWithRetry(roomID, mediaGeneration, metadataToken, found)
+    }).catch(() => undefined)
+  }
   const totalBytes = file.size
   const uploaded: string[] = []
   const playlists = new Map<string, string>()
@@ -455,6 +463,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     if (warmRegion !== region && confirmed.some((name) => /cs_\d+_\d+\.m4s$/.test(name) && current(name))) {
       warmRegion = region
       onRegionWarm?.()
+      startChapters()
     }
     if (trace.open() && region > seekFromRegion && confirmed.some((name) => /cs_\d+_\d+\.m4s$/.test(name) && current(name)) && playlists.has('master.m3u8')) {
       trace.mark('publishOk', regionSpanMs(regions.find((r) => r.growing) ?? regions[regions.length - 1]))

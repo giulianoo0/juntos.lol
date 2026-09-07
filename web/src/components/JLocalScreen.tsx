@@ -13,7 +13,7 @@ import './jlocalScreen.css'
 /**
  * Live snapshot of the picked target. Polls GET
  * /capture/snapshot?display_id=<id>&width=640 (window_id on the Apps tab)
- * every 250ms — 640px is plenty for the ≤320px pane and cheaper to encode.
+ * at a relaxed cadence — 640px is plenty for the ≤320px pane and cheaper to encode.
  * Each frame preloads into an offscreen Image and the visible src only swaps
  * inside its onload, so the current frame never unmounts into a gap; the
  * parent remounts per target via key, restarting poll, shimmer, and denial
@@ -24,7 +24,7 @@ import './jlocalScreen.css'
  * content never balloons the panel.
  */
 const PREVIEW_WIDTH = 640
-const PREVIEW_POLL_MS = 250
+const PREVIEW_POLL_MS = 750
 
 function JLocalPreview({ target }: { target: { kind: 'display' | 'window'; id: string } }) {
   const t = useT()
@@ -34,26 +34,55 @@ function JLocalPreview({ target }: { target: { kind: 'display' | 'window'; id: s
   const [denied, setDenied] = useState(false)
   useEffect(() => {
     let cancelled = false
+    let terminal = false
     let tick = 0
-    const poll = () => {
+    let timer: number | null = null
+    let probe: HTMLImageElement | null = null
+    function schedule(): void {
+      if (cancelled || terminal) return
+      timer = window.setTimeout(poll, PREVIEW_POLL_MS)
+    }
+    function poll(): void {
+      if (cancelled || terminal) return
+      // A hidden picker needs no OS capture or JPEG decode. Resume one cadence
+      // later instead of doing background work that competes with the UI.
+      if (document.hidden) {
+        schedule()
+        return
+      }
       tick += 1
       const url = `${base}&t=${tick}`
-      const probe = new Image()
-      probe.onload = () => { if (!cancelled) setSrc(url) }
+      probe = new Image()
+      probe.onload = () => {
+        if (!cancelled) setSrc(url)
+        schedule()
+      }
       probe.onerror = () => {
         if (cancelled) return
         // An <img> hides the status, so probe it: only a 503 (permission
         // or capture unavailable) turns the pane into the hint — anything
         // else is transient and keeps the shimmer polling.
         void fetch(base)
-          .then((response) => { if (!cancelled && response.status === 503) setDenied(true) })
+          .then((response) => {
+            if (!cancelled && response.status === 503) {
+              terminal = true
+              setDenied(true)
+            }
+          })
           .catch(() => undefined)
+          .finally(schedule)
       }
       probe.src = url
     }
     poll()
-    const timer = window.setInterval(poll, PREVIEW_POLL_MS)
-    return () => { cancelled = true; window.clearInterval(timer) }
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+      if (probe !== null) {
+        probe.onload = null
+        probe.onerror = null
+      }
+    }
   }, [base])
   if (denied) {
     return (

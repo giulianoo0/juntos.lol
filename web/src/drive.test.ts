@@ -11,6 +11,7 @@ import {
   fetchDriveMeta,
   isDriveId,
   listDriveFolder,
+  openDriveEntrySession,
   openDriveSession,
   parseDriveLink,
 } from './drive'
@@ -200,6 +201,20 @@ describe('openDriveSession', () => {
     await expect(session.select('missing.mkv')).rejects.toThrow('drive file not found')
     expect(driveEntryForFile(session, 'movie.mkv')?.id).toBe(VID)
     expect(driveEntryForFile(session, 'movie.srt')?.name).toBe('movie.srt')
+    // Metadata already carries parents, so opening needs only metadata plus
+    // one sibling listing (the old path fetched parents a second time).
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    session.destroy()
+  })
+
+  it('builds a picked-entry session without another Drive request', () => {
+    const session = openDriveEntrySession(
+      { id: VID, name: 'movie.mkv', mimeType: 'video/x-matroska', size: 1000 },
+      [{ id: 's'.repeat(30), name: 'movie.srt', mimeType: 'text/plain', size: 50 }],
+    )
+    expect(session.files.map((file) => file.name)).toEqual(['movie.mkv'])
+    expect(session.subtitleFiles.map((file) => file.name)).toEqual(['movie.srt'])
+    expect(fetchMock).not.toHaveBeenCalled()
     session.destroy()
   })
 

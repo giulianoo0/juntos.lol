@@ -144,6 +144,8 @@ export interface DriveFileMeta {
   name: string
   mimeType: string
   size: number
+  /** Present when the API response included the file's parent folders. */
+  parents?: string[]
 }
 
 export type DriveEntry = DriveFileMeta
@@ -238,7 +240,17 @@ function toMeta(json: unknown): DriveFileMeta {
   }
   const rawSize = 'size' in json ? json.size : undefined
   const size = typeof rawSize === 'string' ? Number(rawSize) : 0
-  return { id, name, mimeType, size: Number.isFinite(size) ? size : 0 }
+  const rawParents = 'parents' in json ? json.parents : undefined
+  const parents = Array.isArray(rawParents)
+    ? rawParents.filter((parent): parent is string => typeof parent === 'string' && isDriveId(parent))
+    : []
+  return {
+    id,
+    name,
+    mimeType,
+    size: Number.isFinite(size) ? size : 0,
+    ...(parents.length > 0 ? { parents } : {}),
+  }
 }
 
 /** Metadata for one file; rejects native Google-doc types (no downloadable bytes). */
@@ -332,8 +344,8 @@ interface TreeFile {
 async function collectTree(rootId: string, signal?: AbortSignal): Promise<TreeFile[]> {
   const out: TreeFile[] = []
   const queue: Array<{ id: string; prefix: string; depth: number }> = [{ id: rootId, prefix: '', depth: 0 }]
-  while (queue.length > 0) {
-    const next = queue.shift()
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const next = queue[cursor]
     if (!next || next.depth > MAX_TREE_DEPTH) continue
     const children = await listDriveFolder(next.id, { signal })
     for (const child of children) {
@@ -401,6 +413,23 @@ function buildSession(name: string, videos: TreeFile[], subtitles: TreeFile[], c
 }
 
 /**
+ * Builds the session for an entry the picker already has in hand. No Drive
+ * request is made: the current folder listing is enough to attach subtitle
+ * sidecars, and delaying session creation until a video is picked avoids an
+ * eager recursive walk of the whole folder tree.
+ */
+export function openDriveEntrySession(entry: DriveEntry, siblings: DriveEntry[] = []): TorrentSession {
+  const controller = new AbortController()
+  const subtitles = siblings
+    .filter((sibling) => sibling.id !== entry.id
+      && isSubtitleFileName(sibling.name)
+      && sibling.size > 0
+      && sibling.size <= MAX_SIDE_FILE_BYTES)
+    .map((sibling) => ({ entry: sibling, path: sibling.name }))
+  return buildSession(entry.name, [{ entry, path: entry.name }], subtitles, controller)
+}
+
+/**
  * Opens a pasted link as a TorrentSession-shaped object so the room reuses
  * the `kind='upload'` path: file links resolve to the single video (plus
  * same-folder subtitle sidecars via the parent), folder links collect every
@@ -424,7 +453,7 @@ export async function openDriveSession(
     }
     let subtitles: TreeFile[] = []
     try {
-      const parents = await driveParents(ref.id, controller.signal)
+      const parents = meta.parents ?? []
       if (parents.length > 0) {
         const siblings = await listDriveFolder(parents[0], { signal: controller.signal })
         subtitles = siblings
@@ -444,16 +473,6 @@ export async function openDriveSession(
     (item) => item.entry.mimeType !== DRIVE_FOLDER_MIME && isSubtitleFileName(item.entry.name) && item.entry.size > 0 && item.entry.size <= MAX_SIDE_FILE_BYTES,
   )
   return buildSession(meta?.name ?? 'Google Drive', videos, subtitles, controller)
-}
-
-async function driveParents(id: string, signal?: AbortSignal): Promise<string[]> {
-  const key = apiKey()
-  const fields = encodeURIComponent('parents')
-  const url = `${API}/files/${id}?key=${encodeURIComponent(key)}&supportsAllDrives=true&fields=${fields}`
-  const { status, json } = await driveGet(url, signal)
-  if (status !== 200 || typeof json !== 'object' || json === null || !('parents' in json)) return []
-  if (!Array.isArray(json.parents)) return []
-  return json.parents.filter((p): p is string => typeof p === 'string' && isDriveId(p))
 }
 
 async function driveMetaBestEffort(id: string, signal?: AbortSignal): Promise<DriveFileMeta | null> {

@@ -373,11 +373,12 @@ describe('jlocal screen panel', () => {
     preloads[0]?.fireLoad()
     await waitFor(() => expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[0]?.url))
     expect(document.querySelector('.jscreen-preview-shimmer')).toBeNull()
-    // Later polls preload without touching the visible frame until loaded.
-    await waitFor(() => expect(preloads.length).toBeGreaterThanOrEqual(3), { timeout: 3000 })
+    // The next request starts only after the previous image settled: slow OS
+    // snapshots never stack up and compete with dropdown interaction.
+    await waitFor(() => expect(preloads.length).toBeGreaterThanOrEqual(2), { timeout: 3000 })
     expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[0]?.url)
-    preloads[2]?.fireLoad()
-    await waitFor(() => expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[2]?.url))
+    preloads[1]?.fireLoad()
+    await waitFor(() => expect(document.querySelector('.jscreen-preview')?.getAttribute('src')).toBe(preloads[1]?.url))
   })
 
   it('previews the picked window on the Apps tab', async () => {

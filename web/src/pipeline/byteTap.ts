@@ -25,7 +25,12 @@ export class ByteTap {
   private waiter: ((woken: boolean) => void) | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private done = false
-  private furthest = 0
+  // End of the latest relevant offer, rather than the greatest offset ever
+  // seen. Container probes commonly touch the tail and then return to the
+  // head; remembering the maximum forever would make that one probe look
+  // like a permanent gap and force the subtitle pass to download the movie
+  // a second time.
+  private latestOfferEnd = 0
 
   private readonly bufferBytes: number
   private readonly idleMs: number
@@ -43,14 +48,14 @@ export class ByteTap {
   /** Reading within reach of the cursor, so the scan can ride along instead
    * of fetching the same bytes. False across a gap, and once closed. */
   get riding(): boolean {
-    return !this.done && this.furthest <= this.at + this.bufferBytes
+    return !this.done && this.latestOfferEnd <= this.at + this.bufferBytes
   }
 
   /** Bytes the remux just read, at their absolute offset in the file. */
   offer(offset: number, bytes: Uint8Array): void {
     if (this.done || bytes.length === 0) return
-    this.furthest = Math.max(this.furthest, offset + bytes.length)
     if (offset + bytes.length <= this.at) return
+    this.latestOfferEnd = offset + bytes.length
     if (offset < this.at) {
       bytes = bytes.subarray(this.at - offset)
       offset = this.at
@@ -75,7 +80,7 @@ export class ByteTap {
       const out = this.drain()
       if (out) return out
       if (this.done) return null
-      if (this.furthest > this.at + this.bufferBytes) return null
+      if (this.latestOfferEnd > this.at + this.bufferBytes) return null
       if (!(await this.idle())) return null
     }
   }

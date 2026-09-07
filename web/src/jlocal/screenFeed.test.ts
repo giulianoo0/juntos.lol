@@ -265,6 +265,21 @@ describe('jlocal screen feed', () => {
     expect(previewUrls).toHaveLength(pollsBefore)
   })
 
+  it('returns the capture token when stopping so stale cleanup cannot stop a replacement', async () => {
+    const fetchMock = stubFetch(true, 200, { capture_id: 'session-42' })
+    const feed = await startJLocalScreenFeed(
+      { kind: 'display', id: 'display-1' },
+      { width: 320, height: 200, fps: 5 },
+    )
+
+    feed.stop()
+
+    const stopCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/capture/stop'))
+    expect(stopCall).toBeDefined()
+    if (stopCall === undefined) throw new Error('missing capture stop request')
+    expect(JSON.parse(String((stopCall[1] as RequestInit).body))).toEqual({ capture_id: 'session-42' })
+  })
+
   it('stop swallows a failing capture-stop release', async () => {
     vi.stubGlobal(
       'fetch',
