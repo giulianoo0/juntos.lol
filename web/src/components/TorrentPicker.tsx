@@ -59,8 +59,11 @@ export function TorrentPicker({ maxFileBytes, onPicked, onPickedJLocal, onExit, 
     void torrentCapacity().then((value) => {
       if (cancelled) return
       setCapacity(value)
-      if (value === 'disabled' || value === 'no_workers') setError(t('home.torrentNoWorkers'))
-      else if (value === 'busy') setError(t('home.torrentBusy'))
+      // The server error is only final when the companion app cannot serve
+      // either; otherwise load() routes straight to JLocal below.
+      if ((value === 'disabled' || value === 'no_workers') && !isJLocalTorrentAvailable()) {
+        setError(t('home.torrentNoWorkers'))
+      } else if (value === 'busy') setError(t('home.torrentBusy'))
     })
     return () => { cancelled = true }
   }, [t])
@@ -95,7 +98,9 @@ export function TorrentPicker({ maxFileBytes, onPicked, onPickedJLocal, onExit, 
 
   const load = async () => {
     if (!magnet.trim() || loading) return
-    if (capacity === 'disabled' || capacity === 'no_workers') {
+    const serverDead = capacity === 'disabled' || capacity === 'no_workers'
+    const jlocalReady = !!onPickedJLocal && isJLocalTorrentAvailable()
+    if (serverDead && !jlocalReady) {
       setError(t('home.torrentNoWorkers'))
       return
     }

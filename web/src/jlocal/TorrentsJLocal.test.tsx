@@ -77,7 +77,7 @@ function stubFetch(health: unknown, caps: unknown, overrides: Record<string, unk
       return { ok: true, status: 200, json: async () => ({}) }
     }
     if (target.endsWith('/api/torrents/capacity')) {
-      return { ok: true, status: 200, json: async () => ({ capacity: 'available' }) }
+      return { ok: true, status: 200, json: async () => ({ capacity: overrides.capacity ?? 'available' }) }
     }
     void init
     return { ok: true, json: async () => health }
@@ -238,6 +238,25 @@ describe('jlocal torrent picker', () => {
     fireEvent.change(screen.getByLabelText(/magnet link/i), { target: { value: MAGNET } })
     fireEvent.click(screen.getByRole('button', { name: /find files/i }))
     await waitFor(() => expect(vi.mocked(openTorrent)).toHaveBeenCalled())
+  })
+  it('routes straight to the app when the server reports no workers', async () => {
+    await connectWithCaps(CAPS_TORRENT)
+    // Server dead, app alive: the picker must try JLocal, not show the
+    // server error.
+    stubFetch({ name: 'jlocal', version: 'v0.0.1' }, CAPS_TORRENT, { capacity: 'disabled' })
+    const picked: JLocalPickedStream[] = []
+    render(
+      <TorrentPicker
+        maxFileBytes={50_000}
+        t={enTranslator()}
+        onPicked={() => { throw new Error('native path must not run') }}
+        onPickedJLocal={(stream) => { picked.push(stream) }}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText(/magnet link/i), { target: { value: MAGNET } })
+    fireEvent.click(screen.getByRole('button', { name: /find files/i }))
+    expect(await screen.findByText('Local via JLocal')).toBeInTheDocument()
+    expect(vi.mocked(openTorrent)).not.toHaveBeenCalled()
   })
 })
 
