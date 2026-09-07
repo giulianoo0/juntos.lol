@@ -227,14 +227,12 @@ export async function startJLocalScreenFeed(
   async function pollFrame(): Promise<void> {
     if (stopped) return
     try {
-      const img = new Image()
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = () => reject(new Error('frame'))
-        img.src = `${JLOCAL_ORIGIN}/capture/preview.jpg?t=${Date.now()}`
-      })
-      if (stopped) return
-      const bitmap = await createImageBitmap(img)
+      // fetch, not <img>: the loopback origin differs from the page, so an
+      // <img> would taint the canvas and the captured stream would go black.
+      // The endpoint answers CORS, hence these bytes decode clean.
+      const response = await fetch(`${JLOCAL_ORIGIN}/capture/preview.jpg?t=${Date.now()}`)
+      if (!response.ok || stopped) return
+      const bitmap = await createImageBitmap(await response.blob())
       if (stopped) {
         bitmap.close()
         return

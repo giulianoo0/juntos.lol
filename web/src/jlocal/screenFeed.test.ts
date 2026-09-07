@@ -2,29 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { startJLocalScreenFeed } from './screenFeed'
 import { JLOCAL_ORIGIN } from './status'
 
-type ImageOutcome = 'load' | 'error'
+type PreviewOutcome = 'frame' | 'error'
 
-let imageOutcomes: ImageOutcome[]
-const imageSrcs: string[] = []
-
-/** Resolves onload/onerror on src assignment, like a loopback JPEG fetch. */
-class FakeImage {
-  onload: (() => void) | null = null
-  onerror: (() => void) | null = null
-  private _src = ''
-  get src(): string {
-    return this._src
-  }
-  set src(value: string) {
-    this._src = value
-    imageSrcs.push(value)
-    const outcome = imageOutcomes.length > 0 ? imageOutcomes.shift()! : 'load'
-    queueMicrotask(() => {
-      if (outcome === 'load') this.onload?.()
-      else this.onerror?.()
-    })
-  }
-}
+let previewOutcomes: PreviewOutcome[]
+const previewUrls: string[] = []
 
 const drawImage = vi.fn()
 const trackStop = vi.fn()
@@ -98,6 +79,10 @@ function stubFetchWithAudio(stream: { ok: boolean; status: number; body?: unknow
     const target = String(url)
     if (target.endsWith('/capture/start')) return { ok: true, status: 200, json: async () => ({}) }
     if (target.endsWith('/capture/stop')) return { ok: true, status: 200, json: async () => ({}) }
+    if (target.includes('/capture/preview.jpg')) {
+      previewUrls.push(target)
+      return { ok: true, status: 200, blob: async () => new Uint8Array([1, 2, 3]) }
+    }
     if (target.endsWith('/audio/stream')) {
       if (!stream.ok) return { ok: false, status: stream.status, json: async () => ({}) }
       return { ok: true, status: 200, body: stream.body, json: async () => ({}) }
@@ -109,7 +94,6 @@ function stubFetchWithAudio(stream: { ok: boolean; status: number; body?: unknow
 }
 
 function stubGlobals(): void {
-  vi.stubGlobal('Image', FakeImage)
   vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ close: bitmapClose }))
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
     (() => ({ drawImage })) as unknown as typeof HTMLCanvasElement.prototype.getContext,
@@ -121,7 +105,7 @@ function stubGlobals(): void {
   })
 }
 
-/** Routes /capture/start to ok/status and answers /capture/stop 200. */
+/** Routes /capture/start to ok/status, preview.jpg to frames, and answers /capture/stop 200. */
 function stubFetch(startOk: boolean, startStatus = 200, startBody: unknown = {}): Mock {
   const fetchMock = vi.fn(async (url: unknown) => {
     const target = String(url)
@@ -130,6 +114,12 @@ function stubFetch(startOk: boolean, startStatus = 200, startBody: unknown = {})
     }
     if (target.endsWith('/capture/stop')) {
       return { ok: true, status: 200, json: async () => ({}) }
+    }
+    if (target.includes('/capture/preview.jpg')) {
+      previewUrls.push(target)
+      const outcome = previewOutcomes.length > 0 ? previewOutcomes.shift()! : 'frame'
+      if (outcome === 'error') throw new Error('frame refused')
+      return { ok: true, status: 200, blob: async () => new Uint8Array([1, 2, 3]) }
     }
     throw new Error(`unexpected fetch ${target}`)
   })
@@ -140,8 +130,8 @@ function stubFetch(startOk: boolean, startStatus = 200, startBody: unknown = {})
 describe('jlocal screen feed', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    imageOutcomes = []
-    imageSrcs.length = 0
+    previewOutcomes = []
+    previewUrls.length = 0
     drawImage.mockClear()
     trackStop.mockClear()
     bitmapClose.mockClear()
@@ -173,30 +163,29 @@ describe('jlocal screen feed', () => {
     feed.stop()
   })
 
-  it('paints preview frames onto the canvas stream without fetching them', async () => {
-    const fetchMock = stubFetch(true)
+  it('paints fetched preview frames onto the canvas', async () => {
+    stubFetch(true)
     const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
     expect(feed.stream).toBe(mockStream)
     await vi.advanceTimersByTimeAsync(400)
-    expect(imageSrcs.length).toBeGreaterThanOrEqual(2)
-    for (const src of imageSrcs) {
-      expect(src).toContain(`${JLOCAL_ORIGIN}/capture/preview.jpg`)
+    expect(previewUrls.length).toBeGreaterThanOrEqual(2)
+    for (const url of previewUrls) {
+      expect(url).toContain(`${JLOCAL_ORIGIN}/capture/preview.jpg`)
     }
     // Each poll busts the cache so a stale JPEG is never repainted.
-    for (let n = 1; n < imageSrcs.length; n += 1) {
-      expect(imageSrcs[n]).not.toBe(imageSrcs[n - 1])
+    for (let n = 1; n < previewUrls.length; n += 1) {
+      expect(previewUrls[n]).not.toBe(previewUrls[n - 1])
     }
-    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes('preview'))).toBe(true)
     expect(drawImage).toHaveBeenCalled()
     feed.stop()
   })
 
   it('skips failed frames and keeps polling', async () => {
     stubFetch(true)
-    imageOutcomes = ['error', 'load']
+    previewOutcomes = ['error', 'frame']
     const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
     await vi.advanceTimersByTimeAsync(400)
-    expect(imageSrcs.length).toBeGreaterThanOrEqual(2)
+    expect(previewUrls.length).toBeGreaterThanOrEqual(2)
     expect(drawImage).toHaveBeenCalledTimes(1)
     feed.stop()
   })
@@ -215,9 +204,10 @@ describe('jlocal screen feed', () => {
     )
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/capture/stop'))).toHaveLength(1)
     drawImage.mockClear()
+    const pollsBefore = previewUrls.length
     await vi.advanceTimersByTimeAsync(1000)
     expect(drawImage).not.toHaveBeenCalled()
-    expect(imageSrcs).toHaveLength(1)
+    expect(previewUrls).toHaveLength(pollsBefore)
   })
 
   it('stop swallows a failing capture-stop release', async () => {
@@ -225,6 +215,9 @@ describe('jlocal screen feed', () => {
       'fetch',
       vi.fn(async (url: unknown) => {
         if (String(url).endsWith('/capture/stop')) throw new Error('app gone')
+        if (String(url).includes('/capture/preview.jpg')) {
+          return { ok: true, status: 200, blob: async () => new Uint8Array([1]) }
+        }
         return { ok: true, status: 200, json: async () => ({}) }
       }),
     )
