@@ -76,9 +76,13 @@ vi.mock('@mediabunny/ac3', () => ({ registerAc3Decoder: () => undefined }))
 vi.mock('@mediabunny/dts', () => ({ registerDtsDecoder: () => undefined }))
 vi.mock('@mediabunny/aac-encoder', () => ({ registerAacEncoder: () => undefined }))
 const chaptersMock = vi.hoisted(() => ({
+  calls: 0,
   read: (): Promise<{ startMs: number; endMs: number; title: string }[]> => Promise.resolve([]),
 }))
-vi.mock('./mkvChapters', () => ({ readMkvChapters: () => chaptersMock.read() }))
+vi.mock('./mkvChapters', () => ({ readMkvChapters: () => {
+  chaptersMock.calls += 1
+  return chaptersMock.read()
+} }))
 
 import { endPlaylist, runClientRemux, segmentDurations, type ClientRemuxHandle } from './clientMedia'
 
@@ -136,6 +140,7 @@ function mockServer({ holdUploads = false } = {}): Recorded[] {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  chaptersMock.calls = 0
 })
 
 afterEach(() => {
@@ -279,6 +284,7 @@ describe('client remux regions', () => {
       onHandle: (h) => { handle = h },
     })
     await flush()
+    expect(chaptersMock.calls).toBe(0)
     const first = conversions[0].opts.output.opts.format.options
     void emit(conversions[0], 'cinit_0.mp4')
     for (let n = 1; n <= 6; n += 1) {
@@ -294,6 +300,7 @@ describe('client remux regions', () => {
     releaseUploads()
     await flush()
     await publishRound()
+    expect(chaptersMock.calls).toBe(1)
     await flush()
     await run
     expect(conversions).toHaveLength(1)

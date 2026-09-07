@@ -84,6 +84,14 @@ describe('ByteTap', () => {
     expect(await tap.pull()).toBeNull()
   })
 
+  it('does not let a tail probe permanently poison a later sequential read', async () => {
+    const tap = new ByteTap(100, IDLE_MS)
+    tap.offer(10_000, bytes(0, 50))
+    tap.offer(0, bytes(0, 50))
+    expect(await tap.pull()).toEqual(bytes(0, 50))
+    expect(tap.riding).toBe(true)
+  })
+
   it('caps one pull so the parser gets bytes instead of a backlog', async () => {
     const tap = new ByteTap(32 * 1024 * 1024)
     for (let i = 0; i < 12; i += 1) tap.offer(i * 1024 * 1024, bytes(0, 1024 * 1024))

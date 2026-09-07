@@ -122,7 +122,6 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
   const [link, setLink] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [session, setSession] = useState<TorrentSession | null>(null)
   const [trail, setTrail] = useState<FolderLevel[]>([])
   const [confirm, setConfirm] = useState<DriveConfirm | null>(null)
   const [query, setQuery] = useState('')
@@ -154,7 +153,6 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     owned.current = null
     extra.current?.destroy()
     extra.current = null
-    setSession(null)
     setTrail([])
     setConfirm(null)
     setQuery('')
@@ -178,7 +176,6 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     owned.current = null
     extra.current?.destroy()
     extra.current = null
-    setSession(null)
     setTrail([])
     setConfirm(null)
     setQuery('')
@@ -186,14 +183,10 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     setLoading(true)
     try {
       if (parsed.kind === 'file') {
-        const info = await drive.fetchDriveMeta(parsed.id, { signal: controller.signal })
-        if (!isVideoEntry({ id: info.id, name: info.name, mimeType: info.mimeType, size: info.size })) {
-          setError(t('drive.notVideo'))
-          return
-        }
         const opened = await drive.openDriveSession({ kind: 'file', id: parsed.id }, { signal: controller.signal })
         const file = opened.files[0] ?? null
-        if (!file) {
+        const entry = file ? drive.driveEntryForFile(opened, file.path) : null
+        if (!file || !entry || !isVideoEntry(entry)) {
           opened.destroy()
           setError(t('drive.notVideo'))
           return
@@ -204,16 +197,13 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
           return
         }
         owned.current = opened
-        setSession(opened)
         setConfirm({ file, session: opened })
       } else {
-        const [entries, opened] = await Promise.all([
+        const [entries, info] = await Promise.all([
           drive.listDriveFolder(parsed.id, { signal: controller.signal }),
-          drive.openDriveSession({ kind: 'folder', id: parsed.id }, { signal: controller.signal }),
+          drive.fetchDriveMeta(parsed.id, { signal: controller.signal }),
         ])
-        owned.current = opened
-        setSession(opened)
-        setTrail([{ id: parsed.id, name: opened.name || t('drive.folder'), entries }])
+        setTrail([{ id: parsed.id, name: info.name || t('drive.folder'), entries }])
       }
     } catch (unknown) {
       if (controller.signal.aborted) return
@@ -246,29 +236,17 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
   }
 
   const pickVideo = async (entry: DriveEntry) => {
-    const browsing = session
-    if (!browsing || !current || loading) return
+    if (!current || loading) return
     setError('')
     setLoading(true)
-    let controller: AbortController | null = null
     try {
-      const parents = trail.slice(1).map((level) => level.name)
-      const treePath = [...parents, entry.name].join('/')
-      const direct = browsing.files.find((file) => file.path === treePath) ?? null
-      if (direct) {
-        if (direct.size > maxFileBytes) {
-          setError(t('home.tooLarge'))
-          return
-        }
-        setConfirm({ file: direct, session: browsing })
+      if (entry.size > maxFileBytes) {
+        setError(t('home.tooLarge'))
         return
       }
       // Dynamic import: see drivePlaybackUrls.
       const drive = await import('../drive')
-      abortRef.current?.abort()
-      controller = new AbortController()
-      abortRef.current = controller
-      const opened = await drive.openDriveSession({ kind: 'file', id: entry.id }, { signal: controller.signal })
+      const opened = drive.openDriveEntrySession(entry, current.entries)
       const first = opened.files[0] ?? null
       if (!first) {
         opened.destroy()
@@ -284,9 +262,9 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
       extra.current = opened
       setConfirm({ file: first, session: opened })
     } catch (unknown) {
-      if (!controller?.signal.aborted) fail(unknown)
+      fail(unknown)
     } finally {
-      if (controller !== null && abortRef.current === controller) setLoading(false)
+      setLoading(false)
     }
   }
 
@@ -306,7 +284,6 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     if (extra.current === confirm.session) extra.current = null
     const picked = confirm
     setConfirm(null)
-    setSession(null)
     setTrail([])
     setQuery('')
     onPicked(picked.file, picked.session)
