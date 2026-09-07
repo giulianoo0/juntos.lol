@@ -108,6 +108,14 @@ function startSystemAudio(stream: MediaStream, isStopped: () => boolean): () => 
       return
     }
     context = audioContext
+    // Autoplay policy boots the context suspended when creation escapes the
+    // click gesture (the start POST + canvas setup run first): without an
+    // explicit resume the clock never advances and every frame stays silent.
+    try {
+      await audioContext.resume().catch(() => {})
+    } catch {
+      // A closing context must not break the feed.
+    }
     const destination = audioContext.createMediaStreamDestination()
     const [audioTrack] = destination.stream.getAudioTracks()
     if (!audioTrack) {

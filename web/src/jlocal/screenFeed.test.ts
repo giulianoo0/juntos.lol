@@ -49,6 +49,10 @@ class FakeAudioContext {
   createBufferSource(): unknown {
     return { connect: () => undefined, start: () => { this.started += 1 } }
   }
+  resumed = false
+  async resume(): Promise<void> {
+    this.resumed = true
+  }
   async close(): Promise<void> {
     this.closed = true
   }
@@ -299,7 +303,7 @@ describe('jlocal screen feed', () => {
       const context = FakeAudioContext.instances[0]
       expect(context).toBeDefined()
       expect(context?.started).toBeGreaterThanOrEqual(1)
-      expect(context?.buffers.length).toBeGreaterThanOrEqual(1)
+      expect(context?.resumed).toBe(true)
       // s16le decode lands on float samples: left +0.5, right −0.5.
       expect(context?.buffers[0]?.left[0]).toBeCloseTo(0.5, 5)
       expect(context?.buffers[0]?.right[0]).toBeCloseTo(-0.5, 5)
