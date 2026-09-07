@@ -339,7 +339,7 @@ export async function startJLocalScreenFeed(
             buffer = buffer.slice(boundaryAt + boundary.length)
             if (frame && !stopped) {
               try {
-                callbacks.onFrame(await createImageBitmap(new Blob([frame], { type: 'image/jpeg' })))
+                callbacks.onFrame(await createImageBitmap(new Blob([frame.buffer as ArrayBuffer], { type: 'image/jpeg' })))
               } catch {
                 // Half-written part: the next boundary resyncs.
               }
