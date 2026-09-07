@@ -16,6 +16,7 @@ import {
   setJLocalAppMuted,
   setJLocalAudioMode,
 } from '../jlocal/audio'
+import { startJLocalScreenFeed } from '../jlocal/screenFeed'
 
 vi.mock('../screenshare', () => ({
   screenShareSupported: vi.fn().mockReturnValue(true),
@@ -45,17 +46,25 @@ vi.mock('../jlocal/audio', () => ({
   fetchJLocalWindows: vi.fn().mockResolvedValue([]),
   isJLocalAudioCaptureAvailable: vi.fn().mockReturnValue(false),
 }))
+vi.mock('../jlocal/screenFeed', () => ({
+  startJLocalScreenFeed: vi.fn(),
+}))
 
 const modalSeen = vi.hoisted(() => ({ props: [] as Array<{ open: boolean; onConfirm: (stream: MediaStream, stop: () => void) => void; onUseBrowser: () => void }> }))
 vi.mock('../components/JLocalScreen', () => ({
   JLocalScreenModal: (props: {
     open: boolean
-    onConfirm: (stream: MediaStream, stop: () => void) => void
+    onConfirm: (stream: MediaStream, stop: () => void, choice?: unknown) => void
     onUseBrowser: () => void
   }) => {
     modalSeen.props.push(props)
     return props.open ? <div data-testid="jscreen-stub" /> : null
   },
+  jlocalQualityOptions: () => [
+    { id: '1080p', width: 1920, height: 1080 },
+    { id: '4K', width: 3840, height: 2160 },
+  ],
+  jlocalFpsOptions: () => [24, 30, 60],
 }))
 
 class FakeWebSocket {
@@ -245,5 +254,85 @@ describe('RoomPage screen gear', () => {
 
     expect(screen.queryByRole('switch', { name: /system sound|som do sistema/i })).not.toBeInTheDocument()
     expect(vi.mocked(fetchJLocalWindows)).not.toHaveBeenCalled()
+  })
+
+  it('restarts the same target at a new framerate without repicking', async () => {
+    const live = fakeStream(false)
+    const next = fakeStream(false)
+    const stopFirst = vi.fn()
+    const stopNext = vi.fn()
+    vi.mocked(startJLocalScreenFeed).mockResolvedValue({ stream: next.stream, stop: stopNext })
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m1')
+
+    fireEvent.click(await screen.findByRole('button', { name: /share my screen|compartilhar minha tela/i }))
+    await screen.findByTestId('jscreen-stub')
+    const choice = { target: { kind: 'display', id: '1' }, qualityId: '1080p', width: 1920, height: 1080, fps: 30, audio: false }
+    act(() => { modalSeen.props[modalSeen.props.length - 1]?.onConfirm(live.stream, stopFirst, choice) })
+    await waitFor(() => expect(publishScreen).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(await screen.findByRole('button', { name: /screen share settings|configurações do compartilhamento/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: '60 fps' }))
+
+    await waitFor(() => expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
+      { kind: 'display', id: '1' },
+      { width: 1920, height: 1080, fps: 60, audio: false },
+    ))
+    await waitFor(() => expect(publishScreen).toHaveBeenCalledTimes(2))
+    expect(publishScreen).toHaveBeenLastCalledWith(expect.anything(), next.stream)
+    expect(stopFirst).toHaveBeenCalled()
+    expect(live.video.stop).toHaveBeenCalled()
+  })
+
+  it('restarts the same target at a new quality without repicking', async () => {
+    const live = fakeStream(false)
+    const next = fakeStream(false)
+    vi.mocked(startJLocalScreenFeed).mockResolvedValue({ stream: next.stream, stop: vi.fn() })
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m1')
+
+    fireEvent.click(await screen.findByRole('button', { name: /share my screen|compartilhar minha tela/i }))
+    await screen.findByTestId('jscreen-stub')
+    const choice = { target: { kind: 'display', id: '1' }, qualityId: '1080p', width: 1920, height: 1080, fps: 30, audio: false }
+    act(() => { modalSeen.props[modalSeen.props.length - 1]?.onConfirm(live.stream, vi.fn(), choice) })
+    await waitFor(() => expect(publishScreen).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(await screen.findByRole('button', { name: /screen share settings|configurações do compartilhamento/i }))
+    // Current quality is checked and disabled; the other preset switches.
+    expect(screen.getByRole('radio', { name: '1080p' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByRole('radio', { name: '4K' }))
+
+    await waitFor(() => expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
+      { kind: 'display', id: '1' },
+      { width: 3840, height: 2160, fps: 30, audio: false },
+    ))
+    await waitFor(() => expect(publishScreen).toHaveBeenCalledTimes(2))
+  })
+
+  it('applies native framerate live on the track', async () => {
+    const video = { ...fakeTrack(), applyConstraints: vi.fn().mockResolvedValue(undefined), getSettings: () => ({ frameRate: 30 }) }
+    const stream = {
+      getTracks: () => [video],
+      getVideoTracks: () => [video],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m1')
+
+    fireEvent.click(await screen.findByRole('button', { name: /share my screen|compartilhar minha tela/i }))
+    await screen.findByTestId('jscreen-stub')
+    // Native confirm: no feed choice, so fps applies on the track.
+    act(() => { modalSeen.props[modalSeen.props.length - 1]?.onConfirm(stream, vi.fn()) })
+    await waitFor(() => expect(publishScreen).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(await screen.findByRole('button', { name: /screen share settings|configurações do compartilhamento/i }))
+    fireEvent.click(await screen.findByRole('radio', { name: '60 fps' }))
+
+    await waitFor(() => expect(video.applyConstraints).toHaveBeenCalledWith({ frameRate: { ideal: 60 } }))
+    expect(publishScreen).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(startJLocalScreenFeed)).not.toHaveBeenCalled()
   })
 })

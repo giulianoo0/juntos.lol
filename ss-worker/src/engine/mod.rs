@@ -23,6 +23,7 @@ use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::config::WorkerConfig;
+use crate::remux::subs::SidecarFile;
 pub use admission::{is_sidecar, LeaseInfo, Rejection};
 use disk::DiskAccountant;
 use entry::{Entry, Phase};
@@ -498,6 +499,37 @@ impl Engine {
         }
         self.apply_window(&infohash);
         Ok(selected_bytes)
+    }
+
+    /// Lists the torrent's sidecar subtitles that are fully on disk: only
+    /// files the lease selected for download whose on-disk length matches
+    /// the expected length, so holes and partials are skipped.
+    pub fn sidecar_files(&self, infohash: &str) -> Vec<SidecarFile> {
+        let infohash = infohash.to_ascii_lowercase();
+        let Some(handle) = self.handle(&infohash) else { return Vec::new() };
+        let guard = handle.metadata.load();
+        let Some(meta) = guard.as_ref() else { return Vec::new() };
+        let base = handle.output_folder();
+        let mut out = Vec::new();
+        for info in meta.file_infos.iter() {
+            let relative = info.relative_filename.to_string_lossy();
+            if !admission::is_sidecar(&relative, info.len) {
+                continue;
+            }
+            let path = base.join(&info.relative_filename);
+            let Ok(metadata) = std::fs::metadata(&path) else { continue };
+            if !metadata.is_file() || metadata.len() != info.len {
+                continue;
+            }
+            let name = info
+                .relative_filename
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| relative.clone().into_owned());
+            out.push(SidecarFile { name, path, size: info.len });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
     }
 
     /// Releases a lease. The torrent stays hot for a grace period; the LAST

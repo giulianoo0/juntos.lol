@@ -7,7 +7,7 @@ import { buildAssDocument, isFontAttachment } from './assDoc'
 import type { VttTrack } from './subtitleFormats'
 
 export const MAX_SUBTITLE_TRACKS = 64
-const PUBLISH_INTERVAL_MS = 8_000
+const PUBLISH_INTERVAL_MS = 3_000
 
 export interface SubtitleCue {
   text: string

@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { useT } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
-import { startJLocalScreenFeed } from '../jlocal/screenFeed'
+import { startJLocalScreenFeed, type JLocalFeedChoice } from '../jlocal/screenFeed'
 import { setJLocalAudioMode } from '../jlocal/audio'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { Button } from '../ui/Button'
@@ -106,6 +106,30 @@ const RESOLUTIONS = [
 
 const FRAME_RATES = [24, 30, 48, 60] as const
 
+export interface JLocalQualityOption {
+  id: string
+  width: number
+  height: number
+}
+
+/** Preset encode sizes the app allows, ceiling included: presets may exceed
+ * the target (the app upscales Discord-style). The live gear reuses this so
+ * mid-share switches offer exactly what the picker would. */
+export function jlocalQualityOptions(): JLocalQualityOption[] {
+  const caps = getCachedJLocalCapabilities()
+  const allowed = RESOLUTIONS.filter(
+    (option) => option.width <= (caps?.screen.maxWidth ?? 1920) && option.height <= (caps?.screen.maxHeight ?? 1080),
+  )
+  return allowed.length > 0 ? [...allowed] : [RESOLUTIONS[0] as JLocalQualityOption]
+}
+
+/** Frame rates the app allows. Same shared source as the picker. */
+export function jlocalFpsOptions(): number[] {
+  const caps = getCachedJLocalCapabilities()
+  const allowed = FRAME_RATES.filter((fps) => fps <= (caps?.screen.maxFps ?? 30))
+  return allowed.length > 0 ? [...allowed] : [FRAME_RATES[0] as number]
+}
+
 /**
  * Whatever GET /capture/displays or /capture/windows answers, a usable list
  * or nothing. Both wrap the list in an envelope ({displays}/{windows}); a
@@ -135,7 +159,7 @@ function parseTargets(body: unknown, key: string): JLocalCaptureTarget[] {
 }
 
 export interface JLocalScreenPanelProps {
-  onConfirm: (stream: MediaStream, stop: () => void) => void
+  onConfirm: (stream: MediaStream, stop: () => void, choice: JLocalFeedChoice) => void
   onUseBrowser: () => void
   onExit: () => void
 }
@@ -157,17 +181,9 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
   const t = useT()
   const reduceMotion = useReducedMotion()
   const caps = getCachedJLocalCapabilities()
-  const resolutions = (() => {
-    const allowed = RESOLUTIONS.filter(
-      (option) => option.width <= (caps?.screen.maxWidth ?? 1920) && option.height <= (caps?.screen.maxHeight ?? 1080),
-    )
-    return allowed.length > 0 ? allowed : [RESOLUTIONS[0] as (typeof RESOLUTIONS)[number]]
-  })()
+  const resolutions = jlocalQualityOptions()
   // (resolution options are built after the selection state below.)
-  const frameRates = (() => {
-    const allowed = FRAME_RATES.filter((fps) => fps <= (caps?.screen.maxFps ?? 30))
-    return allowed.length > 0 ? allowed : [FRAME_RATES[0] as (typeof FRAME_RATES)[number]]
-  })()
+  const frameRates = jlocalFpsOptions()
   const [tab, setTab] = useState<'displays' | 'windows'>('displays')
   const [displays, setDisplays] = useState<JLocalCaptureTarget[] | null>(null)
   const [displaysFailed, setDisplaysFailed] = useState(false)
@@ -283,13 +299,15 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
     if (!target) return
     setStarting(true)
     setStartError(null)
-    void startJLocalScreenFeed(target, { width: picked.width, height: picked.height, fps, audio: audioCapture && soundOn })
+    const audio = audioCapture && soundOn
+    const choice: JLocalFeedChoice = { target, qualityId: picked.id, width: picked.width, height: picked.height, fps, audio }
+    void startJLocalScreenFeed(target, { width: picked.width, height: picked.height, fps, audio })
       .then(({ stream, stop }) => {
         // The toggle owns the local track flag at handoff: a late flip while
         // starting still lands on the published stream. The optional call
         // covers bare test doubles without getAudioTracks.
         for (const track of stream.getAudioTracks?.() ?? []) track.enabled = soundRef.current
-        onConfirm(stream, stop)
+        onConfirm(stream, stop, choice)
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : ''
@@ -450,7 +468,7 @@ export interface JLocalScreenModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onUseBrowser: () => void
-  onConfirm: (stream: MediaStream, stop: () => void) => void
+  onConfirm: (stream: MediaStream, stop: () => void, choice: JLocalFeedChoice) => void
 }
 
 /**
@@ -468,7 +486,7 @@ export function JLocalScreenModal({ open, onOpenChange, onUseBrowser, onConfirm 
         closeLabel={t('jlocal.close')}
       >
         {open ? (
-          <JLocalScreenPanel onConfirm={(stream, stop) => { onConfirm(stream, stop); onOpenChange(false) }} onUseBrowser={onUseBrowser} onExit={() => onOpenChange(false)} />
+          <JLocalScreenPanel onConfirm={(stream, stop, choice) => { onConfirm(stream, stop, choice); onOpenChange(false) }} onUseBrowser={onUseBrowser} onExit={() => onOpenChange(false)} />
         ) : null}
       </DialogContent>
     </Dialog>

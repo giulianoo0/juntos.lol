@@ -5,8 +5,9 @@ import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { JLocalDownload, JLocalModal, JLocalStatus } from '../components/JLocal'
-import { JLocalScreenModal } from '../components/JLocalScreen'
+import { JLocalScreenModal, jlocalFpsOptions, jlocalQualityOptions } from '../components/JLocalScreen'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
+import { startJLocalScreenFeed, type JLocalFeedChoice } from '../jlocal/screenFeed'
 import { useJLocal } from '../jlocal/status'
 import {
   fetchJLocalWindows,
@@ -20,7 +21,7 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, Download, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Settings, Upload, UserX, Volume2, VolumeX, X } from 'lucide-react'
+import { Check, Compass, Crown, Download, FileVideo, FolderOpen, Link2, MessageSquare, MonitorUp, Replace, Settings, Upload, UserX, Volume2, VolumeX, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -56,6 +57,7 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { DrivePicker, confirmDrivePick } from '../components/DrivePicker'
 import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
@@ -323,25 +325,25 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
   useMessageChime(sync.messages, sync.connected, nickname)
-  const [sourcePanel, setSourcePanel] = useState<'torrent' | null>(null)
+  const [sourcePanel, setSourcePanel] = useState<'torrent' | 'drive' | null>(null)
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
   const [screenOpen, setScreenOpen] = useState(false)
   const screenFallbackRef = useRef<(() => void) | null>(null)
-  const screenConfirmRef = useRef<((stream: MediaStream, stop: () => void) => void) | null>(null)
-  const openJLocalScreen = (fallback: () => void, onConfirm?: (stream: MediaStream, stop: () => void) => void) => {
+  const screenConfirmRef = useRef<((stream: MediaStream, stop: () => void, choice?: JLocalFeedChoice) => void) | null>(null)
+  const openJLocalScreen = (fallback: () => void, onConfirm?: (stream: MediaStream, stop: () => void, choice?: JLocalFeedChoice) => void) => {
     screenFallbackRef.current = fallback
     screenConfirmRef.current = onConfirm ?? null
     setScreenOpen(true)
   }
   const useBrowserForScreen = () => { setScreenOpen(false); screenFallbackRef.current?.(); screenFallbackRef.current = null; screenConfirmRef.current = null }
-  const confirmJLocalScreen = (stream: MediaStream, stop: () => void) => {
+  const confirmJLocalScreen = (stream: MediaStream, stop: () => void, choice: JLocalFeedChoice) => {
     setScreenOpen(false)
     // The feed dies with its stream: every teardown path stops the tracks,
     // which releases app capture — polling plus POST /capture/stop, best-effort.
     stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
-    screenConfirmRef.current?.(stream, stop)
+    screenConfirmRef.current?.(stream, stop, choice)
     screenFallbackRef.current = null
     screenConfirmRef.current = null
   }
@@ -419,6 +421,17 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         throw error
       }
       startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
+    })
+  }
+
+  const chooseDrive = (file: TorrentVideoFile, session: TorrentSession) => {
+    void swapSource(async () => {
+      try {
+        await confirmDrivePick({ roomID: room.id, memberId: sync.memberId, capability: sync.capability }, file, session)
+      } catch (error) {
+        session.destroy()
+        throw error
+      }
     })
   }
 
@@ -673,6 +686,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               onOpen={() => setSourceError('')}
               onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
               onTorrent={() => setSourcePanel('torrent')}
+              onDrive={() => setSourcePanel('drive')}
               onFile={() => fileInputRef.current?.click()}
               onScreen={chooseScreen}
             />
@@ -913,6 +927,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             hideTitle
             title={t('home.torrentTitle')}
           >
+            {sourcePanel === 'drive' ? (
+              <DrivePicker
+                maxFileBytes={MAX_UPLOAD_BYTES}
+                t={t}
+                onExit={() => setSourcePanel(null)}
+                onPicked={chooseDrive}
+              />
+            ) : (
             <TorrentPicker
               maxFileBytes={MAX_UPLOAD_BYTES}
               t={t}
@@ -925,6 +947,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
                 })
               }}
             />
+            )}
           </DialogContent>
         ) : null}
       </Dialog>
@@ -983,10 +1006,11 @@ function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKic
 }
 
 /** The one entry point for putting something else on, as a MorphingMenu. */
-function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
+function MediaSwitch({ onOpen, onCatalog, onTorrent, onDrive, onFile, onScreen, t }: {
   onOpen: () => void
   onCatalog: () => void
   onTorrent: () => void
+  onDrive: () => void
   onFile: () => void
   onScreen: () => void
   t: Translator
@@ -1010,6 +1034,9 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
           </button>
           <button type="button" onClick={pick(close, onTorrent)}>
             <span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.switchTorrent')}
+          </button>
+          <button type="button" onClick={pick(close, onDrive)}>
+            <FolderOpen size={15} aria-hidden="true" />{t('room.switchDrive')}
           </button>
           <button type="button" onClick={pick(close, onFile)}>
             <Upload size={15} aria-hidden="true" />{t('room.switchFile')}
@@ -1059,16 +1086,86 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
 
 /** A viewer that is still not seeing frames this long after the host went live subscribes again. */
 const SCREEN_WATCH_RETRY_MS = 4_000
+
+/** Frame rates offered for native shares, applied live via applyConstraints. */
+const NATIVE_FPS_OPTIONS = [24, 30, 48, 60]
+
+/** Best guess at a native track's current rate for the checked state. */
+function currentNativeFps(stream: MediaStream | null): number {
+  const settings = stream?.getVideoTracks()[0]?.getSettings?.()
+  return typeof settings?.frameRate === 'number' ? Math.round(settings.frameRate) : 30
+}
+
+/**
+ * Mid-share size/rate for a jlocal feed: the same presets the picker offers,
+ * applied by restarting the same target (no repick). The current choice rides
+ * as a checked row even when it is the target's native size, which has no
+ * preset; fps always has one.
+ */
+function LiveFeedQuality({ choice, disabled, onPick, t }: {
+  choice: JLocalFeedChoice
+  disabled: boolean
+  onPick: (width: number, height: number, fps: number, qualityId: string) => void
+  t: Translator
+}) {
+  const qualities = jlocalQualityOptions()
+  const rates = jlocalFpsOptions()
+  const nativeCurrent = !qualities.some((option) => option.id === choice.qualityId)
+  return (
+    <>
+      <p className="screen-gear-section">{t('jlocal.screenRes')}</p>
+      {nativeCurrent ? (
+        <button type="button" role="radio" aria-checked disabled>
+          <span className="screen-gear-dot" aria-hidden="true" />{choice.qualityId}
+        </button>
+      ) : null}
+      {qualities.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          role="radio"
+          aria-checked={choice.qualityId === option.id}
+          disabled={disabled || choice.qualityId === option.id}
+          onClick={() => onPick(option.width, option.height, choice.fps, option.id)}
+        >
+          <span className="screen-gear-dot" aria-hidden="true" />{option.id}
+        </button>
+      ))}
+      <p className="screen-gear-section">{t('jlocal.screenFps')}</p>
+      {rates.map((rate) => (
+        <button
+          key={rate}
+          type="button"
+          role="radio"
+          aria-checked={choice.fps === rate}
+          disabled={disabled || choice.fps === rate}
+          onClick={() => onPick(choice.width, choice.height, rate, choice.qualityId)}
+        >
+          <span className="screen-gear-dot" aria-hidden="true" />{rate} fps
+        </button>
+      ))}
+    </>
+  )
+}
+
 /**
  * The controller's live screen controls: a gear next to the share button,
  * opening through the same MorphingMenu surface as change-media. Switch
- * source re-opens the JLocal picker while live; the sound master and the
- * per-app mutes only render when the app advertises audio capture.
+ * source re-opens the JLocal picker while live; quality and framerate switch
+ * the live feed without repicking; the sound master and the per-app mutes
+ * only render when the app advertises audio capture.
  */
-function ScreenShareGear({ t, onSwitchSource, getStream }: {
+function ScreenShareGear({ t, onSwitchSource, getStream, feedChoice, nativeFps, canNativeFps, switching, onReconfigure, onNativeFps }: {
   t: Translator
   onSwitchSource: () => void
   getStream: () => MediaStream | null
+  /** Null for native shares: quality/fps switch live instead of restarting. */
+  feedChoice: JLocalFeedChoice | null
+  nativeFps: number | null
+  canNativeFps: boolean
+  switching: boolean
+  onReconfigure: (width: number, height: number, fps: number, qualityId: string) => void
+  onNativeFps: (fps: number) => void
 }) {
   const [audioCapable, setAudioCapable] = useState(false)
   const [soundOn, setSoundOn] = useState(true)
@@ -1131,6 +1228,30 @@ function ScreenShareGear({ t, onSwitchSource, getStream }: {
           <button type="button" onClick={() => { close(); onSwitchSource() }}>
             <MonitorUp size={15} aria-hidden="true" />{t('room.screenSwitchSource')}
           </button>
+          {feedChoice !== null ? (
+            <LiveFeedQuality
+              t={t}
+              choice={feedChoice}
+              disabled={switching}
+              onPick={(width, height, fps, qualityId) => { close(); onReconfigure(width, height, fps, qualityId) }}
+            />
+          ) : canNativeFps ? (
+            <>
+              <p className="screen-gear-section">{t('jlocal.screenFps')}</p>
+              {NATIVE_FPS_OPTIONS.map((rate) => (
+                <button
+                  key={rate}
+                  type="button"
+                  role="radio"
+                  aria-checked={(nativeFps ?? currentNativeFps(getStream())) === rate}
+                  disabled={switching}
+                  onClick={() => { close(); onNativeFps(rate) }}
+                >
+                  <span className="screen-gear-dot" aria-hidden="true" />{rate} fps
+                </button>
+              ))}
+            </>
+          ) : null}
           {audioCapable ? (
             <>
               <button type="button" role="switch" aria-checked={soundOn} onClick={toggleSound}>
@@ -1177,7 +1298,7 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
   isController: boolean
   screenLive: boolean
   t: Translator
-  onJLocalScreen: (fallback: () => void, onConfirm?: (stream: MediaStream, stop: () => void) => void) => void
+  onJLocalScreen: (fallback: () => void, onConfirm?: (stream: MediaStream, stop: () => void, choice?: JLocalFeedChoice) => void) => void
 }) {
   const previewRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -1190,6 +1311,11 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
   const [watchStatus, setWatchStatus] = useState<ScreenWatchStatus>('offline')
   const [seenLive, setSeenLive] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  // What the jlocal picker chose, kept so the gear can restart the same
+  // target at a new size/rate without repicking. Null for native shares.
+  const [feedChoice, setFeedChoice] = useState<JLocalFeedChoice | null>(null)
+  // Native fps picked live via applyConstraints (no republish involved).
+  const [nativeFps, setNativeFps] = useState<number | null>(null)
   const supported = useMemo(() => screenShareSupported(), [])
 
   const endSharing = useCallback(() => {
@@ -1203,6 +1329,8 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
     const preview = previewRef.current
     if (preview) preview.srcObject = null
     setSharing(false)
+    setFeedChoice(null)
+    setNativeFps(null)
     if (memberId && capability) void setScreenLive(roomId, memberId, capability, false).catch(() => undefined)
   }, [roomId, memberId, capability])
 
@@ -1300,9 +1428,10 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
     startSharingNative()
   }
 
-  const confirmSharingFeed = (stream: MediaStream, stop: () => void) => {
+  const confirmSharingFeed = (stream: MediaStream, stop: () => void, choice?: JLocalFeedChoice) => {
     feedStopRef.current = stop
     setFailed(false)
+    setFeedChoice(choice ?? null)
     // beginSharing failures already run endSharing, which calls the feed stop.
     void beginSharing(stream).catch(() => setFailed(true))
   }
@@ -1324,8 +1453,8 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
       setSwitching(false)
     }
   }, [beginSharing, endSharing])
-
-  const confirmSwapFeed = useCallback((stream: MediaStream, stop: () => void) => {
+  const confirmSwapFeed = useCallback((stream: MediaStream, stop: () => void, choice?: JLocalFeedChoice) => {
+    setFeedChoice(choice ?? null)
     void swapFeed(stream, stop)
   }, [swapFeed])
 
@@ -1341,6 +1470,45 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
     if (isJLocalCaptureAvailable()) { onJLocalScreen(repickNative, confirmSwapFeed); return }
     repickNative()
   }, [onJLocalScreen, repickNative, confirmSwapFeed])
+
+  // Mid-share quality/fps without repicking: the app has no reconfigure
+  // endpoint, so the same target restarts at the new size/rate and the
+  // publish swaps like a repick — one brief gap, viewers resubscribe.
+  const reconfigureFeed = useCallback(async (width: number, height: number, fps: number, qualityId: string) => {
+    const current = feedChoice
+    if (!current || switching) return
+    setSwitching(true)
+    try {
+      feedStopRef.current?.()
+      feedStopRef.current = null
+      const { stream, stop } = await startJLocalScreenFeed(
+        current.target,
+        { width, height, fps, audio: current.audio },
+      )
+      for (const track of stream.getAudioTracks?.() ?? []) track.enabled = true
+      setFeedChoice({ ...current, qualityId, width, height, fps })
+      await swapFeed(stream, stop)
+    } catch {
+      // The old feed is already stopped: go fully offline so the room does
+      // not hang on a frozen publish. The host repicks from the gear.
+      endSharing()
+      setFailed(true)
+      setSwitching(false)
+    }
+  }, [feedChoice, switching, swapFeed, endSharing])
+
+  // Native shares have no capture session: fps applies live on the track,
+  // no republish. Resolution stays browser-owned (repick to change it).
+  const applyNativeFps = useCallback(async (fps: number) => {
+    const track = streamRef.current?.getVideoTracks()[0]
+    if (!track || switching) return
+    try {
+      await track.applyConstraints({ frameRate: { ideal: fps } })
+      setNativeFps(fps)
+    } catch {
+      // Overconstrained: keep showing the previous rate.
+    }
+  }, [switching])
 
   const hint = !supported ? t('room.screenUnsupported')
     : isController ? (sharing ? null : t('room.screenHostHint'))
@@ -1362,7 +1530,7 @@ function ScreenStage({ roomId, memberId, capability, isController, screenLive, t
             <button className="primary-button" disabled={!memberId || switching} onClick={sharing ? endSharing : startSharing}>
               {switching ? t('room.screenSwitching') : sharing ? t('room.screenStop') : t('room.screenStart')}
             </button>
-            <ScreenShareGear t={t} onSwitchSource={repickSource} getStream={() => streamRef.current} />
+            <ScreenShareGear t={t} onSwitchSource={repickSource} getStream={() => streamRef.current} feedChoice={feedChoice} nativeFps={nativeFps} canNativeFps={sharing && feedChoice === null} switching={switching} onReconfigure={(width, height, fps, qualityId) => { void reconfigureFeed(width, height, fps, qualityId) }} onNativeFps={(fps) => { void applyNativeFps(fps) }} />
           </div>
         ) : null}
         {failed ? <span className="error-card compact">{t('error.screenshare')}</span> : null}

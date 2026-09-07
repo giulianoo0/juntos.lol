@@ -18,7 +18,7 @@ import { ReadAbortedError } from './rangeRead'
 import type { ReadHint } from './mediaInput'
 
 const MAX_EXTERNAL_SUBTITLES = 16
-const SUBTITLE_SNAPSHOT_MS = 8_000
+const SUBTITLE_SNAPSHOT_MS = 3_000
 const SUBTITLE_SLICE_BYTES = 8 * 1024 * 1024
 const SCAN_HOLDOFF_MAX_MS = 45_000
 const SCAN_PATIENCE_MS = 60_000

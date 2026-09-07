@@ -319,7 +319,8 @@ impl Remux {
             reader: format!("remux-subs:{}", spec.run_id),
             size,
         });
-        if !source.subtitles.is_empty() {
+        let sidecars = self.engine.sidecar_files(infohash);
+        if !source.subtitles.is_empty() || !sidecars.is_empty() {
             let extractor = subs::Extractor {
                 ffmpeg_path: self.cfg.ffmpeg_path.clone(),
                 client: self.client.clone(),
@@ -330,7 +331,8 @@ impl Remux {
                 claim: spec.claim.clone(),
                 input_url: subs_url,
                 dir: self.cfg.data_dir.join("remux").join(&spec.run_id).join("subs"),
-                state: subs::room_state(&self.subtitle_rooms, &spec.room_id, spec.media_generation, &source),
+                state: subs::room_state(&self.subtitle_rooms, &spec.room_id, spec.media_generation, &source, &sidecars),
+                sidecars,
             };
             let plan_for_subs = source.clone();
             let (run_id, start_ms, end_ms) = (spec.run_id.clone(), spec.start_ms, spec.end_ms);

@@ -15,6 +15,20 @@ export interface JLocalScreenFeedOptions {
   audio?: boolean
 }
 
+/**
+ * What a confirm picked, remembered so a live share can reconfigure without
+ * repicking: same target, new size/rate. qualityId is the panel's option id
+ * (preset or the target's native size label).
+ */
+export interface JLocalFeedChoice {
+  target: JLocalScreenTarget
+  qualityId: string
+  width: number
+  height: number
+  fps: number
+  audio: boolean
+}
+
 // PCM contract: the server flushes ~20ms frames of s16le 48kHz stereo with
 // no framing headers — a raw infinite body, so any chunk boundary can split
 // a frame and the decoder below reassembles by byte count.

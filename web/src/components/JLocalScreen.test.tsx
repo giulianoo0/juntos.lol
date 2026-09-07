@@ -96,7 +96,14 @@ describe('jlocal screen modal displays', () => {
       // No audio.capture in these caps: the toggle stays hidden, audio off.
       { width: 3840, height: 2160, fps: 30, audio: false },
     )
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop, {
+      target: { kind: 'display', id: '2' },
+      qualityId: '4K',
+      width: 3840,
+      height: 2160,
+      fps: 30,
+      audio: false,
+    }))
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
@@ -129,7 +136,14 @@ describe('jlocal screen modal displays', () => {
       { kind: 'window', id: '9' },
       { width: 3840, height: 2160, fps: 30, audio: false },
     )
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop, {
+      target: { kind: 'window', id: '9' },
+      qualityId: '4K',
+      width: 3840,
+      height: 2160,
+      fps: 30,
+      audio: false,
+    }))
   })
 
   it('offers the full frame-rate range in the fps dropdown', async () => {
@@ -227,7 +241,14 @@ describe('jlocal screen panel', () => {
       { kind: 'display', id: '2' },
       { width: 3840, height: 2160, fps: 30, audio: false },
     )
-    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop, {
+      target: { kind: 'display', id: '2' },
+      qualityId: '4K',
+      width: 3840,
+      height: 2160,
+      fps: 30,
+      audio: false,
+    }))
   })
   it('shows a sound toggle with audio caps and passes it to the feed', async () => {
     const audioCaps = {
