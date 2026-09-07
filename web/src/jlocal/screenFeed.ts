@@ -23,6 +23,32 @@ const AUDIO_CHANNELS = 2
 const AUDIO_FRAME_SAMPLES = 960
 const AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * 2
 
+/** Byte search for the MJPEG boundary inside the reassembly buffer. */
+function indexOfBytes(haystack: Uint8Array, needle: Uint8Array): number {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i += 1) {
+    for (let j = 0; j < needle.length; j += 1) {
+      if (haystack[i + j] !== needle[j]) continue outer
+    }
+    return i
+  }
+  return -1
+}
+
+/**
+ * Slice the JPEG out of one multipart part (headers end at the blank line).
+ * Null when the part is truncated — the next boundary resyncs the reader.
+ */
+function extractMjpegFrame(part: Uint8Array): Uint8Array | null {
+  const head = [13, 10, 13, 10]
+  for (let i = 0; i + 4 <= part.length; i += 1) {
+    if (part[i] === head[0] && part[i + 1] === head[1] && part[i + 2] === head[2] && part[i + 3] === head[3]) {
+      const jpeg = part.slice(i + 4)
+      return jpeg.length > 0 ? jpeg : null
+    }
+  }
+  return null
+}
+
 export interface JLocalScreenFeed {
   stream: MediaStream
   stop: () => void
@@ -231,14 +257,21 @@ export async function startJLocalScreenFeed(
 
   let stopped = false
   const intervalMs = Math.max(1, Math.round(1000 / fps))
+  let inFlight = false
+  // Monotonic, not Date.now(): a frozen clock (background tab) must still
+  // bust the cache on every poll.
+  let pollTick = 0
 
   async function pollFrame(): Promise<void> {
-    if (stopped) return
+    // No stacking: at 60fps a slow poll must skip, never overlap — overlaps
+    // pile up out-of-order draws and judder.
+    if (stopped || inFlight) return
+    inFlight = true
     try {
       // fetch, not <img>: the loopback origin differs from the page, so an
       // <img> would taint the canvas and the captured stream would go black.
       // The endpoint answers CORS, hence these bytes decode clean.
-      const response = await fetch(`${JLOCAL_ORIGIN}/capture/preview.jpg?t=${Date.now()}`)
+      const response = await fetch(`${JLOCAL_ORIGIN}/capture/preview.jpg?t=${pollTick++}`)
       if (!response.ok || stopped) return
       const bitmap = await createImageBitmap(await response.blob())
       if (stopped) {
@@ -249,12 +282,111 @@ export async function startJLocalScreenFeed(
       bitmap.close()
     } catch {
       // A missing or half-written JPEG skips this frame; the next tick tries again.
+    } finally {
+      inFlight = false
     }
   }
 
-  const timer = setInterval(() => {
-    void pollFrame()
-  }, intervalMs)
+  function startPolling(): () => void {
+    const timer = setInterval(() => {
+      void pollFrame()
+    }, intervalMs)
+    return () => clearInterval(timer)
+  }
+
+  /**
+   * One connection, server-paced MJPEG (`GET /capture/stream`): frames arrive
+   * at the session rate with no HTTP-per-frame overhead and no overlap.
+   * `onLive` fires on the first good response (the caller stops polling);
+   * `onDead` fires when the stream ends or errors (the caller resumes
+   * polling, so old apps and dropped connections keep a picture).
+   */
+  function startMjpeg(callbacks: {
+    onLive: () => void
+    onFrame: (bitmap: ImageBitmap) => void
+    onDead: () => void
+  }): () => void {
+    const controller = new AbortController()
+    const boundary = new TextEncoder().encode('--frame')
+    let buffer = new Uint8Array(0)
+    let live = false
+    void (async () => {
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+      try {
+        const response = await fetch(`${JLOCAL_ORIGIN}/capture/stream`, { signal: controller.signal })
+        if (stopped) return
+        if (!response.ok || !response.body) {
+          if (!live) callbacks.onDead()
+          return
+        }
+        live = true
+        callbacks.onLive()
+        reader = response.body.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (stopped) return
+          if (done) {
+            callbacks.onDead()
+            return
+          }
+          const merged = new Uint8Array(buffer.length + value.length)
+          merged.set(buffer)
+          merged.set(value, buffer.length)
+          buffer = merged
+          let boundaryAt = indexOfBytes(buffer, boundary)
+          while (boundaryAt >= 0) {
+            const frame = extractMjpegFrame(buffer.slice(0, boundaryAt))
+            buffer = buffer.slice(boundaryAt + boundary.length)
+            if (frame && !stopped) {
+              try {
+                callbacks.onFrame(await createImageBitmap(new Blob([frame], { type: 'image/jpeg' })))
+              } catch {
+                // Half-written part: the next boundary resyncs.
+              }
+            }
+            boundaryAt = indexOfBytes(buffer, boundary)
+          }
+          // Cap the resync buffer: a lost boundary must not grow it forever.
+          if (buffer.length > 8 * 1024 * 1024) buffer = new Uint8Array(0)
+        }
+      } catch {
+        // Refused before going live, or ended mid-stream: polling covers both.
+        if (!stopped) callbacks.onDead()
+      } finally {
+        try {
+          await reader?.cancel().catch(() => {})
+        } catch {
+          // Raced with stop(): nothing left to release.
+        }
+      }
+    })()
+    return () => controller.abort()
+  }
+
+  // Prefer the live stream; polling covers old apps and dropped connections.
+  let stopFrames = startPolling()
+  const stopStream = startMjpeg({
+    onLive: () => {
+      stopFrames()
+    },
+    onFrame: (bitmap) => {
+      if (stopped) {
+        bitmap.close()
+        return
+      }
+      g.drawImage(bitmap, 0, 0, width, height)
+      bitmap.close()
+    },
+    onDead: () => {
+      if (stopped) return
+      stopFrames()
+      stopFrames = startPolling()
+    },
+  })
+  const stopVideo = () => {
+    stopFrames()
+    stopStream()
+  }
 
   const stream = canvas.captureStream(fps)
 
@@ -266,7 +398,7 @@ export async function startJLocalScreenFeed(
   function stop(): void {
     if (stopped) return
     stopped = true
-    clearInterval(timer)
+    stopVideo()
     // Cancel the PCM reader and close the context before stopping tracks,
     // so the decode loop exits instead of racing the teardown below.
     try {

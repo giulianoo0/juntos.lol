@@ -194,10 +194,9 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
     soundRef.current = next
     void setJLocalAudioMode(next ? 'all' : 'none')
   }
-  // The default quality must fit the picked target, not the caps ceiling: a
-  // 4K default on a 1512x982 display fails the start with a confusing error.
-  // The target's exact size always works, so it rides along as a fallback
-  // option when no preset fits.
+  // Resolution is encode quality, Discord-style: presets may exceed the
+  // target (the app upscales), so the default stays at the ceiling and the
+  // target's exact size rides along for pixel-perfect captures.
   const selectedTarget =
     tab === 'windows'
       ? (windows?.find((entry) => entry.id === windowId) ?? null)
@@ -214,22 +213,6 @@ export function JLocalScreenPanel({ onConfirm, onUseBrowser, onExit }: JLocalScr
         }
       : null
   const resolutionOptions = nativeOption !== null ? [...resolutions, nativeOption] : resolutions
-  useEffect(() => {
-    if (selectedTarget === null) return
-    const fitting = resolutionOptions.filter(
-      (option) => option.width <= selectedTarget.width && option.height <= selectedTarget.height,
-    )
-    const wanted = fitting[fitting.length - 1] ?? nativeOption ?? resolutionOptions[0]
-    if (wanted !== undefined) {
-      const current = resolutionOptions.find((option) => option.id === resolution)
-      const fits =
-        current !== undefined &&
-        current.width <= selectedTarget.width &&
-        current.height <= selectedTarget.height
-      if (!fits) setResolution(wanted.id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTarget?.id, selectedTarget?.width, selectedTarget?.height, tab])
 
   const panelRef = useRef<HTMLDivElement>(null)
   const onExitRef = useRef(onExit)

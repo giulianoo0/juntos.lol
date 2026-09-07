@@ -85,8 +85,8 @@ describe('jlocal screen modal displays', () => {
     expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Side/ })).toBeInTheDocument()
     expect(screen.getByText('2560×1440')).toBeInTheDocument()
-    // Resolution defaults to the best fit for Main (2560x1440), not the 4K ceiling.
-    expect(screen.getByRole('button', { name: '1440p' })).toBeInTheDocument()
+    // Resolution defaults to the ceiling: presets upscale Discord-style.
+    expect(screen.getByRole('button', { name: '4K' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: /Side/ }))
     fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
@@ -94,7 +94,7 @@ describe('jlocal screen modal displays', () => {
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },
       // No audio.capture in these caps: the toggle stays hidden, audio off.
-      { width: 1920, height: 1080, fps: 30, audio: false },
+      { width: 3840, height: 2160, fps: 30, audio: false },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
     expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -127,7 +127,7 @@ describe('jlocal screen modal displays', () => {
     fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'window', id: '9' },
-      { width: 1440, height: 900, fps: 30, audio: false },
+      { width: 3840, height: 2160, fps: 30, audio: false },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
   })
@@ -225,7 +225,7 @@ describe('jlocal screen panel', () => {
     fireEvent.click(confirm)
     expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenCalledWith(
       { kind: 'display', id: '2' },
-      { width: 1920, height: 1080, fps: 30, audio: false },
+      { width: 3840, height: 2160, fps: 30, audio: false },
     )
     await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(stream, stop))
   })
@@ -268,6 +268,28 @@ describe('jlocal screen panel', () => {
       { kind: 'display', id: '1' },
       expect.objectContaining({ audio: false }),
     ))
+  })
+  it('selects an fps option on click and feeds it to confirm', async () => {
+    stubFetch(DISPLAYS)
+    await openWithCaps()
+    const stream = {} as MediaStream
+    const stop = vi.fn()
+    vi.mocked(startJLocalScreenFeed).mockResolvedValue({ stream, stop })
+    const onConfirm = vi.fn()
+    render(<JLocalScreenPanel onConfirm={onConfirm} onUseBrowser={() => undefined} onExit={() => undefined} />)
+    expect(await screen.findByRole('radio', { name: /Main/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '30 fps' }))
+    const option = await screen.findByRole('option', { name: '60 fps' })
+    fireEvent.click(option.querySelector('button') ?? option)
+    // The trigger now shows 60 fps (exited menu nodes linger under jsdom,
+    // so match any of the same-named buttons for the assertion).
+    expect(screen.getAllByRole('button', { name: '60 fps' }).length).toBeGreaterThanOrEqual(1)
+    fireEvent.click(screen.getByRole('button', { name: /sharing|compartilhar/i }))
+    expect(vi.mocked(startJLocalScreenFeed)).toHaveBeenLastCalledWith(
+      { kind: 'display', id: '1' },
+      expect.objectContaining({ fps: 60 }),
+    )
   })
   it('closes an open quality dropdown on outside pointer press', async () => {
     stubFetch(DISPLAYS)

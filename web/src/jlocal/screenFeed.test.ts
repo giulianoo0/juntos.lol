@@ -193,6 +193,57 @@ describe('jlocal screen feed', () => {
     expect(drawImage).toHaveBeenCalledTimes(1)
     feed.stop()
   })
+  it('reads MJPEG parts from the live stream and skips polling', async () => {
+    const encode = new TextEncoder()
+    const part = (payload: number[]): Uint8Array => {
+      const head = encode.encode(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${payload.length}\r\n\r\n`)
+      const body = new Uint8Array(payload)
+      const out = new Uint8Array(head.length + body.length + 2)
+      out.set(head)
+      out.set(body, head.length)
+      out.set([13, 10], head.length + body.length)
+      return out
+    }
+    // Two parts: frames extract between boundaries; the split lands mid-frame
+    // to prove reassembly across chunk boundaries.
+    const wire = new Uint8Array([...part([7, 7, 7]), ...part([9])])
+    const chunks = [wire.slice(0, 10), wire.slice(10)]
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        const target = String(url)
+        if (target.endsWith('/capture/start')) return { ok: true, status: 200, json: async () => ({}) }
+        if (target.endsWith('/capture/stop')) return { ok: true, status: 200, json: async () => ({}) }
+        if (target.endsWith('/capture/stream')) {
+          return {
+            ok: true,
+            status: 200,
+            body: {
+              getReader: () => ({
+                read: async () => {
+                  reads += 1
+                  if (reads <= chunks.length) return { done: false, value: chunks[reads - 1] }
+                  // Park the stream: the test ends via stop(), not EOF.
+                  await new Promise(() => {})
+                  return { done: true, value: undefined };
+                },
+                cancel: async () => undefined,
+              }),
+            },
+            json: async () => ({}),
+          }
+        }
+        throw new Error(`unexpected fetch ${target}`)
+      }),
+    )
+    const feed = await startJLocalScreenFeed({ kind: 'display', id: 'display-1' }, { width: 320, height: 200, fps: 5 })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(drawImage).toHaveBeenCalled()
+    // Live stream won: no polling fallback polls fired.
+    expect(previewUrls).toHaveLength(0)
+    feed.stop()
+  })
 
   it('stop halts polling, stops tracks, and posts capture stop once', async () => {
     const fetchMock = stubFetch(true)
