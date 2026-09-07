@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
+import { FolderOpen, LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
@@ -15,6 +15,7 @@ import { caretToEndOnFocus } from '../ui/caret'
 import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile, WorkerProbe } from '../torrent'
@@ -40,7 +41,7 @@ type HomeView = 'catalog' | 'manual' | 'status'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
-type ManualStep = false | 'menu' | 'file' | 'magnet' | 'join'
+type ManualStep = false | 'menu' | 'file' | 'magnet' | 'drive' | 'join'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -52,6 +53,7 @@ interface RoomHistoryEntry {
 type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
+  | { kind: 'drive'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'screen'; stream: MediaStream }
   | { kind: 'stream'; pick: TitlePick }
 
@@ -152,7 +154,7 @@ export function Home() {
   }
 
   const discardPending = (media: PendingMedia | null) => {
-    if (media?.kind === 'torrent') media.session.destroy()
+    if (media?.kind === 'torrent' || media?.kind === 'drive') media.session.destroy()
     if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
   }
 
@@ -203,6 +205,17 @@ export function Home() {
         fileName = media.file.name
       } else if (media.kind === 'torrent') {
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
+        fileName = media.file.name
+      } else if (media.kind === 'drive') {
+        // The picker already selected the file; resolve its ranged Drive URL
+        // and sidecars, then create the room onto a client-remuxed URL source.
+        const playback = await drivePlaybackUrls(media.file, media.session)
+        try {
+          room = await createRoomAndUploadUrl(playback.url, media.file.name, media.file.size, draftNickname.trim(), playback.sideFiles)
+        } catch (error) {
+          media.session.destroy()
+          throw error
+        }
         fileName = media.file.name
       } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
         closeTitle()
@@ -283,6 +296,9 @@ export function Home() {
             </button>
             <button onClick={() => { setError(''); setManualOpen('magnet') }}>
               <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+            </button>
+            <button onClick={() => { setError(''); setManualOpen('drive') }}>
+              <FolderOpen size={18} aria-hidden="true" />{t('home.openDrive')}
             </button>
             <button onClick={startScreenRoom}>
               <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
@@ -366,6 +382,20 @@ export function Home() {
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
             }}
+      {shownManual === 'drive' ? (
+        <div className="morph-step" data-step="drive">
+          <DrivePicker
+            maxFileBytes={MAX_UPLOAD_BYTES}
+            t={t}
+            onExit={() => setManualOpen('menu')}
+            onPicked={(file, session) => {
+              setManualOpen(false)
+              setDraftNickname(nickname)
+              setPendingMedia({ kind: 'drive', file, session })
+            }}
+          />
+        </div>
+      ) : null}
           />
         </div>
       ) : null}
