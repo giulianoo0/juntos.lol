@@ -50,7 +50,7 @@ vi.mock('../jlocal/screenFeed', () => ({
   startJLocalScreenFeed: vi.fn(),
 }))
 
-const modalSeen = vi.hoisted(() => ({ props: [] as Array<{ open: boolean; onConfirm: (stream: MediaStream, stop: () => void) => void; onUseBrowser: () => void }> }))
+const modalSeen = vi.hoisted(() => ({ props: [] as Array<{ open: boolean; onConfirm: (stream: MediaStream, stop: () => void, choice?: unknown) => void; onUseBrowser: () => void }> }))
 vi.mock('../components/JLocalScreen', () => ({
   JLocalScreenModal: (props: {
     open: boolean
