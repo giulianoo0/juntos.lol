@@ -21,9 +21,12 @@ afterEach(() => {
 })
 
 describe('DrivePicker folder browsing', () => {
-  it('lists only the current level and turns a known entry into a ready pick without fetching again', async () => {
+  it('lists only the current level and picks a video straight from the list', async () => {
     const fetchMock = vi.fn(async (url: unknown) => {
       const target = String(url)
+      if (target.includes('alt=media')) {
+        return new Response(new Uint8Array([0]), { status: 206 })
+      }
       if (target.includes('/drive/v3/files?')) {
         return new Response(JSON.stringify({ files: [
           { id: VIDEO, name: 'movie.mkv', mimeType: 'video/x-matroska', size: '1000' },
@@ -39,17 +42,19 @@ describe('DrivePicker folder browsing', () => {
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
 
-    render(<DrivePicker maxFileBytes={10_000} onPicked={vi.fn()} t={t} />)
+    const onPicked = vi.fn()
+    render(<DrivePicker maxFileBytes={10_000} onPicked={onPicked} t={t} />)
     await user.type(screen.getByLabelText('drive.link'), `https://drive.google.com/drive/folders/${FOLDER}`)
     await user.click(screen.getByRole('button', { name: 'drive.load' }))
 
     await screen.findByRole('heading', { name: 'My folder' })
     expect(fetchMock).toHaveBeenCalledTimes(2)
 
+    // One click on the row is the whole pick: the only extra request is the
+    // one-byte probe that turns a refused download into a named error.
     await user.click(screen.getByRole('button', { name: /movie\.mkv/ }))
-    const watch = await screen.findByRole('button', { name: 'drive.confirmWatch' })
-    await waitFor(() => expect(watch).toBeEnabled())
-    expect(watch).toHaveAttribute('aria-busy', 'false')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(onPicked).toHaveBeenCalledTimes(1))
+    expect(onPicked.mock.calls[0][0]).toMatchObject({ name: 'movie.mkv' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })
