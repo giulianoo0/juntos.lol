@@ -910,3 +910,25 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 @media (max-width: 620px) { .jlocal-label { display: none; } .jlocal-status { padding: 7px 10px; } .ui-dialog.jlocal-dialog { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .jlocal-os { animation: none; } }
 .torrent-source-badge { padding: 4px 10px; border-radius: 999px; background: rgba(52,211,153,.12); color: #34d399; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+/* Gecko (see engine.ts): backdrop-filter, animated filter and text-clipped shimmers are re-rasterised on the CPU every frame the page changes, and a playing video changes it constantly; those surfaces go opaque and flat there. Blink keeps everything above. */
+[data-engine='gecko'] .chat-panel, [data-engine='gecko'] .chat-composer, [data-engine='gecko'] .waiting-panel, [data-engine='gecko'] .next-episode-card, [data-engine='gecko'] .notice-chip, [data-engine='gecko'] .player-feedback, [data-engine='gecko'] .player-unplayable, [data-engine='gecko'] .volume-panel, [data-engine='gecko'] .settings-morph.is-open, [data-engine='gecko'] .gate-overlay, [data-engine='gecko'] .ui-toast, [data-engine='gecko'] .request-card, [data-engine='gecko'] .catalog-search, [data-engine='gecko'] .state-card { backdrop-filter: none; }
+[data-engine='gecko'] .waiting-panel, [data-engine='gecko'] .next-episode-card, [data-engine='gecko'] .catalog-search { background: rgba(11,12,18,.94); }
+[data-engine='gecko'] .player-feedback, [data-engine='gecko'] .notice-chip { background: rgba(9,8,10,.9); }
+[data-engine='gecko'] .gate-overlay { background: rgba(6,5,8,.82); }
+[data-engine='gecko'] .chat-panel { background: rgba(25,23,27,.94); }
+[data-engine='gecko'] .player-controls svg, [data-engine='gecko'] .player-controls .seek-track { filter: none; }
+[data-engine='gecko'] .morph-fade, [data-engine='gecko'] .morph-fade[data-morphing='true'], [data-engine='gecko'] .home-intro, [data-engine='gecko'] .home-stage:not([data-step='drop']) .home-intro, [data-engine='gecko'] .source-hint, [data-engine='gecko'] .home-stage:not([data-step='drop']) .source-hint, [data-engine='gecko'] .torrent-error, [data-engine='gecko'] .details-hero { filter: none; }
+@keyframes home-rise-flat { from { opacity: 0; transform: translateY(18px) scale(.98); } }
+@keyframes room-arrive-flat { from { opacity: 0; transform: scale(.985); } }
+@keyframes modal-bloom-flat { from { opacity: 0; } }
+@keyframes modal-bloom-out-flat { to { opacity: 0; } }
+[data-engine='gecko'] .home-header, [data-engine='gecko'] .home-intro h1, [data-engine='gecko'] .home-intro p, [data-engine='gecko'] .source-row > *, [data-engine='gecko'] .catalog-search { animation-name: home-rise-flat; }
+[data-engine='gecko'] .room-enter { animation-name: room-arrive-flat; }
+[data-engine='gecko'] .ui-dialog.upload-dialog { animation-name: modal-bloom-flat; }
+[data-engine='gecko'] .ui-dialog.upload-dialog[data-state='closed'] { animation-name: modal-bloom-out-flat; }
+/* The shimmer paints a text clip every frame; a pulse rides the compositor. */
+@keyframes pulse-dim { 50% { opacity: .5; } }
+[data-engine='gecko'] .status-connecting, [data-engine='gecko'] .text-shimmer { background: none; -webkit-background-clip: border-box; background-clip: border-box; animation: pulse-dim 1.8s ease-in-out infinite; }
+[data-engine='gecko'] .status-connecting { color: #e0b64a; }
+[data-engine='gecko'] .text-shimmer { color: var(--text-dim); }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import NumberFlow from '@number-flow/react'
+import { numbersAnimate } from '../engine'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import type { TorrentStats } from '../torrent'
 import type { RoomUploadProgress } from '../upload'
@@ -61,22 +62,22 @@ export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
       {arriving ? (
         <span className="pipeline-metric" title={t('home.swarmSpeed')}>
           <ArrowDown size={11} aria-hidden="true" />
-          <NumberFlow value={round(swarm.downloadSpeed / 1_048_576, 1)} suffix=" MB/s" />
+          <NumberFlow animated={numbersAnimate} value={round(swarm.downloadSpeed / 1_048_576, 1)} suffix=" MB/s" />
         </span>
       ) : progress === null ? null : upSpeed > 0 ? (
         <span className="pipeline-metric" title={t('room.uploadSpeed')}>
           <ArrowUp size={11} aria-hidden="true" />
-          <NumberFlow value={round(upSpeed / 1_048_576, 1)} suffix=" MB/s" />
+          <NumberFlow animated={numbersAnimate} value={round(upSpeed / 1_048_576, 1)} suffix=" MB/s" />
         </span>
       ) : (
         <span className="pipeline-metric" title={t('home.uploading')}>
           <ArrowUp size={11} aria-hidden="true" />
-          <NumberFlow value={round(progress.bytesUploaded / 1_073_741_824, 2)} suffix=" GB" />
+          <NumberFlow animated={numbersAnimate} value={round(progress.bytesUploaded / 1_073_741_824, 2)} suffix=" GB" />
         </span>
       )}
       {arriving || progress !== null ? <span className="pipeline-dot" aria-hidden="true">·</span> : null}
       <span className="pipeline-metric" title={t('room.bufferAhead')}>
-        <NumberFlow value={bufferSec} suffix={` s ${t('room.bufferAheadShort')}`} />
+        <NumberFlow animated={numbersAnimate} value={bufferSec} suffix={` s ${t('room.bufferAheadShort')}`} />
       </span>
     </span>
   )

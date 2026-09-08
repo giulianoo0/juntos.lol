@@ -1,4 +1,5 @@
 import NumberFlow from '@number-flow/react'
+import { numbersAnimate } from '../engine'
 import type { Translator } from '../i18n/useT'
 import { SlotText } from '../ui/SlotText'
 
@@ -15,7 +16,7 @@ export function WaitLabel({ secondsLeft, t }: { secondsLeft: number | null; t: T
         {phase === 'preparing' ? t('room.preparingPart') : (
           <>
             <span>{t('room.playerBufferingLead').trim()}</span>
-            <NumberFlow value={secondsLeft ?? 0} suffix={t('room.playerBufferingTail')} />
+            <NumberFlow animated={numbersAnimate} value={secondsLeft ?? 0} suffix={t('room.playerBufferingTail')} />
           </>
         )}
       </SlotText>
