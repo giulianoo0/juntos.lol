@@ -10,6 +10,11 @@ ENV VITE_GIT_SHA=$GIT_SHA
 ARG DISCORD_URL=
 ENV VITE_DISCORD_URL=$DISCORD_URL
 
+# Public browser key for Google Drive (public links only). Baked into the
+# bundle at build time; restrict by HTTP referrer in the Google console.
+ARG VITE_GOOGLE_DRIVE_API_KEY=
+ENV VITE_GOOGLE_DRIVE_API_KEY=$VITE_GOOGLE_DRIVE_API_KEY
+
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 # The install hook that keeps public/matroska-subtitles.min.js in step with

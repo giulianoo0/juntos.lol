@@ -262,10 +262,11 @@ export async function createRoomAndUploadUrl(
   fileName: string,
   size: number,
   nickname: string,
+  sideFiles: RemuxSideFile[] = [],
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
   const created = await createRoom(fileName, nickname)
-  startUrlUpload(created.id, 0, url, fileName, size)
+  startUrlUpload(created.id, 0, url, fileName, size, sideFiles)
   return { roomID: created.id, nickname: created.nickname }
 }
 
@@ -356,9 +357,10 @@ export function startUrlUpload(
   url: string,
   fileName: string,
   size: number,
+  sideFiles: RemuxSideFile[] = [],
 ): void {
   saveResumableSource(roomID, { kind: 'url', fileName, url, size })
-  startRoomUpload(roomID, mediaGeneration, { kind: 'url', url, name: fileName, size }, [])
+  startRoomUpload(roomID, mediaGeneration, { kind: 'url', url, name: fileName, size }, sideFiles)
 }
 
 interface RoomUploadOptions {
