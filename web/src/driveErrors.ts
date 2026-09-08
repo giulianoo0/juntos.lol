@@ -10,6 +10,8 @@ export function driveErrorKey(error: unknown): string {
     case 'bad-id': return 'drive.badLink'
     case 'not-shared': return 'drive.notShared'
     case 'quota': return 'drive.quota'
+    case 'download-quota': return 'drive.downloadQuota'
+    case 'storage-full': return 'drive.storageFull'
     case 'too-many': return 'drive.tooMany'
     default: return 'drive.failed'
   }

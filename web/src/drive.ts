@@ -35,7 +35,9 @@ export function isDriveNativeDoc(mimeType: string): boolean {
     && mimeType !== 'application/vnd.google-apps.folder'
 }
 
-export type DriveErrorCode = 'missing-key' | 'bad-id' | 'not-shared' | 'quota' | 'network' | 'unsupported' | 'too-many'
+export type DriveErrorCode =
+  | 'missing-key' | 'bad-id' | 'not-shared' | 'quota' | 'download-quota' | 'storage-full'
+  | 'network' | 'unsupported' | 'too-many'
 
 export class DriveError extends Error {
   code: DriveErrorCode
@@ -67,6 +69,22 @@ export class DriveQuotaError extends DriveError {
   constructor() {
     super('quota', 'Google Drive is rate-limiting us right now. Try again in a bit.')
     this.name = 'DriveQuotaError'
+  }
+}
+
+/** The file blew Drive's daily download cap: too many people pulled it recently. */
+export class DriveDownloadQuotaError extends DriveError {
+  constructor() {
+    super('download-quota', 'This Drive file hit its download limit for now.')
+    this.name = 'DriveDownloadQuotaError'
+  }
+}
+
+/** The owner's Drive is full, so Drive refuses to serve the file. */
+export class DriveStorageFullError extends DriveError {
+  constructor() {
+    super('storage-full', "The owner's Google Drive is out of space.")
+    this.name = 'DriveStorageFullError'
   }
 }
 
@@ -211,15 +229,30 @@ function driveReason(json: unknown): string {
   return typeof first.reason === 'string' ? first.reason : ''
 }
 
+function driveMessage(json: unknown): string {
+  if (typeof json !== 'object' || json === null || !('error' in json)) return ''
+  const error = json.error
+  if (typeof error !== 'object' || error === null || !('message' in error)) return ''
+  return typeof error.message === 'string' ? error.message : ''
+}
+
 /** Maps Drive API failures to typed, user-readable errors. */
 function throwForStatus(status: number, json: unknown): never {
   const reason = driveReason(json)
+  const message = driveMessage(json).toLowerCase()
+  // Two 403s deserve their own words: the file's daily download cap (nothing
+  // the viewer can do but wait) and the owner's Drive being full.
+  if (reason === 'downloadQuotaExceeded' || message.includes('download quota')) {
+    throw new DriveDownloadQuotaError()
+  }
+  if (reason === 'storageQuotaExceeded' || message.includes('storage quota')) {
+    throw new DriveStorageFullError()
+  }
   if (
     status === 429
     || reason === 'rateLimitExceeded'
     || reason === 'userRateLimitExceeded'
     || reason === 'quotaExceeded'
-    || reason === 'downloadQuotaExceeded'
   ) {
     throw new DriveQuotaError()
   }
@@ -486,4 +519,31 @@ async function driveMetaBestEffort(id: string, signal?: AbortSignal): Promise<Dr
   } catch {
     return null
   }
+}
+
+/**
+ * One-byte Range GET on the download URL, so a file that Drive will refuse to
+ * stream (download cap spent, owner's Drive full) says so before the room is
+ * built instead of failing later as a generic remux error.
+ */
+export async function probeDriveDownload(id: string, opts?: { signal?: AbortSignal }): Promise<void> {
+  const url = driveMediaUrl(id)
+  let response: Response
+  try {
+    response = await fetch(url, { headers: { Range: 'bytes=0-0' }, signal: opts?.signal })
+  } catch {
+    if (opts?.signal?.aborted) throw signalAborted()
+    throw new DriveNetworkError()
+  }
+  if (response.ok || response.status === 206) {
+    await response.body?.cancel().catch(() => undefined)
+    return
+  }
+  let json: unknown = null
+  try {
+    json = await response.json()
+  } catch {
+    json = null
+  }
+  throwForStatus(response.status, json)
 }

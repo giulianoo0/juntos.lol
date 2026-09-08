@@ -48,6 +48,8 @@ export const en: Record<string, string> = {
   'drive.badLink': 'That does not look like a Drive file or folder link.',
   'drive.notShared': 'Drive refused this file. It must be shared as Anyone with the link.',
   'drive.quota': 'Google Drive said no for now: quota exceeded. Try again later.',
+  'drive.downloadQuota': 'This file has been downloaded too many times today, so Drive is blocking it for now. Try again in a few hours, or use a copy of the file.',
+  'drive.storageFull': 'The Google Drive that owns this file is out of space, so Drive will not serve it. Free some space in that account and try again.',
   'drive.tooMany': 'That Drive folder is too large to browse. Pick a smaller folder or a direct file link.',
   'drive.failed': 'Could not read Google Drive. Check the link and try again.',
   'drive.notVideo': 'That Drive file is not a playable video.',
