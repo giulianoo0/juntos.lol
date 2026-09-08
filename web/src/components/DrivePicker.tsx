@@ -108,8 +108,10 @@ interface FolderLevel {
   entries: DriveEntry[]
 }
 
-interface DriveConfirm {
+/** A pasted file link lists that one file, so the list is the only shape here. */
+interface SingleFile {
   file: TorrentVideoFile
+  entry: DriveEntry
   session: TorrentSession
 }
 
@@ -123,7 +125,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [trail, setTrail] = useState<FolderLevel[]>([])
-  const [confirm, setConfirm] = useState<DriveConfirm | null>(null)
+  const [single, setSingle] = useState<SingleFile | null>(null)
   const [query, setQuery] = useState('')
   const owned = useRef<TorrentSession | null>(null)
   const extra = useRef<TorrentSession | null>(null)
@@ -139,6 +141,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
   }, [])
 
   const current = trail.length > 0 ? trail[trail.length - 1] : null
+  const listing = current !== null || single !== null
   const needle = query.trim().toLowerCase()
   const folders = !current ? [] : current.entries.filter((entry) => isFolderEntry(entry))
     .filter((entry) => needle === '' || entry.name.toLowerCase().includes(needle))
@@ -154,7 +157,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     extra.current?.destroy()
     extra.current = null
     setTrail([])
-    setConfirm(null)
+    setSingle(null)
     setQuery('')
     setError('')
   }
@@ -177,7 +180,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     extra.current?.destroy()
     extra.current = null
     setTrail([])
-    setConfirm(null)
+    setSingle(null)
     setQuery('')
     setError('')
     setLoading(true)
@@ -197,7 +200,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
           return
         }
         owned.current = opened
-        setConfirm({ file, session: opened })
+        setSingle({ file, entry, session: opened })
       } else {
         const [entries, info] = await Promise.all([
           drive.listDriveFolder(parsed.id, { signal: controller.signal }),
@@ -235,6 +238,21 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     }
   }
 
+  /** One click on a list row is the whole pick, exactly like the torrent list. */
+  const takeSession = async (file: TorrentVideoFile, session: TorrentSession, entryId: string) => {
+    await session.select(file.path)
+    // A one-byte read now, so a file Drive refuses to serve (download cap
+    // spent, owner's Drive full) says why here instead of as a remux error.
+    const { probeDriveDownload } = await import('../drive')
+    await probeDriveDownload(entryId)
+    if (owned.current === session) owned.current = null
+    if (extra.current === session) extra.current = null
+    setSingle(null)
+    setTrail([])
+    setQuery('')
+    onPicked(file, session)
+  }
+
   const pickVideo = async (entry: DriveEntry) => {
     if (!current || loading) return
     setError('')
@@ -260,7 +278,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
       }
       extra.current?.destroy()
       extra.current = opened
-      setConfirm({ file: first, session: opened })
+      await takeSession(first, opened, entry.id)
     } catch (unknown) {
       fail(unknown)
     } finally {
@@ -268,36 +286,22 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     }
   }
 
-  const watch = async () => {
-    if (!confirm || loading) return
+  const pickSingle = async () => {
+    if (!single || loading) return
     setError('')
     setLoading(true)
     try {
-      await confirm.session.select(confirm.file.path)
-      // A one-byte read now, so a file Drive refuses to serve (download cap
-      // spent, owner's Drive full) says why here instead of as a remux error.
-      const { driveEntryForFile, probeDriveDownload } = await import('../drive')
-      const entry = driveEntryForFile(confirm.session, confirm.file.path)
-      if (entry) await probeDriveDownload(entry.id)
+      await takeSession(single.file, single.session, single.entry.id)
     } catch (unknown) {
       fail(unknown)
+    } finally {
       setLoading(false)
-      return
     }
-    setLoading(false)
-    if (owned.current === confirm.session) owned.current = null
-    if (extra.current === confirm.session) extra.current = null
-    const picked = confirm
-    setConfirm(null)
-    setTrail([])
-    setQuery('')
-    onPicked(picked.file, picked.session)
   }
 
   const back = () => {
-    if (confirm) {
-      setConfirm(null)
-      setError('')
+    if (single) {
+      reset()
       return
     }
     if (trail.length > 1) {
@@ -313,10 +317,9 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     onExit?.()
   }
 
-  const showBack = confirm !== null || trail.length > 0 || onExit !== undefined
-  const title = confirm !== null ? t('drive.confirm') : current !== null ? current.name : t('drive.title')
-  const guide = confirm !== null ? t('drive.confirmGuide')
-    : current !== null ? t('drive.chooseGuide') : t('drive.guide')
+  const showBack = listing || onExit !== undefined
+  const title = single !== null ? single.session.name : current !== null ? current.name : t('drive.title')
+  const guide = listing ? t('drive.chooseGuide') : t('drive.guide')
 
   return (
     <div className="morph-fade">
@@ -325,27 +328,12 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
         <h2 className="stage-title">{title}</h2>
       </div>
       <p className="stage-description">{guide}</p>
-      {confirm ? (
-        <>
-          <div className="torrent-summary">
-            <strong>{confirm.file.name}</strong>
-            <span>{formatBytes(confirm.file.size)}</span>
-          </div>
-          <div className="torrent-actions">
-            <button
-              ref={loadRef}
-              type="button"
-              className={`primary-button torrent-load ${loading ? 'is-loading' : ''}`}
-              disabled={loading}
-              aria-busy={loading}
-              onClick={() => { void watch() }}
-            >
-              <span className="morph-fade button-label" data-morphing={swapping}>
-                {t(waiting ? 'drive.loading' : 'drive.confirmWatch')}
-              </span>
-            </button>
-          </div>
-        </>
+      {single ? (
+        <div className="torrent-files" aria-busy={loading}>
+          <button type="button" disabled={loading} onClick={() => { void pickSingle() }}>
+            <span>{single.file.name}</span><small>{formatBytes(single.file.size)}</small>
+          </button>
+        </div>
       ) : !current ? (
         <>
           <form
