@@ -14,6 +14,7 @@ import {
   openDriveEntrySession,
   openDriveSession,
   parseDriveLink,
+  probeDriveDownload,
 } from './drive'
 
 const VID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUq'
@@ -124,6 +125,13 @@ describe('fetchDriveMeta', () => {
     await expect(fetchDriveMeta(VID)).rejects.toBeInstanceOf(DriveAccessError)
     fetchMock.mockResolvedValueOnce(json({ error: { errors: [{ reason: 'rateLimitExceeded' }] } }, 403))
     await expect(fetchDriveMeta(VID)).rejects.toBeInstanceOf(DriveQuotaError)
+  })
+
+  it('tells a spent download cap and a full Drive apart from plain rate limits', async () => {
+    fetchMock.mockResolvedValueOnce(json({ error: { errors: [{ reason: 'downloadQuotaExceeded' }] } }, 403))
+    await expect(fetchDriveMeta(VID)).rejects.toMatchObject({ code: 'download-quota' })
+    fetchMock.mockResolvedValueOnce(json({ error: { errors: [{ reason: 'storageQuotaExceeded' }] } }, 403))
+    await expect(fetchDriveMeta(VID)).rejects.toMatchObject({ code: 'storage-full' })
   })
 
   it('rejects native Google docs with a clear error', async () => {
@@ -290,5 +298,15 @@ describe('driveMediaInput', () => {
 
   it('builds the keyed media URL', () => {
     expect(driveMediaUrl(VID)).toContain(`www.googleapis.com/drive/v3/files/${VID}?alt=media&key=test-key`)
+  })
+})
+
+describe('probeDriveDownload', () => {
+  it('passes on a partial read and names the refusal otherwise', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 206, body: null, json: async () => null } as unknown as Response)
+    await expect(probeDriveDownload(VID)).resolves.toBeUndefined()
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ headers: { Range: 'bytes=0-0' } })
+    fetchMock.mockResolvedValueOnce(json({ error: { errors: [{ reason: 'downloadQuotaExceeded' }] } }, 403))
+    await expect(probeDriveDownload(VID)).rejects.toMatchObject({ code: 'download-quota' })
   })
 })

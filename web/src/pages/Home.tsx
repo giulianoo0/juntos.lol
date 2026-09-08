@@ -382,6 +382,10 @@ export function Home() {
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
             }}
+          />
+        </div>
+      ) : null}
+
       {shownManual === 'drive' ? (
         <div className="morph-step" data-step="drive">
           <DrivePicker
@@ -393,9 +397,6 @@ export function Home() {
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'drive', file, session })
             }}
-          />
-        </div>
-      ) : null}
           />
         </div>
       ) : null}

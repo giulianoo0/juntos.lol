@@ -48,6 +48,8 @@ export const ptBR: Record<string, string> = {
   'drive.badLink': 'Isso não parece um link de arquivo ou pasta do Drive.',
   'drive.notShared': 'O Drive recusou esse arquivo. Ele precisa estar compartilhado como Qualquer pessoa com o link.',
   'drive.quota': 'O Google Drive disse não por enquanto: cota esgotada. Tente mais tarde.',
+  'drive.downloadQuota': 'Esse arquivo foi baixado vezes demais hoje e o Drive bloqueou por enquanto. Tente de novo daqui a algumas horas ou use uma cópia do arquivo.',
+  'drive.storageFull': 'O Google Drive dono desse arquivo está sem espaço, então o Drive se recusa a entregá-lo. Libere espaço nessa conta e tente de novo.',
   'drive.tooMany': 'Essa pasta do Drive é grande demais para navegar. Escolha uma pasta menor ou o link direto do arquivo.',
   'drive.failed': 'Não foi possível ler o Google Drive. Confira o link e tente novamente.',
   'drive.notVideo': 'Esse arquivo do Drive não é um vídeo reproduzível.',

@@ -274,8 +274,13 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
     setLoading(true)
     try {
       await confirm.session.select(confirm.file.path)
-    } catch {
-      setError(t('drive.failed'))
+      // A one-byte read now, so a file Drive refuses to serve (download cap
+      // spent, owner's Drive full) says why here instead of as a remux error.
+      const { driveEntryForFile, probeDriveDownload } = await import('../drive')
+      const entry = driveEntryForFile(confirm.session, confirm.file.path)
+      if (entry) await probeDriveDownload(entry.id)
+    } catch (unknown) {
+      fail(unknown)
       setLoading(false)
       return
     }
