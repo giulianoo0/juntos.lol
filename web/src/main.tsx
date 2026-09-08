@@ -4,7 +4,9 @@ import './theme.css'
 import App from './App.tsx'
 import { ToastProvider } from './ui/Toast'
 import { installMockApi } from './mocks'
+import { markEngine } from './engine'
 
+markEngine()
 installMockApi()
 
 createRoot(document.getElementById('root')!).render(

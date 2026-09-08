@@ -1,4 +1,5 @@
 import NumberFlow, { type Format } from '@number-flow/react'
+import { numbersAnimate } from '../engine'
 
 const PLAIN: Format = { useGrouping: false }
 const PADDED: Format = { minimumIntegerDigits: 2, useGrouping: false }
@@ -12,9 +13,9 @@ export function Timecode({ seconds }: { seconds: number }) {
   const total = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
   return (
     <span className="timecode-clock">
-      <NumberFlow value={Math.floor(total / 60)} format={PLAIN} />
+      <NumberFlow animated={numbersAnimate} value={Math.floor(total / 60)} format={PLAIN} />
       <span className="timecode-colon">:</span>
-      <NumberFlow value={total % 60} format={PADDED} />
+      <NumberFlow animated={numbersAnimate} value={total % 60} format={PADDED} />
     </span>
   )
 }

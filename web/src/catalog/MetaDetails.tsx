@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { animate } from 'motion'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { isGecko } from '../engine'
 import { ChevronLeft, Filter, MessageSquareShare, Play, PlugZap, Puzzle, SearchX, Star, X } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Dropdown } from './Dropdown'
@@ -68,6 +69,7 @@ function SourcesEmpty({ icon, title, hint, action }: {
 export function MetaDetails({ open, mode, focus, onClose, onPickStream, onRequestTitle, onOpenPlugins }: MetaDetailsProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
+  const flatReveal = reduceMotion || isGecko
   const panelRef = useRef<HTMLDivElement>(null)
   const heroRef = useRef<HTMLDivElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -362,9 +364,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
             <motion.div
               key="episodes"
               className="details-episodes"
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
-              animate={{ opacity: 1, filter: 'blur(0px)' }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
+              exit={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
               transition={{ duration: 0.2, ease: REVEAL_EASE }}
             >
               <div className="details-season-row">
@@ -418,9 +420,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
             <motion.div
               key="request"
               className="details-request"
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
-              animate={{ opacity: 1, filter: 'blur(0px)' }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
+              exit={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
               transition={{ duration: 0.2, ease: REVEAL_EASE }}
             >
               {selected ? (
@@ -443,9 +445,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
             <motion.div
               key="sources"
               className="details-streams"
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
-              animate={{ opacity: 1, filter: 'blur(0px)' }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
+              animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
+              exit={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
               transition={{ duration: 0.2, ease: REVEAL_EASE }}
             >
               {meta.type === 'series' && selected ? (
@@ -496,8 +498,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   key={`skeleton:${target.season ?? 0}:${target.episode ?? 0}`}
                   className="stream-list"
                   aria-label={t('details.loadingSources')}
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
-                  animate={{ opacity: 1, filter: 'blur(0px)' }}
+                  initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
+                  animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
                   transition={{ duration: 0.25, ease: REVEAL_EASE }}
                 >
                   {Array.from({ length: 5 }, (_, index) => <span key={index} className="stream-skeleton" />)}
@@ -545,8 +547,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                 <motion.div
                   key={`streams:${target.season ?? 0}:${target.episode ?? 0}`}
                   className="stream-list"
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
-                  animate={{ opacity: 1, filter: 'blur(0px)' }}
+                  initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
+                  animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
                   transition={{ duration: 0.25, ease: REVEAL_EASE }}
                 >
                   {visibleStreams.slice(0, 30).map((stream) => (

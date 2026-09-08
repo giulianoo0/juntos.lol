@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { isGecko } from '../engine'
 import { CLOSE_DURATION, MORPH_EASE, OPEN_DURATION } from './morphTokens'
 
 /**
@@ -103,6 +104,7 @@ export function MorphingMenu({
   const revealTimeoutRef = useRef<number | undefined>(undefined)
 
   const reducedMotion = useReducedMotion() ?? false
+  const soften = !reducedMotion && !isGecko
   const uid = useId()
   const morphId = `morphing-menu-${uid}`
   const panelId = `morphing-menu-panel-${uid}`
@@ -238,14 +240,14 @@ export function MorphingMenu({
                 <motion.div
                   layout
                   className="morph-menu-content"
-                  initial={reducedMotion ? false : { opacity: 0, filter: 'blur(2px)' }}
-                  animate={{ opacity: 1, filter: 'blur(0px)', transition: openTransition }}
+                  initial={reducedMotion ? false : soften ? { opacity: 0, filter: 'blur(2px)' } : { opacity: 0 }}
+                  animate={soften ? { opacity: 1, filter: 'blur(0px)', transition: openTransition } : { opacity: 1, transition: openTransition }}
                   exit={
                     reducedMotion
                       ? { opacity: 0, transition: { duration: 0 } }
                       : {
                           opacity: [1, 0, 0],
-                          filter: ['blur(0px)', 'blur(2px)', 'blur(2px)'],
+                          ...(soften ? { filter: ['blur(0px)', 'blur(2px)', 'blur(2px)'] } : {}),
                           transition: {
                             duration: CLOSE_DURATION,
                             times: [0, CLOSE_CONTENT_FADE, 1],

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import NumberFlow from '@number-flow/react'
+import { numbersAnimate } from '../engine'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { Translator } from '../i18n/useT'
 
@@ -58,7 +59,7 @@ export function StillThere({ deadlineMs, serverOffsetMs, onStay, onExpired, t }:
           description={t('room.stillThereGuide')}
         >
           <p className="still-there-count">
-            <NumberFlow value={left} suffix={t('room.stillThereUnit')} />
+            <NumberFlow animated={numbersAnimate} value={left} suffix={t('room.stillThereUnit')} />
           </p>
           <button type="button" className="primary-button" autoFocus onClick={onStay}>
             {t('room.stillHere')}

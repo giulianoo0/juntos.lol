@@ -6,6 +6,7 @@ import type { TorrentStats } from '../torrent'
 import { TorrentReadout } from './TorrentReadout'
 import { SlotText } from '../ui/SlotText'
 import NumberFlow from '@number-flow/react'
+import { numbersAnimate } from '../engine'
 import { GATE_OPEN_SEC } from '../player/gate'
 
 /** What the player under the card is waiting on, once the room has media. */
@@ -127,7 +128,7 @@ export function UploadAvailability({
         <div className="prep-eta">
           <span>{buffering || (target.bytes > 0 && !target.certain) ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
           {buffering
-            ? <strong>{bufferLeft !== null ? <NumberFlow value={bufferLeft} suffix={t('room.bufferingTail')} /> : t('prep.etaUnknown')}</strong>
+            ? <strong>{bufferLeft !== null ? <NumberFlow animated={numbersAnimate} value={bufferLeft} suffix={t('room.bufferingTail')} /> : t('prep.etaUnknown')}</strong>
             : <strong>{etaLabel}</strong>}
         </div>
       </div>
