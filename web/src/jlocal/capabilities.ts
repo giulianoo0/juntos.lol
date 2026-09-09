@@ -86,12 +86,13 @@ export function refreshJLocalCapabilities(): void {
  */
 export function isJLocalCaptureAvailable(): boolean {
   const snapshot = getJLocalSnapshot()
-  const fresh = cache.data !== null && Date.now() - cache.at <= CACHE_TTL_MS ? cache.data : null
+  // A stale advertisement still answers this click — the app is the same one
+  // that advertised it — and is refreshed in the background for the next.
+  const stale = cache.data === null || Date.now() - cache.at > CACHE_TTL_MS
+  if (snapshot.connected && stale) refreshJLocalCapabilities()
   // Capture is advertised separately from relay publish: the app can capture
   // (capture true) long before it can publish (available stays false).
-  const available = snapshot.connected && fresh?.screen.capture === true
-  if (!available && snapshot.connected && fresh === null) refreshJLocalCapabilities()
-  return available
+  return snapshot.connected && cache.data?.screen.capture === true
 }
 
 // Warm the cache the moment the app connects, so the first share click per

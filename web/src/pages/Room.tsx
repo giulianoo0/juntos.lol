@@ -665,6 +665,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               isController={sync.isController}
               shareOpen={liveRoom.screenShareOpen !== false}
               screens={liveRoom.screens ?? []}
+              viewers={sync.members.filter((member) => member.id !== sync.memberId).length}
               t={t}
             />
           ) : (

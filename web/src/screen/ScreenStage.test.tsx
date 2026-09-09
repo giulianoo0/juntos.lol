@@ -39,6 +39,7 @@ function renderStage(props: Partial<Parameters<typeof ScreenStage>[0]> = {}) {
         isController
         shareOpen
         screens={[]}
+        viewers={1}
         t={t}
         {...props}
       />

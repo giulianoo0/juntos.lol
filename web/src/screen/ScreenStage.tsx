@@ -40,7 +40,7 @@ function formatStats(stats: ScreenSendStats): string {
  * Every decision about publishing and subscribing lives in the hook; this is
  * only how it looks.
  */
-export function ScreenStage({ roomId, memberId, nickname, capability, isController, shareOpen, screens, t }: {
+export function ScreenStage({ roomId, memberId, nickname, capability, isController, shareOpen, screens, viewers, t }: {
   roomId: string
   memberId: string
   nickname: string
@@ -48,6 +48,8 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   isController: boolean
   shareOpen: boolean
   screens: ScreenShareInfo[]
+  /** How many others are in the room; nothing is sent until one of them subscribes, so the readout waits for them. */
+  viewers: number
   t: Translator
 }) {
   const { toast } = useToast()
@@ -154,7 +156,7 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
         <QualityMenu quality={share.quality} onPick={share.setQuality} t={t} />
       ) : null}
       {sharing && share.viaJlocal && getCachedJLocalCapabilities()?.audio.capture ? <SoundMenu t={t} /> : null}
-      {sharing && share.stats ? <span className="screen-stats">{formatStats(share.stats)}</span> : null}
+      {sharing && share.stats && viewers > 0 ? <span className="screen-stats">{formatStats(share.stats)}</span> : null}
       {hasRemote || isController ? <span className="screen-bar-sep" aria-hidden="true" /> : null}
       {hasRemote ? (
         <IconButton
