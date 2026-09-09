@@ -14,6 +14,8 @@
  */
 import type * as Publish from '@moq/publish'
 import type * as Watch from '@moq/watch'
+import type { EncodedFrame } from './jlocal/h264Feed'
+import { codecFromAnnexB } from './jlocal/h264Feed'
 
 const pendingStreams = new Map<string, MediaStream>()
 
@@ -437,6 +439,126 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
       videoSource.close()
       broadcast.close()
       connection.close()
+    },
+  }
+}
+
+/** Frames already encoded elsewhere (the jlocal companion), with what the catalog needs to say about them. */
+export interface EncodedSource {
+  width: number
+  height: number
+  frameRate: number
+  bitrate: number
+  /** Starts delivering frames, the first one a keyframe; returns the closer. */
+  open(onFrame: (frame: EncodedFrame) => void, onEnd: () => void): () => void
+}
+
+/**
+ * Publishes access units as they are: no WebCodecs in between. The rendition
+ * is registered on the broadcast like the encoder would, the catalog entry is
+ * written once the first keyframe tells us the codec string, and frames are
+ * appended to the track whenever a subscriber holds one open. The source is
+ * reopened for every new track, since each one has to start on a keyframe.
+ */
+export async function publishEncodedScreen(relay: ScreenRelay, source: EncodedSource, audioTrack?: MediaStreamTrack): Promise<ScreenPublisher> {
+  const [Publish, Hang] = await Promise.all([import('@moq/publish'), import('@moq/hang/container')])
+  const { Net, Signals } = Publish
+  const connection = relayConnection(Net, relay.url)
+  const display = new Signals.Signal<{ width: number; height: number } | undefined>({ width: source.width, height: source.height })
+  const broadcast = new Publish.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(relay.path), display })
+  const rendition = broadcast.video('video')
+  const audio = new Publish.Audio.Encoder('audio', {
+    broadcast,
+    enabled: audioTrack !== undefined,
+    source: audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined,
+    codec: { mime: 'opus', bitrate: SCREEN_AUDIO_BITRATE },
+  })
+
+  let codec: string | undefined
+  let frames = 0
+  let bytes = 0
+  let keyframes = 0
+  const setCatalog = () => {
+    if (!codec) return
+    rendition.config.set({
+      codec,
+      codedWidth: source.width,
+      codedHeight: source.height,
+      framerate: source.frameRate,
+      bitrate: source.bitrate || undefined,
+      optimizeForLatency: true,
+      container: { kind: 'legacy' },
+      jitter: Math.ceil(1000 / source.frameRate),
+    } as Parameters<typeof rendition.config.set>[0])
+  }
+
+  const signals = new Signals.Effect()
+  signals.run((effect) => {
+    const track = effect.get(rendition.track)
+    if (!track) return
+    const producer = new Hang.Legacy.Producer(track)
+    let started = false
+    const close = source.open((frame) => {
+      if (!started) {
+        if (!frame.keyframe) return
+        started = true
+        if (!codec) {
+          codec = codecFromAnnexB(frame.data) ?? 'avc1.640028'
+          setCatalog()
+        }
+      }
+      frames += 1
+      bytes += frame.data.byteLength
+      if (frame.keyframe) keyframes += 1
+      try {
+        producer.encode(frame.data, frame.timestamp as Publish.Net.Time.Micro, frame.keyframe)
+      } catch { /* the track closed under us; the effect cleans up */ }
+    }, () => producer.close())
+    effect.cleanup(() => {
+      close()
+      producer.close()
+    })
+  })
+
+  const ready = new Promise<void>((resolve, reject) => {
+    if (broadcast.net.peek()) { resolve(); return }
+    const timer = setTimeout(() => {
+      stop()
+      reject(new Error('relay did not accept the broadcast in time'))
+    }, PUBLISH_READY_MS)
+    const stop = broadcast.net.subscribe((producer) => {
+      if (!producer) return
+      clearTimeout(timer)
+      stop()
+      resolve()
+    })
+  })
+
+  let last: { frames: number; bytes: number; at: number } | null = null
+  return {
+    status: connection.status,
+    ready,
+    async setQuality() { /* the companion owns its size; a new share picks another */ },
+    sample() {
+      const at = performance.now()
+      const previous = last
+      last = { frames, bytes, at }
+      if (!previous || at - previous.at < 250) return null
+      const seconds = (at - previous.at) / 1000
+      return {
+        width: source.width,
+        height: source.height,
+        frameRate: (frames - previous.frames) / seconds,
+        bitrate: ((bytes - previous.bytes) * 8) / seconds,
+      }
+    },
+    close() {
+      signals.close()
+      audio.close()
+      rendition.close()
+      broadcast.close()
+      connection.close()
+      void keyframes
     },
   }
 }

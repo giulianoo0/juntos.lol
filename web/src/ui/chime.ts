@@ -55,3 +55,12 @@ export function playJoinChime(): void {
 export function playMessageChime(): void {
   playNotes([{ frequency: 880, startMs: 0, durationMs: 70, peak: 0.035 }])
 }
+
+/** A short rising triad for the moment the jlocal companion connects. */
+export function playJLocalChime(): void {
+  playNotes([
+    { frequency: 1046.5, startMs: 0, durationMs: 70, peak: 0.04 },
+    { frequency: 1318.5, startMs: 70, durationMs: 70, peak: 0.04 },
+    { frequency: 1568, startMs: 140, durationMs: 110, peak: 0.04 },
+  ])
+}
