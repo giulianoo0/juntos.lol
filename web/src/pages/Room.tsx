@@ -1,4 +1,6 @@
-import { JlocalPill } from '../components/JlocalPill'
+import { LayoutGroup } from 'motion/react'
+import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
+import { useJlocal } from '../jlocal/useJlocal'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Chat } from '../chat/Chat'
@@ -205,6 +207,7 @@ function guestName(): string {
 }
 
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
+  const jlocal = useJlocal()
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaOffsetMsRef = useRef(0)
@@ -588,13 +591,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     ) : null}
     <main className="room-shell room-enter">
       <header className="room-header">
-        <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span></div>
+        <LayoutGroup id="jlocal">
+        <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span><JlocalStatus status={jlocal} t={t} /></div>
         <div className="header-actions">
           {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
-          <JlocalPill t={t} />
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController && !isScreenRoom ? (
             <Button
@@ -647,7 +650,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             aria-pressed={chatOpen}
             onClick={() => setChatOpen((open) => !open)}
           />
+          <JlocalDownload status={jlocal} t={t} />
         </div>
+        </LayoutGroup>
       </header>
       <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
         <section className="media-column">
