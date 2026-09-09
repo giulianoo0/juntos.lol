@@ -227,7 +227,6 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
               error={pickerError}
               mode={pickerMode}
               onPick={pickJlocal}
-              onUseBrowser={() => { setPickerOpen(false); if (pickerMode === 'switch') share.switchSource(); else share.start() }}
               onExit={() => setPickerOpen(false)}
             />
           ) : null}

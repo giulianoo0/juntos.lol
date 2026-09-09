@@ -93,9 +93,8 @@ function Thumb({ target, kind, live, t }: { target: Target; kind: Tab; live: boo
   )
 }
 
-export function JlocalPicker({ onPick, onUseBrowser, onExit, busy = false, error = null, mode = 'start', t }: {
+export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode = 'start', t }: {
   onPick: (pick: JlocalPick) => void
-  onUseBrowser: () => void
   onExit: () => void
   busy?: boolean
   error?: string | null
@@ -225,7 +224,6 @@ export function JlocalPicker({ onPick, onUseBrowser, onExit, busy = false, error
         </MorphingMenu>
         {audioCapture ? <SoundMenu t={t} /> : null}
         <span className="spacer" />
-        <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.useBrowser')}</Button>
         <Button variant="primary" disabled={!canShare} onClick={share}>
           {mode === 'switch' ? <Replace size={15} aria-hidden="true" /> : <MonitorUp size={15} aria-hidden="true" />}
           {t(mode === 'switch' ? 'jlocal.switch' : 'jlocal.share')}

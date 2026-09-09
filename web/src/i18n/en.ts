@@ -387,7 +387,6 @@ export const en: Record<string, string> = {
   'jlocal.tabDisplays': 'Displays',
   'jlocal.tabWindows': 'Windows',
   'jlocal.sound': 'System sound',
-  'jlocal.useBrowser': 'Use the browser',
   'jlocal.share': 'Share',
   'jlocal.loading': 'Looking…',
   'jlocal.empty': 'Nothing to show here.',

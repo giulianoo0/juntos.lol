@@ -405,7 +405,6 @@ export function Home() {
           <JlocalPicker
             t={t}
             onExit={() => setManualOpen('menu')}
-            onUseBrowser={startScreenRoomNative}
             onPick={(pick) => {
               setManualOpen(false)
               setError('')

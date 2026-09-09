@@ -387,7 +387,6 @@ export const ptBR: Record<string, string> = {
   'jlocal.tabDisplays': 'Telas',
   'jlocal.tabWindows': 'Janelas',
   'jlocal.sound': 'Som do sistema',
-  'jlocal.useBrowser': 'Usar o navegador',
   'jlocal.share': 'Compartilhar',
   'jlocal.loading': 'Procurando…',
   'jlocal.empty': 'Nada para mostrar aqui.',
