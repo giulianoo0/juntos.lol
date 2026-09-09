@@ -362,8 +362,9 @@ button.timecode-chapter:hover { color: var(--text); }
 .jpick-name strong { font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jpick-name small { color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jpick-note { display: grid; place-items: center; min-height: 160px; color: var(--text-dim); font-size: 13px; text-align: center; }
-.jpick-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.jpick-bar .spacer { flex: 1; }
+.jpick-bar { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.jpick-bar .spacer { flex: 1 1 0; min-width: 0; }
+.jpick-bar .screen-quality-pill { flex: 0 0 auto; }
 .jpick-bar .ui-button, .jpick-bar .icon-button { height: 34px; white-space: nowrap; }
 .jpick-bar .ui-button--primary { padding: 0 16px; font-size: 12.5px; box-shadow: none; }
 .jpick-error { margin: 0; color: var(--danger); font-size: 12.5px; }
