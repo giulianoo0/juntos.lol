@@ -1,6 +1,6 @@
 import { LayoutGroup } from 'motion/react'
 import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
-import { useJlocal } from '../jlocal/useJlocal'
+import { useJLocal } from '../jlocal/status'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Chat } from '../chat/Chat'
@@ -207,7 +207,7 @@ function guestName(): string {
 }
 
 function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
-  const jlocal = useJlocal()
+  const jlocal = useJLocal()
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaOffsetMsRef = useRef(0)

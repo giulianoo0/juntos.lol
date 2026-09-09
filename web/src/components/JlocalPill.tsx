@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Download } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import { JLOCAL_RELEASES_URL, type JlocalStatus } from '../jlocal/useJlocal'
+import type { JLocalSnapshot as JlocalStatus } from '../jlocal/status'
+import { JlocalModal } from './JlocalModal'
 import { MORPH_EASE } from '../ui/morphTokens'
 
 /**
@@ -58,9 +60,10 @@ export function JlocalStatus({ status, t }: { status: JlocalStatus; t: Translato
   )
 }
 
-/** The end of the header: the download link, replaced by the pill once jlocal is there. */
+/** The end of the header: the download button, replaced by the pill once jlocal is there. */
 export function JlocalDownload({ status, t }: { status: JlocalStatus; t: Translator }) {
   const still = useReducedMotion() ?? false
+  const [open, setOpen] = useState(false)
   const fold = still ? { duration: 0 } : { duration: 0.3, ease: MORPH_EASE }
   return (
     <span className="jlocal-slot">
@@ -68,22 +71,22 @@ export function JlocalDownload({ status, t }: { status: JlocalStatus; t: Transla
         {status.connected ? (
           <Pill key="end" connected version={status.version} t={t} />
         ) : (
-          <motion.a
+          <motion.button
             key="get"
+            type="button"
             layout
             className="jlocal-get"
-            href={JLOCAL_RELEASES_URL}
-            target="_blank"
-            rel="noreferrer"
+            onClick={() => setOpen(true)}
             initial={still ? false : { opacity: 0, scale: 0.9, filter: 'blur(4px)' }}
             animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
             exit={still ? { opacity: 0 } : { opacity: 0, scale: 0.85, filter: 'blur(6px)' }}
             transition={fold}
           >
             <Download size={14} aria-hidden="true" />{t('jlocal.get')}
-          </motion.a>
+          </motion.button>
         )}
       </AnimatePresence>
+      <JlocalModal open={open} onOpenChange={setOpen} status={status} t={t} />
     </span>
   )
 }

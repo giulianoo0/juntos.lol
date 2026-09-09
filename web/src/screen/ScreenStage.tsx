@@ -10,7 +10,10 @@ import { MORPH_EASE } from '../ui/morphTokens'
 import { playJoinChime } from '../ui/chime'
 import { useToast } from '../ui/toastContext'
 import { SCREEN_QUALITIES, screenQuality, type ScreenQualityId, type ScreenSendStats } from '../screenshare'
-import { useScreenShare, type ScreenTile } from './useScreenShare'
+import { useScreenShare, type JlocalPick, type ScreenTile } from './useScreenShare'
+import { Dialog, DialogContent } from '../ui/Dialog'
+import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
+import { JlocalPicker } from './JlocalPicker'
 
 /** Columns that keep every tile as close to a screen's own shape as possible. */
 function gridColumns(count: number): number {
@@ -48,6 +51,8 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   const { toast } = useToast()
   const previewRef = useRef<HTMLVideoElement>(null)
   const [focusedId, setFocusedId] = useState<string | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerError, setPickerError] = useState<string | null>(null)
   const reducedMotion = useReducedMotion() ?? false
   const share = useScreenShare({
     roomId,
@@ -87,6 +92,21 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [focused])
 
+  // The companion's picker when the app is up and can capture; the browser's otherwise.
+  const beginShare = () => {
+    if (isJLocalCaptureAvailable()) { setPickerError(null); setPickerOpen(true); return }
+    share.start()
+  }
+  const pickJlocal = (pick: JlocalPick) => {
+    setPickerError(null)
+    share.startWithJlocal(pick)
+      .then(() => setPickerOpen(false))
+      .catch((failure: unknown) => {
+        const message = failure instanceof Error ? failure.message : ''
+        setPickerError(t(message.includes('permission') ? 'jlocal.permission' : message === 'sharing_closed' ? 'room.screenClosedNotice' : 'jlocal.failed'))
+      })
+  }
+
   const toggleFocus = useCallback((id: string) => {
     setFocusedId((current) => (current === id ? null : id))
   }, [])
@@ -112,7 +132,7 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
               <MonitorOff size={15} aria-hidden="true" />{t('room.screenStop')}
             </Button>
           ) : (
-            <Button variant="primary" disabled={!memberId} onClick={() => share.start()}>
+            <Button variant="primary" disabled={!memberId} onClick={beginShare}>
               <MonitorUp size={15} aria-hidden="true" />{t('room.screenStart')}
             </Button>
           )
@@ -156,8 +176,8 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
               <Tile
                 key={tile.memberId}
                 tile={tile}
-                previewRef={tile.self ? previewRef : undefined}
-                canvasRef={tile.self ? undefined : share.canvasRef(tile.memberId)}
+                previewRef={tile.self && share.preview ? previewRef : undefined}
+                canvasRef={tile.self ? (share.preview ? undefined : share.selfCanvasRef) : share.canvasRef(tile.memberId)}
                 zoom={tiles.length > 1 ? (focused === tile.memberId ? 'focused' : focused ? 'aside' : 'zoomable') : 'none'}
                 transition={tileTransition}
                 onToggle={() => toggleFocus(tile.memberId)}
@@ -184,6 +204,20 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
         ) : null}
       </AnimatePresence>
       {tiles.length > 0 ? <div className="screen-bar">{controls}</div> : null}
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent className="jpick-dialog" title={t('jlocal.pickTitle')} description={t('jlocal.pickGuide')} closeLabel={t('home.closeDialog')}>
+          {pickerOpen ? (
+            <JlocalPicker
+              t={t}
+              busy={share.state === 'starting'}
+              error={pickerError}
+              onPick={pickJlocal}
+              onUseBrowser={() => { setPickerOpen(false); share.start() }}
+              onExit={() => setPickerOpen(false)}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -216,7 +250,7 @@ const Tile = forwardRef<HTMLDivElement, {
       aria-pressed={clickable ? zoom === 'focused' : undefined}
     >
       <div className="screen-surface">
-        {tile.self
+        {tile.self && previewRef
           ? <video ref={previewRef} autoPlay muted playsInline />
           : <canvas ref={canvasRef} className={tile.stalled ? 'screen-frozen' : ''} role="img" aria-label={tile.nickname || t('room.screenSomeone')} />}
       </div>

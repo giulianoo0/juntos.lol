@@ -7,12 +7,14 @@ import {
   publishScreen,
   requestScreenStream,
   saveScreenQuality,
+  screenQuality,
   screenPath,
   screenShareSupported,
   setScreenLive,
   setScreenShareOpen,
   takeScreenStream,
   watchScreen,
+  publishEncodedScreen,
   type ScreenPublisher,
   type ScreenQualityId,
   type ScreenRelay,
@@ -20,6 +22,7 @@ import {
   type ScreenWatcher,
   type ScreenWatchStatus,
 } from '../screenshare'
+import { previewH264, startH264Feed, systemAudioTrack, type H264Feed } from '../jlocal/h264Feed'
 
 /** A viewer that is still not seeing frames this long after a screen went live subscribes again. */
 const WATCH_RETRY_MS = 4_000
@@ -27,6 +30,26 @@ const WATCH_RETRY_MS = 4_000
 const STATS_SAMPLE_MS = 1_000
 
 export type ScreenShareState = 'idle' | 'starting' | 'sharing' | 'failed'
+
+/** What the jlocal picker chose. */
+export interface JlocalPick {
+  target: { kind: 'display' | 'window'; id: string }
+  quality: ScreenQualityId
+  audio: boolean
+}
+
+const pendingPicks = new Map<string, JlocalPick>()
+
+/** A pick made on the home page waits here until the room knows who we are. */
+export function stashJlocalPick(roomId: string, pick: JlocalPick): void {
+  pendingPicks.set(roomId, pick)
+}
+
+export function takeJlocalPick(roomId: string): JlocalPick | null {
+  const pick = pendingPicks.get(roomId) ?? null
+  pendingPicks.delete(roomId)
+  return pick
+}
 
 /** Why sharing stopped short. A picker the member dismissed is not an error. */
 export type ScreenShareError = 'closed' | 'full' | 'failed'
@@ -70,6 +93,10 @@ export interface ScreenShareApi {
   muted: boolean
   /** Opens the picker and publishes what it returns. A dismissed picker is a no-op. */
   start(quality?: ScreenQualityId): void
+  /** Publishes what the jlocal companion captures: hardware H.264, no re-encode. */
+  startWithJlocal(pick: JlocalPick): Promise<void>
+  /** Where my own jlocal share paints itself; null when publishing from the browser. */
+  selfCanvasRef: (canvas: HTMLCanvasElement | null) => void
   stop(): void
   /** Re-sizes a live share in place, and remembers the choice for the next one. */
   setQuality(id: ScreenQualityId): void
@@ -116,6 +143,9 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
 }): ScreenShareApi {
   const publisherRef = useRef<ScreenPublisher | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const jlocalRef = useRef<{ feed: H264Feed; audio: { stop(): void } | null; preview: (() => void) | null } | null>(null)
+  /** My own tile's canvas, bound whenever the tile exists, whichever path is publishing. */
+  const selfCanvasElRef = useRef<HTMLCanvasElement | null>(null)
   const relayRef = useRef<ScreenRelay | null>(null)
   const attachedRef = useRef(new Map<string, Attached>())
   const mutedRef = useRef(false)
@@ -142,6 +172,13 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     publisherRef.current = null
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
+    const companion = jlocalRef.current
+    if (companion) {
+      jlocalRef.current = null
+      companion.preview?.()
+      companion.audio?.stop()
+      companion.feed.stop()
+    }
     setPreview(null)
     setStats(null)
     setState('idle')
@@ -170,12 +207,62 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     }
   }, [roomId, memberId, capability, stop])
 
+  const startWithJlocal = useCallback(async (pick: JlocalPick) => {
+    setState('starting')
+    setError(null)
+    const quality = screenQuality(pick.quality)
+    const feed = await startH264Feed({
+      target: pick.target,
+      width: quality.width ?? 1920,
+      height: quality.height ?? 1080,
+      fps: quality.frameRate ?? 30,
+      bitrate: quality.maxBitrate,
+    })
+    const audio = pick.audio ? systemAudioTrack() : null
+    const companion = { feed, audio, preview: null as (() => void) | null }
+    jlocalRef.current = companion
+    try {
+      const relay = await fetchScreenRelay(roomId, memberId, capability, true)
+      if (!relay.publish) throw new Error('sharing_closed')
+      const publisher = await publishEncodedScreen(relay, {
+        width: feed.width,
+        height: feed.height,
+        frameRate: feed.fps,
+        bitrate: feed.bitrate,
+        open: feed.open,
+      }, audio?.track)
+      publisherRef.current = publisher
+      // A stream stands in for the browser's own so the tile knows it is mine.
+      streamRef.current = new MediaStream()
+      setQualityState(pick.quality)
+      saveScreenQuality(pick.quality)
+      setState('sharing')
+      if (selfCanvasElRef.current) companion.preview = previewH264(feed, selfCanvasElRef.current)
+      await publisher.ready
+      await setScreenLive(roomId, memberId, capability, true)
+    } catch (failure) {
+      stop()
+      throw failure
+    }
+  }, [roomId, memberId, capability, stop])
+
+  const selfCanvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
+    if (selfCanvasElRef.current === canvas) return
+    selfCanvasElRef.current = canvas
+    const companion = jlocalRef.current
+    if (!companion) return
+    companion.preview?.()
+    companion.preview = canvas && publisherRef.current ? previewH264(companion.feed, canvas) : null
+  }, [])
+
   const fail = useCallback((failure: unknown) => {
     if (isScreenShareCancelled(failure)) { setState('idle'); return }
     setState('failed')
     const reason = failure instanceof Error ? failure.message : ''
     setError(reason === 'sharing_closed' ? 'closed' : reason === 'too_many_screens' ? 'full' : 'failed')
   }, [])
+
+  const startJlocal = useCallback((pick: JlocalPick) => startWithJlocal(pick).catch((failure: unknown) => { fail(failure); throw failure }), [startWithJlocal, fail])
 
   const start = useCallback((pick?: ScreenQualityId) => {
     const qualityId = pick ?? quality
@@ -222,6 +309,11 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   // A stream granted on the home page is published as soon as the room knows who we are.
   useEffect(() => {
     if (!memberId || !capability) return
+    const pick = takeJlocalPick(roomId)
+    if (pick) {
+      if (mayPublish && supported) void startJlocal(pick).catch(() => undefined)
+      return
+    }
     const granted = takeScreenStream(roomId)
     if (!granted) return
     if (!mayPublish || !supported) {
@@ -416,6 +508,8 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     preview,
     muted,
     start,
+    startWithJlocal: startJlocal,
+    selfCanvasRef,
     stop,
     setQuality,
     setMuted,
