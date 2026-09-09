@@ -282,6 +282,16 @@ export interface ScreenPublisher {
   ready: Promise<void>
   /** Re-sizes and re-rates a live share in place, surface and encoder both. */
   setQuality(id: ScreenQualityId): Promise<void>
+  /**
+   * Swaps what is being sent without leaving the relay: viewers keep their
+   * subscription and see the new surface from its first keyframe. A browser
+   * publisher takes a stream, a companion publisher an encoded source; the
+   * other kind is refused.
+   */
+  switchStream(stream: MediaStream): Promise<void>
+  switchSource(source: EncodedSource): Promise<void>
+  /** Replaces the soundtrack, or silences the share when given nothing. */
+  setAudio(track: MediaStreamTrack | undefined): void
   /** Samples what the encoder is actually producing; returns null until it has. */
   sample(): ScreenSendStats | null
   close(): void
@@ -291,12 +301,16 @@ export interface ScreenPublisher {
 export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qualityId: ScreenQualityId): Promise<ScreenPublisher> {
   const Publish = await import('@moq/publish')
   const { Net, Signals } = Publish
-  const [videoTrack] = stream.getVideoTracks()
+  let [videoTrack] = stream.getVideoTracks()
   const [audioTrack] = stream.getAudioTracks()
   if (!videoTrack) throw new Error('screen stream has no video track')
 
   const connection = relayConnection(Net, relay.url)
-  const capture = new Publish.Video.Capture({ source: videoTrack as Publish.Video.Source })
+  // Our own signals stand behind the encoders' inputs, so a switch mid-share is one `set`.
+  const videoSource = new Signals.Signal<Publish.Video.Source | undefined>(videoTrack as Publish.Video.Source)
+  const audioSource = new Signals.Signal<Publish.Audio.Source | undefined>(audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
+  const audioEnabled = new Signals.Signal(audioTrack !== undefined)
+  const capture = new Publish.Video.Capture({ source: videoSource })
   const broadcast = new Publish.Broadcast({
     connection: connection.established,
     enabled: true,
@@ -313,8 +327,8 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
   const video = new Publish.Video.Encoder('video', { broadcast, capture, enabled: true, bandwidth, config })
   const audio = new Publish.Audio.Encoder('audio', {
     broadcast,
-    enabled: audioTrack !== undefined,
-    source: audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined,
+    enabled: audioEnabled,
+    source: audioSource,
     codec: { mime: 'opus', bitrate: SCREEN_AUDIO_BITRATE },
   })
 
@@ -364,6 +378,26 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
       config.set(await encoderConfig(quality, videoTrack))
       last = null
     },
+    async switchStream(next) {
+      const [nextVideo] = next.getVideoTracks()
+      if (!nextVideo) throw new Error('screen stream has no video track')
+      const previous = videoTrack
+      previous.removeEventListener('configurationchange', onSurfaceChange)
+      videoTrack = nextVideo
+      videoTrack.addEventListener('configurationchange', onSurfaceChange)
+      config.set(await encoderConfig(quality, videoTrack))
+      videoSource.set(videoTrack as Publish.Video.Source)
+      previous.stop()
+      const [nextAudio] = next.getAudioTracks()
+      audioSource.set(nextAudio ? { track: nextAudio as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
+      audioEnabled.set(nextAudio !== undefined)
+      last = null
+    },
+    async switchSource() { throw new Error('a browser share cannot take encoded frames') },
+    setAudio(track) {
+      audioSource.set(track ? { track: track as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
+      audioEnabled.set(track !== undefined)
+    },
     sample() {
       const resolved = video.out.resolved.peek()
       const stats = video.out.stats.peek()
@@ -399,7 +433,15 @@ export interface ScreenWatcher {
   close(): void
 }
 
-/** Subscribes to one publisher's path and paints it on the canvas, with the audio on the speakers, until closed. */
+/**
+ * Subscribes to one publisher's path and paints it on the canvas, with the
+ * audio on the speakers, until closed.
+ *
+ * A publisher that switches surface or resizes rewrites its video entry in
+ * the catalog, and the player resubscribes to the track; the decoder it hands
+ * the frames to is patched (see `patches/`) to wait for the next keyframe
+ * instead of dying on a delta that lands first.
+ */
 export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false): Promise<ScreenWatcher> {
   const Watch = await import('@moq/watch')
   const { Net, Signals } = Watch
@@ -453,70 +495,106 @@ export interface EncodedSource {
   open(onFrame: (frame: EncodedFrame) => void, onEnd: () => void): () => void
 }
 
+/** A companion that sends nothing for this long is published with a codec string every H.264 decoder accepts. */
+const CODEC_PROBE_MS = 1_500
+const DEFAULT_H264_CODEC = 'avc1.640028'
+
+/**
+ * Opens the source just long enough to read the codec out of its first
+ * keyframe. A still screen can hold back that frame for a while, so this
+ * gives up after a bit with the safe default rather than keeping viewers
+ * waiting for a catalog.
+ */
+function probeCodec(source: EncodedSource): Promise<string> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (codec: string) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      close()
+      resolve(codec)
+    }
+    const timer = setTimeout(() => finish(DEFAULT_H264_CODEC), CODEC_PROBE_MS)
+    const close = source.open((frame) => {
+      if (frame.keyframe) finish(codecFromAnnexB(frame.data) ?? DEFAULT_H264_CODEC)
+    }, () => finish(DEFAULT_H264_CODEC))
+  })
+}
+
 /**
  * Publishes access units as they are: no WebCodecs in between. The rendition
- * is registered on the broadcast like the encoder would, the catalog entry is
- * written once the first keyframe tells us the codec string, and frames are
- * appended to the track whenever a subscriber holds one open. The source is
- * reopened for every new track, since each one has to start on a keyframe.
+ * is registered on the broadcast like the encoder would, and its catalog
+ * entry is written before anyone subscribes — a viewer only asks for a track
+ * the catalog names, so the entry can never wait on the frames. Frames are
+ * appended whenever a subscriber holds the track open; the source is
+ * reopened for every new track and for every switch, since each has to start
+ * on a keyframe, and timestamps keep climbing across those reopenings.
  */
-export async function publishEncodedScreen(relay: ScreenRelay, source: EncodedSource, audioTrack?: MediaStreamTrack): Promise<ScreenPublisher> {
+export async function publishEncodedScreen(relay: ScreenRelay, initial: EncodedSource, audioTrack?: MediaStreamTrack): Promise<ScreenPublisher> {
   const [Publish, Hang] = await Promise.all([import('@moq/publish'), import('@moq/hang/container')])
   const { Net, Signals } = Publish
   const connection = relayConnection(Net, relay.url)
-  const display = new Signals.Signal<{ width: number; height: number } | undefined>({ width: source.width, height: source.height })
+  const source = new Signals.Signal<EncodedSource>(initial)
+  const display = new Signals.Signal<{ width: number; height: number } | undefined>({ width: initial.width, height: initial.height })
   const broadcast = new Publish.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(relay.path), display })
   const rendition = broadcast.video('video')
+  const audioSource = new Signals.Signal<Publish.Audio.Source | undefined>(audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
+  const audioEnabled = new Signals.Signal(audioTrack !== undefined)
   const audio = new Publish.Audio.Encoder('audio', {
     broadcast,
-    enabled: audioTrack !== undefined,
-    source: audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined,
+    enabled: audioEnabled,
+    source: audioSource,
     codec: { mime: 'opus', bitrate: SCREEN_AUDIO_BITRATE },
   })
 
-  let codec: string | undefined
-  let frames = 0
-  let bytes = 0
-  let keyframes = 0
-  const setCatalog = () => {
-    if (!codec) return
+  const codec = await probeCodec(initial)
+  const setCatalog = (current: EncodedSource) => {
     rendition.config.set({
       codec,
-      codedWidth: source.width,
-      codedHeight: source.height,
-      framerate: source.frameRate,
-      bitrate: source.bitrate || undefined,
+      codedWidth: current.width,
+      codedHeight: current.height,
+      framerate: current.frameRate,
+      bitrate: current.bitrate || undefined,
       optimizeForLatency: true,
       container: { kind: 'legacy' },
-      jitter: Math.ceil(1000 / source.frameRate),
+      jitter: Math.ceil(1000 / current.frameRate),
     } as Parameters<typeof rendition.config.set>[0])
   }
+  setCatalog(initial)
 
+  let frames = 0
+  let bytes = 0
+  // The last timestamp put on the wire; every reopened source continues from it.
+  let lastTimestamp = -1
   const signals = new Signals.Effect()
   signals.run((effect) => {
     const track = effect.get(rendition.track)
     if (!track) return
     const producer = new Hang.Legacy.Producer(track)
-    let started = false
-    const close = source.open((frame) => {
-      if (!started) {
-        if (!frame.keyframe) return
-        started = true
-        if (!codec) {
-          codec = codecFromAnnexB(frame.data) ?? 'avc1.640028'
-          setCatalog()
+    effect.cleanup(() => producer.close())
+    effect.run((inner) => {
+      const current = inner.get(source)
+      const base = lastTimestamp < 0 ? 0 : lastTimestamp + Math.ceil(1_000_000 / current.frameRate)
+      let started = false
+      const close = current.open((frame) => {
+        if (!started) {
+          if (!frame.keyframe) return
+          started = true
         }
-      }
-      frames += 1
-      bytes += frame.data.byteLength
-      if (frame.keyframe) keyframes += 1
-      try {
-        producer.encode(frame.data, frame.timestamp as Publish.Net.Time.Micro, frame.keyframe)
-      } catch { /* the track closed under us; the effect cleans up */ }
-    }, () => producer.close())
-    effect.cleanup(() => {
-      close()
-      producer.close()
+        frames += 1
+        bytes += frame.data.byteLength
+        const timestamp = base + frame.timestamp
+        lastTimestamp = timestamp
+        try {
+          producer.encode(frame.data, timestamp as Publish.Net.Time.Micro, frame.keyframe)
+        } catch { /* the track closed under us; the effect cleans up */ }
+      }, () => {
+        // A feed that ends is either being switched out — the next one takes
+        // over on this same track — or the companion is gone, and then the
+        // share is stopped from above; the track outlives the feed either way.
+      })
+      inner.cleanup(close)
     })
   })
 
@@ -539,15 +617,27 @@ export async function publishEncodedScreen(relay: ScreenRelay, source: EncodedSo
     status: connection.status,
     ready,
     async setQuality() { /* the companion owns its size; a new share picks another */ },
+    async switchStream() { throw new Error('a companion share cannot take a browser stream') },
+    async switchSource(next) {
+      display.set({ width: next.width, height: next.height })
+      setCatalog(next)
+      source.set(next)
+      last = null
+    },
+    setAudio(track) {
+      audioSource.set(track ? { track: track as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
+      audioEnabled.set(track !== undefined)
+    },
     sample() {
+      const current = source.peek()
       const at = performance.now()
       const previous = last
       last = { frames, bytes, at }
       if (!previous || at - previous.at < 250) return null
       const seconds = (at - previous.at) / 1000
       return {
-        width: source.width,
-        height: source.height,
+        width: current.width,
+        height: current.height,
         frameRate: (frames - previous.frames) / seconds,
         bitrate: ((bytes - previous.bytes) * 8) / seconds,
       }
@@ -558,7 +648,6 @@ export async function publishEncodedScreen(relay: ScreenRelay, source: EncodedSo
       rendition.close()
       broadcast.close()
       connection.close()
-      void keyframes
     },
   }
 }

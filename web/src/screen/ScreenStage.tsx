@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
-import { Check, Gauge, MonitorOff, MonitorUp, Users, Volume2, VolumeX } from 'lucide-react'
+import { Check, Gauge, MonitorOff, MonitorUp, Replace, Users, Volume2, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import type { ScreenShareInfo } from '../types'
 import { Button } from '../ui/Button'
@@ -14,6 +14,8 @@ import { useScreenShare, type JlocalPick, type ScreenTile } from './useScreenSha
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { JlocalPicker } from './JlocalPicker'
+import { SoundMenu } from './SoundMenu'
+import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
 
 /** Columns that keep every tile as close to a screen's own shape as possible. */
 function gridColumns(count: number): number {
@@ -52,6 +54,8 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   const previewRef = useRef<HTMLVideoElement>(null)
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  /** Whether the open picker starts a share or swaps the surface of the live one. */
+  const [pickerMode, setPickerMode] = useState<'start' | 'switch'>('start')
   const [pickerError, setPickerError] = useState<string | null>(null)
   const reducedMotion = useReducedMotion() ?? false
   const share = useScreenShare({
@@ -94,12 +98,18 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
 
   // The companion's picker when the app is up and can capture; the browser's otherwise.
   const beginShare = () => {
-    if (isJLocalCaptureAvailable()) { setPickerError(null); setPickerOpen(true); return }
+    if (isJLocalCaptureAvailable()) { setPickerError(null); setPickerMode('start'); setPickerOpen(true); return }
     share.start()
+  }
+  // Mid-share, the same choice again: the companion's picker or the browser's.
+  const switchShare = () => {
+    if (isJLocalCaptureAvailable()) { setPickerError(null); setPickerMode('switch'); setPickerOpen(true); return }
+    share.switchSource()
   }
   const pickJlocal = (pick: JlocalPick) => {
     setPickerError(null)
-    share.startWithJlocal(pick)
+    const attempt = pickerMode === 'switch' ? share.switchJlocal(pick) : share.startWithJlocal(pick)
+    attempt
       .then(() => setPickerOpen(false))
       .catch((failure: unknown) => {
         const message = failure instanceof Error ? failure.message : ''
@@ -128,18 +138,22 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
       {canPublish ? (
         sharing
           ? (
-            <Button className="screen-stop" disabled={!memberId} onClick={share.stop}>
-              <MonitorOff size={15} aria-hidden="true" />{t('room.screenStop')}
-            </Button>
+            <>
+              <Button className="screen-stop" disabled={!memberId} onClick={share.stop}>
+                <MonitorOff size={15} aria-hidden="true" />{t('room.screenStop')}
+              </Button>
+              <IconButton icon={<Replace size={16} />} label={t('room.screenSwitch')} disabled={share.state !== 'sharing'} onClick={switchShare} />
+            </>
           ) : (
             <Button variant="primary" disabled={!memberId} onClick={beginShare}>
               <MonitorUp size={15} aria-hidden="true" />{t('room.screenStart')}
             </Button>
           )
       ) : null}
-      {canPublish ? (
+      {canPublish && !share.viaJlocal ? (
         <QualityMenu quality={share.quality} onPick={share.setQuality} t={t} />
       ) : null}
+      {sharing && share.viaJlocal && getCachedJLocalCapabilities()?.audio.capture ? <SoundMenu t={t} /> : null}
       {sharing && share.stats ? <span className="screen-stats">{formatStats(share.stats)}</span> : null}
       {hasRemote || isController ? <span className="screen-bar-sep" aria-hidden="true" /> : null}
       {hasRemote ? (
@@ -205,14 +219,15 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
       </AnimatePresence>
       {tiles.length > 0 ? <div className="screen-bar">{controls}</div> : null}
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="jpick-dialog" title={t('jlocal.pickTitle')} description={t('jlocal.pickGuide')} closeLabel={t('home.closeDialog')}>
+        <DialogContent className="jpick-dialog" title={t(pickerMode === 'switch' ? 'jlocal.switchTitle' : 'jlocal.pickTitle')} description={t(pickerMode === 'switch' ? 'jlocal.switchGuide' : 'jlocal.pickGuide')} closeLabel={t('home.closeDialog')}>
           {pickerOpen ? (
             <JlocalPicker
               t={t}
               busy={share.state === 'starting'}
               error={pickerError}
+              mode={pickerMode}
               onPick={pickJlocal}
-              onUseBrowser={() => { setPickerOpen(false); share.start() }}
+              onUseBrowser={() => { setPickerOpen(false); if (pickerMode === 'switch') share.switchSource(); else share.start() }}
               onExit={() => setPickerOpen(false)}
             />
           ) : null}

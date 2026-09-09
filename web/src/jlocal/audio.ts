@@ -71,3 +71,45 @@ export async function fetchJLocalWindows(signal?: AbortSignal): Promise<JLocalWi
 export function isJLocalAudioCaptureAvailable(): boolean {
   return getCachedJLocalCapabilities()?.audio.capture === true
 }
+
+export interface JLocalAudioApp {
+  id: string
+  name: string
+}
+
+/**
+ * GET /audio/apps: the apps whose sound the mix can leave out, by the ids
+ * the mute endpoint takes. Never throws: a 501 or an unreachable app is [].
+ */
+export async function fetchJLocalAudioApps(signal?: AbortSignal): Promise<JLocalAudioApp[]> {
+  try {
+    const response = await fetch(`${JLOCAL_ORIGIN}/audio/apps`, { signal })
+    if (!response.ok) return []
+    const body: unknown = await response.json()
+    if (!isRecord(body) || !Array.isArray(body.apps)) return []
+    const found: JLocalAudioApp[] = []
+    for (const entry of body.apps) {
+      if (!isRecord(entry)) continue
+      const { id, name } = entry
+      if ((typeof id !== 'string' && typeof id !== 'number') || typeof name !== 'string') continue
+      found.push({ id: String(id), name })
+    }
+    return found.sort((left, right) => left.name.localeCompare(right.name))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The apps worth a row in a sounds menu: those with a window open, named
+ * as `/audio/apps` names them and keyed by the id the mute endpoint takes.
+ * The audio list on its own is every GUI process on the machine, agents and
+ * helpers included; the window list is what a person recognises as an app.
+ * Should the two lists fail to line up at all, the audio list stands.
+ */
+export async function fetchJLocalSoundApps(signal?: AbortSignal): Promise<JLocalAudioApp[]> {
+  const [apps, windows] = await Promise.all([fetchJLocalAudioApps(signal), fetchJLocalWindows(signal)])
+  const open = new Set(windows.map((window) => window.app.trim().toLowerCase()))
+  const listed = apps.filter((app) => open.has(app.id) || open.has(app.name.trim().toLowerCase()))
+  return listed.length > 0 ? listed : apps
+}

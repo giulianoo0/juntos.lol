@@ -22,7 +22,8 @@ import {
   type ScreenWatcher,
   type ScreenWatchStatus,
 } from '../screenshare'
-import { previewH264, startH264Feed, systemAudioTrack, type H264Feed } from '../jlocal/h264Feed'
+import { previewH264, startH264Feed, systemAudioTrack, type H264Feed, type SystemAudio } from '../jlocal/h264Feed'
+import { applySoundChoice } from '../jlocal/soundChoice'
 
 /** A viewer that is still not seeing frames this long after a screen went live subscribes again. */
 const WATCH_RETRY_MS = 4_000
@@ -95,6 +96,11 @@ export interface ScreenShareApi {
   start(quality?: ScreenQualityId): void
   /** Publishes what the jlocal companion captures: hardware H.264, no re-encode. */
   startWithJlocal(pick: JlocalPick): Promise<void>
+  /** Another surface from the browser's picker, on the same broadcast. */
+  switchSource(): void
+  /** Another display or window from the companion, on the same broadcast. */
+  switchJlocal(pick: JlocalPick): Promise<void>
+  viaJlocal: boolean
   /** Where my own jlocal share paints itself; null when publishing from the browser. */
   selfCanvasRef: (canvas: HTMLCanvasElement | null) => void
   stop(): void
@@ -143,7 +149,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
 }): ScreenShareApi {
   const publisherRef = useRef<ScreenPublisher | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const jlocalRef = useRef<{ feed: H264Feed; audio: { stop(): void } | null; preview: (() => void) | null } | null>(null)
+  const jlocalRef = useRef<{ feed: H264Feed; audio: SystemAudio | null; preview: (() => void) | null } | null>(null)
   /** My own tile's canvas, bound whenever the tile exists, whichever path is publishing. */
   const selfCanvasElRef = useRef<HTMLCanvasElement | null>(null)
   const relayRef = useRef<ScreenRelay | null>(null)
@@ -161,6 +167,8 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   const [stats, setStats] = useState<ScreenSendStats | null>(null)
   const [preview, setPreview] = useState<MediaStream | null>(null)
   const [muted, setMutedState] = useState(false)
+  /** Whether the live share is the companion's feed rather than the browser's stream. */
+  const [viaJlocal, setViaJlocal] = useState(false)
   const [watchStatus, setWatchStatus] = useState<Record<string, ScreenWatchStatus>>({})
   const [seenLive, setSeenLive] = useState<Record<string, boolean>>({})
 
@@ -181,6 +189,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     }
     setPreview(null)
     setStats(null)
+    setViaJlocal(false)
     setState('idle')
     if (memberId && capability) void setScreenLive(roomId, memberId, capability, false).catch(() => undefined)
   }, [roomId, memberId, capability])
@@ -197,6 +206,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
       publisherRef.current = publisher
       streamRef.current = stream
       setPreview(stream)
+      setViaJlocal(false)
       setState('sharing')
       stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
       await publisher.ready
@@ -207,44 +217,91 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     }
   }, [roomId, memberId, capability, stop])
 
-  const startWithJlocal = useCallback(async (pick: JlocalPick) => {
-    setState('starting')
-    setError(null)
+  const openFeed = (pick: JlocalPick) => {
     const quality = screenQuality(pick.quality)
-    const feed = await startH264Feed({
+    return startH264Feed({
       target: pick.target,
       width: quality.width ?? 1920,
       height: quality.height ?? 1080,
       fps: quality.frameRate ?? 30,
       bitrate: quality.maxBitrate,
     })
+  }
+  const encodedSource = (feed: H264Feed) => ({ width: feed.width, height: feed.height, frameRate: feed.fps, bitrate: feed.bitrate, open: feed.open })
+
+  /** Publishes the companion's feed under this member; `startWithJlocal` and a reconnect both come here. */
+  const publishJlocal = useCallback(async (companion: NonNullable<typeof jlocalRef.current>, qualityId: ScreenQualityId) => {
+    const relay = await fetchScreenRelay(roomId, memberId, capability, true)
+    if (!relay.publish) throw new Error('sharing_closed')
+    const publisher = await publishEncodedScreen(relay, encodedSource(companion.feed), companion.audio?.track)
+    publisherRef.current = publisher
+    // A stream stands in for the browser's own so the tile knows it is mine.
+    streamRef.current = new MediaStream()
+    setQualityState(qualityId)
+    saveScreenQuality(qualityId)
+    setViaJlocal(true)
+    setState('sharing')
+    companion.preview?.()
+    companion.preview = selfCanvasElRef.current ? previewH264(companion.feed, selfCanvasElRef.current) : null
+    await publisher.ready
+    await setScreenLive(roomId, memberId, capability, true)
+  }, [roomId, memberId, capability])
+
+  const startWithJlocal = useCallback(async (pick: JlocalPick) => {
+    setState('starting')
+    setError(null)
+    // The app is told which sounds go out before the first frame leaves.
+    applySoundChoice()
+    const feed = await openFeed(pick)
     const audio = pick.audio ? systemAudioTrack() : null
     const companion = { feed, audio, preview: null as (() => void) | null }
     jlocalRef.current = companion
     try {
-      const relay = await fetchScreenRelay(roomId, memberId, capability, true)
-      if (!relay.publish) throw new Error('sharing_closed')
-      const publisher = await publishEncodedScreen(relay, {
-        width: feed.width,
-        height: feed.height,
-        frameRate: feed.fps,
-        bitrate: feed.bitrate,
-        open: feed.open,
-      }, audio?.track)
-      publisherRef.current = publisher
-      // A stream stands in for the browser's own so the tile knows it is mine.
-      streamRef.current = new MediaStream()
-      setQualityState(pick.quality)
-      saveScreenQuality(pick.quality)
-      setState('sharing')
-      if (selfCanvasElRef.current) companion.preview = previewH264(feed, selfCanvasElRef.current)
-      await publisher.ready
-      await setScreenLive(roomId, memberId, capability, true)
+      await publishJlocal(companion, pick.quality)
     } catch (failure) {
       stop()
       throw failure
     }
-  }, [roomId, memberId, capability, stop])
+  }, [publishJlocal, stop])
+
+  /**
+   * Another display or window from the companion, without leaving the relay:
+   * the new feed is opened first, the publisher swapped onto it, and only then
+   * the old capture ended. A share that came from the browser is restarted
+   * instead, since the two publishers cannot trade places.
+   */
+  const switchJlocal = useCallback(async (pick: JlocalPick) => {
+    const companion = jlocalRef.current
+    const publisher = publisherRef.current
+    if (!companion || !publisher) {
+      stop()
+      await startWithJlocal(pick)
+      return
+    }
+    const feed = await openFeed(pick)
+    try {
+      await publisher.switchSource(encodedSource(feed))
+    } catch (failure) {
+      feed.stop()
+      throw failure
+    }
+    const previous = companion.feed
+    companion.feed = feed
+    companion.preview?.()
+    companion.preview = selfCanvasElRef.current ? previewH264(feed, selfCanvasElRef.current) : null
+    if (pick.audio && !companion.audio) {
+      companion.audio = systemAudioTrack()
+      publisher.setAudio(companion.audio?.track)
+    } else if (!pick.audio && companion.audio) {
+      publisher.setAudio(undefined)
+      companion.audio.stop()
+      companion.audio = null
+    }
+    previous.stop()
+    setQualityState(pick.quality)
+    saveScreenQuality(pick.quality)
+    setStats(null)
+  }, [startWithJlocal, stop])
 
   const selfCanvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
     if (selfCanvasElRef.current === canvas) return
@@ -276,6 +333,32 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
       }
     }).catch(fail)
   }, [quality, publish, fail])
+
+  /**
+   * The browser's picker again, for another surface on the same broadcast.
+   * Dismissing it keeps the current share; a share that came from the
+   * companion is restarted through the browser instead.
+   */
+  const switchSource = useCallback(() => {
+    const publisher = publisherRef.current
+    if (!publisher || jlocalRef.current) {
+      stop()
+      start()
+      return
+    }
+    // Opened inside the click, before any await, or the browser refuses.
+    void requestScreenStream(quality).then(async (stream) => {
+      const current = publisherRef.current
+      if (current !== publisher) { stream.getTracks().forEach((track) => track.stop()); return }
+      const previous = streamRef.current
+      await publisher.switchStream(stream)
+      previous?.getTracks().forEach((track) => track.stop())
+      streamRef.current = stream
+      setPreview(stream)
+      setStats(null)
+      stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
+    }).catch((failure: unknown) => { if (!isScreenShareCancelled(failure)) fail(failure) })
+  }, [quality, start, stop, fail])
 
   const setQuality = useCallback((id: ScreenQualityId) => {
     setQualityState(id)
@@ -351,11 +434,19 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     if (!memberId || previous === memberId || !stream) return
     publisherRef.current?.close()
     publisherRef.current = null
+    const companion = jlocalRef.current
+    if (companion) {
+      publishJlocal(companion, loadScreenQuality()).catch((failure: unknown) => {
+        stopRef.current()
+        fail(failure)
+      })
+      return
+    }
     publish(stream, loadScreenQuality()).catch((failure: unknown) => {
       stream.getTracks().forEach((track) => track.stop())
       fail(failure)
     })
-  }, [memberId, publish, fail])
+  }, [memberId, publish, publishJlocal, fail])
 
   // A host closing the room to guests takes the guests' screens down with it.
   useEffect(() => {
@@ -509,6 +600,9 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     muted,
     start,
     startWithJlocal: startJlocal,
+    switchSource,
+    switchJlocal,
+    viaJlocal,
     selfCanvasRef,
     stop,
     setQuality,

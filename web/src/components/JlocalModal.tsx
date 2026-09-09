@@ -10,6 +10,12 @@ const JLOCAL_RELEASES_URL = 'https://github.com/giulianoo0/jlocal/releases/lates
 
 type OS = 'mac' | 'win' | 'linux'
 
+const PLATFORMS: readonly { os: OS; key: string }[] = [
+  { os: 'mac', key: 'jlocal.platformMac' },
+  { os: 'win', key: 'jlocal.platformWin' },
+  { os: 'linux', key: 'jlocal.platformLinux' },
+]
+
 function detectOS(): OS {
   if (typeof navigator === 'undefined') return 'linux'
   const agent = navigator.userAgent
@@ -19,11 +25,12 @@ function detectOS(): OS {
 }
 
 /**
- * What the companion is for and how to get it, in one calm card: three
- * things it makes better, the download for the system this browser runs on,
- * and the reassurance that everything works without it. It watches the
- * loopback status, so the card itself says "conectado" the moment the app
- * is up, without the person having to do anything here.
+ * What the companion is for and how to get it, in one calm card: that it is
+ * optional, said up front; three things it makes better; the download for
+ * the system this browser runs on, with the other platforms as plain links
+ * underneath. It watches the loopback status, so the card itself says
+ * "conectado" the moment the app is up, without the person having to do
+ * anything here.
  */
 export function JlocalModal({ open, onOpenChange, status, t }: {
   open: boolean
@@ -39,9 +46,10 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
     { icon: <Volume2 size={16} aria-hidden="true" />, text: t('jlocal.perkSound') },
     { icon: <Magnet size={16} aria-hidden="true" />, text: t('jlocal.perkTorrent') },
   ]
+  const description = <>{t('jlocal.modalGuide')} <strong>{t('jlocal.modalOptional')}</strong></>
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="jget-dialog" title={t('jlocal.modalTitle')} description={t('jlocal.modalGuide')} closeLabel={t('home.closeDialog')}>
+      <DialogContent className="jget-dialog" title={t('jlocal.modalTitle')} description={description} closeLabel={t('home.closeDialog')}>
         <ul className="jget-perks">
           {perks.map((perk, index) => (
             <motion.li
@@ -67,21 +75,28 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
               <Button variant="ghost" onClick={() => onOpenChange(false)}>{t('home.closeDialog')}</Button>
             </motion.div>
           ) : (
-            <motion.div key="off" className="jget-actions" initial={still ? false : { opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)' }} exit={{ opacity: 0, filter: 'blur(4px)' }} transition={fade}>
-              <Button variant="primary" asChild>
-                <a href={JLOCAL_RELEASES_URL} target="_blank" rel="noreferrer">
-                  <Download size={15} aria-hidden="true" />{t(os === 'mac' ? 'jlocal.downloadMac' : os === 'win' ? 'jlocal.downloadWin' : 'jlocal.downloadLinux')}
-                </a>
-              </Button>
-              <Button variant="ghost" asChild>
-                <a href={JLOCAL_RELEASES_URL} target="_blank" rel="noreferrer">{t('jlocal.otherSystems')}</a>
-              </Button>
-              <span className="spacer" />
-              <span className="jget-waiting"><span className="jlocal-dot" aria-hidden="true" />{t('jlocal.waiting')}</span>
+            <motion.div key="off" initial={still ? false : { opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)' }} exit={{ opacity: 0, filter: 'blur(4px)' }} transition={fade}>
+              <div className="jget-actions">
+                <Button variant="primary" asChild>
+                  <a href={JLOCAL_RELEASES_URL} target="_blank" rel="noreferrer">
+                    <Download size={15} aria-hidden="true" />{t(os === 'mac' ? 'jlocal.downloadMac' : os === 'win' ? 'jlocal.downloadWin' : 'jlocal.downloadLinux')}
+                  </a>
+                </Button>
+                <span className="spacer" />
+                <span className="jget-waiting"><span className="jlocal-dot" aria-hidden="true" />{t('jlocal.waiting')}</span>
+              </div>
+              <p className="jget-platforms">
+                {t('jlocal.otherSystems')}
+                {PLATFORMS.filter((platform) => platform.os !== os).map((platform, index) => (
+                  <span key={platform.os}>
+                    {index > 0 ? <span className="jget-platforms-sep" aria-hidden="true"> · </span> : ' '}
+                    <a href={JLOCAL_RELEASES_URL} target="_blank" rel="noreferrer">{t(platform.key)}</a>
+                  </span>
+                ))}
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
-        <p className="jget-optional">{t('jlocal.modalOptional')}</p>
       </DialogContent>
     </Dialog>
   )

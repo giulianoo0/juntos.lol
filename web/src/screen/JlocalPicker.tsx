@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, Gauge, MonitorUp, Volume2, VolumeX } from 'lucide-react'
+import { Check, Gauge, MonitorUp, Replace } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
-import { setJLocalAudioMode } from '../jlocal/audio'
+import { useSoundChoice } from '../jlocal/soundChoice'
 import { Button } from '../ui/Button'
-import { IconButton } from '../ui/IconButton'
+import { SoundMenu } from './SoundMenu'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { MORPH_EASE } from '../ui/morphTokens'
 import { loadScreenQuality, screenQuality, type ScreenQualityId } from '../screenshare'
@@ -93,12 +93,14 @@ function Thumb({ target, kind, live, t }: { target: Target; kind: Tab; live: boo
   )
 }
 
-export function JlocalPicker({ onPick, onUseBrowser, onExit, busy = false, error = null, t }: {
+export function JlocalPicker({ onPick, onUseBrowser, onExit, busy = false, error = null, mode = 'start', t }: {
   onPick: (pick: JlocalPick) => void
   onUseBrowser: () => void
   onExit: () => void
   busy?: boolean
   error?: string | null
+  /** `switch` is the same panel during a share: the button swaps the surface instead of starting one. */
+  mode?: 'start' | 'switch'
   t: Translator
 }) {
   const still = useReducedMotion() ?? false
@@ -111,7 +113,7 @@ export function JlocalPicker({ onPick, onUseBrowser, onExit, busy = false, error
     return qualities.includes(saved) ? saved : qualities.includes('1080p60') ? '1080p60' : qualities[qualities.length - 1]
   })
   const audioCapture = getCachedJLocalCapabilities()?.audio.capture === true
-  const [sound, setSound] = useState(true)
+  const sound = useSoundChoice().enabled
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -221,19 +223,12 @@ export function JlocalPicker({ onPick, onUseBrowser, onExit, busy = false, error
             </div>
           )}
         </MorphingMenu>
-        {audioCapture ? (
-          <IconButton
-            icon={sound ? <Volume2 size={16} /> : <VolumeX size={16} />}
-            label={t('jlocal.sound')}
-            className={sound ? 'is-on' : ''}
-            aria-pressed={sound}
-            onClick={() => { const next = !sound; setSound(next); void setJLocalAudioMode(next ? 'all' : 'none') }}
-          />
-        ) : null}
+        {audioCapture ? <SoundMenu t={t} /> : null}
         <span className="spacer" />
         <Button variant="ghost" onClick={onUseBrowser}>{t('jlocal.useBrowser')}</Button>
         <Button variant="primary" disabled={!canShare} onClick={share}>
-          <MonitorUp size={15} aria-hidden="true" />{t('jlocal.share')}
+          {mode === 'switch' ? <Replace size={15} aria-hidden="true" /> : <MonitorUp size={15} aria-hidden="true" />}
+          {t(mode === 'switch' ? 'jlocal.switch' : 'jlocal.share')}
         </Button>
       </div>
     </div>

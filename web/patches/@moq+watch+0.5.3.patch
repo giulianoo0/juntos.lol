@@ -1,0 +1,51 @@
+diff --git a/node_modules/@moq/watch/source-CoU8Fj72.js b/node_modules/@moq/watch/source-CoU8Fj72.js
+index 1674adf..35a1985 100644
+--- a/node_modules/@moq/watch/source-CoU8Fj72.js
++++ b/node_modules/@moq/watch/source-CoU8Fj72.js
+@@ -1313,7 +1313,7 @@ var Ee = n.Milli(500), De = class {
+ 			optimizeForLatency: this.config.optimizeForLatency,
+ 			flip: !1
+ 		});
+-		let o;
++		let o, needKey = !1;
+ 		e.spawn(async () => {
+ 			for (;;) {
+ 				let e = await a.next();
+@@ -1331,7 +1331,10 @@ var Ee = n.Milli(500), De = class {
+ 				this.stats.update((e) => ({
+ 					frameCount: (e?.frameCount ?? 0) + 1,
+ 					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
+-				})), o !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(o), n.Milli.fromMicro(t.timestamp)), o = t.timestamp, r.decode(s);
++				})), o !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(o), n.Milli.fromMicro(t.timestamp)), o = t.timestamp;
++				// A delta on a fresh or reset decoder is dropped, and so is everything up to the next keyframe; the stream picks up there instead of dying.
++				if (needKey && s.type !== "key") continue;
++				try { r.decode(s), needKey = !1; } catch (err) { if (err instanceof DOMException && err.name === "DataError") { needKey = !0; continue; } throw err; }
+ 			}
+ 		});
+ 	}
+@@ -1353,7 +1356,7 @@ var Ee = n.Milli(500), De = class {
+ 			optimizeForLatency: this.config.optimizeForLatency,
+ 			flip: !1
+ 		});
+-		let d;
++		let d, needKey = !1;
+ 		e.spawn(async () => {
+ 			for (;;) {
+ 				let e = await c.next();
+@@ -1366,11 +1369,14 @@ var Ee = n.Milli(500), De = class {
+ 					frameCount: (e?.frameCount ?? 0) + 1,
+ 					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
+ 				})), d !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(d), n.Milli.fromMicro(t.timestamp)), d = t.timestamp, r.state === "closed") break;
+-				r.decode(new EncodedVideoChunk({
++				let s = new EncodedVideoChunk({
+ 					type: t.keyframe ? "key" : "delta",
+ 					data: t.payload,
+ 					timestamp: t.timestamp
+-				}));
++				});
++				// A delta on a fresh or reset decoder is dropped, and so is everything up to the next keyframe; the stream picks up there instead of dying.
++				if (needKey && s.type !== "key") continue;
++				try { r.decode(s), needKey = !1; } catch (err) { if (err instanceof DOMException && err.name === "DataError") { needKey = !0; continue; } throw err; }
+ 			}
+ 		});
+ 	}

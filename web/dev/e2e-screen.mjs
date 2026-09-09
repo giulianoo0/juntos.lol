@@ -73,11 +73,20 @@ const newPage = async (tag, hue) => {
 
 const tiles = (page) => page.locator('.screen-tile')
 const probe = async (page) => page.evaluate(() => [...document.querySelectorAll('.screen-tile')].map((tile) => {
+  // Mean luminance of a downscale: a decoded picture is well above black.
+  const luminance = (canvas) => {
+    const small = document.createElement('canvas'); small.width = 64; small.height = 36
+    const ctx = small.getContext('2d'); ctx.drawImage(canvas, 0, 0, 64, 36)
+    const px = ctx.getImageData(0, 0, 64, 36).data
+    let sum = 0
+    for (let i = 0; i < px.length; i += 4) sum += (px[i] + px[i + 1] + px[i + 2]) / 3
+    return Math.round(sum / (px.length / 4))
+  }
   const canvas = tile.querySelector('canvas')
   return {
     label: tile.querySelector('.screen-tile-label')?.textContent ?? '',
     state: tile.querySelector('.screen-tile-state')?.textContent ?? '',
-    live: canvas ? { w: canvas.width, h: canvas.height, bytes: canvas.toDataURL('image/png').length } : 'local preview',
+    live: canvas ? { w: canvas.width, h: canvas.height, bytes: canvas.toDataURL('image/png').length, mean: luminance(canvas) } : 'local preview',
     frozen: canvas?.className ?? '',
   }
 }))
@@ -100,8 +109,18 @@ await guest.fill('#join-nickname', 'guest')
 await guest.getByRole('button', { name: 'Entrar na sala' }).click()
 await tiles(guest).first().waitFor({ timeout: 40000 })
 await guest.waitForTimeout(4000)
-console.log('guest sees the host:', await probe(guest))
+const seen = await probe(guest)
+console.log('guest sees the host:', seen)
+if (!(seen[0]?.live?.mean > 3)) throw new Error('guest canvas is black')
 await shot(guest, 'guest-1')
+
+// The host picks another surface on the same broadcast; the guest keeps seeing frames.
+await host.getByRole('button', { name: 'Trocar fonte' }).click()
+await host.waitForTimeout(4000)
+if ((await room(roomId)).screens.length !== 1) throw new Error('switching the source changed the screen list')
+const switched = await probe(guest)
+console.log('guest after the switch:', switched)
+if (!(switched[0]?.live?.mean > 3) || switched[0].state !== '') throw new Error('guest lost the picture on switch')
 
 // A guest may share too, unless the host says otherwise.
 await guest.getByRole('button', { name: 'Compartilhar minha tela' }).click()
