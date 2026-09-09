@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion, LayoutGroup } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { FolderOpen, LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { useT } from '../i18n/useT'
@@ -8,7 +8,8 @@ import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
-import { JlocalPill } from '../components/JlocalPill'
+import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
+import { useJlocal } from '../jlocal/useJlocal'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
 import { playError } from '../onboarding/sounds'
@@ -85,6 +86,7 @@ function isMetaType(value: string | undefined): value is MetaType {
 }
 
 export function Home() {
+  const jlocal = useJlocal()
   const t = useT()
   const navigate = useNavigate()
   const params = useParams<{ type?: string; id?: string }>()
@@ -406,6 +408,7 @@ export function Home() {
   return (
     <main className="home-shell catalog-shell">
       <header className="home-header">
+        <LayoutGroup id="jlocal">
         <ProgressiveBlur />
         <div className="header-start">
           <a className="home-wordmark" href="/" aria-label="juntos.lol">
@@ -415,6 +418,7 @@ export function Home() {
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
+          <JlocalStatus status={jlocal} t={t} />
         </div>
         <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
           {(['catalog', 'manual', 'status'] as const).map((value) => (
@@ -442,11 +446,12 @@ export function Home() {
         <div className="header-end">
           <BuildInfo label={t('home.source')} />
           <DiscordLink label={t('home.discord')} />
-          <JlocalPill t={t} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
           </button>
+          <JlocalDownload status={jlocal} t={t} />
         </div>
+        </LayoutGroup>
       </header>
 
       <section className="catalog-stage">
