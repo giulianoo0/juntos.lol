@@ -9,10 +9,19 @@ import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '
 const screenStream = { getTracks: () => [], getVideoTracks: () => [] } as unknown as MediaStream
 vi.mock('../screenshare', () => ({
   screenShareSupported: vi.fn().mockReturnValue(true),
-  fetchScreenRelay: vi.fn().mockResolvedValue({ url: 'https://relay.test/token', path: 'juntos/abc123/secret.hang', publish: true }),
+  fetchScreenRelay: vi.fn().mockResolvedValue({
+    url: 'https://relay.test/token', base: 'juntos/abc123/secret', path: 'juntos/abc123/secret/m1.hang', publish: true, open: true,
+  }),
   publishScreen: vi.fn().mockResolvedValue({ status: { peek: () => 'connected', subscribe: () => () => undefined }, ready: Promise.resolve(), close: vi.fn() }),
-  watchScreen: vi.fn().mockResolvedValue({ status: { peek: () => 'offline', subscribe: () => () => undefined }, close: vi.fn() }),
+  watchScreen: vi.fn().mockResolvedValue({
+    status: { peek: () => 'offline', subscribe: () => () => undefined }, muted: { set: vi.fn() }, close: vi.fn(),
+  }),
   setScreenLive: vi.fn().mockResolvedValue(undefined),
+  setScreenShareOpen: vi.fn().mockResolvedValue(undefined),
+  screenPath: (base: string, memberId: string) => `${base}/${memberId}.hang`,
+  loadScreenQuality: vi.fn().mockReturnValue('auto'),
+  saveScreenQuality: vi.fn(),
+  SCREEN_QUALITIES: [{ id: 'auto' }],
   requestScreenStream: vi.fn(),
   stashScreenStream: vi.fn(),
   takeScreenStream: vi.fn().mockReturnValue(null),

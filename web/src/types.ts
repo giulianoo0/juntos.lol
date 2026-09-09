@@ -104,6 +104,13 @@ export interface MediaRegion {
   growing: boolean
 }
 
+/** One member publishing their screen to the room right now. */
+export interface ScreenShareInfo {
+  memberId: string
+  nickname: string
+  since: string
+}
+
 export interface RoomInfo {
   id: string
   fileName: string
@@ -126,7 +133,8 @@ export interface RoomInfo {
   chapters?: RoomChapter[] | null
   bitmapSubsSkipped: number
   producerHeartbeatMs?: number
-  screenLive?: boolean
+  screenShareOpen?: boolean
+  screens?: ScreenShareInfo[] | null
   preparation?: RoomPreparation
   memberCount: number
   expiresAt: string

@@ -43,6 +43,15 @@ type Member struct {
 	JoinedAt time.Time `json:"joinedAt"`
 }
 
+// ScreenShare is one member publishing their screen to the room right now.
+// The relay announces nothing, so this list is the only thing telling a
+// viewer which broadcasts exist and whose they are.
+type ScreenShare struct {
+	MemberID string    `json:"memberId"`
+	Nickname string    `json:"nickname"`
+	Since    time.Time `json:"since"`
+}
+
 type PlayState struct {
 	Playing      bool    `json:"playing"`
 	PositionMs   int64   `json:"positionMs"`
@@ -81,7 +90,8 @@ type Room struct {
 	ClientSubs          bool           `json:"clientSubs,omitempty"`
 	Preparation         Preparation    `json:"preparation"`
 	ProducerHeartbeatMs int64          `json:"producerHeartbeatMs,omitempty"`
-	ScreenLive          bool           `json:"screenLive,omitempty"`
+	ScreenShareOpen     bool           `json:"screenShareOpen"`
+	Screens             []ScreenShare  `json:"screens,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	ExpiresAt           time.Time      `json:"expiresAt"`
 }
