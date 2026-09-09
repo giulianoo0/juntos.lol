@@ -1,3 +1,4 @@
+import { JlocalPill } from '../components/JlocalPill'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Chat } from '../chat/Chat'
@@ -14,19 +15,12 @@ import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
 import {
   dropScreenStream,
-  fetchScreenRelay,
   isScreenShareCancelled,
-  publishScreen,
   requestScreenStream,
   screenShareSupported,
-  setScreenLive,
   stashScreenStream,
-  takeScreenStream,
-  watchScreen,
-  type ScreenPublisher,
-  type ScreenWatcher,
-  type ScreenWatchStatus,
 } from '../screenshare'
+import { ScreenStage } from '../screen/ScreenStage'
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
 import { MorphPanel } from '../ui/MorphPanel'
@@ -319,6 +313,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isScreenRoom = liveRoom.sourceKind === 'screen'
+  const selfNickname = sync.members.find((member) => member.id === sync.memberId)?.nickname ?? ''
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [transferTo, setTransferTo] = useState<Member | null>(null)
   const transferControls = (member: Member) => {
@@ -599,6 +594,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
+          <JlocalPill t={t} />
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
           {sync.isController && !isScreenRoom ? (
             <Button
@@ -659,9 +655,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             <ScreenStage
               roomId={room.id}
               memberId={sync.memberId}
+              nickname={selfNickname}
               capability={sync.capability}
               isController={sync.isController}
-              screenLive={liveRoom.screenLive === true}
+              shareOpen={liveRoom.screenShareOpen !== false}
+              screens={liveRoom.screens ?? []}
               t={t}
             />
           ) : (
@@ -989,161 +987,6 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
           </span>
         </span>
       ))}
-    </div>
-  )
-}
-
-/** A viewer that is still not seeing frames this long after the host went live subscribes again. */
-const SCREEN_WATCH_RETRY_MS = 4_000
-
-/**
- * The controller publishes the picked surface to the relay from inside its
- * own click and previews its own stream locally; everyone else subscribes to
- * the room's broadcast path once the room says the host is live. The relay
- * announces nothing, so "live" comes from the room, not from the relay, and a
- * subscription that stays silent is retried rather than trusted.
- */
-function ScreenStage({ roomId, memberId, capability, isController, screenLive, t }: {
-  roomId: string
-  memberId: string
-  capability: string
-  isController: boolean
-  screenLive: boolean
-  t: Translator
-}) {
-  const previewRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const publisherRef = useRef<ScreenPublisher | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const [sharing, setSharing] = useState(false)
-  const [failed, setFailed] = useState(false)
-  const [watchStatus, setWatchStatus] = useState<ScreenWatchStatus>('offline')
-  const [seenLive, setSeenLive] = useState(false)
-  const [attempt, setAttempt] = useState(0)
-  const supported = useMemo(() => screenShareSupported(), [])
-
-  const endSharing = useCallback(() => {
-    publisherRef.current?.close()
-    publisherRef.current = null
-    streamRef.current?.getTracks().forEach((track) => track.stop())
-    streamRef.current = null
-    const preview = previewRef.current
-    if (preview) preview.srcObject = null
-    setSharing(false)
-    if (memberId && capability) void setScreenLive(roomId, memberId, capability, false).catch(() => undefined)
-  }, [roomId, memberId, capability])
-
-  const beginSharing = useCallback(async (stream: MediaStream) => {
-    const relay = await fetchScreenRelay(roomId, memberId, capability)
-    if (!relay.publish) throw new Error('not_controller')
-    const publisher = await publishScreen(relay, stream)
-    try {
-      publisherRef.current = publisher
-      streamRef.current = stream
-      const preview = previewRef.current
-      if (preview) preview.srcObject = stream
-      setSharing(true)
-      stream.getVideoTracks()[0]?.addEventListener('ended', endSharing, { once: true })
-      await publisher.ready
-      await setScreenLive(roomId, memberId, capability, true)
-    } catch (error) {
-      endSharing()
-      throw error
-    }
-  }, [roomId, memberId, capability, endSharing])
-
-  // A stream granted on the home page is published as soon as the room knows who we are.
-  useEffect(() => {
-    if (!memberId || !capability) return
-    const granted = takeScreenStream(roomId)
-    if (!granted) return
-    if (!isController || !supported) {
-      granted.getTracks().forEach((track) => track.stop())
-      return
-    }
-    void beginSharing(granted).catch(() => {
-      granted.getTracks().forEach((track) => track.stop())
-      setFailed(true)
-    })
-  }, [roomId, memberId, capability, isController, supported, beginSharing])
-
-  // Leaving the stage ends the broadcast; the room learns it even if the tab is going away.
-  useEffect(() => () => {
-    if (streamRef.current) endSharing()
-  }, [endSharing])
-
-  useEffect(() => {
-    if (isController || !supported || !screenLive || !memberId || !capability) {
-      setWatchStatus('offline')
-      return
-    }
-    const canvas = canvasRef.current
-    if (!canvas) return
-    let disposed = false
-    let watcher: ScreenWatcher | null = null
-    let unsubscribe: (() => void) | undefined
-    void fetchScreenRelay(roomId, memberId, capability)
-      .then((relay) => watchScreen(relay, canvas))
-      .then((created) => {
-        if (disposed) { created.close(); return }
-        watcher = created
-        setWatchStatus(created.status.peek())
-        unsubscribe = created.status.subscribe(setWatchStatus)
-      })
-      .catch(() => { if (!disposed) setFailed(true) })
-    return () => {
-      disposed = true
-      unsubscribe?.()
-      watcher?.close()
-    }
-  }, [roomId, memberId, capability, isController, supported, screenLive, attempt])
-
-  useEffect(() => {
-    if (watchStatus === 'live') setSeenLive(true)
-  }, [watchStatus])
-
-  useEffect(() => {
-    if (isController || !screenLive || watchStatus === 'live') return
-    const timer = setTimeout(() => setAttempt((count) => count + 1), SCREEN_WATCH_RETRY_MS)
-    return () => clearTimeout(timer)
-  }, [isController, screenLive, watchStatus, attempt])
-
-  const startSharing = () => {
-    setFailed(false)
-    void requestScreenStream().then(async (stream) => {
-      try {
-        await beginSharing(stream)
-      } catch (error) {
-        stream.getTracks().forEach((track) => track.stop())
-        throw error
-      }
-    }).catch((error: unknown) => {
-      if (!isScreenShareCancelled(error)) setFailed(true)
-    })
-  }
-
-  const hint = !supported ? t('room.screenUnsupported')
-    : isController ? (sharing ? null : t('room.screenHostHint'))
-    : !screenLive ? t('room.screenWaiting')
-    : watchStatus === 'live' ? null
-    : t('room.screenConnecting')
-
-  return (
-    <div className="player-wrap screen-stage">
-      <div className="screen-surface">
-        {isController
-          ? <video ref={previewRef} autoPlay muted playsInline hidden={!sharing} />
-          : <canvas ref={canvasRef} className={seenLive && !screenLive ? 'screen-frozen' : ''} hidden={!seenLive} />}
-      </div>
-      <div className="screen-overlay">
-        {hint ? <p>{hint}</p> : null}
-        {isController && supported ? (
-          <button className="primary-button" disabled={!memberId} onClick={sharing ? endSharing : startSharing}>
-            {sharing ? t('room.screenStop') : t('room.screenStart')}
-          </button>
-        ) : null}
-        {failed ? <span className="error-card compact">{t('error.screenshare')}</span> : null}
-      </div>
     </div>
   )
 }

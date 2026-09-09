@@ -1,0 +1,426 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ScreenShareInfo } from '../types'
+import {
+  fetchScreenRelay,
+  isScreenShareCancelled,
+  loadScreenQuality,
+  publishScreen,
+  requestScreenStream,
+  saveScreenQuality,
+  screenPath,
+  screenShareSupported,
+  setScreenLive,
+  setScreenShareOpen,
+  takeScreenStream,
+  watchScreen,
+  type ScreenPublisher,
+  type ScreenQualityId,
+  type ScreenRelay,
+  type ScreenSendStats,
+  type ScreenWatcher,
+  type ScreenWatchStatus,
+} from '../screenshare'
+
+/** A viewer that is still not seeing frames this long after a screen went live subscribes again. */
+const WATCH_RETRY_MS = 4_000
+/** How often the encoder is asked what it is really sending. */
+const STATS_SAMPLE_MS = 1_000
+
+export type ScreenShareState = 'idle' | 'starting' | 'sharing' | 'failed'
+
+/** Why sharing stopped short. A picker the member dismissed is not an error. */
+export type ScreenShareError = 'closed' | 'full' | 'failed'
+
+/** As many screens as the room accepts at once; mirrors `MaxScreenShares` on the server. */
+export const MAX_SCREENS = 4
+
+/** One live screen of the room, as a stage needs it. */
+export interface ScreenTile {
+  memberId: string
+  nickname: string
+  since: string
+  /** Mine — painted from {@link ScreenShareApi.preview}, not from a watcher. */
+  self: boolean
+  /** A remote tile's subscription state; always `live` for my own tile. */
+  status: ScreenWatchStatus
+  /** Frames arrived and then stopped: the canvas holds a stale picture. */
+  stalled: boolean
+}
+
+export interface ScreenShareApi {
+  /** Whether this browser can carry a screen either way. */
+  supported: boolean
+  /** Whether this member may publish right now: the host always, guests while open. */
+  mayPublish: boolean
+  /** The room already carries as many screens as it takes; starting another is refused. */
+  full: boolean
+  /** The host's switch, as the room has it. */
+  shareOpen: boolean
+  /** Every live screen, mine included, oldest first. */
+  screens: ScreenTile[]
+  /** My own publishing state. */
+  state: ScreenShareState
+  /** Why my last attempt stopped short; cleared by the next attempt. */
+  error: ScreenShareError | null
+  quality: ScreenQualityId
+  /** What my encoder is really sending; null until it has been sampled. */
+  stats: ScreenSendStats | null
+  /** My own stream, for a muted `<video>` preview. */
+  preview: MediaStream | null
+  muted: boolean
+  /** Opens the picker and publishes what it returns. A dismissed picker is a no-op. */
+  start(quality?: ScreenQualityId): void
+  stop(): void
+  /** Re-sizes a live share in place, and remembers the choice for the next one. */
+  setQuality(id: ScreenQualityId): void
+  setMuted(muted: boolean): void
+  setShareOpen(open: boolean): Promise<void>
+  /** Binds a remote member's screen to a canvas, or unbinds it when passed null. */
+  attach(memberId: string, canvas: HTMLCanvasElement | null): void
+  /**
+   * The same thing as a ref callback, one stable function per member, so
+   * `ref={canvasRef(memberId)}` does not resubscribe on every render.
+   */
+  canvasRef(memberId: string): (canvas: HTMLCanvasElement | null) => void
+}
+
+interface Attached {
+  canvas: HTMLCanvasElement
+  watcher: ScreenWatcher | null
+  unsubscribe?: () => void
+  /** Bumped on every resubscribe so a late promise from an older one is dropped. */
+  generation: number
+  closed: boolean
+  /** When the current subscription was opened; a silent one is retried on its own clock. */
+  openedAt: number
+}
+
+/**
+ * The whole screen-sharing machine of a room: who is publishing, what I am
+ * publishing, and one subscription per remote screen.
+ *
+ * The relay announces nothing and keeps no history, so a subscription opened
+ * before its publisher is up finds no track and stays silent forever. The
+ * room's list of live screens is what says a path exists, and a tile that sees
+ * no frames resubscribes until it does.
+ */
+export function useScreenShare({ roomId, memberId, nickname, capability, isController, shareOpen, screens, onScreenStarted }: {
+  roomId: string
+  memberId: string
+  nickname: string
+  capability: string
+  isController: boolean
+  shareOpen: boolean
+  screens: ScreenShareInfo[]
+  onScreenStarted?: (share: ScreenShareInfo) => void
+}): ScreenShareApi {
+  const publisherRef = useRef<ScreenPublisher | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const relayRef = useRef<ScreenRelay | null>(null)
+  const attachedRef = useRef(new Map<string, Attached>())
+  const mutedRef = useRef(false)
+  const startedRef = useRef<Set<string> | null>(null)
+  const canvasRefsRef = useRef(new Map<string, (canvas: HTMLCanvasElement | null) => void>())
+  const noticeRef = useRef(onScreenStarted)
+  noticeRef.current = onScreenStarted
+
+  const [relay, setRelay] = useState<ScreenRelay | null>(null)
+  const [state, setState] = useState<ScreenShareState>('idle')
+  const [error, setError] = useState<ScreenShareError | null>(null)
+  const [quality, setQualityState] = useState<ScreenQualityId>(() => loadScreenQuality())
+  const [stats, setStats] = useState<ScreenSendStats | null>(null)
+  const [preview, setPreview] = useState<MediaStream | null>(null)
+  const [muted, setMutedState] = useState(false)
+  const [watchStatus, setWatchStatus] = useState<Record<string, ScreenWatchStatus>>({})
+  const [seenLive, setSeenLive] = useState<Record<string, boolean>>({})
+
+  const supported = useMemo(() => screenShareSupported(), [])
+  const mayPublish = isController || shareOpen
+
+  const stop = useCallback(() => {
+    publisherRef.current?.close()
+    publisherRef.current = null
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current = null
+    setPreview(null)
+    setStats(null)
+    setState('idle')
+    if (memberId && capability) void setScreenLive(roomId, memberId, capability, false).catch(() => undefined)
+  }, [roomId, memberId, capability])
+  const stopRef = useRef(stop)
+  stopRef.current = stop
+
+  const publish = useCallback(async (stream: MediaStream, qualityId: ScreenQualityId) => {
+    setState('starting')
+    setError(null)
+    const current = await fetchScreenRelay(roomId, memberId, capability, true)
+    if (!current.publish) throw new Error('sharing_closed')
+    const publisher = await publishScreen(current, stream, qualityId)
+    try {
+      publisherRef.current = publisher
+      streamRef.current = stream
+      setPreview(stream)
+      setState('sharing')
+      stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
+      await publisher.ready
+      await setScreenLive(roomId, memberId, capability, true)
+    } catch (failure) {
+      stop()
+      throw failure
+    }
+  }, [roomId, memberId, capability, stop])
+
+  const fail = useCallback((failure: unknown) => {
+    if (isScreenShareCancelled(failure)) { setState('idle'); return }
+    setState('failed')
+    const reason = failure instanceof Error ? failure.message : ''
+    setError(reason === 'sharing_closed' ? 'closed' : reason === 'too_many_screens' ? 'full' : 'failed')
+  }, [])
+
+  const start = useCallback((pick?: ScreenQualityId) => {
+    const qualityId = pick ?? quality
+    // The picker must be opened inside the click, before any await.
+    void requestScreenStream(qualityId).then(async (stream) => {
+      try {
+        await publish(stream, qualityId)
+      } catch (failure) {
+        stream.getTracks().forEach((track) => track.stop())
+        throw failure
+      }
+    }).catch(fail)
+  }, [quality, publish, fail])
+
+  const setQuality = useCallback((id: ScreenQualityId) => {
+    setQualityState(id)
+    saveScreenQuality(id)
+    void publisherRef.current?.setQuality(id).catch(() => undefined)
+  }, [])
+
+  const setMuted = useCallback((next: boolean) => {
+    mutedRef.current = next
+    setMutedState(next)
+    for (const entry of attachedRef.current.values()) entry.watcher?.muted.set(next)
+  }, [])
+
+  const setOpen = useCallback((open: boolean) => setScreenShareOpen(roomId, memberId, capability, open), [roomId, memberId, capability])
+
+  // Everyone needs the relay to watch, and its answer also says whether this
+  // member may publish, so it is refetched when the host flips the switch.
+  useEffect(() => {
+    if (!memberId || !capability) return
+    let disposed = false
+    void fetchScreenRelay(roomId, memberId, capability)
+      .then((current) => {
+        if (disposed) return
+        relayRef.current = current
+        setRelay(current)
+      })
+      .catch(() => undefined)
+    return () => { disposed = true }
+  }, [roomId, memberId, capability, shareOpen])
+
+  // A stream granted on the home page is published as soon as the room knows who we are.
+  useEffect(() => {
+    if (!memberId || !capability) return
+    const granted = takeScreenStream(roomId)
+    if (!granted) return
+    if (!mayPublish || !supported) {
+      granted.getTracks().forEach((track) => track.stop())
+      return
+    }
+    publish(granted, loadScreenQuality()).catch((failure: unknown) => {
+      granted.getTracks().forEach((track) => track.stop())
+      fail(failure)
+    })
+    // The stash is taken once, on the first render that knows the member.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, memberId, capability])
+
+  // Leaving the room or closing the tab ends the broadcast; the room learns it
+  // either way, because the live flag is sent with keepalive. Registered once:
+  // a member id that changes must not count as leaving.
+  useEffect(() => {
+    const leave = () => { if (streamRef.current) stopRef.current() }
+    window.addEventListener('pagehide', leave)
+    return () => {
+      window.removeEventListener('pagehide', leave)
+      leave()
+    }
+  }, [])
+
+  // A socket that reconnects comes back as a new member, and the room has
+  // already dropped the old one's screen. The surface the member picked is
+  // kept and published again under the new name.
+  const identityRef = useRef(memberId)
+  useEffect(() => {
+    const previous = identityRef.current
+    identityRef.current = memberId
+    const stream = streamRef.current
+    if (!memberId || previous === memberId || !stream) return
+    publisherRef.current?.close()
+    publisherRef.current = null
+    publish(stream, loadScreenQuality()).catch((failure: unknown) => {
+      stream.getTracks().forEach((track) => track.stop())
+      fail(failure)
+    })
+  }, [memberId, publish, fail])
+
+  // A host closing the room to guests takes the guests' screens down with it.
+  useEffect(() => {
+    if (shareOpen || isController || !streamRef.current) return
+    stop()
+    setError('closed')
+  }, [shareOpen, isController, stop])
+
+  useEffect(() => {
+    if (state !== 'sharing') return
+    const timer = setInterval(() => {
+      const sample = publisherRef.current?.sample()
+      if (sample) setStats(sample)
+    }, STATS_SAMPLE_MS)
+    return () => clearInterval(timer)
+  }, [state])
+
+  const open = useCallback((entry: Attached, target: string) => {
+    const current = relayRef.current
+    if (!current) return
+    const generation = entry.generation
+    void watchScreen(current, screenPath(current.base, target), entry.canvas, mutedRef.current)
+      .then((watcher) => {
+        if (entry.closed || entry.generation !== generation) { watcher.close(); return }
+        entry.watcher = watcher
+        const apply = (status: ScreenWatchStatus) => {
+          setWatchStatus((all) => (all[target] === status ? all : { ...all, [target]: status }))
+          if (status === 'live') setSeenLive((all) => (all[target] ? all : { ...all, [target]: true }))
+        }
+        apply(watcher.status.peek())
+        entry.unsubscribe = watcher.status.subscribe(apply)
+      })
+      .catch(() => undefined)
+  }, [])
+
+  const close = useCallback((entry: Attached) => {
+    entry.closed = true
+    entry.unsubscribe?.()
+    entry.watcher?.close()
+    entry.watcher = null
+    entry.unsubscribe = undefined
+  }, [])
+
+  const attach = useCallback((target: string, canvas: HTMLCanvasElement | null) => {
+    const attached = attachedRef.current
+    const existing = attached.get(target)
+    if (!canvas) {
+      if (existing) { close(existing); attached.delete(target) }
+      return
+    }
+    if (existing && existing.canvas === canvas) return
+    if (existing) { close(existing); attached.delete(target) }
+    const entry: Attached = { canvas, watcher: null, generation: 0, closed: false, openedAt: performance.now() }
+    attached.set(target, entry)
+    open(entry, target)
+  }, [open, close])
+
+  const canvasRef = useCallback((target: string) => {
+    const cached = canvasRefsRef.current.get(target)
+    if (cached) return cached
+    const callback = (canvas: HTMLCanvasElement | null) => attach(target, canvas)
+    canvasRefsRef.current.set(target, callback)
+    return callback
+  }, [attach])
+
+  // A tile can be bound before the relay answers; it gets its subscription the
+  // moment it does, instead of waiting out a retry.
+  useEffect(() => {
+    if (!relay) return
+    for (const [target, entry] of attachedRef.current) {
+      if (entry.watcher) continue
+      entry.generation += 1
+      entry.openedAt = performance.now()
+      open(entry, target)
+    }
+  }, [relay, open])
+
+  // A broadcast that never spoke is subscribed to again — there is nothing else
+  // to wait for, since the relay announces nothing. Each tile keeps its own
+  // clock, so a status that flickers does not push the retry away forever.
+  const watchStatusRef = useRef(watchStatus)
+  watchStatusRef.current = watchStatus
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = performance.now()
+      for (const [target, entry] of attachedRef.current) {
+        if (entry.watcher && watchStatusRef.current[target] === 'live') continue
+        if (now - entry.openedAt < WATCH_RETRY_MS) continue
+        close(entry)
+        entry.closed = false
+        entry.generation += 1
+        entry.openedAt = now
+        open(entry, target)
+      }
+    }, WATCH_RETRY_MS / 4)
+    return () => clearInterval(timer)
+  }, [open, close])
+
+  useEffect(() => () => {
+    for (const entry of attachedRef.current.values()) close(entry)
+    attachedRef.current.clear()
+  }, [close])
+
+  const sharing = state === 'sharing' || state === 'starting'
+  const full = !sharing && screens.filter((screen) => screen.memberId !== memberId).length >= MAX_SCREENS
+
+  const tiles = useMemo<ScreenTile[]>(() => {
+    const listed = screens.filter((screen) => screen.memberId !== memberId)
+    const mine = screens.find((screen) => screen.memberId === memberId)
+    const all: ScreenShareInfo[] = sharing
+      ? [...listed, mine ?? { memberId, nickname, since: new Date().toISOString() }]
+      : listed
+    return all
+      .sort((left, right) => left.since.localeCompare(right.since))
+      .map((screen) => {
+        const self = screen.memberId === memberId
+        const status = self ? 'live' : watchStatus[screen.memberId] ?? 'offline'
+        return {
+          ...screen,
+          self,
+          status,
+          stalled: !self && status !== 'live' && seenLive[screen.memberId] === true,
+        }
+      })
+  }, [screens, memberId, nickname, sharing, watchStatus, seenLive])
+
+  // Screens the room gained since the last render are news; the first list is
+  // the room as we found it.
+  useEffect(() => {
+    const ids = new Set(screens.map((screen) => screen.memberId))
+    const known = startedRef.current
+    startedRef.current = ids
+    if (!known) return
+    for (const screen of screens) {
+      if (known.has(screen.memberId) || screen.memberId === memberId) continue
+      noticeRef.current?.(screen)
+    }
+  }, [screens, memberId])
+
+  return {
+    supported,
+    mayPublish,
+    full,
+    shareOpen,
+    screens: tiles,
+    state,
+    error,
+    quality,
+    stats,
+    preview,
+    muted,
+    start,
+    stop,
+    setQuality,
+    setMuted,
+    setShareOpen: setOpen,
+    attach,
+    canvasRef,
+  }
+}

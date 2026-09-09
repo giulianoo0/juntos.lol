@@ -8,6 +8,7 @@ import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
+import { JlocalPill } from '../components/JlocalPill'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
 import { playError } from '../onboarding/sounds'
@@ -441,6 +442,7 @@ export function Home() {
         <div className="header-end">
           <BuildInfo label={t('home.source')} />
           <DiscordLink label={t('home.discord')} />
+          <JlocalPill t={t} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
           </button>

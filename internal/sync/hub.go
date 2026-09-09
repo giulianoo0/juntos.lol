@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -83,6 +84,7 @@ type roomConn struct {
 	unregister chan *client
 	inbound    chan clientInbound
 	updates    chan Outbound
+	dropped    atomic.Bool
 }
 
 type joinRequest struct {
@@ -295,6 +297,9 @@ func (h *Hub) notify(roomID string, event Outbound) {
 	select {
 	case connection.updates <- event:
 	default:
+		// A full queue must not lose the room's latest shape: the loop
+		// re-announces it the next time it wakes up.
+		connection.dropped.Store(true)
 	}
 }
 
@@ -318,7 +323,7 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bo
 		register:     make(chan joinRequest),
 		unregister:   make(chan *client),
 		inbound:      make(chan clientInbound),
-		updates:      make(chan Outbound, 4),
+		updates:      make(chan Outbound, 32),
 	}
 	h.rooms[roomID] = connection
 	h.wg.Go(connection.run)
@@ -388,6 +393,9 @@ func (r *roomConn) run() {
 			r.handleInbound(event)
 		case event := <-r.updates:
 			r.broadcast(event)
+			if r.dropped.Swap(false) {
+				r.broadcast(Outbound{Type: "roomUpdated"})
+			}
 		case <-gateExpired:
 			r.releaseGate()
 		case <-awake.C:
@@ -543,6 +551,14 @@ func (r *roomConn) handleDisconnect(disconnected *client) {
 	defer cancel()
 	if err := r.hub.store.RemoveMember(ctx, r.id, disconnected.id); err != nil {
 		slog.ErrorContext(ctx, "remove websocket member failed", "room_id", r.id, "member_id", disconnected.id, "error", err)
+	}
+	// Nothing else ends a screen share when a tab dies mid-broadcast, and a
+	// share left in the list is a path every viewer keeps retrying forever.
+	stopped, err := r.hub.store.StopScreenShare(ctx, r.id, disconnected.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "stop screen share on disconnect failed", "room_id", r.id, "member_id", disconnected.id, "error", err)
+	} else if stopped && len(r.clients) > 0 {
+		r.broadcast(Outbound{Type: "roomUpdated"})
 	}
 	if disconnected.id == r.controllerID {
 		members := r.members()

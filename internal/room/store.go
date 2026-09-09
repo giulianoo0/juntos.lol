@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,12 @@ import (
 )
 
 var ErrNotFound = errors.New("room not found")
+
+// ErrSharingClosed is a guest starting a screen in a room the host closed.
+var ErrSharingClosed = errors.New("sharing closed")
+
+// ErrTooManyScreens is one screen more than MaxScreenShares.
+var ErrTooManyScreens = errors.New("too many screens")
 
 var ErrUploadReserved = errors.New("upload already reserved")
 
@@ -253,7 +260,14 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		r.SubsVersion = n
 	}
 	r.GatingEnabled = fields["gating_disabled"] != "1"
-	r.ScreenLive = fields["screen_live"] == "1"
+	// Sharing is open unless a host closed it, so a room made before the flag
+	// existed still lets everyone share.
+	r.ScreenShareOpen = fields["screen_closed"] != "1"
+	screens, err := parseScreenShares(fields)
+	if err != nil {
+		return nil, err
+	}
+	r.Screens = screens
 	r.ClientSubs = fields["client_subs"] == "1"
 	for field, target := range map[string]*int64{
 		"duration_ms":          &r.DurationMs,
@@ -378,15 +392,122 @@ func (s *Store) SetGatingDisabled(ctx context.Context, id string, disabled bool)
 	return s.mutateRoom(ctx, id, false, "gating_disabled", value)
 }
 
-// SetScreenLive records whether the host is publishing a screen right now, so a
-// viewer knows when to subscribe instead of probing a relay that keeps no
-// history and announces nothing.
-func (s *Store) SetScreenLive(ctx context.Context, id string, live bool) error {
-	value := "0"
-	if live {
-		value = "1"
+// screenSharePrefix is the room-hash field holding one member's live screen.
+// One field per publisher keeps starting and stopping a share a single atomic
+// write, with no read-modify-write over a shared list.
+const screenSharePrefix = "screen_share:"
+
+func parseScreenShares(fields map[string]string) ([]ScreenShare, error) {
+	var screens []ScreenShare
+	for field, value := range fields {
+		memberID, ok := strings.CutPrefix(field, screenSharePrefix)
+		if !ok {
+			continue
+		}
+		var share ScreenShare
+		// One unreadable share must not take the whole room down with it.
+		if err := json.Unmarshal([]byte(value), &share); err != nil {
+			continue
+		}
+		share.MemberID = memberID
+		screens = append(screens, share)
 	}
-	return s.mutateRoom(ctx, id, false, "screen_live", value)
+	sort.Slice(screens, func(i, j int) bool {
+		if !screens[i].Since.Equal(screens[j].Since) {
+			return screens[i].Since.Before(screens[j].Since)
+		}
+		return screens[i].MemberID < screens[j].MemberID
+	})
+	return screens, nil
+}
+
+// SetScreenShareOpen records whether members other than the controller may
+// publish a screen.
+func (s *Store) SetScreenShareOpen(ctx context.Context, id string, open bool) error {
+	value := "1"
+	if open {
+		value = "0"
+	}
+	return s.mutateRoom(ctx, id, false, "screen_closed", value)
+}
+
+// MaxScreenShares is how many members may publish at once: every viewer
+// pays one relay subscription and one decoder per screen.
+const MaxScreenShares = 4
+
+// StartScreenShare records that a member is publishing, so a viewer knows
+// which broadcast to subscribe to instead of probing a relay that keeps no
+// history and announces nothing. The check that the room is open to this
+// member and has room for one more happens in the same step as the write, so
+// a host closing the room cannot lose the race against a guest starting.
+func (s *Store) StartScreenShare(ctx context.Context, id string, share ScreenShare, controller bool) error {
+	payload, err := json.Marshal(ScreenShare{Nickname: share.Nickname, Since: share.Since})
+	if err != nil {
+		return fmt.Errorf("marshal screen share: %w", err)
+	}
+	allowClosed := "0"
+	if controller {
+		allowClosed = "1"
+	}
+	result, err := s.rdb.Eval(ctx, `
+if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+if ARGV[1] == '0' and redis.call('HGET', KEYS[1], 'screen_closed') == '1' then return -2 end
+if redis.call('HEXISTS', KEYS[1], ARGV[2]) == 0 then
+  local count = 0
+  for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
+    if string.sub(field, 1, 13) == 'screen_share:' then count = count + 1 end
+  end
+  if count >= tonumber(ARGV[4]) then return -3 end
+end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+return 1
+`, []string{roomKey(id)}, allowClosed, screenSharePrefix+share.MemberID, string(payload), MaxScreenShares).Int64()
+	if err != nil {
+		return fmt.Errorf("start screen share: %w", err)
+	}
+	switch result {
+	case -1:
+		return ErrNotFound
+	case -2:
+		return ErrSharingClosed
+	case -3:
+		return ErrTooManyScreens
+	}
+	return nil
+}
+
+// StopScreenShare drops one member's share. Called both when a member stops
+// on purpose and when their socket goes away.
+func (s *Store) StopScreenShare(ctx context.Context, id, memberID string) (bool, error) {
+	removed, err := s.rdb.HDel(ctx, roomKey(id), screenSharePrefix+memberID).Result()
+	if err != nil {
+		return false, fmt.Errorf("stop screen share: %w", err)
+	}
+	return removed > 0, nil
+}
+
+// StopScreenSharesExcept ends every share but one, which is how closing a room
+// to guest sharing leaves the host's own screen up. Reports whether anything
+// was actually dropped.
+func (s *Store) StopScreenSharesExcept(ctx context.Context, id, keepMemberID string) (bool, error) {
+	fields, err := s.rdb.HKeys(ctx, roomKey(id)).Result()
+	if err != nil {
+		return false, fmt.Errorf("list room fields: %w", err)
+	}
+	var drop []string
+	for _, field := range fields {
+		memberID, ok := strings.CutPrefix(field, screenSharePrefix)
+		if ok && memberID != keepMemberID {
+			drop = append(drop, field)
+		}
+	}
+	if len(drop) == 0 {
+		return false, nil
+	}
+	if err := s.rdb.HDel(ctx, roomKey(id), drop...).Err(); err != nil {
+		return false, fmt.Errorf("stop screen shares: %w", err)
+	}
+	return true, nil
 }
 
 // ScreenSecret returns the secret that makes the room's broadcast path
@@ -645,7 +766,10 @@ redis.call('HSET', KEYS[1],
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
-  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token', 'screen_live')
+  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token')
+for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
+  if string.sub(field, 1, 13) == 'screen_share:' then redis.call('HDEL', KEYS[1], field) end
+end
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])
