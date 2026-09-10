@@ -8,8 +8,14 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-const (
-	writeWait  = 10 * time.Second
+const writeWait = 10 * time.Second
+
+// Variables so tests can shrink them. A connection is alive as long as
+// anything arrives on it: a pong, or the heartbeat the browser sends every
+// few seconds. Pongs alone were not enough — a link busy uploading a screen
+// held them back for minutes while the heartbeats kept coming, and the room
+// dropped members who were right there.
+var (
 	pongWait   = 60 * time.Second
 	pingPeriod = 30 * time.Second
 )
@@ -24,6 +30,8 @@ type client struct {
 	report           memberReport
 	telemetry        syncTelemetry
 	lastTitleRequest time.Time
+	// Set by the room before a kick is written; a kicked seat is not held.
+	kicked bool
 }
 
 func (c *client) readPump() {
@@ -43,6 +51,9 @@ func (c *client) readPump() {
 	for {
 		var message Inbound
 		if err := c.conn.ReadJSON(&message); err != nil {
+			return
+		}
+		if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
 			return
 		}
 		if message.Type == "hello" {

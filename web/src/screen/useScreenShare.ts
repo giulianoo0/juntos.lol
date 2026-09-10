@@ -25,8 +25,15 @@ import {
 import { previewH264, startH264Feed, systemAudioTrack, type H264Feed, type SystemAudio } from '../jlocal/h264Feed'
 import { applySoundChoice } from '../jlocal/soundChoice'
 
-/** A viewer that is still not seeing frames this long after a screen went live subscribes again. */
+/** A subscription the relay turned away (no such broadcast yet) is tried again after this long. */
 const WATCH_RETRY_MS = 4_000
+/**
+ * One still waiting for its catalog is left alone much longer: a fresh QUIC
+ * handshake plus a 4K keyframe on a busy link can take more than a few
+ * seconds, and tearing that down every four was what kept tiles at
+ * "connecting" for minutes.
+ */
+const LOADING_RETRY_MS = 15_000
 /** How often the encoder is asked what it is really sending. */
 const STATS_SAMPLE_MS = 1_000
 
@@ -533,8 +540,9 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     const timer = setInterval(() => {
       const now = performance.now()
       for (const [target, entry] of attachedRef.current) {
-        if (entry.watcher && watchStatusRef.current[target] === 'live') continue
-        if (now - entry.openedAt < WATCH_RETRY_MS) continue
+        const status = entry.watcher ? watchStatusRef.current[target] ?? 'offline' : 'offline'
+        if (status === 'live') continue
+        if (now - entry.openedAt < (status === 'loading' ? LOADING_RETRY_MS : WATCH_RETRY_MS)) continue
         close(entry)
         entry.closed = false
         entry.generation += 1

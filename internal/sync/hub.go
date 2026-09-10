@@ -80,6 +80,11 @@ type roomConn struct {
 
 	nextMember int
 	clients    map[string]*client
+	// Seats whose socket dropped, kept for resumeGrace so the same member can
+	// come back as themselves: same id, same capability, screen still up.
+	detached map[string]*detachedSeat
+	// Rung by a timer when a detached seat may have run out.
+	expire     chan struct{}
 	register   chan joinRequest
 	unregister chan *client
 	inbound    chan clientInbound
@@ -92,8 +97,21 @@ type joinRequest struct {
 	nickname     string
 	clientTimeMs int64
 	ownerToken   string
-	result       chan string
+	// The seat a reconnecting socket asks to take back, or "" for a fresh join.
+	memberID   string
+	capability string
+	result     chan string
 }
+
+// detachedSeat is a member whose socket is gone but whose place is kept.
+type detachedSeat struct {
+	client *client
+	until  time.Time
+}
+
+// resumeGrace is how long a dropped socket's seat is held for it. A variable
+// so tests can shrink it.
+var resumeGrace = 45 * time.Second
 
 type clientInbound struct {
 	client  *client
@@ -226,7 +244,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	result := make(chan string, 1)
 	request := joinRequest{
 		client: client, nickname: nickname, clientTimeMs: hello.ClientTimeMs,
-		ownerToken: hello.OwnerToken, result: result,
+		ownerToken: hello.OwnerToken, memberID: hello.MemberID, capability: hello.Capability, result: result,
 	}
 	select {
 	case roomConnection.register <- request:
@@ -320,6 +338,8 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bo
 		gating:       gating,
 		nextMember:   1,
 		clients:      make(map[string]*client),
+		detached:     make(map[string]*detachedSeat),
+		expire:       make(chan struct{}, 1),
 		register:     make(chan joinRequest),
 		unregister:   make(chan *client),
 		inbound:      make(chan clientInbound),
@@ -357,6 +377,19 @@ func (r *roomConn) run() {
 	r.lastActivity = time.Now()
 	awake := time.NewTicker(idleTick)
 	defer awake.Stop()
+	// The idle clock starts when the last seat is really empty: a member whose
+	// socket is being held for them still counts as here.
+	armIdle := func() {
+		if len(r.clients) > 0 || len(r.detached) > 0 || idle != nil {
+			return
+		}
+		if idleTimer == nil {
+			idleTimer = time.NewTimer(r.hub.idleAfter)
+		} else {
+			idleTimer.Reset(r.hub.idleAfter)
+		}
+		idle = idleTimer.C
+	}
 	for {
 		var gateExpired <-chan time.Time
 		if r.gate != nil {
@@ -381,14 +414,10 @@ func (r *roomConn) run() {
 			r.handleJoin(request)
 		case disconnected := <-r.unregister:
 			r.handleDisconnect(disconnected)
-			if len(r.clients) == 0 {
-				if idleTimer == nil {
-					idleTimer = time.NewTimer(r.hub.idleAfter)
-				} else {
-					idleTimer.Reset(r.hub.idleAfter)
-				}
-				idle = idleTimer.C
-			}
+			armIdle()
+		case <-r.expire:
+			r.expireDetached(time.Now())
+			armIdle()
 		case event := <-r.inbound:
 			r.handleInbound(event)
 		case event := <-r.updates:
@@ -410,7 +439,10 @@ func (r *roomConn) run() {
 }
 
 func (r *roomConn) handleJoin(request joinRequest) {
-	if len(r.clients) >= r.hub.cfg.MaxParticipants {
+	if request.memberID != "" && r.resume(request) {
+		return
+	}
+	if len(r.clients)+len(r.detached) >= r.hub.cfg.MaxParticipants {
 		request.result <- "room_full"
 		return
 	}
@@ -451,6 +483,9 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		return
 	}
 	_, controllerLive := r.clients[r.controllerID]
+	if _, held := r.detached[r.controllerID]; held {
+		controllerLive = true
+	}
 	claimsOwnership := r.ownerToken != "" && request.ownerToken != "" &&
 		subtle.ConstantTimeCompare([]byte(r.ownerToken), []byte(request.ownerToken)) == 1
 	if r.controllerID == "" || !controllerLive || claimsOwnership {
@@ -531,22 +566,135 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.controllerID = target.id
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 	case "kick":
+		target.kicked = true
 		r.send(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
 	}
 	r.touch()
 }
 
+// handleDisconnect parks a member whose socket dropped: the seat, the
+// capability and any screen they were sharing stay for resumeGrace, so a
+// browser that reconnects a moment later is still the same person to
+// everyone else. Nothing is announced until the grace runs out.
 func (r *roomConn) handleDisconnect(disconnected *client) {
 	if disconnected == nil || r.clients[disconnected.id] != disconnected {
 		return
 	}
 	delete(r.clients, disconnected.id)
+	close(disconnected.send)
+	if disconnected.kicked {
+		r.finalizeLeave(disconnected)
+		return
+	}
+	until := time.Now().Add(resumeGrace)
+	r.detached[disconnected.id] = &detachedSeat{client: disconnected, until: until}
+	expire := r.expire
+	time.AfterFunc(resumeGrace+10*time.Millisecond, func() {
+		select {
+		case expire <- struct{}{}:
+		default:
+		}
+	})
+	if r.gate != nil && !r.evaluateGate() {
+		r.broadcastWaiting()
+	}
+}
+
+// expireDetached lets go of every seat whose grace has passed.
+func (r *roomConn) expireDetached(now time.Time) {
+	for id, seat := range r.detached {
+		if now.Before(seat.until) {
+			continue
+		}
+		delete(r.detached, id)
+		r.finalizeLeave(seat.client)
+	}
+}
+
+// resume gives a reconnecting socket its old seat back, when the seat is
+// held or still occupied by a socket the server has not noticed is dead. A
+// mismatched capability is nobody's seat: the caller joins fresh.
+func (r *roomConn) resume(request joinRequest) bool {
+	var previous *client
+	if seat, held := r.detached[request.memberID]; held {
+		previous = seat.client
+	} else if connected, live := r.clients[request.memberID]; live {
+		previous = connected
+	}
+	if previous == nil || len(previous.capability) != len(request.capability) ||
+		subtle.ConstantTimeCompare([]byte(previous.capability), []byte(request.capability)) != 1 {
+		return false
+	}
+	if _, held := r.detached[request.memberID]; held {
+		delete(r.detached, request.memberID)
+	} else {
+		// The old socket is replaced; when its pump finally returns, the
+		// unregister finds a different client in the seat and does nothing.
+		delete(r.clients, request.memberID)
+		close(previous.send)
+	}
+	next := request.client
+	next.id = previous.id
+	next.capability = previous.capability
+	next.member = previous.member
+	next.report = previous.report
+	next.telemetry = previous.telemetry
+	next.lastTitleRequest = previous.lastTitleRequest
+	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+	defer cancel()
+	renamed := false
+	if request.nickname != next.member.Nickname {
+		next.member.Nickname = request.nickname
+		if err := r.hub.store.AddMember(ctx, r.id, next.member); err != nil {
+			slog.ErrorContext(ctx, "rename resumed websocket member failed", "room_id", r.id, "member_id", next.id, "error", err)
+		}
+		renamed = true
+	}
+	state, err := r.hub.store.GetState(ctx, r.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "load websocket state failed", "room_id", r.id, "error", err)
+		request.result <- "internal_error"
+		return true
+	}
+	if state.Rate == 0 {
+		state.Rate = 1
+	}
+	history, err := r.hub.store.Messages(ctx, r.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "load websocket chat failed", "room_id", r.id, "error", err)
+		request.result <- "internal_error"
+		return true
+	}
+	r.clients[next.id] = next
+	r.touch()
+	members := r.members()
+	gating := r.gating
+	r.send(next, Outbound{
+		Type: "welcome", MemberID: next.id, State: &state, ControllerID: r.controllerID,
+		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
+		Capability: next.capability, Gating: &gating,
+	})
+	r.send(next, Outbound{
+		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
+	})
+	if renamed {
+		r.broadcastExcept(next, Outbound{Type: "members", ControllerID: r.controllerID, Members: members})
+	}
+	if r.gate != nil {
+		r.broadcastWaiting()
+	}
+	request.result <- ""
+	return true
+}
+
+// finalizeLeave is a member really going: the seat, the capability, the
+// screen and, if they held it, the controls all pass on.
+func (r *roomConn) finalizeLeave(disconnected *client) {
 	r.logSyncSummary(disconnected)
 	delete(r.ignored, disconnected.id)
 	r.hub.mu.Lock()
 	delete(r.hub.capabilities[r.id], disconnected.id)
 	r.hub.mu.Unlock()
-	close(disconnected.send)
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
 	if err := r.hub.store.RemoveMember(ctx, r.id, disconnected.id); err != nil {
@@ -746,9 +894,12 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 }
 
 func (r *roomConn) members() []room.Member {
-	members := make([]room.Member, 0, len(r.clients))
+	members := make([]room.Member, 0, len(r.clients)+len(r.detached))
 	for _, connected := range r.clients {
 		members = append(members, connected.member)
+	}
+	for _, seat := range r.detached {
+		members = append(members, seat.client.member)
 	}
 	slices.SortFunc(members, func(a, b room.Member) int {
 		if a.JoinedAt.Before(b.JoinedAt) {

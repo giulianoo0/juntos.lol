@@ -294,6 +294,11 @@ func newHubTestServer(t *testing.T, cfg config.Config) (*Hub, *room.Store, *http
 		cfg.RoomIdleSeconds = 90
 	}
 	cfg.DataDir = t.TempDir()
+	// A dropped socket's seat is held briefly here so leaving is prompt;
+	// tests about resuming lengthen it themselves.
+	previousGrace := resumeGrace
+	resumeGrace = 150 * time.Millisecond
+	t.Cleanup(func() { resumeGrace = previousGrace })
 	hub := NewHub(store, cfg, objectstore.NewFake())
 	t.Cleanup(hub.Close)
 	router := gin.New()

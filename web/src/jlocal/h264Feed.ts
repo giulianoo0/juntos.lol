@@ -141,6 +141,27 @@ const AUDIO_SAMPLE_RATE = 48_000
 const AUDIO_CHANNELS = 2
 const AUDIO_FRAME_SAMPLES = 960
 const AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * 2
+/**
+ * How far ahead of the clock frames are scheduled. The app hands them over
+ * as the OS captures them, and the loop that receives them shares the main
+ * thread with everything else on the page; without this much slack every
+ * late read was a hole in the sound.
+ */
+const AUDIO_LEAD_S = 0.12
+/** Frames queued further out than this are the link catching up after a stall: they are let go so the sound stays close to the picture. */
+const AUDIO_MAX_LEAD_S = 0.5
+
+/** Interleaved little-endian 16-bit stereo into the buffer's planar channels. */
+export function decodeInterleavedS16(frame: Uint8Array, buffer: AudioBuffer): void {
+  const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength)
+  const left = buffer.getChannelData(0)
+  const right = buffer.getChannelData(1)
+  const frames = Math.min(buffer.length, frame.byteLength >> 2)
+  for (let i = 0; i < frames; i += 1) {
+    left[i] = view.getInt16(i * 4, true) / 32768
+    right[i] = view.getInt16(i * 4 + 2, true) / 32768
+  }
+}
 
 export interface SystemAudio {
   track: MediaStreamTrack
@@ -179,7 +200,7 @@ export function systemAudioTrack(): SystemAudio | null {
     if (!response.ok || !response.body) return
     const reader = response.body.getReader()
     let pending = new Uint8Array(0)
-    let nextStart = context.currentTime
+    let nextStart = context.currentTime + AUDIO_LEAD_S
     try {
       for (;;) {
         const { done, value } = await reader.read()
@@ -191,18 +212,19 @@ export function systemAudioTrack(): SystemAudio | null {
         while (pending.length >= AUDIO_FRAME_BYTES) {
           const frame = pending.subarray(0, AUDIO_FRAME_BYTES)
           pending = pending.slice(AUDIO_FRAME_BYTES)
+          const now = context.currentTime
+          // Behind the clock: the slack is taken again from here, one gap
+          // instead of a click on every frame until the source catches up.
+          if (nextStart < now) nextStart = now + AUDIO_LEAD_S
+          // Too far ahead: the sound would trail the picture; skip the frame.
+          if (nextStart - now > AUDIO_MAX_LEAD_S) continue
           const buffer = context.createBuffer(AUDIO_CHANNELS, AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE)
-          const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength)
-          for (let channel = 0; channel < AUDIO_CHANNELS; channel += 1) {
-            const samples = buffer.getChannelData(channel)
-            for (let i = 0; i < AUDIO_FRAME_SAMPLES; i += 1) samples[i] = view.getInt16((i * AUDIO_CHANNELS + channel) * 2, true) / 32768
-          }
+          decodeInterleavedS16(frame, buffer)
           const node = context.createBufferSource()
           node.buffer = buffer
           node.connect(destination)
-          const when = Math.max(nextStart, context.currentTime)
-          node.start(when)
-          nextStart = when + AUDIO_FRAME_SAMPLES / AUDIO_SAMPLE_RATE
+          node.start(nextStart)
+          nextStart += AUDIO_FRAME_SAMPLES / AUDIO_SAMPLE_RATE
         }
       }
     } catch { /* the app went away; the track goes quiet */ }

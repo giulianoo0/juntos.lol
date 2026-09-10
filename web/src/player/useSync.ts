@@ -9,6 +9,13 @@ const WAITING_REPORT_MS = 1000
 const READINESS_DEBOUNCE_MS = 100
 const RECONNECT_MIN_MS = 500
 const RECONNECT_MAX_MS = 8000
+/**
+ * The server answers every heartbeat, so a socket that has said nothing for
+ * this long is dead whatever its readyState claims — the browser only learns
+ * of a lost link when a write fails, and a viewer sends almost nothing.
+ */
+const HEARTBEAT_MS = 5000
+const DEAD_AFTER_MS = 15_000
 
 interface Outbound {
   type: string
@@ -84,6 +91,11 @@ export function useSync(
 ): SyncResult {
   const socketRef = useRef<WebSocket | null>(null)
   const offsetRef = useRef(0)
+  /** The seat this browser holds in the room; a reconnect asks for it back so nobody sees us leave. */
+  const seatRef = useRef<{ roomId: string; memberId: string; capability: string } | null>(null)
+  /** Chat typed while the socket was down; it goes out the moment the seat is ours again. */
+  const pendingChatRef = useRef<Record<string, unknown>[]>([])
+  const lastHeardRef = useRef(0)
   const bufferingRef = useRef(false)
   const mediaOffset = () => mediaOffsetMsRef?.current ?? 0
   const coldWait = () => coldWaitRef?.current ?? false
@@ -119,7 +131,12 @@ export function useSync(
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
     const socket = socketRef.current
-    if (socket?.readyState !== WebSocket.OPEN) return false
+    if (socket?.readyState !== WebSocket.OPEN) {
+      // A message is worth keeping across a reconnect; a state report is not.
+      if (type !== 'chat') return false
+      pendingChatRef.current.push(payload)
+      return true
+    }
     socket.send(JSON.stringify({ type, ...payload }))
     return true
   }, [])
@@ -228,9 +245,17 @@ export function useSync(
 
       socket.onopen = () => {
         attempt = 0
+        lastHeardRef.current = Date.now()
         setConnected(true)
         const clientTimeMs = Date.now()
-        socket.send(JSON.stringify({ type: 'hello', nickname, clientTimeMs, ownerToken: ownerTokenFor(roomId) }))
+        const seat = seatRef.current?.roomId === roomId ? seatRef.current : null
+        socket.send(JSON.stringify({
+          type: 'hello',
+          nickname,
+          clientTimeMs,
+          ownerToken: ownerTokenFor(roomId),
+          ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
+        }))
       }
       socket.onclose = () => {
         setConnected(false)
@@ -240,6 +265,7 @@ export function useSync(
         retry = window.setTimeout(connect, backoff * (0.75 + Math.random() * 0.5))
       }
       socket.onmessage = (event) => {
+        lastHeardRef.current = Date.now()
         const message = JSON.parse(String(event.data)) as Outbound
         if (message.serverTimeMs !== undefined && message.clientTimeMs !== undefined) {
           const now = Date.now()
@@ -249,6 +275,8 @@ export function useSync(
         }
         switch (message.type) {
           case 'welcome':
+            seatRef.current = { roomId, memberId: message.memberId ?? '', capability: message.capability ?? '' }
+            for (const payload of pendingChatRef.current.splice(0)) socket.send(JSON.stringify({ type: 'chat', ...payload }))
             setMemberId(message.memberId ?? '')
             setControllerId(message.controllerId ?? '')
             applyMembers(message.members ?? [])
@@ -333,6 +361,14 @@ export function useSync(
     document.addEventListener('visibilitychange', wakeUp)
 
     const heartbeat = window.setInterval(() => {
+      const socket = socketRef.current
+      if (socket?.readyState === WebSocket.OPEN && Date.now() - lastHeardRef.current > DEAD_AFTER_MS) {
+        // Closing it ourselves is what brings the reconnect loop in; the
+        // seat is asked back straight away rather than after a backoff.
+        attempt = 0
+        socket.close()
+        return
+      }
       send('heartbeat', { clientTimeMs: Date.now() })
       sendReadiness()
       const media = videoRef.current
@@ -343,7 +379,7 @@ export function useSync(
         if (needsResync(media.currentTime * 1000 + mediaOffset(), expected)) media.currentTime = (expected - mediaOffset()) / 1000
         return current
       })
-    }, 5000)
+    }, HEARTBEAT_MS)
 
     if (left) return
     connect()

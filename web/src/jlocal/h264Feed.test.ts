@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FrameParser, codecFromAnnexB } from './h264Feed'
+import { FrameParser, codecFromAnnexB, decodeInterleavedS16 } from './h264Feed'
 
 function packet(pts: number, keyframe: boolean, payload: number[]): Uint8Array {
   const out = new Uint8Array(13 + payload.length)
@@ -37,5 +37,23 @@ describe('codecFromAnnexB', () => {
 
   it('is null without an SPS', () => {
     expect(codecFromAnnexB(new Uint8Array([0, 0, 0, 1, 0x65, 0x88]))).toBeNull()
+  })
+})
+
+describe('decodeInterleavedS16', () => {
+  it('splits little-endian stereo samples into planar floats', () => {
+    const frame = new Uint8Array(8)
+    const view = new DataView(frame.buffer)
+    view.setInt16(0, 16384, true)
+    view.setInt16(2, -32768, true)
+    view.setInt16(4, 0, true)
+    view.setInt16(6, 32767, true)
+    const left = new Float32Array(2)
+    const right = new Float32Array(2)
+    const buffer = { length: 2, getChannelData: (channel: number) => (channel === 0 ? left : right) } as unknown as AudioBuffer
+    decodeInterleavedS16(frame, buffer)
+    expect(Array.from(left)).toEqual([0.5, 0])
+    expect(right[0]).toBe(-1)
+    expect(right[1]).toBeCloseTo(1, 4)
   })
 })

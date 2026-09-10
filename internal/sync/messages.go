@@ -17,6 +17,10 @@ type Inbound struct {
 	Enabled       *bool         `json:"enabled,omitempty"`
 	Title         *TitleRequest `json:"title,omitempty"`
 	Origin        string        `json:"origin,omitempty"`
+	// MemberID and Capability on a hello ask for the seat a dropped socket
+	// held; the server hands it back while it is still being kept.
+	MemberID   string `json:"memberId,omitempty"`
+	Capability string `json:"capability,omitempty"`
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The
