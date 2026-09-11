@@ -381,6 +381,7 @@ export const ptBR: Record<string, string> = {
   'jlocal.soundNoApps': 'Nenhum app com som agora',
   'jlocal.waiting': 'Esperando o app aparecer',
   'jlocal.already': 'Já baixei',
+  'jlocal.alreadyRetry': 'Tentar de novo',
   'jlocal.alreadyAsking': 'Procurando…',
   'jlocal.connectedNow': 'Conectado',
   'jlocal.modalOptional': 'Ele é totalmente opcional.',

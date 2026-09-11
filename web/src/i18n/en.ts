@@ -381,6 +381,7 @@ export const en: Record<string, string> = {
   'jlocal.soundNoApps': 'No app with sound right now',
   'jlocal.waiting': 'Waiting for the app to show up',
   'jlocal.already': 'Already installed',
+  'jlocal.alreadyRetry': 'Try again',
   'jlocal.alreadyAsking': 'Checking…',
   'jlocal.connectedNow': 'Connected',
   'jlocal.modalOptional': 'It is completely optional.',

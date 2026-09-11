@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, Download, Gauge, Magnet, Volume2 } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import { JLOCAL_ORIGIN, connectJLocal, type JLocalSnapshot } from '../jlocal/status'
-import { askJLocalScreenPermission } from '../jlocal/askScreenPermission'
+import { connectJLocal, type JLocalSnapshot } from '../jlocal/status'
+import { askJLocalScreenPermission, probeJLocalScreenPermission } from '../jlocal/askScreenPermission'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { Button } from '../ui/Button'
 import { MORPH_EASE } from '../ui/morphTokens'
@@ -43,24 +43,21 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
   const still = useReducedMotion() ?? false
   const os = detectOS()
   const [asking, setAsking] = useState(false)
-  // null while unknown (card closed, app absent, old build): the button only
-  // shows on a definite "no", so nobody who is already granted sees it.
+  // null only while the app is unreachable: a denial answers false, so the
+  // retry stays on screen for exactly the people who need it.
   const [granted, setGranted] = useState<boolean | null>(null)
   const [probe, setProbe] = useState(0)
+  // macOS only prompts once. After a denial the app can no longer raise the
+  // dialog, so the card starts saying where the switch lives.
+  const [refused, setRefused] = useState(false)
 
   useEffect(() => {
-    if (!open || !status.connected) { setGranted(null); return }
+    if (!open || !status.connected) { setGranted(null); setRefused(false); return }
     let cancelled = false
-    void fetch(`${JLOCAL_ORIGIN}/capabilities`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error(String(response.status))
-        const body = (await response.json()) as { capabilities?: { permissions?: { screenCapture?: unknown } } }
-        const value = body.capabilities?.permissions?.screenCapture
-        if (!cancelled) setGranted(typeof value === 'boolean' ? value : null)
-      })
-      .catch(() => { if (!cancelled) setGranted(null) })
+    void probeJLocalScreenPermission().then((value) => { if (!cancelled) setGranted(value) })
     return () => { cancelled = true }
   }, [open, status.connected, probe])
+
   const fade = still ? { duration: 0 } : { duration: 0.28, ease: MORPH_EASE }
   const perks = [
     { icon: <Gauge size={16} aria-hidden="true" />, text: t('jlocal.perkQuality') },
@@ -75,9 +72,11 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
     <Button variant="ghost" disabled={asking} onClick={() => {
       setAsking(true)
       connectJLocal()
-      void askJLocalScreenPermission().finally(() => { setAsking(false); setProbe((n) => n + 1) })
+      void askJLocalScreenPermission()
+        .then((ok) => { if (!ok) setRefused(true) })
+        .finally(() => { setAsking(false); setProbe((n) => n + 1) })
     }}>
-      {t(asking ? 'jlocal.alreadyAsking' : 'jlocal.already')}
+      {t(asking ? 'jlocal.alreadyAsking' : refused ? 'jlocal.alreadyRetry' : 'jlocal.already')}
     </Button>
   ) : null
   return (
@@ -100,6 +99,7 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
           <li>{t(os === 'mac' ? 'jlocal.stepOpenMac' : os === 'win' ? 'jlocal.stepOpenWin' : 'jlocal.stepOpenLinux')}</li>
           <li>{t('jlocal.stepConnect')}</li>
         </ol>
+        {granted === false && refused ? <p className="jget-blocked">{t('jlocal.permission')}</p> : null}
         <AnimatePresence mode="wait" initial={false}>
           {status.connected ? (
             <motion.div key="on" className="jget-actions" initial={still ? false : { opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)' }} exit={{ opacity: 0, filter: 'blur(4px)' }} transition={fade}>

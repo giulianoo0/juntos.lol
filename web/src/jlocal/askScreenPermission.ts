@@ -12,12 +12,7 @@ import { JLOCAL_ORIGIN } from './status'
  */
 export async function askJLocalScreenPermission(): Promise<boolean> {
   try {
-    const listed = await fetch(`${JLOCAL_ORIGIN}/capture/displays`)
-    if (!listed.ok) return false
-    const body = (await listed.json()) as { displays?: unknown } | unknown[]
-    const list = Array.isArray(body) ? body : (body as { displays?: unknown }).displays
-    const first = Array.isArray(list) ? (list[0] as { id?: unknown } | undefined) : undefined
-    const id = typeof first?.id === 'string' || typeof first?.id === 'number' ? String(first.id) : null
+    const id = await firstDisplayId()
     if (id === null) return false
     const started = await fetch(`${JLOCAL_ORIGIN}/capture/start`, {
       method: 'POST',
@@ -35,5 +30,45 @@ export async function askJLocalScreenPermission(): Promise<boolean> {
   } catch {
     // The app went away mid-click; the status pill already says so.
     return false
+  }
+}
+
+/** The first display the app lists, or null when it lists none. */
+async function firstDisplayId(): Promise<string | null> {
+  const listed = await fetch(`${JLOCAL_ORIGIN}/capture/displays`)
+  if (!listed.ok) return null
+  const body = (await listed.json()) as { displays?: unknown } | unknown[]
+  const list = Array.isArray(body) ? body : (body as { displays?: unknown }).displays
+  const first = Array.isArray(list) ? (list[0] as { id?: unknown } | undefined) : undefined
+  return typeof first?.id === 'string' || typeof first?.id === 'number' ? String(first.id) : null
+}
+
+/**
+ * Whether the app may capture the screen right now: false is a definite no,
+ * null only when the app itself is unreachable.
+ *
+ * The advertisement is the cheap answer, but builds older than the
+ * `permissions` block omit it — and answering null there would hide the retry
+ * button from exactly the people who need it. So the fallback asks the thing
+ * every build has: one tiny snapshot, which is report-only and comes back 503
+ * `permission` while Screen Recording is denied.
+ */
+export async function probeJLocalScreenPermission(): Promise<boolean | null> {
+  try {
+    const advertised = await fetch(`${JLOCAL_ORIGIN}/capabilities`)
+    if (advertised.ok) {
+      const body = (await advertised.json()) as { capabilities?: { permissions?: { screenCapture?: unknown } } }
+      const value = body.capabilities?.permissions?.screenCapture
+      if (typeof value === 'boolean') return value
+    }
+    const id = await firstDisplayId()
+    if (id === null) return null
+    const snapshot = await fetch(`${JLOCAL_ORIGIN}/capture/snapshot?display_id=${encodeURIComponent(id)}&width=64`)
+    if (snapshot.ok) return true
+    if (snapshot.status !== 503) return null
+    const body = (await snapshot.json().catch(() => null)) as { error?: unknown } | null
+    return body?.error === 'permission' ? false : null
+  } catch {
+    return null
   }
 }

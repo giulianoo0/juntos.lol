@@ -390,6 +390,7 @@ button.timecode-chapter:hover { color: var(--text); }
 @keyframes jget-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 .jget-connected { display: inline-flex; align-items: center; gap: 7px; color: #7ee2a8; font-size: 13px; font-weight: 500; }
 .jget-platforms { margin: 12px 0 0; color: var(--text-faint); font-size: 12.5px; }
+.jget-blocked { margin: 0; padding: 10px 12px; border-radius: 12px; background: rgba(230,162,60,.12); color: #e6a23c; font-size: 12.5px; }
 .jget-platforms a { color: #8ab4ff; text-decoration: none; }
 .jget-platforms a:hover { text-decoration: underline; }
 .jget-platforms-sep { color: var(--text-faint); }
