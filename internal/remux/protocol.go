@@ -81,7 +81,20 @@ type Capability struct {
 	ActiveRuns      int         `json:"activeRuns"`
 	FFmpeg          string      `json:"ffmpeg"`
 	AudioCodecs     []string    `json:"audioCodecs"`
+	Youtube         *Youtube    `json:"youtube,omitempty"`
 	Runs            []RunReport `json:"runs,omitempty"`
+}
+
+// Youtube is the worker's word that it resolves YouTube links: yt-dlp is
+// there, and whether it leaves through a proxy.
+type Youtube struct {
+	Version string `json:"version"`
+	Proxied bool   `json:"proxied"`
+}
+
+// TakesYoutube reports whether a YouTube run may be dispatched here.
+func (c *Capability) TakesYoutube() bool {
+	return c.Compatible() && c.Youtube != nil && c.Youtube.Version != ""
 }
 
 // RunReport is one run's state as the worker last told it.

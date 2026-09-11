@@ -66,6 +66,13 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		case room.SourceScreen:
 			status = "ready"
 			fileName = ""
+		case room.SourceYoutube:
+			// The file name is the video's title, which may carry a slash.
+			if !validRoomText(fileName, maxFileNameBytes) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+				return
+			}
+			kind = room.SourceUpload
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return

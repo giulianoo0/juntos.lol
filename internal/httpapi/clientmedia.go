@@ -60,6 +60,52 @@ func RegisterClientMediaRoutes(rg *gin.RouterGroup, store *room.Store, cfg confi
 	rg.POST("/rooms/:id/client-media/publish", publishClientMedia(store, cfg, bucket, hooks))
 	rg.POST("/rooms/:id/client-media/metadata", metadataClientMedia(store, hooks))
 	rg.DELETE("/rooms/:id/client-media", releaseClientMedia(store))
+	rg.POST("/rooms/:id/client-media/run", setClientMediaRun(store))
+}
+
+type clientRunRequest struct {
+	Claim string `json:"claim" binding:"required"`
+	RunID string `json:"runId" binding:"required"`
+}
+
+// setClientMediaRun moves the room's run fence for a producer the claim
+// holder orchestrates from outside the fleet (the companion app): every
+// region is its own run, and the fence must name the newest one before it
+// publishes, or the commit refuses it as stale.
+func setClientMediaRun(store *room.Store) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		var req clientRunRequest
+		if err := c.ShouldBindJSON(&req); err != nil || len(req.RunID) > 64 || !validRunID(req.RunID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if _, ok := authorizeClaim(c, store, roomID, req.Claim); !ok {
+			return
+		}
+		if err := store.SetProducerRun(c.Request.Context(), roomID, req.RunID); err != nil {
+			slog.ErrorContext(c.Request.Context(), "set producer run", "room_id", roomID, "error", err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	}
+}
+
+func validRunID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 type clientClaimResponse struct {

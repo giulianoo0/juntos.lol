@@ -264,21 +264,26 @@ func (r *Registry) Snapshot() []Worker {
 // JobRecord is a job's durable state. Everything a browser can ask about
 // lives here so any instance can answer for it.
 type JobRecord struct {
-	ID         string      `json:"id"`
-	SessionID  string      `json:"sessionId"`
-	RoomID     string      `json:"roomId,omitempty"`
-	Infohash   string      `json:"infohash"`
-	WorkerID   string      `json:"workerId"`
-	LeaseID    string      `json:"leaseId"`
-	State      string      `json:"state"`
-	Error      string      `json:"error,omitempty"`
-	Name       string      `json:"name,omitempty"`
-	Files      []FileEntry `json:"files,omitempty"`
-	FileIndex  *int        `json:"fileIndex,omitempty"`
-	Audience   string      `json:"audience,omitempty"`
-	CreatedAt  time.Time   `json:"createdAt"`
-	LastSeenAt time.Time   `json:"lastSeenAt"`
-	HaveBytes  int64       `json:"haveBytes"`
+	ID        string `json:"id"`
+	SessionID string `json:"sessionId"`
+	RoomID    string `json:"roomId,omitempty"`
+	// Kind is "" for a torrent and "youtube" for a link the worker resolves;
+	// a YouTube job has no infohash, no lease and no files.
+	Kind       string          `json:"kind,omitempty"`
+	URL        string          `json:"url,omitempty"`
+	Summary    json.RawMessage `json:"summary,omitempty"`
+	Infohash   string          `json:"infohash"`
+	WorkerID   string          `json:"workerId"`
+	LeaseID    string          `json:"leaseId"`
+	State      string          `json:"state"`
+	Error      string          `json:"error,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Files      []FileEntry     `json:"files,omitempty"`
+	FileIndex  *int            `json:"fileIndex,omitempty"`
+	Audience   string          `json:"audience,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	LastSeenAt time.Time       `json:"lastSeenAt"`
+	HaveBytes  int64           `json:"haveBytes"`
 }
 
 type FileEntry struct {

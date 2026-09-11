@@ -62,6 +62,9 @@ type PlayState struct {
 const (
 	SourceUpload = "upload"
 	SourceScreen = "screen"
+	// SourceYoutube is an upload whose producer is a worker or the host's
+	// companion app reading a YouTube link; the room prepares like any upload.
+	SourceYoutube = "youtube"
 )
 
 // Room is the aggregate stored under room:{id}.

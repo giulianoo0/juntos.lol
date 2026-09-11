@@ -89,8 +89,12 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
+		kind := req.Kind
+		if kind == room.SourceYoutube {
+			kind = room.SourceUpload
+		}
 		_, generation, err := store.SwapSource(
-			c.Request.Context(), roomID, req.Kind, fileName, status, time.Now())
+			c.Request.Context(), roomID, kind, fileName, status, time.Now())
 		if errors.Is(err, room.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
 			return
@@ -106,7 +110,7 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":          status,
-			"sourceKind":      req.Kind,
+			"sourceKind":      kind,
 			"fileName":        fileName,
 			"mediaGeneration": generation,
 		})
@@ -124,6 +128,11 @@ func sourceTarget(req changeSourceRequest) (status, fileName string, ok bool) {
 		return "uploading", req.FileName, true
 	case room.SourceScreen:
 		return "ready", "", true
+	case room.SourceYoutube:
+		if !validRoomText(req.FileName, maxFileNameBytes) {
+			return "", "", false
+		}
+		return "uploading", req.FileName, true
 	default:
 		return "", "", false
 	}

@@ -33,11 +33,15 @@ var (
 
 // RemuxRun is the durable record of a room's remote production.
 type RemuxRun struct {
-	RunID           string    `json:"runId"`
-	RequestID       string    `json:"requestId"`
-	JobID           string    `json:"jobId"`
-	SessionID       string    `json:"sessionId"`
-	WorkerID        string    `json:"workerId"`
+	RunID     string `json:"runId"`
+	RequestID string `json:"requestId"`
+	JobID     string `json:"jobId"`
+	SessionID string `json:"sessionId"`
+	WorkerID  string `json:"workerId"`
+	// Source is "" for a torrent file and "youtube" for a link; a YouTube
+	// run has no infohash, no lease, and needs no re-lease to restart.
+	Source          string    `json:"source,omitempty"`
+	URL             string    `json:"url,omitempty"`
 	Infohash        string    `json:"infohash"`
 	FileIndex       int       `json:"fileIndex"`
 	LeaseID         string    `json:"leaseId"`
@@ -163,7 +167,12 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	if err != nil {
 		return nil, err
 	}
-	if job.State != JobServing || job.FileIndex == nil {
+	youtube := job.Kind == JobKindYoutube
+	if youtube {
+		if job.State != JobListed {
+			return nil, ErrNotListed
+		}
+	} else if job.State != JobServing || job.FileIndex == nil {
 		return nil, ErrNotListed
 	}
 	if job.RoomID != req.RoomID {
@@ -216,6 +225,11 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	if !o.capableWorker(job.WorkerID) {
 		return nil, ErrRemuxUnavailable
 	}
+	if youtube {
+		if held, ok := o.Service.Registry.Get(job.WorkerID); !ok || !held.Heartbeat.Remux.TakesYoutube() {
+			return nil, ErrRemuxUnavailable
+		}
+	}
 
 	secret := make([]byte, 16)
 	if _, err := rand.Read(secret); err != nil {
@@ -229,14 +243,20 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		return nil, ErrRemuxRoomState
 	}
 
+	fileIndex := 0
+	if job.FileIndex != nil {
+		fileIndex = *job.FileIndex
+	}
 	run := &RemuxRun{
 		RunID:           "run_" + randomID(8),
 		RequestID:       req.RequestID,
 		JobID:           job.ID,
 		SessionID:       sessionID,
 		WorkerID:        job.WorkerID,
+		Source:          job.Kind,
+		URL:             job.URL,
 		Infohash:        job.Infohash,
-		FileIndex:       *job.FileIndex,
+		FileIndex:       fileIndex,
 		LeaseID:         job.LeaseID,
 		Claim:           claim,
 		RoomID:          req.RoomID,
@@ -279,17 +299,20 @@ func (o *RemuxOrchestrator) dispatchStart(ctx context.Context, run *RemuxRun) er
 			PutConcurrency: 4,
 		},
 	}
-	index := run.FileIndex
-	result, err := o.Service.Hub.Dispatch(ctx, Job{
-		Kind:      "remuxStart",
-		JobID:     "rx_" + randomID(6),
-		WorkerID:  run.WorkerID,
-		Infohash:  run.Infohash,
-		FileIndex: &index,
-		RoomID:    run.RoomID,
-		LeaseID:   run.LeaseID,
-		Remux:     spec,
-	}, 60*time.Second)
+	job := Job{
+		Kind:     "remuxStart",
+		JobID:    "rx_" + randomID(6),
+		WorkerID: run.WorkerID,
+		RoomID:   run.RoomID,
+		Remux:    spec,
+	}
+	if run.Source == JobKindYoutube {
+		job.Youtube = &YoutubeJob{URL: run.URL}
+	} else {
+		index := run.FileIndex
+		job.Infohash, job.FileIndex, job.LeaseID = run.Infohash, &index, run.LeaseID
+	}
+	result, err := o.Service.Hub.Dispatch(ctx, job, 60*time.Second)
 	if err != nil {
 		return fmt.Errorf("remux dispatch: %w", err)
 	}
@@ -544,20 +567,22 @@ func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRu
 			break
 		}
 	}
-	if result, err := o.Service.Hub.Dispatch(ctx, Job{
-		Kind: "lease", JobID: "rl_" + randomID(6), WorkerID: lost.WorkerID,
-		Infohash: lost.Infohash, LeaseID: lost.LeaseID,
-	}, 3*time.Minute); err != nil || !result.OK {
-		slog.Warn("lost run re-lease failed", "room_id", lost.RoomID, "error", err)
-		return false
-	}
-	index := lost.FileIndex
-	if result, err := o.Service.Hub.Dispatch(ctx, Job{
-		Kind: "select", JobID: "rs_" + randomID(6), WorkerID: lost.WorkerID,
-		Infohash: lost.Infohash, FileIndex: &index, RoomID: lost.RoomID,
-	}, 60*time.Second); err != nil || !result.OK {
-		slog.Warn("lost run re-select failed", "room_id", lost.RoomID, "error", err)
-		return false
+	if lost.Source != JobKindYoutube {
+		if result, err := o.Service.Hub.Dispatch(ctx, Job{
+			Kind: "lease", JobID: "rl_" + randomID(6), WorkerID: lost.WorkerID,
+			Infohash: lost.Infohash, LeaseID: lost.LeaseID,
+		}, 3*time.Minute); err != nil || !result.OK {
+			slog.Warn("lost run re-lease failed", "room_id", lost.RoomID, "error", err)
+			return false
+		}
+		index := lost.FileIndex
+		if result, err := o.Service.Hub.Dispatch(ctx, Job{
+			Kind: "select", JobID: "rs_" + randomID(6), WorkerID: lost.WorkerID,
+			Infohash: lost.Infohash, FileIndex: &index, RoomID: lost.RoomID,
+		}, 60*time.Second); err != nil || !result.OK {
+			slog.Warn("lost run re-select failed", "room_id", lost.RoomID, "error", err)
+			return false
+		}
 	}
 	if err := o.Store.SetProducerRun(ctx, lost.RoomID, replaced.RunID); err != nil {
 		return false
@@ -661,8 +686,10 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		if job, err := o.Service.Registry.LoadJob(ctx, run.JobID); err == nil && job != nil {
 			job.LastSeenAt = time.Now()
 			_ = o.Service.Registry.SaveJob(ctx, job, o.Service.JobTTL)
-			_ = o.Service.Hub.Send(Job{Kind: "renew", JobID: "n_" + randomID(6),
-				WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+			if job.Kind != JobKindYoutube {
+				_ = o.Service.Hub.Send(Job{Kind: "renew", JobID: "n_" + randomID(6),
+					WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+			}
 		}
 	}
 }

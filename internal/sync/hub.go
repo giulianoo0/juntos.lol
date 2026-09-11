@@ -523,11 +523,11 @@ func (r *roomConn) handleJoin(request joinRequest) {
 }
 
 // handleSource records which browser holds the room's source. Only the one
-// running the pipeline says so, and only the three origins the room knows
-// are kept; everyone then refetches the room to learn it.
+// running the pipeline says so, and only the origins the room knows are
+// kept; everyone then refetches the room to learn it.
 func (r *roomConn) handleSource(sender *client, message Inbound) {
 	switch message.Origin {
-	case "file", "torrent", "url":
+	case "file", "torrent", "url", "youtube":
 	default:
 		return
 	}

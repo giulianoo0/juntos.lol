@@ -49,6 +49,7 @@ type Result struct {
 	Name          string          `json:"name"`
 	Files         []FileEntry     `json:"files"`
 	SelectedBytes int64           `json:"selectedBytes"`
+	Summary       json.RawMessage `json:"summary,omitempty"`
 	Raw           json.RawMessage `json:"-"`
 }
 

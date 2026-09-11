@@ -198,6 +198,136 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 	_ = s.Registry.SaveJob(ctx, current, s.JobTTL)
 }
 
+const JobKindYoutube = "youtube"
+
+var ErrNoYoutube = errors.New("no_youtube")
+
+// YoutubeCapacity says whether a link can be resolved right now: a healthy
+// worker with yt-dlp and a free remux slot.
+func (s *Service) YoutubeCapacity() string {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return "disabled"
+	}
+	now := time.Now()
+	any, free := false, false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) || !w.Heartbeat.Remux.TakesYoutube() {
+			continue
+		}
+		any = true
+		if w.Heartbeat.Remux.ActiveRuns < w.Heartbeat.Remux.Slots {
+			free = true
+		}
+	}
+	switch {
+	case free:
+		return "available"
+	case any:
+		return "busy"
+	default:
+		return "no_workers"
+	}
+}
+
+// placeYoutube picks the worker with the most remux room among those that
+// resolve links.
+func (s *Service) placeYoutube(now time.Time) (Worker, error) {
+	var best *Worker
+	bestFree := -1
+	seen := false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) || !w.Heartbeat.Remux.TakesYoutube() {
+			continue
+		}
+		seen = true
+		free := w.Heartbeat.Remux.Slots - w.Heartbeat.Remux.ActiveRuns
+		if free <= 0 {
+			continue
+		}
+		if best == nil || free > bestFree {
+			candidate := w
+			best, bestFree = &candidate, free
+		}
+	}
+	switch {
+	case best != nil:
+		return *best, nil
+	case seen:
+		return Worker{}, ErrWorkersBusy
+	default:
+		return Worker{}, ErrNoYoutube
+	}
+}
+
+// StartYoutube registers a link for a session: quota, placement, then the
+// resolve job in the background; the summary arrives through Get.
+func (s *Service) StartYoutube(ctx context.Context, sessionID, url string) (*JobRecord, error) {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return nil, ErrDisabled
+	}
+	worker, err := s.placeYoutube(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	job := &JobRecord{
+		ID:         "y_" + randomID(8),
+		SessionID:  sessionID,
+		Kind:       JobKindYoutube,
+		URL:        url,
+		WorkerID:   worker.ID,
+		State:      JobResolving,
+		CreatedAt:  time.Now(),
+		LastSeenAt: time.Now(),
+	}
+	if s.Quota != nil {
+		ok, err := s.Quota.AcquireJob(ctx, sessionID, job.ID, s.JobTTL)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrQuotaJobs
+		}
+	}
+	if err := s.Registry.SaveJob(ctx, job, s.JobTTL); err != nil {
+		if s.Quota != nil {
+			_ = s.Quota.ReleaseJob(ctx, sessionID, job.ID)
+		}
+		return nil, err
+	}
+	go s.resolveYoutube(*job)
+	return job, nil
+}
+
+func (s *Service) resolveYoutube(job JobRecord) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:     "ytResolve",
+		JobID:    job.ID,
+		WorkerID: job.WorkerID,
+		Youtube:  &YoutubeJob{URL: job.URL},
+	}, 2*time.Minute)
+	current, loadErr := s.Registry.LoadJob(ctx, job.ID)
+	if loadErr != nil || current == nil {
+		return
+	}
+	switch {
+	case err != nil:
+		current.State, current.Error = JobFailed, mapDispatchError(err)
+	case !result.OK:
+		current.State, current.Error = JobFailed, result.Error
+		slog.Info("worker refused youtube link", "job", job.ID, "code", result.Error, "detail", result.Detail)
+	case len(result.Summary) == 0:
+		current.State, current.Error = JobFailed, "youtube_tool"
+	default:
+		current.State, current.Summary = JobListed, result.Summary
+	}
+	if current.State == JobFailed && s.Quota != nil {
+		_ = s.Quota.ReleaseJob(ctx, current.SessionID, current.ID)
+	}
+	_ = s.Registry.SaveJob(ctx, current, s.JobTTL)
+}
+
 func mapDispatchError(err error) string {
 	switch {
 	case errors.Is(err, ErrWorkerGone):
@@ -361,7 +491,9 @@ func (s *Service) Release(ctx context.Context, sessionID, jobID string) error {
 }
 
 func (s *Service) release(ctx context.Context, job *JobRecord) {
-	_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+	if job.Kind != JobKindYoutube {
+		_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+	}
 	if s.Quota != nil {
 		_ = s.Quota.ReleaseJob(ctx, job.SessionID, job.ID)
 	}

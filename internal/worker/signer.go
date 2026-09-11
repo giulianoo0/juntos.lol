@@ -59,18 +59,24 @@ func (s *Signer) PublicKeyB64() string {
 // Job is what a worker is told to do. It names an infohash, never a URL,
 // and the worker it is for; the nonce and expiry make it single-use.
 type Job struct {
-	Kind      string   `json:"kind"`
-	JobID     string   `json:"jobId"`
-	WorkerID  string   `json:"workerId"`
-	Nonce     string   `json:"nonce"`
-	Exp       int64    `json:"exp"`
-	Infohash  string   `json:"infohash,omitempty"`
-	FileIndex *int     `json:"fileIndex,omitempty"`
-	RoomID    string   `json:"roomId,omitempty"`
-	LeaseID   string   `json:"leaseId,omitempty"`
-	Trackers  []string `json:"trackers,omitempty"`
-	JTI       string   `json:"jti,omitempty"`
-	Remux     any      `json:"remux,omitempty"`
+	Kind      string      `json:"kind"`
+	JobID     string      `json:"jobId"`
+	WorkerID  string      `json:"workerId"`
+	Nonce     string      `json:"nonce"`
+	Exp       int64       `json:"exp"`
+	Infohash  string      `json:"infohash,omitempty"`
+	FileIndex *int        `json:"fileIndex,omitempty"`
+	RoomID    string      `json:"roomId,omitempty"`
+	LeaseID   string      `json:"leaseId,omitempty"`
+	Trackers  []string    `json:"trackers,omitempty"`
+	JTI       string      `json:"jti,omitempty"`
+	Remux     any         `json:"remux,omitempty"`
+	Youtube   *YoutubeJob `json:"youtube,omitempty"`
+}
+
+// YoutubeJob names the page a ytResolve or a YouTube remuxStart works on.
+type YoutubeJob struct {
+	URL string `json:"url"`
 }
 
 // Envelope is a signed job as it crosses the control link.
