@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, Download, Gauge, Magnet, Volume2 } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import type { JLocalSnapshot } from '../jlocal/status'
+import { connectJLocal, type JLocalSnapshot } from '../jlocal/status'
+import { askJLocalScreenPermission } from '../jlocal/askScreenPermission'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { Button } from '../ui/Button'
 import { MORPH_EASE } from '../ui/morphTokens'
@@ -40,6 +42,7 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
 }) {
   const still = useReducedMotion() ?? false
   const os = detectOS()
+  const [asking, setAsking] = useState(false)
   const fade = still ? { duration: 0 } : { duration: 0.28, ease: MORPH_EASE }
   const perks = [
     { icon: <Gauge size={16} aria-hidden="true" />, text: t('jlocal.perkQuality') },
@@ -47,6 +50,18 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
     { icon: <Magnet size={16} aria-hidden="true" />, text: t('jlocal.perkTorrent') },
   ]
   const description = <>{t('jlocal.modalGuide')} <strong>{t('jlocal.modalOptional')}</strong></>
+  // Always here, on both halves of the card: whoever already has the app open
+  // uses it to re-probe the loopback and, on macOS, to bring the Screen
+  // Recording prompt back up — nothing the site polls ever asks for it.
+  const already = (
+    <Button variant="ghost" disabled={asking} onClick={() => {
+      setAsking(true)
+      connectJLocal()
+      void askJLocalScreenPermission().finally(() => setAsking(false))
+    }}>
+      {t(asking ? 'jlocal.alreadyAsking' : 'jlocal.already')}
+    </Button>
+  )
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="jget-dialog" title={t('jlocal.modalTitle')} description={description} closeLabel={t('home.closeDialog')}>
@@ -72,6 +87,7 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
             <motion.div key="on" className="jget-actions" initial={still ? false : { opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)' }} exit={{ opacity: 0, filter: 'blur(4px)' }} transition={fade}>
               <span className="jget-connected"><Check size={15} aria-hidden="true" />{t('jlocal.connectedNow')}{status.version ? ` · ${status.version}` : ''}</span>
               <span className="spacer" />
+              {already}
               <Button variant="ghost" onClick={() => onOpenChange(false)}>{t('home.closeDialog')}</Button>
             </motion.div>
           ) : (
@@ -82,6 +98,7 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
                     <Download size={15} aria-hidden="true" />{t(os === 'mac' ? 'jlocal.downloadMac' : os === 'win' ? 'jlocal.downloadWin' : 'jlocal.downloadLinux')}
                   </a>
                 </Button>
+                {already}
                 <span className="spacer" />
                 <span className="jget-waiting"><span className="jlocal-dot" aria-hidden="true" />{t('jlocal.waiting')}</span>
               </div>

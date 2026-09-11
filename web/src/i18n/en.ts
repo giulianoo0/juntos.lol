@@ -380,6 +380,8 @@ export const en: Record<string, string> = {
   'jlocal.soundPick': 'Untick an app to leave its sound out',
   'jlocal.soundNoApps': 'No app with sound right now',
   'jlocal.waiting': 'Waiting for the app to show up',
+  'jlocal.already': 'Already installed',
+  'jlocal.alreadyAsking': 'Checking…',
   'jlocal.connectedNow': 'Connected',
   'jlocal.modalOptional': 'It is completely optional.',
   'jlocal.pickTitle': 'Share with jlocal',

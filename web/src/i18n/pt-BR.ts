@@ -380,6 +380,8 @@ export const ptBR: Record<string, string> = {
   'jlocal.soundPick': 'Desmarque um app para tirar o som dele',
   'jlocal.soundNoApps': 'Nenhum app com som agora',
   'jlocal.waiting': 'Esperando o app aparecer',
+  'jlocal.already': 'Já baixei',
+  'jlocal.alreadyAsking': 'Procurando…',
   'jlocal.connectedNow': 'Conectado',
   'jlocal.modalOptional': 'Ele é totalmente opcional.',
   'jlocal.pickTitle': 'Compartilhar com o jlocal',

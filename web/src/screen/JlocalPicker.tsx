@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, Gauge, MonitorUp, Replace, ShieldAlert } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
+import { askJLocalScreenPermission } from '../jlocal/askScreenPermission'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
 import { useSoundChoice } from '../jlocal/soundChoice'
 import { Button } from '../ui/Button'
@@ -158,38 +159,15 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
   const swap = still ? { duration: 0 } : { duration: 0.22, ease: MORPH_EASE }
   const label = (id: ScreenQualityId) => screenQuality(id).label
 
-  /**
-   * The preview poll never prompts (the app answers 503 from a report-only
-   * probe), so the system dialog has to come from a click: one real capture
-   * start brings the app's prompt up, and stopping it right after leaves
-   * nothing running. Granted, the thumbnails come back on their own.
-   */
   const askPermission = async () => {
     if (asking) return
     setAsking(true)
-    const idKey = tab === 'windows' ? 'window_id' : 'display_id'
-    try {
-      const started = await fetch(`${JLOCAL_ORIGIN}/capture/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [idKey]: selected, width: 640, height: 360, fps: 5 }),
-      })
-      const body = (await started.json().catch(() => null)) as { capture_id?: unknown } | null
-      const captureId = typeof body?.capture_id === 'string' ? body.capture_id : null
-      void fetch(`${JLOCAL_ORIGIN}/capture/stop`, captureId === null ? { method: 'POST' } : {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ capture_id: captureId }),
-      }).catch(() => undefined)
-      if (started.ok) {
-        setBlocked(false)
-        setLists({ displays: null, windows: null })
-      }
-    } catch {
-      // The app went away mid-click; the pill above already says so.
-    } finally {
-      setAsking(false)
+    const granted = await askJLocalScreenPermission()
+    if (granted) {
+      setBlocked(false)
+      setLists({ displays: null, windows: null })
     }
+    setAsking(false)
   }
 
   const share = () => {
