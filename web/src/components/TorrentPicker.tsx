@@ -7,6 +7,7 @@ import { torrentErrorKey } from '../torrentErrors'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
+import { isYoutubeLink } from '../youtube'
 
 const EMPTY_TORRENT_STATS: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
 
@@ -16,6 +17,8 @@ interface TorrentPickerProps {
   maxFileBytes: number
   onPicked: (file: TorrentVideoFile, session: TorrentSession, magnet: string) => void
   onExit?: () => void
+  /** A YouTube link pasted where a magnet goes is handed here instead of refused. */
+  onYoutubeLink?: (url: string) => void
   initialSession?: TorrentSession | null
   initialMagnet?: string
   t: Translator
@@ -38,7 +41,7 @@ function formatBytes(bytes: number): string {
  * it opened itself; a session handed in by the caller is released only by
  * backing out of its list.
  */
-export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
+export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
   const [probes, setProbes] = useState<WorkerProbe[]>([])
@@ -78,8 +81,14 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
     return () => window.clearInterval(timer)
   }, [session])
 
+  const youtubeLink = onYoutubeLink !== undefined && isYoutubeLink(magnet)
+
   const load = async () => {
     if (!magnet.trim() || loading) return
+    if (youtubeLink) {
+      onYoutubeLink?.(magnet.trim())
+      return
+    }
     if (capacity === 'disabled' || capacity === 'no_workers') {
       setError(t('home.torrentNoWorkers'))
       return
@@ -189,7 +198,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, initialSession, 
             onClick={() => { void load() }}
           >
             <span className="morph-fade button-label" data-morphing={swapping}>
-              {t(waiting ? 'home.torrentLoading' : 'home.torrentLoad')}
+              {t(waiting ? 'home.torrentLoading' : youtubeLink ? 'home.openYoutube' : 'home.torrentLoad')}
             </span>
           </button>
         </div>

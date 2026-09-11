@@ -5,6 +5,8 @@ import App from './App.tsx'
 import { ToastProvider } from './ui/Toast'
 import { installMockApi } from './mocks'
 import { markEngine } from './engine'
+import { registerYoutubeBackend } from './youtube'
+import { jlocalBackend } from './jlocal/youtube'
 
 markEngine()
 installMockApi()
@@ -16,6 +18,8 @@ createRoot(document.getElementById('root')!).render(
     </ToastProvider>
   </StrictMode>,
 )
+
+registerYoutubeBackend(jlocalBackend)
 
 const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
 const idle = window.requestIdleCallback

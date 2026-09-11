@@ -14,6 +14,7 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // pulls mediabunny into the first-paint chunk and defeats the dynamic import.
 import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
 import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
+import { backendFor, type YoutubeSession } from './youtube'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -76,9 +77,34 @@ const uploads = new Map<string, UploadEntry>()
 
 const remuxHandles = new Map<string, ClientRemuxHandle>()
 
+// A production this tab orchestrates but does not run (the companion app's):
+// its handle answers follows like the pipeline's, and it is stopped the
+// moment another source takes the room.
+const externalStops = new Map<string, () => void>()
+
 /** The running remux pipeline for this room, when this tab is its host. */
 export function remuxHandleFor(roomID: string): ClientRemuxHandle | undefined {
   return remuxHandles.get(roomID)
+}
+
+/** Hands the room's follow to an external production; `stop` runs when the room moves on. */
+export function registerRemuxHandle(roomID: string, handle: ClientRemuxHandle, stop: () => void): void {
+  releaseExternal(roomID)
+  remuxHandles.set(roomID, handle)
+  externalStops.set(roomID, stop)
+}
+
+export function unregisterRemuxHandle(roomID: string, handle: ClientRemuxHandle): void {
+  if (remuxHandles.get(roomID) === handle) remuxHandles.delete(roomID)
+  externalStops.delete(roomID)
+}
+
+function releaseExternal(roomID: string): void {
+  const stop = externalStops.get(roomID)
+  if (!stop) return
+  externalStops.delete(roomID)
+  remuxHandles.delete(roomID)
+  stop()
 }
 
 const torrentSessions = new Map<string, TorrentSession>()
@@ -92,7 +118,7 @@ const remoteProductions = new Set<string>()
 export function isRemoteProduction(roomID: string): boolean {
   return remoteProductions.has(roomID)
 }
-export type SourceOrigin = 'file' | 'torrent' | 'url'
+export type SourceOrigin = 'file' | 'torrent' | 'url' | 'youtube'
 
 /** What this tab's pipeline for the room feeds from, when this tab runs one. */
 export function sourceOriginFor(roomID: string): SourceOrigin | null {
@@ -115,7 +141,7 @@ export function uploadActive(roomID: string): boolean {
 // room can pick the preparo back up. A picked File has no way back.
 
 export interface ResumableSource {
-  kind: 'torrent' | 'url'
+  kind: 'torrent' | 'url' | 'youtube'
   fileName: string
   magnet?: string
   filePath?: string
@@ -182,7 +208,7 @@ export async function changeRoomSource(
   roomID: string,
   memberId: string,
   capability: string,
-  kind: 'upload' | 'screen',
+  kind: 'upload' | 'screen' | 'youtube',
   fileName?: string,
 ): Promise<RoomSource> {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
@@ -257,6 +283,55 @@ export async function createRoomAndUploadTorrent(
   return { roomID: created.id, nickname: created.nickname }
 }
 
+export async function createRoomAndUploadYoutube(
+  session: YoutubeSession,
+  nickname: string,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(youtubeFileName(session), nickname, 'youtube')
+  startYoutubeUpload(created.id, 0, session)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
+/** The room's file name for a video: its title, or the id when there is none. */
+export function youtubeFileName(session: YoutubeSession): string {
+  const title = session.summary.title.trim()
+  return (title || session.videoId).slice(0, 200)
+}
+
+/**
+ * Hands the link to its backend. The backend produces the video or nobody
+ * does; progress and readiness then arrive through the room like any
+ * guest's, and a refusal is the room's failure.
+ */
+export function startYoutubeUpload(
+  roomID: string,
+  mediaGeneration: number,
+  session: YoutubeSession,
+  auth?: TorrentAuth,
+): void {
+  releaseExternal(roomID)
+  saveResumableSource(roomID, { kind: 'youtube', fileName: youtubeFileName(session), url: session.url })
+  remoteProductions.delete(roomID)
+  origins.set(roomID, 'youtube')
+  const entry = createEntry(0)
+  uploads.set(roomID, entry)
+  const ownerToken = ownerTokenFor(roomID)
+  const start = mocksEnabled
+    ? Promise.resolve<string | null>(null)
+    : backendFor(session).start(session, { roomId: roomID, mediaGeneration, ownerToken: ownerToken || undefined, auth })
+  void start.then((refusal) => {
+    if (refusal !== null) {
+      lastFailureDetail = refusal
+      finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => session.destroy())
+      return
+    }
+    remoteProductions.add(roomID)
+    lastFailureDetail = null
+    finishEntry(roomID, entry, null, () => undefined)
+  })
+}
+
 export async function createRoomAndUploadUrl(
   url: string,
   fileName: string,
@@ -296,6 +371,7 @@ export function startTorrentUpload(
   onProgress?: (progress: UploadProgress) => void,
   auth?: TorrentAuth,
 ): void {
+  releaseExternal(roomID)
   torrentSessions.set(roomID, session)
   if (session.magnet) {
     saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
@@ -380,6 +456,7 @@ export function startRoomUpload(
   { onProgress, cleanup = () => {} }: RoomUploadOptions = {},
 ): void {
   const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
+  releaseExternal(roomID)
   remoteProductions.delete(roomID)
   origins.set(roomID, source.kind === 'file' ? 'file' : 'url')
   const size = sourceSize(source)

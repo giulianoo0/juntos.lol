@@ -8,6 +8,8 @@ export interface JLocalCapabilities {
   screen: { available: boolean; capture: boolean; h264: boolean; maxWidth: number; maxHeight: number; maxFps: number }
   audio: { appList: boolean; capture: boolean }
   torrent: { available: boolean }
+  /** Links prepared by the app: `tools` says why not when `available` is false. */
+  youtube: { available: boolean; tools: string }
 }
 
 const FETCH_TIMEOUT_MS = 1500
@@ -47,6 +49,10 @@ function parseCapabilities(body: unknown): JLocalCapabilities | null {
     },
     audio: { appList: audio.appList, capture: audio.capture === true },
     torrent: { available: torrent.available },
+    // Older apps have no youtube block: they cannot prepare links.
+    youtube: isRecord(caps.youtube)
+      ? { available: caps.youtube.available === true, tools: typeof caps.youtube.tools === 'string' ? caps.youtube.tools : 'missing' }
+      : { available: false, tools: 'unsupported' },
   }
 }
 

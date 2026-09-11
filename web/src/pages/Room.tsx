@@ -12,6 +12,7 @@ import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
 import { Check, Compass, Crown, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
+import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -40,6 +41,8 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { YoutubePicker } from '../components/YoutubePicker'
+import { isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
 import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
@@ -59,6 +62,8 @@ import {
   isRemoteProduction,
   startTorrentUpload,
   startUrlUpload,
+  startYoutubeUpload,
+  youtubeFileName,
   type RoomUploadProgress,
   remuxHandleFor,
   torrentStatsFor,
@@ -273,6 +278,17 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           startUrlUpload(room.id, next.mediaGeneration, source.url ?? '', source.fileName, source.size ?? 0)
           return
         }
+        if (source.kind === 'youtube') {
+          const session = await openYoutube(source.url ?? '')
+          try {
+            const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'youtube', youtubeFileName(session))
+            startYoutubeUpload(room.id, next.mediaGeneration, session, { memberId: sync.memberId, capability: sync.capability })
+          } catch (error) {
+            session.destroy()
+            throw error
+          }
+          return
+        }
         const session = await openTorrent(source.magnet ?? '')
         const file = session.files.find((candidate) => candidate.path === source.filePath) ?? session.files[0]
         if (!file) {
@@ -290,7 +306,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       } catch (error) {
         console.error('resume preparation failed', error)
         toast(t('room.resumeFailed'))
-        if (!torrentErrorRetryable(error)) clearResumableSource(room.id)
+        if (!torrentErrorRetryable(error) || !youtubeErrorRetryable(error)) clearResumableSource(room.id)
       }
     })()
   }, [needsPreparo, room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
@@ -307,7 +323,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
   useMessageChime(sync.messages, sync.connected, nickname)
-  const [sourcePanel, setSourcePanel] = useState<'torrent' | null>(null)
+  const [sourcePanel, setSourcePanel] = useState<'torrent' | 'youtube' | null>(null)
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
@@ -363,7 +379,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       await run()
     } catch (error) {
       console.error('change source failed', error)
-      setSourceError(isTorrentError(error) ? torrentErrorKey(error) : 'room.changeFailed')
+      setSourceError(isTorrentError(error) ? torrentErrorKey(error) : isYoutubeError(error) ? youtubeErrorKey(error) : 'room.changeFailed')
     }
   }
 
@@ -386,6 +402,19 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         throw error
       }
       startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
+    })
+  }
+
+  const chooseYoutube = (session: YoutubeSession) => {
+    void swapSource(async () => {
+      let next
+      try {
+        next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'youtube', youtubeFileName(session))
+      } catch (error) {
+        session.destroy()
+        throw error
+      }
+      startYoutubeUpload(room.id, next.mediaGeneration, session, { memberId: sync.memberId, capability: sync.capability })
     })
   }
 
@@ -622,6 +651,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               onOpen={() => setSourceError('')}
               onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
               onTorrent={() => setSourcePanel('torrent')}
+              onYoutube={() => setSourcePanel('youtube')}
               onFile={() => fileInputRef.current?.click()}
               onScreen={chooseScreen}
             />
@@ -861,14 +891,23 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             className="torrent-dialog"
             closeLabel={t('home.closeDialog')}
             hideTitle
-            title={t('home.torrentTitle')}
+            title={t(sourcePanel === 'youtube' ? 'home.youtubeTitle' : 'home.torrentTitle')}
           >
-            <TorrentPicker
-              maxFileBytes={MAX_UPLOAD_BYTES}
-              t={t}
-              onExit={() => setSourcePanel(null)}
-              onPicked={chooseTorrent}
-            />
+            {sourcePanel === 'youtube' ? (
+              <YoutubePicker
+                t={t}
+                onExit={() => setSourcePanel(null)}
+                onPicked={(session) => { setSourcePanel(null); chooseYoutube(session) }}
+              />
+            ) : (
+              <TorrentPicker
+                maxFileBytes={MAX_UPLOAD_BYTES}
+                t={t}
+                onExit={() => setSourcePanel(null)}
+                onYoutubeLink={() => setSourcePanel('youtube')}
+                onPicked={chooseTorrent}
+              />
+            )}
           </DialogContent>
         ) : null}
       </Dialog>
@@ -927,10 +966,11 @@ function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKic
 }
 
 /** The one entry point for putting something else on, as a MorphingMenu. */
-function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
+function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, onScreen, t }: {
   onOpen: () => void
   onCatalog: () => void
   onTorrent: () => void
+  onYoutube: () => void
   onFile: () => void
   onScreen: () => void
   t: Translator
@@ -953,6 +993,9 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onFile, onScreen, t }: {
           </button>
           <button type="button" onClick={pick(close, onTorrent)}>
             <span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.switchTorrent')}
+          </button>
+          <button type="button" onClick={pick(close, onYoutube)}>
+            <YoutubeGlyph size={15} />{t('room.switchYoutube')}
           </button>
           <button type="button" onClick={pick(close, onFile)}>
             <Upload size={15} aria-hidden="true" />{t('room.switchFile')}

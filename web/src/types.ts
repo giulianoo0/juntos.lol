@@ -117,7 +117,7 @@ export interface RoomInfo {
   status: string
   sourceKind: 'upload' | 'screen'
   sourceMemberId?: string
-  sourceOrigin?: 'file' | 'torrent' | 'url'
+  sourceOrigin?: 'file' | 'torrent' | 'url' | 'youtube'
   mediaGeneration: number
   mediaVersion?: number
   subsVersion?: number

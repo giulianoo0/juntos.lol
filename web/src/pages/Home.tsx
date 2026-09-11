@@ -2,9 +2,10 @@ import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, typ
 import { AnimatePresence, motion, useReducedMotion, LayoutGroup } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { FolderOpen, LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
+import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
-import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createScreenRoom, isUnreadableFile, type UploadProgress } from '../upload'
+import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, createScreenRoom, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
@@ -20,6 +21,8 @@ import { caretToEndOnFocus } from '../ui/caret'
 import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { YoutubePicker } from '../components/YoutubePicker'
+import { isYoutubeError, youtubeErrorKey, type YoutubeSession } from '../youtube'
 import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
@@ -46,7 +49,7 @@ type HomeView = 'catalog' | 'manual' | 'status'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
-type ManualStep = false | 'menu' | 'file' | 'magnet' | 'drive' | 'screen' | 'join'
+type ManualStep = false | 'menu' | 'file' | 'magnet' | 'youtube' | 'drive' | 'screen' | 'join'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -58,6 +61,7 @@ interface RoomHistoryEntry {
 type PendingMedia =
   | { kind: 'local'; file: File }
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
+  | { kind: 'youtube'; session: YoutubeSession }
   | { kind: 'drive'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'screen'; stream: MediaStream }
   | { kind: 'jlocalScreen'; pick: JlocalPick }
@@ -138,6 +142,7 @@ export function Home() {
   }, [manualOpen, panelFilled])
   const [resumed, setResumed] = useState<{ magnet: string; session: TorrentSession } | null>(null)
   const [startingLabel, setStartingLabel] = useState('')
+  const [youtubeDraft, setYoutubeDraft] = useState('')
   const [streamProbes, setStreamProbes] = useState<WorkerProbe[]>([])
 
   const state = (location.state ?? {}) as TitleLocationState
@@ -167,7 +172,7 @@ export function Home() {
   }
 
   const discardPending = (media: PendingMedia | null) => {
-    if (media?.kind === 'torrent' || media?.kind === 'drive') media.session.destroy()
+    if (media?.kind === 'torrent' || media?.kind === 'drive' || media?.kind === 'youtube') media.session.destroy()
     if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
   }
 
@@ -208,7 +213,8 @@ export function Home() {
     setStartingLabel(
       media.kind === 'screen' || media.kind === 'jlocalScreen' ? t('room.screenLabel')
         : media.kind === 'stream' ? media.pick.displayName
-          : media.file.name,
+          : media.kind === 'youtube' ? youtubeFileName(media.session)
+            : media.file.name,
     )
     try {
       let room
@@ -219,6 +225,9 @@ export function Home() {
       } else if (media.kind === 'torrent') {
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
         fileName = media.file.name
+      } else if (media.kind === 'youtube') {
+        room = await createRoomAndUploadYoutube(media.session, draftNickname.trim())
+        fileName = youtubeFileName(media.session)
       } else if (media.kind === 'drive') {
         // The picker already selected the file; resolve its ranged Drive URL
         // and sidecars, then create the room onto a client-remuxed URL source.
@@ -276,7 +285,8 @@ export function Home() {
       const message = t(
         isUnreadableFile(error) ? 'error.fileChanged'
           : isTorrentError(error) ? torrentErrorKey(error)
-            : 'home.failed',
+            : isYoutubeError(error) ? youtubeErrorKey(error)
+              : 'home.failed',
       )
       if (view === 'catalog') {
         playError()
@@ -310,6 +320,9 @@ export function Home() {
             </button>
             <button onClick={() => { setError(''); setManualOpen('magnet') }}>
               <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+            </button>
+            <button onClick={() => { setError(''); setYoutubeDraft(''); setManualOpen('youtube') }}>
+              <YoutubeGlyph size={18} />{t('home.openYoutube')}
             </button>
             <button onClick={() => { setError(''); setManualOpen('drive') }}>
               <FolderOpen size={18} aria-hidden="true" />{t('home.openDrive')}
@@ -390,11 +403,27 @@ export function Home() {
             initialSession={resumed?.session ?? null}
             initialMagnet={resumed?.magnet ?? ''}
             onExit={() => { setResumed(null); setManualOpen('menu') }}
+            onYoutubeLink={(link) => { setYoutubeDraft(link); setManualOpen('youtube') }}
             onPicked={(file, session, magnet) => {
               setResumed({ magnet, session })
               setManualOpen(false)
               setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
+            }}
+          />
+        </div>
+      ) : null}
+
+      {shownManual === 'youtube' ? (
+        <div className="morph-step" data-step="youtube">
+          <YoutubePicker
+            t={t}
+            initialUrl={youtubeDraft}
+            onExit={() => setManualOpen('menu')}
+            onPicked={(session) => {
+              setManualOpen(false)
+              setDraftNickname(nickname)
+              setPendingMedia({ kind: 'youtube', session })
             }}
           />
         </div>
@@ -562,7 +591,8 @@ export function Home() {
             <span className="dialog-file">
               {pendingMedia.kind === 'screen' || pendingMedia.kind === 'jlocalScreen' ? t('home.screenDialog')
                 : pendingMedia.kind === 'stream' ? pendingMedia.pick.displayName
-                  : pendingMedia.file.name}
+                  : pendingMedia.kind === 'youtube' ? youtubeFileName(pendingMedia.session)
+                    : pendingMedia.file.name}
             </span>
             <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
               <label htmlFor="nickname">{t('home.nickname')}</label>
