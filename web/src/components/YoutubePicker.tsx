@@ -130,13 +130,13 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
     <div className="morph-fade" data-morphing={picking}>
       <div className="morph-head">
         {resolved || onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
-        <h2 className="stage-title">{resolved ? t('home.youtubeConfirm') : t('home.youtubeTitle')}</h2>
+        <h2 className="stage-title">{t('home.youtubeTitle')}</h2>
       </div>
-      <p className="stage-description">{resolved ? t('home.youtubeConfirmGuide') : t('home.youtubeGuide')}</p>
+      {!resolved ? <p className="stage-description">{t('home.youtubeGuide')}</p> : null}
       {!resolved ? (
         <>
-          <label htmlFor="youtube-link">{t('home.youtubeLink')}</label>
           <input
+            aria-label={t('home.youtubeLink')}
             id="youtube-link"
             className="sunken text-field youtube-input"
             autoFocus
@@ -164,7 +164,7 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
           </div>
         </div>
       ) : null}
-      {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
+      {error ? <div className="error-card torrent-error youtube-error" role="alert">{error}</div> : null}
       {!resolved && tools && tools.status !== 'ready' && tools.status !== 'unsupported' ? (
         <div className="youtube-tools">
           {tools.status === 'downloading' ? (
