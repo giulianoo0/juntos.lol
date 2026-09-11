@@ -391,6 +391,8 @@ export const en: Record<string, string> = {
   'jlocal.loading': 'Looking…',
   'jlocal.empty': 'Nothing to show here.',
   'jlocal.permission': 'Allow Screen Recording for jlocal in System Settings › Privacy & Security, then try again.',
+  'jlocal.permissionAsk': 'Ask again',
+  'jlocal.permissionAsking': 'Asking…',
   'jlocal.failed': 'jlocal could not start capturing.',
   'jlocal.needsUpdate': 'Update jlocal to share in hardware H.264.',
 }

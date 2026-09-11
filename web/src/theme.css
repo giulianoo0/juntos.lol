@@ -368,6 +368,10 @@ button.timecode-chapter:hover { color: var(--text); }
 .jpick-bar .ui-button, .jpick-bar .icon-button { height: 34px; white-space: nowrap; }
 .jpick-bar .ui-button--primary { padding: 0 16px; font-size: 12.5px; box-shadow: none; }
 .jpick-error { margin: 0; color: var(--danger); font-size: 12.5px; }
+.jpick-permission { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.05); font-size: 12.5px; color: var(--text-dim); }
+.jpick-permission > svg { flex: 0 0 auto; color: #e6a23c; }
+.jpick-permission > span { flex: 1; min-width: 0; }
+.jpick-permission .ui-button { flex: 0 0 auto; height: 30px; white-space: nowrap; }
 .jpick-dialog { width: min(720px, calc(100vw - 32px)); }
 .morph-step[data-step='screen'] { padding: 4px 0 0; }
 .jget-dialog { width: min(560px, calc(100vw - 32px)); }

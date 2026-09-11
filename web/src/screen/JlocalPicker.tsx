@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Check, Gauge, MonitorUp, Replace } from 'lucide-react'
+import { Check, Gauge, MonitorUp, Replace, ShieldAlert } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { JLOCAL_ORIGIN } from '../jlocal/status'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
@@ -57,9 +57,11 @@ function parseTargets(body: unknown, key: string): Target[] {
   return targets
 }
 
-function Thumb({ target, kind, live, t }: { target: Target; kind: Tab; live: boolean; t: Translator }) {
+function Thumb({ target, kind, live, onDenied, t }: { target: Target; kind: Tab; live: boolean; onDenied: () => void; t: Translator }) {
   const [src, setSrc] = useState<string | null>(null)
   const [denied, setDenied] = useState(false)
+  const notify = useRef(onDenied)
+  notify.current = onDenied
   const param = kind === 'windows' ? 'window_id' : 'display_id'
   const base = `${JLOCAL_ORIGIN}/capture/snapshot?${param}=${encodeURIComponent(target.id)}&width=${THUMB_WIDTH}`
   useEffect(() => {
@@ -78,7 +80,14 @@ function Thumb({ target, kind, live, t }: { target: Target; kind: Tab; live: boo
       }
       probe.onerror = () => {
         if (cancelled) return
-        void fetch(base).then((r) => { if (r.status === 503) setDenied(true) }).catch(() => undefined)
+        void fetch(base)
+          .then(async (r) => {
+            if (r.status !== 503) return
+            const body = (await r.json().catch(() => null)) as { error?: unknown } | null
+            setDenied(true)
+            if (body?.error === 'permission') notify.current()
+          })
+          .catch(() => undefined)
         if (live) timer = window.setTimeout(load, LIVE_THUMB_MS * 2)
       }
       probe.src = url
@@ -114,6 +123,8 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
   const audioCapture = getCachedJLocalCapabilities()?.audio.capture === true
   const sound = useSoundChoice().enabled
   const panelRef = useRef<HTMLDivElement>(null)
+  const [blocked, setBlocked] = useState(false)
+  const [asking, setAsking] = useState(false)
 
   useEffect(() => {
     if (lists[tab] !== null) return
@@ -146,6 +157,40 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
   const canShare = Array.isArray(current) && current.length > 0 && selected !== null && !busy
   const swap = still ? { duration: 0 } : { duration: 0.22, ease: MORPH_EASE }
   const label = (id: ScreenQualityId) => screenQuality(id).label
+
+  /**
+   * The preview poll never prompts (the app answers 503 from a report-only
+   * probe), so the system dialog has to come from a click: one real capture
+   * start brings the app's prompt up, and stopping it right after leaves
+   * nothing running. Granted, the thumbnails come back on their own.
+   */
+  const askPermission = async () => {
+    if (asking) return
+    setAsking(true)
+    const idKey = tab === 'windows' ? 'window_id' : 'display_id'
+    try {
+      const started = await fetch(`${JLOCAL_ORIGIN}/capture/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [idKey]: selected, width: 640, height: 360, fps: 5 }),
+      })
+      const body = (await started.json().catch(() => null)) as { capture_id?: unknown } | null
+      const captureId = typeof body?.capture_id === 'string' ? body.capture_id : null
+      void fetch(`${JLOCAL_ORIGIN}/capture/stop`, captureId === null ? { method: 'POST' } : {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ capture_id: captureId }),
+      }).catch(() => undefined)
+      if (started.ok) {
+        setBlocked(false)
+        setLists({ displays: null, windows: null })
+      }
+    } catch {
+      // The app went away mid-click; the pill above already says so.
+    } finally {
+      setAsking(false)
+    }
+  }
 
   const share = () => {
     if (!canShare || selected === null) return
@@ -185,7 +230,7 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
                       onClick={() => setPicked((all) => ({ ...all, [tab]: target.id }))}
                       onDoubleClick={share}
                     >
-                      <Thumb target={target} kind={tab} live={target.id === selected} t={t} />
+                      <Thumb target={target} kind={tab} live={target.id === selected} onDenied={() => setBlocked(true)} t={t} />
                       <span className="jpick-meta">
                         {target.icon ? <img className="jpick-icon" src={target.icon} alt="" aria-hidden="true" /> : null}
                         <span className="jpick-name">
@@ -201,6 +246,15 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
           </motion.div>
         </AnimatePresence>
       </div>
+      {blocked ? (
+        <div className="jpick-permission" role="alert">
+          <ShieldAlert size={15} aria-hidden="true" />
+          <span>{t('jlocal.permission')}</span>
+          <Button variant="ghost" disabled={asking} onClick={() => { void askPermission() }}>
+            {t(asking ? 'jlocal.permissionAsking' : 'jlocal.permissionAsk')}
+          </Button>
+        </div>
+      ) : null}
       {error ? <p className="jpick-error" role="alert">{error}</p> : null}
       <div className="jpick-bar">
         <MorphingMenu

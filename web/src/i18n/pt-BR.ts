@@ -391,6 +391,8 @@ export const ptBR: Record<string, string> = {
   'jlocal.loading': 'Procurando…',
   'jlocal.empty': 'Nada para mostrar aqui.',
   'jlocal.permission': 'Libere “Gravação de Tela” para o jlocal em Ajustes › Privacidade e Segurança e tente de novo.',
+  'jlocal.permissionAsk': 'Pedir permissão',
+  'jlocal.permissionAsking': 'Pedindo…',
   'jlocal.failed': 'O jlocal não conseguiu começar a captura.',
   'jlocal.needsUpdate': 'Atualize o jlocal para compartilhar em H.264 por hardware.',
 }
