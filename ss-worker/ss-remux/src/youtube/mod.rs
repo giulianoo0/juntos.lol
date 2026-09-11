@@ -494,6 +494,8 @@ pub fn classify_failure(stderr: &str) -> Error {
         Error::Blocked
     } else if lower.contains("private video")
         || lower.contains("video unavailable")
+        || lower.contains("video is unavailable")
+        || lower.contains("is unavailable")
         || lower.contains("has been removed")
         || lower.contains("is not available")
         || lower.contains("does not exist")
@@ -774,6 +776,7 @@ mod tests {
     fn failures_map_to_codes() {
         assert_eq!(classify_failure("ERROR: [youtube] x: Sign in to confirm you’re not a bot."), Error::Blocked);
         assert_eq!(classify_failure("ERROR: [youtube] x: Private video. Sign in").code(), "youtube_unavailable");
+        assert_eq!(classify_failure("ERROR: [youtube] AAAAAAAAAAA: This video is unavailable").code(), "youtube_unavailable");
         assert_eq!(classify_failure("ERROR: Unsupported URL: https://x").code(), "youtube_unsupported");
         assert_eq!(classify_failure("ERROR: something odd").code(), "youtube_tool");
         assert!(stale_extractor("ERROR: Unable to extract nsig"));
