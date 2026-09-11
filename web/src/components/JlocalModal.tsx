@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { Check, Download, Gauge, Magnet, Volume2 } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import { connectJLocal, type JLocalSnapshot } from '../jlocal/status'
+import { JLOCAL_ORIGIN, connectJLocal, type JLocalSnapshot } from '../jlocal/status'
 import { askJLocalScreenPermission } from '../jlocal/askScreenPermission'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { Button } from '../ui/Button'
@@ -43,6 +43,24 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
   const still = useReducedMotion() ?? false
   const os = detectOS()
   const [asking, setAsking] = useState(false)
+  // null while unknown (card closed, app absent, old build): the button only
+  // shows on a definite "no", so nobody who is already granted sees it.
+  const [granted, setGranted] = useState<boolean | null>(null)
+  const [probe, setProbe] = useState(0)
+
+  useEffect(() => {
+    if (!open || !status.connected) { setGranted(null); return }
+    let cancelled = false
+    void fetch(`${JLOCAL_ORIGIN}/capabilities`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(String(response.status))
+        const body = (await response.json()) as { capabilities?: { permissions?: { screenCapture?: unknown } } }
+        const value = body.capabilities?.permissions?.screenCapture
+        if (!cancelled) setGranted(typeof value === 'boolean' ? value : null)
+      })
+      .catch(() => { if (!cancelled) setGranted(null) })
+    return () => { cancelled = true }
+  }, [open, status.connected, probe])
   const fade = still ? { duration: 0 } : { duration: 0.28, ease: MORPH_EASE }
   const perks = [
     { icon: <Gauge size={16} aria-hidden="true" />, text: t('jlocal.perkQuality') },
@@ -50,18 +68,18 @@ export function JlocalModal({ open, onOpenChange, status, t }: {
     { icon: <Magnet size={16} aria-hidden="true" />, text: t('jlocal.perkTorrent') },
   ]
   const description = <>{t('jlocal.modalGuide')} <strong>{t('jlocal.modalOptional')}</strong></>
-  // Always here, on both halves of the card: whoever already has the app open
-  // uses it to re-probe the loopback and, on macOS, to bring the Screen
-  // Recording prompt back up — nothing the site polls ever asks for it.
-  const already = (
+  // Only for the app that is up but blocked: it re-probes the loopback and
+  // brings the Screen Recording prompt back up, which nothing the site polls
+  // ever asks for. Granted (or unknown), the card stays as it was.
+  const already = granted === false ? (
     <Button variant="ghost" disabled={asking} onClick={() => {
       setAsking(true)
       connectJLocal()
-      void askJLocalScreenPermission().finally(() => setAsking(false))
+      void askJLocalScreenPermission().finally(() => { setAsking(false); setProbe((n) => n + 1) })
     }}>
       {t(asking ? 'jlocal.alreadyAsking' : 'jlocal.already')}
     </Button>
-  )
+  ) : null
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="jget-dialog" title={t('jlocal.modalTitle')} description={description} closeLabel={t('home.closeDialog')}>
