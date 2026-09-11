@@ -270,6 +270,29 @@ func (h *Hub) NotifyStatus(roomID, status string) {
 	h.notify(roomID, Outbound{Type: "roomStatus", Status: status})
 }
 
+// ResetPlayback puts the room back at zero and paused: the media behind it
+// changed, so the clock every member was running means nothing for what
+// comes next. Unlike a notification it is never dropped — a member who
+// keeps the old clock waits at a position the new media may never reach.
+func (h *Hub) ResetPlayback(roomID string) {
+	state := room.PlayState{Rate: 1, ServerTimeMs: time.Now().UnixMilli()}
+	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
+	defer cancel()
+	if err := h.store.SetState(ctx, roomID, state); err != nil {
+		slog.ErrorContext(ctx, "reset playback state failed", "room_id", roomID, "error", err)
+	}
+	h.mu.Lock()
+	connection := h.rooms[roomID]
+	h.mu.Unlock()
+	if connection == nil {
+		return
+	}
+	select {
+	case connection.updates <- Outbound{Type: "state", State: &state}:
+	case <-ctx.Done():
+	}
+}
+
 // NotifyRoomUpdated tells clients to refresh room metadata without changing
 // media readiness. Subtitle extraction uses this path.
 func (h *Hub) NotifyRoomUpdated(roomID string) {
@@ -421,6 +444,10 @@ func (r *roomConn) run() {
 		case event := <-r.inbound:
 			r.handleInbound(event)
 		case event := <-r.updates:
+			if event.Type == "state" && event.State != nil {
+				r.playing = event.State.Playing
+				r.dropGate()
+			}
 			r.broadcast(event)
 			if r.dropped.Swap(false) {
 				r.broadcast(Outbound{Type: "roomUpdated"})

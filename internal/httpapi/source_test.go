@@ -47,8 +47,10 @@ func TestChangeSourceToScreen(t *testing.T) {
 	store := newTestStore(t)
 	e := sourceRoom(t, cfg, store)
 	var notified []string
+	var reset []string
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
-		NotifyStatus: func(_, status string) { notified = append(notified, status) },
+		NotifyStatus:  func(_, status string) { notified = append(notified, status) },
+		ResetPlayback: func(id string) { reset = append(reset, id) },
 	})
 
 	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"screen"}`)
@@ -64,6 +66,7 @@ func TestChangeSourceToScreen(t *testing.T) {
 	require.Empty(t, got.FileName)
 	require.NoDirExists(t, filepath.Join(cfg.DataDir, "rooms", "r1"))
 	require.Equal(t, []string{"ready"}, notified)
+	require.Equal(t, []string{"r1"}, reset)
 
 	members, err := store.Members(t.Context(), "r1")
 	require.NoError(t, err)

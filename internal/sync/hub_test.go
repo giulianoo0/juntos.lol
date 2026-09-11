@@ -760,3 +760,56 @@ func TestRoomSendToleratesNilTarget(t *testing.T) {
 		connection.send(nil, Outbound{Type: "error", ErrCode: "internal_error"})
 	})
 }
+
+func TestHubResetPlaybackPutsEveryoneAtZeroPaused(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host, guest := startedRoom(t, server)
+
+	hub.ResetPlayback("r1")
+	for _, conn := range []*websocket.Conn{host, guest} {
+		reset := readHubEvent(t, conn)
+		require.Equal(t, "state", reset.Type)
+		require.NotNil(t, reset.State)
+		require.False(t, reset.State.Playing)
+		require.Equal(t, int64(0), reset.State.PositionMs)
+		require.Equal(t, float64(1), reset.State.Rate)
+		require.Greater(t, reset.State.ServerTimeMs, int64(0))
+	}
+
+	persisted, err := store.GetState(t.Context(), "r1")
+	require.NoError(t, err)
+	require.False(t, persisted.Playing)
+	require.Equal(t, int64(0), persisted.PositionMs)
+
+	late := dialHubWS(t, server)
+	welcome := helloHubClient(t, late, "late", 3)
+	require.NotNil(t, welcome.State)
+	require.False(t, welcome.State.Playing)
+	require.Equal(t, int64(0), welcome.State.PositionMs)
+}
+
+func TestHubGateSurvivesAMemberDroppingMidWait(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 30_000, Rate: 1}))
+	require.Equal(t, "state", readHubEvent(t, host).Type)
+	require.Equal(t, "waiting", readHubEvent(t, host).Type)
+
+	// The guest's socket drops while the room waits on them: their seat is
+	// held, and the room must go on answering instead of dying.
+	require.NoError(t, guest.Close())
+	require.NoError(t, host.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 7}))
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		require.True(t, time.Now().Before(deadline), "room stopped answering after the guest dropped")
+		event := readHubEvent(t, host)
+		if event.Type == "pong" {
+			break
+		}
+	}
+}

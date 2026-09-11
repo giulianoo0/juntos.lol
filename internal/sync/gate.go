@@ -164,6 +164,13 @@ func (r *roomConn) broadcastWaiting() {
 	readiness := make([]MemberReadiness, 0, len(members))
 	for _, member := range members {
 		connected := r.clients[member.ID]
+		if connected == nil {
+			if seat := r.detached[member.ID]; seat != nil {
+				connected = seat.client
+			} else {
+				continue
+			}
+		}
 		_, ignored := r.ignored[member.ID]
 		readiness = append(readiness, MemberReadiness{
 			MemberID:      member.ID,

@@ -116,7 +116,7 @@ func main() {
 			NotifyRoomMedia:    hub.NotifyRoomMedia,
 			NotifyRoomProgress: hub.NotifyRoomProgress,
 		}),
-		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, CancelMedia: func(roomID string) {
+		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, ResetPlayback: hub.ResetPlayback, CancelMedia: func(roomID string) {
 			remuxOrch.CancelRoom(roomID)
 			torrents.CancelRoom(roomID)
 		}}),

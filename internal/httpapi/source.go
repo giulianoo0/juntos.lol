@@ -19,9 +19,12 @@ const maxSourceBodyBytes = 4 << 10
 // SourceHooks lets a room change what it is playing without httpapi depending on
 // the media pipeline. Both are nil-safe, and CancelMedia runs before the old files
 // are removed so ffmpeg is not left writing into a directory being deleted.
+// ResetPlayback runs once the room points at the new source, before its status
+// is announced, so members drop the old clock before they look for new media.
 type SourceHooks struct {
-	CancelMedia  func(roomID string)
-	NotifyStatus func(roomID, status string)
+	CancelMedia   func(roomID string)
+	NotifyStatus  func(roomID, status string)
+	ResetPlayback func(roomID string)
 }
 
 type changeSourceRequest struct {
@@ -105,6 +108,9 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
+		if hooks.ResetPlayback != nil {
+			hooks.ResetPlayback(roomID)
+		}
 		if hooks.NotifyStatus != nil {
 			hooks.NotifyStatus(roomID, status)
 		}
