@@ -13,6 +13,7 @@
 - chat e lista de participantes por sala;
 - seleção de faixas de áudio e legendas de texto;
 - extração de legendas MKV no navegador, publicadas enquanto o remux continua;
+- link do YouTube preparado sem o player do YouTube: o [jlocal](https://github.com/giulianoo0/jlocal) do host ou um ss-worker resolve o vídeo com yt-dlp e remuxa com FFmpeg; áudios dublados viram faixas, legendas manuais e a automática viram WebVTT, capítulos entram na sala e o seek frio abre região nova como num torrent;
 - torrent baixado por workers remotos (ss-worker) que o servidor despacha, sem nada para instalar, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
 - tela de espera com a fase da preparação e uma estimativa de quando dá para começar a assistir;
 - torrents com seleção de arquivo, sem nenhum download no servidor;
@@ -62,6 +63,17 @@ O servidor não baixa torrent nenhum, e quem abre a sala não instala nada. Um m
 5. As legendas embutidas no MKV e os arquivos que acompanham o vídeo são lidos do worker pelo navegador do host (`GET {readBase}/v1/f/{ticket}` com `Range` e `/v1/file/{ticket}/{índice}`) e publicados junto.
 
 Os workers discam o servidor por WSS (`/ws/worker-link`), se registram uma vez com `WORKER_ENROLLMENT_SECRET` e depois provam a própria chave; reportam disco, leases e peers a cada dez segundos. Um worker sem cert válido, cheio ou drenando não recebe job. Certificados vêm do Let's Encrypt por ACME, para o IP da VPS ou um nome, sem DNS obrigatório. Sem worker conectado, o caminho de magnet se declara indisponível (`GET /api/torrents/capacity`) e a página diz isso; não há fallback no servidor nem no navegador.
+
+### YouTube
+
+Um link do YouTube não toca por embed: o navegador não consegue nem resolver nem ler os streams (o `googlevideo` só responde CORS ao próprio youtube.com e amarra cada URL ao IP que a resolveu), então quem prepara é um processo fora da página, com o mesmo pipeline do torrent:
+
+1. O site escolhe o backend: o **jlocal** conectado com as ferramentas baixadas (yt-dlp e FFmpeg, buscados uma vez com hash fixado para o diretório de dados do app) ou, sem ele, a **frota** (`POST /api/youtube`, mesma cota por sessão dos magnets, despachado a um worker que anuncia yt-dlp no heartbeat).
+2. O backend resolve o `info.json`, escolhe o vídeo mais alto até 1080p (H.264 antes de VP9 e AV1 na mesma altura), uma faixa de áudio por idioma dublado (AAC copiado quando o YouTube oferece, Opus convertido), as legendas manuais e a automática do idioma original, e os capítulos. URLs do CDN nunca saem do processo que as resolveu.
+3. O FFmpeg lê cada stream pela bridge de loopback do crate `ss-remux` (`ss-worker/ss-remux/`, compartilhado com o jlocal), que busca o `googlevideo` em pedaços de 10 MiB pelo parâmetro `range=` da própria URL e guarda as bordas do arquivo em memória para os seeks; cada faixa de áudio é um `-i` separado. Legendas são publicadas inteiras em `/subtitles/fleet` antes do primeiro segmento.
+4. Seek fora do produzido: para a frota, o servidor segue a posição da sala como no torrent; para o jlocal, o próprio navegador do host orquestra (`POST /youtube/run` com a região seguinte, depois de mover a cerca em `POST /rooms/:id/client-media/run`).
+
+Na VPS o worker sai por um proxy (`YOUTUBE_PROXY`, o mesmo tipo do `PLUGIN_FETCH_PROXY`): o CDN recusa endereços de datacenter como robô. Lives, playlists e vídeos acima de 1080p ficam de fora.
 
 ### Sincronização e controle
 
@@ -158,6 +170,8 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `MOQ_SUBSCRIBE_TOKEN` | vazio | Token do relay só com `subscribe`, entregue aos demais participantes. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
+
+`YOUTUBE_PROXY` e `YOUTUBE_COOKIES` (opcionais) chegam ao worker como `SS_WORKER_YOUTUBE_PROXY` e `SS_WORKER_YOUTUBE_COOKIES`: o proxy `http`/`socks5` por onde o yt-dlp e a leitura do `googlevideo` saem (obrigatório numa VPS, que o YouTube bloqueia como robô) e um arquivo de cookies no formato Netscape para vídeos que exigem login.
 
 `PLUGIN_FETCH_PROXY` (opcional) é um proxy `http`, `https` ou `socks5` por onde saem as requisições que o servidor faz em nome dos plugins (`GET /api/plugins/fetch`). Serve para quando um addon recusa o endereço da própria instância — o Torrentio bloqueia faixas de datacenter — e a saída precisa vir de outro lugar. A resolução de nomes passa a acontecer no proxy, então a guarda contra endereços privados vale para a rede dele; a política de URL (só `https`, só nomes, nunca o próprio servidor, em cada redirect) continua aqui.
 
