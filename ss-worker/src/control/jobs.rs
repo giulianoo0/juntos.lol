@@ -65,19 +65,34 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
             ok(json!({}))
         }
         "remuxStart" => {
-            let (Some(ih), Some(index)) = (job.infohash.as_deref(), job.file_index) else {
-                return err("bad_job", "remuxStart needs infohash and fileIndex".into());
-            };
             let Some(raw) = job.remux.clone() else { return err("bad_job", "remuxStart needs a remux spec".into()) };
-            let spec: crate::remux::protocol::Spec = match serde_json::from_value(raw) {
+            let spec: ss_remux::protocol::Spec = match serde_json::from_value(raw) {
                 Ok(s) => s,
                 Err(e) => return err("bad_job", format!("remux spec: {e}")),
             };
             let supervisor = app.remux.read().clone();
             let Some(supervisor) = supervisor else { return err("remux_disabled", "no remux capability".into()) };
-            match supervisor.start(ih, index, spec).await {
+            let input = match (&job.youtube, job.infohash.as_deref(), job.file_index) {
+                (Some(yt), _, _) => ss_remux::RunInput::Youtube(ss_remux::youtube::Request { url: yt.url.clone() }),
+                (None, Some(ih), Some(index)) => match crate::torrent_source::TorrentSource::new(engine.clone(), ih, index) {
+                    Ok(source) => ss_remux::RunInput::Container(Arc::new(source)),
+                    Err(e) => return err("unknown_file", e.to_string()),
+                },
+                _ => return err("bad_job", "remuxStart needs a youtube url or infohash and fileIndex".into()),
+            };
+            match supervisor.start(input, spec).await {
                 Ok(()) => ok(json!({})),
                 Err(e) => err(&e.to_string(), String::new()),
+            }
+        }
+        "ytResolve" => {
+            let Some(yt) = job.youtube.as_ref() else { return err("bad_job", "ytResolve needs a youtube url".into()) };
+            let supervisor = app.remux.read().clone();
+            let resolver = supervisor.as_ref().and_then(|s| s.youtube.clone());
+            let Some(resolver) = resolver else { return err("youtube_disabled", "no youtube capability".into()) };
+            match resolver.summary(&yt.url).await {
+                Ok(summary) => ok(json!({ "summary": summary })),
+                Err(e) => err(e.code(), e.detail()),
             }
         }
         "remuxCancel" => {

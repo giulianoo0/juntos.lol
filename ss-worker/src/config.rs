@@ -56,6 +56,9 @@ pub struct WorkerConfig {
     pub remux_put_global: usize,
     #[allow(dead_code)]
     pub remux_ahead_ms: u64,
+    pub ytdlp_path: String,
+    pub youtube_proxy: Option<String>,
+    pub youtube_cookies: Option<PathBuf>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -198,6 +201,9 @@ impl WorkerConfig {
             remux_put_concurrency: env_parse("SS_WORKER_REMUX_PUTS", 4)?,
             remux_put_global: env_parse("SS_WORKER_REMUX_PUTS_GLOBAL", 8)?,
             remux_ahead_ms: env_parse::<u64>("SS_WORKER_REMUX_AHEAD_SECS", 120)? * 1000,
+            ytdlp_path: env("SS_WORKER_YTDLP").unwrap_or_else(|| "yt-dlp".into()),
+            youtube_proxy: env("SS_WORKER_YOUTUBE_PROXY"),
+            youtube_cookies: env("SS_WORKER_YOUTUBE_COOKIES").map(PathBuf::from),
         };
         if cfg.tls == TlsMode::Acme && cfg.public_ip.is_none() && cfg.public_hostname.is_none() {
             bail!("SS_WORKER_TLS=acme needs SS_WORKER_PUBLIC_IP and/or SS_WORKER_PUBLIC_HOSTNAME");
@@ -209,6 +215,24 @@ impl WorkerConfig {
             bail!("SS_WORKER_DISK_HIGH_WATER_PCT must be 50..99");
         }
         Ok(cfg)
+    }
+
+    pub fn remux_config(&self) -> ss_remux::RemuxConfig {
+        ss_remux::RemuxConfig {
+            data_dir: self.data_dir.clone(),
+            ffmpeg_path: self.ffmpeg_path.clone(),
+            ffprobe_path: self.ffprobe_path.clone(),
+            slots: self.remux_slots,
+            spool_bytes: self.remux_spool_bytes,
+            object_bytes: self.remux_object_bytes,
+            put_concurrency: self.remux_put_concurrency,
+            put_global: self.remux_put_global,
+            youtube: Some(ss_remux::youtube::Config {
+                ytdlp_path: self.ytdlp_path.clone(),
+                proxy: self.youtube_proxy.clone(),
+                cookies_file: self.youtube_cookies.clone(),
+            }),
+        }
     }
 
     pub fn blocking_threads(&self) -> usize {

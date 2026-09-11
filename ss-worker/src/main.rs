@@ -4,8 +4,8 @@ mod control;
 mod engine;
 mod http;
 mod metrics;
-mod remux;
 mod ticket;
+mod torrent_source;
 mod watchdog;
 
 use std::sync::atomic::Ordering;
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
         remux: parking_lot::RwLock::new(None),
     });
     if cfg.remux_slots > 0 {
-        let supervisor = remux::Remux::new(cfg.clone(), engine.clone()).await;
+        let supervisor = ss_remux::Remux::new(cfg.remux_config()).await;
         if supervisor.enabled() {
             tracing::info!(ffmpeg = ?supervisor.ffmpeg_version, "remote remux capability on");
         }

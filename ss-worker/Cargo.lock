@@ -3426,11 +3426,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "ss-remux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum 0.7.9",
+ "bytes",
+ "futures",
+ "hex 0.4.3",
+ "parking_lot",
+ "rand 0.8.8",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+]
+
+[[package]]
 name = "ss-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "axum 0.7.9",
  "axum-server",
  "base64 0.22.1",
@@ -3452,6 +3474,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "ss-remux",
  "time",
  "tokio",
  "tokio-stream",

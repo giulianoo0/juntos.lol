@@ -34,6 +34,13 @@ pub struct Job {
     pub limits: Option<Limits>,
     #[serde(default)]
     pub remux: Option<serde_json::Value>,
+    #[serde(default)]
+    pub youtube: Option<YoutubeJob>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct YoutubeJob {
+    pub url: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -144,6 +151,7 @@ mod tests {
             jti: None,
             limits: None,
             remux: None,
+            youtube: None,
         }
     }
 

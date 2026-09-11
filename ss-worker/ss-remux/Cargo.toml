@@ -1,0 +1,25 @@
+[package]
+name = "ss-remux"
+version = "0.1.0"
+edition = "2021"
+description = "The remote remux for juntos.lol: FFmpeg over a loopback bridge, HLS objects PUT to the bucket, shared by ss-worker and jlocal."
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+axum = { version = "0.7", features = ["http2"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+parking_lot = "0.12"
+futures = "0.3"
+bytes = "1"
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+tracing = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "socks"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

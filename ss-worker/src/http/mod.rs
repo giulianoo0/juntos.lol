@@ -33,7 +33,7 @@ pub struct AppState {
     pub revoked: Mutex<HashMap<String, u64>>,
     pub probe_spent: Mutex<HashMap<String, (usize, u64)>>,
     pub metrics: Arc<Metrics>,
-    pub remux: parking_lot::RwLock<Option<Arc<crate::remux::Remux>>>,
+    pub remux: parking_lot::RwLock<Option<Arc<ss_remux::Remux>>>,
 }
 
 impl AppState {

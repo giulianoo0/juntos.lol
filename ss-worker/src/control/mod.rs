@@ -166,7 +166,7 @@ impl Control {
             "maxTorrents": self.cfg.max_torrents,
             "permitsInUse": snap.permits_in_use,
             "torrents": snap.torrents,
-            "remux": self.app.remux.read().as_ref().and_then(|r| r.heartbeat()),
+            "remux": self.app.remux.read().as_ref().and_then(|r| remux_heartbeat(r)),
         })
         .to_string()
     }
@@ -349,4 +349,21 @@ mod tests {
         assert_eq!(after_reject(UNKNOWN_WORKER, true, REENROLL_BUDGET + 9), AfterReject::Exhausted);
         assert_eq!(after_reject("hello_signature", true, REENROLL_BUDGET), AfterReject::Retry);
     }
+}
+
+/// The remux block of the heartbeat: capability, every run the server may
+/// still care about, and whether YouTube links can be taken here.
+fn remux_heartbeat(remux: &ss_remux::Remux) -> Option<serde_json::Value> {
+    if !remux.enabled() {
+        return None;
+    }
+    Some(json!({
+        "protocolVersion": ss_remux::protocol::PROTOCOL_VERSION,
+        "slots": remux.slots(),
+        "activeRuns": remux.active_runs(),
+        "ffmpeg": remux.ffmpeg_version,
+        "audioCodecs": ["aac", "ac3", "dts"],
+        "youtube": remux.youtube.as_ref().map(|yt| json!({ "version": yt.version, "proxied": yt.proxied() })),
+        "runs": remux.runs(),
+    }))
 }
