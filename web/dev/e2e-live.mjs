@@ -65,6 +65,9 @@ for (let n = 0; n < 12; n++) {
 }
 let g = await luminance(guest)
 if (!(g.mean > 3 && g.badge)) throw new Error('guest never saw the live: ' + JSON.stringify(g))
+// The relay forgets a finished group after seconds: the jump must work long after the catalog was first written.
+console.log(ts(), 'waiting 30 s before the jump')
+await guest.waitForTimeout(30_000)
 await guest.getByRole('button', { name: /Ir para o vivo/ }).click()
 for (let n = 0; n < 10; n++) { await guest.waitForTimeout(2000); g = await luminance(guest); if (g.mean > 3 && g.badge) break }
 console.log(ts(), 'after jump', JSON.stringify(g))

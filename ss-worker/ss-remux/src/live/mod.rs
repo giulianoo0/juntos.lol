@@ -15,6 +15,7 @@ use crate::youtube::{self, Error, Format, Info, Picked, Resolver};
 const MAX_HEIGHT: u32 = 1080;
 const READ_BUF: usize = 64 * 1024;
 const STDERR_KEEP: usize = 4096;
+const CATALOG_REFRESH: Duration = Duration::from_secs(3);
 
 /// The renditions a live is taken from: one H.264 video playlist and, when
 /// the live offers one apart, the best audio playlist.
@@ -317,8 +318,21 @@ async fn run(
     let mut closed = std::pin::pin!(reconnect.closed());
     let mut buf = vec![0u8; READ_BUF];
     let mut decoded: u64 = 0;
+    // The relay keeps a finished group only for a few seconds, and the
+    // catalog is written once: a viewer arriving later (or reopening to jump
+    // to the edge) would subscribe to a track with nothing to serve. Writing
+    // the same catalog again every few seconds keeps a fresh group for them.
+    let mut catalog = catalog;
+    let mut refresh = tokio::time::interval(CATALOG_REFRESH);
+    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = refresh.tick() => {
+                if decoded > 0 {
+                    let mut guard = catalog.lock();
+                    let _touched: &mut _ = &mut *guard;
+                }
+            }
             read = stdout.read(&mut buf) => {
                 let n = read.context("ffmpeg read")?;
                 if n == 0 {
