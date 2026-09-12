@@ -65,7 +65,22 @@ const (
 	// SourceYoutube is an upload whose producer is a worker or the host's
 	// companion app reading a YouTube link; the room prepares like any upload.
 	SourceYoutube = "youtube"
+	// SourceLive is a YouTube live on the MoQ relay: no timeline, no seek,
+	// everyone watches the edge the producer publishes.
+	SourceLive = "live"
 )
+
+// LiveInfo describes the live a room is on and who puts it on the relay.
+type LiveInfo struct {
+	VideoID   string `json:"videoId"`
+	Title     string `json:"title"`
+	Thumbnail string `json:"thumbnail,omitempty"`
+	// Producer is "fleet" (a worker) or "jlocal" (the host's companion app).
+	Producer  string `json:"producer"`
+	Broadcast string `json:"broadcast"`
+	WorkerID  string `json:"workerId,omitempty"`
+	JobID     string `json:"jobId,omitempty"`
+}
 
 // Room is the aggregate stored under room:{id}.
 type Room struct {
@@ -95,6 +110,7 @@ type Room struct {
 	ProducerHeartbeatMs int64          `json:"producerHeartbeatMs,omitempty"`
 	ScreenShareOpen     bool           `json:"screenShareOpen"`
 	Screens             []ScreenShare  `json:"screens,omitempty"`
+	Live                *LiveInfo      `json:"live,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	ExpiresAt           time.Time      `json:"expiresAt"`
 }

@@ -111,11 +111,20 @@ export interface ScreenShareInfo {
   since: string
 }
 
+/** A YouTube live on the relay and who puts it there. */
+export interface LiveInfo {
+  videoId: string
+  title: string
+  thumbnail?: string
+  producer: 'fleet' | 'jlocal'
+  broadcast: string
+}
+
 export interface RoomInfo {
   id: string
   fileName: string
   status: string
-  sourceKind: 'upload' | 'screen'
+  sourceKind: 'upload' | 'screen' | 'live'
   sourceMemberId?: string
   sourceOrigin?: 'file' | 'torrent' | 'url' | 'youtube'
   mediaGeneration: number
@@ -135,6 +144,7 @@ export interface RoomInfo {
   producerHeartbeatMs?: number
   screenShareOpen?: boolean
   screens?: ScreenShareInfo[] | null
+  live?: LiveInfo | null
   preparation?: RoomPreparation
   memberCount: number
   expiresAt: string

@@ -80,3 +80,18 @@ func TestTerminalState(t *testing.T) {
 		}
 	}
 }
+
+func TestTakesLiveNeedsYoutubeAndAFreeSlot(t *testing.T) {
+	c := Capability{ProtocolVersion: ProtocolVersion, FFmpeg: "7.1", Slots: 1, Youtube: &Youtube{Version: "2026.08.19"}, LiveSlots: 1}
+	if !c.TakesLive() {
+		t.Fatal("a worker with yt-dlp and a free live slot takes lives")
+	}
+	c.ActiveLives = 1
+	if c.TakesLive() {
+		t.Fatal("a full worker does not take lives")
+	}
+	c.ActiveLives, c.Youtube = 0, nil
+	if c.TakesLive() {
+		t.Fatal("no yt-dlp, no lives")
+	}
+}

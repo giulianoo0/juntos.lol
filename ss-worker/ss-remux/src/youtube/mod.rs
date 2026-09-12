@@ -30,6 +30,10 @@ pub struct Config {
     pub ytdlp_path: String,
     pub proxy: Option<String>,
     pub cookies_file: Option<PathBuf>,
+    /// A PEM bundle FFmpeg verifies HTTPS against when its build carries no
+    /// system roots (the static macOS and Windows binaries the companion app
+    /// downloads); None trusts the system store.
+    pub ca_file: Option<PathBuf>,
 }
 
 /// Why a video cannot be prepared, as the code the site shows.
@@ -171,7 +175,7 @@ impl Format {
     }
 }
 
-fn is_none(codec: &Option<String>) -> bool {
+pub(crate) fn is_none(codec: &Option<String>) -> bool {
     matches!(codec.as_deref(), None | Some("none") | Some(""))
 }
 
@@ -212,6 +216,8 @@ pub struct Summary {
     pub video_id: String,
     pub title: String,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub live: bool,
     pub thumbnail: Option<String>,
     pub video: SummaryVideo,
     pub audios: Vec<SummaryAudio>,
@@ -245,9 +251,24 @@ pub struct SummarySubtitle {
     pub auto: bool,
 }
 
+/// What a page resolved to: a video the remux reads, or a live the relay path takes.
+pub enum Picked {
+    Vod(Selection),
+    Live(crate::live::Selection),
+}
+
 pub struct Resolved {
     pub info: Info,
-    pub selection: Selection,
+    pub picked: Picked,
+}
+
+impl Resolved {
+    pub fn vod(&self) -> Result<&Selection, Error> {
+        match &self.picked {
+            Picked::Vod(selection) => Ok(selection),
+            Picked::Live(_) => Err(Error::Unsupported("a live is not prepared as a video".into())),
+        }
+    }
 }
 
 /// A run's inputs: the plan FFmpeg follows and the streams behind it.
@@ -461,6 +482,7 @@ pub fn summary(info: &Info, selection: &Selection) -> Summary {
         video_id: info.id.clone(),
         title: info.title.clone(),
         duration_ms: selection.duration_ms,
+        live: false,
         thumbnail: info.thumbnail.clone(),
         video: SummaryVideo {
             itag: selection.video.format_id.clone(),
@@ -487,9 +509,35 @@ pub fn summary(info: &Info, selection: &Selection) -> Summary {
     }
 }
 
+/// A live in the picker: no duration, one video and one audio, nothing to seek.
+pub fn live_summary(info: &Info, selection: &crate::live::Selection) -> Summary {
+    Summary {
+        video_id: info.id.clone(),
+        title: info.title.clone(),
+        duration_ms: 0,
+        live: true,
+        thumbnail: info.thumbnail.clone(),
+        video: SummaryVideo {
+            itag: selection.video.format_id.clone(),
+            codec: "h264".into(),
+            width: selection.video.width.unwrap_or(0),
+            height: selection.video.height.unwrap_or(0),
+        },
+        audios: selection
+            .audio
+            .iter()
+            .map(|f| SummaryAudio { itag: f.format_id.clone(), codec: "aac".into(), language: f.language(), original: true })
+            .collect(),
+        subtitles: Vec::new(),
+        chapters: 0,
+    }
+}
+
 /// Reads yt-dlp's failure into the code the site can act on.
 pub fn classify_failure(stderr: &str) -> Error {
-    let lower = stderr.to_ascii_lowercase();
+    // URLs in the log say nothing about the failure and carry words like
+    // "playlist" that would.
+    let lower = strip_urls(&stderr.to_ascii_lowercase());
     if lower.contains("not a bot") || lower.contains("sign in to confirm") {
         Error::Blocked
     } else if lower.contains("private video")
@@ -515,6 +563,16 @@ pub fn classify_failure(stderr: &str) -> Error {
     } else {
         Error::Tool(stderr.lines().rev().find(|l| l.contains("ERROR")).unwrap_or(stderr).chars().take(200).collect())
     }
+}
+
+fn strip_urls(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|word| {
+            let bare = word.trim_start_matches(['\'', '"', '(', '[', '<']);
+            !bare.starts_with("http://") && !bare.starts_with("https://")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Whether the failure smells like an extractor the site moved past, which
@@ -566,6 +624,14 @@ impl Resolver {
 
     pub fn proxied(&self) -> bool {
         self.cfg.proxy.is_some()
+    }
+
+    pub fn proxy(&self) -> Option<&str> {
+        self.cfg.proxy.as_deref()
+    }
+
+    pub fn ca_file(&self) -> Option<&std::path::Path> {
+        self.cfg.ca_file.as_deref()
     }
 
     fn command(&self) -> tokio::process::Command {
@@ -623,8 +689,9 @@ impl Resolver {
             Err(Error::Tool(detail)) if stale_extractor(&detail) && self.maybe_update().await => self.run_ytdlp(url).await?,
             Err(e) => return Err(e),
         };
-        let selection = select(&info)?;
-        let resolved = Arc::new(Resolved { info, selection });
+        let live = info.is_live == Some(true) || matches!(info.live_status.as_deref(), Some("is_live") | Some("is_upcoming"));
+        let picked = if live { Picked::Live(crate::live::select(&info)?) } else { Picked::Vod(select(&info)?) };
+        let resolved = Arc::new(Resolved { info, picked });
         self.cache.lock().insert(url.to_string(), (Instant::now(), resolved.clone()));
         Ok(resolved)
     }
@@ -640,12 +707,15 @@ impl Resolver {
 
     pub async fn summary(&self, url: &str) -> Result<Summary, Error> {
         let resolved = self.resolve(url).await?;
-        Ok(summary(&resolved.info, &resolved.selection))
+        Ok(match &resolved.picked {
+            Picked::Vod(selection) => summary(&resolved.info, selection),
+            Picked::Live(selection) => live_summary(&resolved.info, selection),
+        })
     }
 
     pub async fn materialize(self: &Arc<Self>, request: &Request) -> anyhow::Result<Materialized> {
         let resolved = self.resolve(&request.url).await?;
-        let selection = &resolved.selection;
+        let selection = resolved.vod()?;
         let mut streams = Vec::with_capacity(1 + selection.audios.len());
         for format in std::iter::once(&selection.video).chain(selection.audios.iter()) {
             let url = format.url.clone().context("format without url")?;
@@ -780,5 +850,22 @@ mod tests {
         assert_eq!(classify_failure("ERROR: Unsupported URL: https://x").code(), "youtube_unsupported");
         assert_eq!(classify_failure("ERROR: something odd").code(), "youtube_tool");
         assert!(stale_extractor("ERROR: Unable to extract nsig"));
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[test]
+    fn a_url_in_the_log_does_not_make_the_failure_a_playlist() {
+        let stderr = "[tls @ 0x1] error:0A000086:SSL routines::certificate verify failed\nError opening input file https://manifest.googlevideo.com/api/manifest/hls_playlist/id/x/playlist/index.m3u8\n";
+        assert_eq!(classify_failure(stderr).code(), "youtube_tool");
+    }
+
+    #[test]
+    fn a_quoted_segment_url_is_stripped_too() {
+        let stderr = "[in#0] Error when loading first segment 'https://rr5.googlevideo.com/videoplayback/playlist_type/DVR/sq/1'\nError opening input: Input/output error\n";
+        assert_eq!(classify_failure(stderr).code(), "youtube_tool");
     }
 }

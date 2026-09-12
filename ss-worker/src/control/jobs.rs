@@ -95,6 +95,25 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
                 Err(e) => err(e.code(), e.detail()),
             }
         }
+        "liveStart" => {
+            let (Some(yt), Some(live), Some(room)) = (job.youtube.as_ref(), job.live.as_ref(), job.room_id.as_deref()) else {
+                return err("bad_job", "liveStart needs a youtube url, a live target and a roomId".into());
+            };
+            let supervisor = app.remux.read().clone();
+            let Some(supervisor) = supervisor else { return err("remux_disabled", "no remux capability".into()) };
+            let request = ss_remux::live::Request { url: yt.url.clone(), relay: live.relay.clone(), broadcast: live.broadcast.clone() };
+            match supervisor.start_live(room, request) {
+                Ok(()) => ok(json!({})),
+                Err(code) => err(code, String::new()),
+            }
+        }
+        "liveStop" => {
+            let Some(room) = job.room_id.as_deref() else { return err("bad_job", "liveStop needs a roomId".into()) };
+            let supervisor = app.remux.read().clone();
+            let Some(supervisor) = supervisor else { return err("remux_disabled", "no remux capability".into()) };
+            supervisor.stop_live(room);
+            ok(json!({}))
+        }
         "remuxCancel" => {
             let run_id = job
                 .remux

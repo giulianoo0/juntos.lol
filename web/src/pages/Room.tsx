@@ -42,7 +42,9 @@ import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { YoutubePicker } from '../components/YoutubePicker'
-import { isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
+import { LiveStage } from '../components/LiveStage'
+import { startYoutubeLive } from '../live'
+import { YoutubeError, isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
 import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { isTorrentError, torrentErrorKey, torrentErrorRetryable } from '../torrentErrors'
@@ -278,6 +280,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           startUrlUpload(room.id, next.mediaGeneration, source.url ?? '', source.fileName, source.size ?? 0)
           return
         }
+        if (source.kind === 'live') {
+          await startYoutubeLive(room.id, { url: source.url ?? '', title: source.fileName }, { memberId: sync.memberId, capability: sync.capability })
+          return
+        }
         if (source.kind === 'youtube') {
           const session = await openYoutube(source.url ?? '')
           try {
@@ -332,6 +338,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isScreenRoom = liveRoom.sourceKind === 'screen'
+  const isLiveRoom = liveRoom.sourceKind === 'live'
+  // A stage room paints a relay broadcast: no player, no timeline, no buffering gate.
+  const isStageRoom = isScreenRoom || isLiveRoom
   const selfNickname = sync.members.find((member) => member.id === sync.memberId)?.nickname ?? ''
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [transferTo, setTransferTo] = useState<Member | null>(null)
@@ -368,7 +377,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     setOpeningWait(wait)
     if (wait.secondsLeft === null && !wait.cold) setOpening(false)
   }, [])
-  const openingGate: GateStep = opening && !isScreenRoom && mediaStatus === 'ready' ? 'buffering' : null
+  const openingGate: GateStep = opening && !isStageRoom && mediaStatus === 'ready' ? 'buffering' : null
   const { shown: shownOpening } = useMorphingStep(openingGate)
 
   const swapSource = async (run: () => Promise<void>) => {
@@ -407,6 +416,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   const chooseYoutube = (session: YoutubeSession) => {
     void swapSource(async () => {
+      if (session.summary.live) {
+        try {
+          await startYoutubeLive(room.id, { url: session.url, title: youtubeFileName(session), thumbnail: session.summary.thumbnail }, { memberId: sync.memberId, capability: sync.capability })
+        } finally {
+          session.destroy()
+        }
+        return
+      }
       let next
       try {
         next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'youtube', youtubeFileName(session))
@@ -556,7 +573,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const nextEpisode = useNextEpisode(
     nowPlaying,
     videoRef,
-    sync.isController && !isScreenRoom && mediaStatus === 'ready',
+    sync.isController && !isStageRoom && mediaStatus === 'ready',
     chooseCatalogStream,
   )
 
@@ -589,7 +606,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         preparation={liveRoom.preparation}
         swarm={swarmStats}
         failure={uploadFailed}
-        errorMessage={liveRoom.errorMessage}
+        errorMessage={liveErrorText(liveRoom.errorMessage, t)}
       />
     )
   }
@@ -623,7 +640,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         <LayoutGroup id="jlocal">
         <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span><JlocalStatus status={jlocal} t={t} /></div>
         <div className="header-actions">
-          {!isScreenRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
+          {!isStageRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
@@ -696,6 +713,15 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               shareOpen={liveRoom.screenShareOpen !== false}
               screens={liveRoom.screens ?? []}
               viewers={sync.members.filter((member) => member.id !== sync.memberId).length}
+              t={t}
+            />
+          ) : isLiveRoom && liveRoom.live ? (
+            <LiveStage
+              roomId={room.id}
+              memberId={sync.memberId}
+              capability={sync.capability}
+              broadcast={liveRoom.live.broadcast}
+              title={liveRoom.live.title || liveRoom.fileName}
               t={t}
             />
           ) : (
@@ -1060,3 +1086,10 @@ function usePresenceNotices(presence: PresenceEvent[], t: Translator): void {
   }, [presence, t, toast])
 }
 
+
+/** A live's failure comes as a code; the page says it in words. */
+function liveErrorText(message: string | undefined, t: Translator): string | undefined {
+  if (!message) return message
+  if (message === 'live_ended' || message.startsWith('youtube_')) return t(youtubeErrorKey(new YoutubeError(message)))
+  return message
+}

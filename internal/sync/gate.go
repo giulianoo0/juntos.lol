@@ -53,7 +53,7 @@ func (r *roomConn) shouldGate(ctx context.Context) bool {
 		slog.ErrorContext(ctx, "load room for gate decision failed", "room_id", r.id, "error", err)
 		return false
 	}
-	return storedRoom.GatingEnabled && storedRoom.SourceKind != room.SourceScreen
+	return storedRoom.GatingEnabled && storedRoom.SourceKind != room.SourceScreen && storedRoom.SourceKind != room.SourceLive
 }
 
 // openGate parks the room paused at targetMs and starts waiting for every

@@ -156,11 +156,11 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
           <div className="youtube-summary-text">
             <strong>{summary.title}</strong>
             <span>
-              {formatDuration(summary.durationMs)} · {summary.video.height}p {summary.video.codec}
+              {summary.live ? <span className="live-badge">{t('home.youtubeLive')}</span> : formatDuration(summary.durationMs)} · {summary.video.height}p {summary.video.codec}
               {resolved?.backend === 'jlocal' ? ` · ${t('home.youtubeViaJlocal')}` : ''}
             </span>
             <span>{t('home.youtubeAudios').replace('{n}', String(summary.audios.length))}{languages ? ` (${languages})` : ''}</span>
-            <span>{t('home.youtubeSubtitles').replace('{n}', String(summary.subtitles.length))}</span>
+            {summary.live ? null : <span>{t('home.youtubeSubtitles').replace('{n}', String(summary.subtitles.length))}</span>}
           </div>
         </div>
       ) : null}

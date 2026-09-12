@@ -73,7 +73,17 @@ Um link do YouTube não toca por embed: o navegador não consegue nem resolver n
 3. O FFmpeg lê cada stream pela bridge de loopback do crate `ss-remux` (`ss-worker/ss-remux/`, compartilhado com o jlocal), que busca o `googlevideo` em pedaços de 10 MiB pelo parâmetro `range=` da própria URL e guarda as bordas do arquivo em memória para os seeks; cada faixa de áudio é um `-i` separado. Legendas são publicadas inteiras em `/subtitles/fleet` antes do primeiro segmento.
 4. Seek fora do produzido: para a frota, o servidor segue a posição da sala como no torrent; para o jlocal, o próprio navegador do host orquestra (`POST /youtube/run` com a região seguinte, depois de mover a cerca em `POST /rooms/:id/client-media/run`).
 
-Na VPS o worker sai por um proxy (`YOUTUBE_PROXY`, o mesmo tipo do `PLUGIN_FETCH_PROXY`): o CDN recusa endereços de datacenter como robô. Lives, playlists e vídeos acima de 1080p ficam de fora.
+Na VPS o worker sai por um proxy (`YOUTUBE_PROXY`, o mesmo tipo do `PLUGIN_FETCH_PROXY`): o CDN recusa endereços de datacenter como robô. Playlists e vídeos acima de 1080p ficam de fora.
+
+#### Lives
+
+Uma live não é preparada no bucket: não há timeline, seek nem pausa sincronizada, e todo mundo assiste ao vivo pelo mesmo relay MoQ do compartilhamento de tela. O produtor é o **jlocal** quando está conectado com as ferramentas, senão um worker da **frota** (`POST /api/rooms/:id/live` com `producer`); os dois rodam o módulo `live` do crate `ss-remux`:
+
+1. `yt-dlp -J` confirma que a live está no ar e escolhe a variante H.264 mais alta até 1080p e a playlist de áudio mais rica.
+2. `ffmpeg -i vídeo.m3u8 -i áudio.m3u8 -c copy -f mpegts -` lê o HLS ao vivo (pelo proxy, na frota) e entrega um único TS, sem re-encode.
+3. O TS entra no importador `moq-mux` e sai pelo `moq-native` para o relay, em `juntos/{sala}/{segredo}/live.hang`, no mesmo container e catálogo que o `@moq/watch` do site já lê.
+
+A sala fica `sourceKind: "live"` e o status segue o produtor: `ready` quando o stream está no relay (heartbeat do worker, ou `POST /api/rooms/:id/live/state` vindo do host no caso do jlocal), `error` com `live_ended` quando a live acaba. O espectador vê a live num canvas com o botão "Ir para o vivo", que reassina e cai no grupo mais novo do relay. Cada worker aceita `SS_WORKER_LIVE_SLOTS` lives ao mesmo tempo (padrão 2).
 
 ### Sincronização e controle
 
@@ -171,7 +181,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 
-`YOUTUBE_PROXY` e `YOUTUBE_COOKIES` (opcionais) chegam ao worker como `SS_WORKER_YOUTUBE_PROXY` e `SS_WORKER_YOUTUBE_COOKIES`: o proxy `http`/`socks5` por onde o yt-dlp e a leitura do `googlevideo` saem (obrigatório numa VPS, que o YouTube bloqueia como robô) e um arquivo de cookies no formato Netscape para vídeos que exigem login.
+`WORKER_LIVE_SLOTS` (padrão 2) vira `SS_WORKER_LIVE_SLOTS`, o número de lives do YouTube que um worker mantém no relay ao mesmo tempo. `YOUTUBE_PROXY` e `YOUTUBE_COOKIES` (opcionais) chegam ao worker como `SS_WORKER_YOUTUBE_PROXY` e `SS_WORKER_YOUTUBE_COOKIES`: o proxy `http`/`socks5` por onde o yt-dlp e a leitura do `googlevideo` saem (obrigatório numa VPS, que o YouTube bloqueia como robô) e um arquivo de cookies no formato Netscape para vídeos que exigem login.
 
 `PLUGIN_FETCH_PROXY` (opcional) é um proxy `http`, `https` ou `socks5` por onde saem as requisições que o servidor faz em nome dos plugins (`GET /api/plugins/fetch`). Serve para quando um addon recusa o endereço da própria instância — o Torrentio bloqueia faixas de datacenter — e a saída precisa vir de outro lugar. A resolução de nomes passa a acontecer no proxy, então a guarda contra endereços privados vale para a rede dele; a política de URL (só `https`, só nomes, nunca o próprio servidor, em cada redirect) continua aqui.
 

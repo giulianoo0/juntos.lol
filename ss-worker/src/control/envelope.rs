@@ -36,11 +36,21 @@ pub struct Job {
     pub remux: Option<serde_json::Value>,
     #[serde(default)]
     pub youtube: Option<YoutubeJob>,
+    #[serde(default)]
+    pub live: Option<LiveJob>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct YoutubeJob {
     pub url: String,
+}
+/// Where a live goes: the relay URL carrying the publish token and the
+/// broadcast name under it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveJob {
+    pub relay: String,
+    pub broadcast: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -152,6 +162,7 @@ mod tests {
             limits: None,
             remux: None,
             youtube: None,
+            live: None,
         }
     }
 

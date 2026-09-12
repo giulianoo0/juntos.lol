@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/giulianoo0/ss/internal/remux"
 	"log/slog"
 	"strings"
 	"time"
@@ -21,6 +22,9 @@ type Service struct {
 	TicketTTL time.Duration
 	JobTTL    time.Duration
 	OnSwarm   func(roomID string, stats SwarmStats)
+	// OnLive hears every live state a worker reports, with the worker it came
+	// from so the room can tell its own producer from a stale one.
+	OnLive    func(roomID, workerID string, state remux.LiveState)
 	RelayBase string
 }
 
@@ -201,6 +205,12 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 const JobKindYoutube = "youtube"
 
 var ErrNoYoutube = errors.New("no_youtube")
+
+// ErrNoLive says no healthy worker has a live slot at all.
+var ErrNoLive = errors.New("no_live")
+
+// JobKindLive is a live a worker keeps on the relay for a room.
+const JobKindLive = "live"
 
 // YoutubeCapacity says whether a link can be resolved right now: a healthy
 // worker with yt-dlp and a free remux slot.
@@ -491,7 +501,9 @@ func (s *Service) Release(ctx context.Context, sessionID, jobID string) error {
 }
 
 func (s *Service) release(ctx context.Context, job *JobRecord) {
-	if job.Kind != JobKindYoutube {
+	if job.Kind == JobKindLive {
+		_ = s.Hub.Send(Job{Kind: "liveStop", JobID: "s_" + randomID(6), WorkerID: job.WorkerID, RoomID: job.RoomID})
+	} else if job.Kind != JobKindYoutube {
 		_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
 	}
 	if s.Quota != nil {
@@ -542,6 +554,9 @@ func (s *Service) Sweep(ctx context.Context, idle time.Duration) {
 		}
 		if w, ok := s.Registry.Get(job.WorkerID); (!ok || now.Sub(w.LastSeen) > 2*time.Minute) && job.State != JobFailed {
 			job.State, job.Error = JobFailed, "worker_gone"
+			if job.Kind == JobKindLive && s.OnLive != nil {
+				s.OnLive(job.RoomID, job.WorkerID, remux.LiveState{State: "failed", Code: "worker_gone"})
+			}
 			_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
 			if s.Quota != nil {
 				_ = s.Quota.ReleaseJob(ctx, job.SessionID, job.ID)
@@ -650,4 +665,115 @@ func (s *Service) RelayTarget(workerID string) (string, bool) {
 		return "", false
 	}
 	return w.PublicBase, true
+}
+
+func (s *Service) placeLive(now time.Time) (Worker, error) {
+	var best *Worker
+	bestFree := -1
+	seen := false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) || !w.Heartbeat.Remux.TakesYoutube() {
+			continue
+		}
+		seen = true
+		free := w.Heartbeat.Remux.LiveSlots - w.Heartbeat.Remux.ActiveLives
+		if free <= 0 {
+			continue
+		}
+		if best == nil || free > bestFree {
+			candidate := w
+			best, bestFree = &candidate, free
+		}
+	}
+	switch {
+	case best != nil:
+		return *best, nil
+	case seen:
+		return Worker{}, ErrWorkersBusy
+	default:
+		return Worker{}, ErrNoLive
+	}
+}
+
+// StartLive puts a room's live on a worker: placement, then the liveStart
+// job, whose refusal is the caller's error. The job lives as long as the
+// worker reports the live; releasing it stops the live.
+func (s *Service) StartLive(ctx context.Context, roomID, url, relay, broadcast string) (*JobRecord, error) {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return nil, ErrDisabled
+	}
+	worker, err := s.placeLive(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	job := &JobRecord{
+		ID:         "l_" + randomID(8),
+		RoomID:     roomID,
+		Kind:       JobKindLive,
+		URL:        url,
+		WorkerID:   worker.ID,
+		State:      JobServing,
+		CreatedAt:  time.Now(),
+		LastSeenAt: time.Now(),
+	}
+	if err := s.Registry.SaveJob(ctx, job, s.JobTTL); err != nil {
+		return nil, err
+	}
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:     "liveStart",
+		JobID:    job.ID,
+		WorkerID: worker.ID,
+		RoomID:   roomID,
+		Youtube:  &YoutubeJob{URL: url},
+		Live:     &LiveJob{Relay: relay, Broadcast: broadcast},
+	}, 30*time.Second)
+	switch {
+	case err != nil:
+		_ = s.Registry.DeleteJob(ctx, job)
+		return nil, errors.New(mapDispatchError(err))
+	case !result.OK:
+		_ = s.Registry.DeleteJob(ctx, job)
+		switch result.Error {
+		case "live_busy":
+			return nil, ErrWorkersBusy
+		case "youtube_disabled", "remux_disabled":
+			return nil, ErrNoLive
+		default:
+			return nil, errors.New(result.Error)
+		}
+	}
+	return job, nil
+}
+
+// ObserveLives reads the lives a heartbeat carries: each keeps its job
+// alive, hands its state to OnLive, and a finished one releases the job so
+// the slot is free again.
+func (s *Service) ObserveLives(workerID string, hb Heartbeat) {
+	if hb.Remux == nil || len(hb.Remux.Lives) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, report := range hb.Remux.Lives {
+		ids, err := s.Registry.JobsForRoom(ctx, report.RoomID)
+		if err != nil {
+			continue
+		}
+		for _, id := range ids {
+			job, err := s.Registry.LoadJob(ctx, id)
+			if err != nil || job == nil || job.Kind != JobKindLive || job.WorkerID != workerID {
+				continue
+			}
+			final := report.State.State == "ended" || report.State.State == "failed"
+			if final {
+				s.release(ctx, job)
+			} else {
+				job.LastSeenAt = time.Now()
+				_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+			}
+		}
+		if s.OnLive != nil {
+			s.OnLive(report.RoomID, workerID, report.State)
+		}
+	}
 }

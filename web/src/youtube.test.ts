@@ -80,3 +80,11 @@ describe('openYoutube', () => {
     await expect(openYoutube('https://vimeo.com/1')).rejects.toMatchObject({ code: 'invalid' })
   })
 })
+
+describe('live error codes', () => {
+  it('says the live ended and maps the fleet refusals', () => {
+    expect(youtubeErrorKey(new YoutubeError('live_ended'))).toBe('room.liveEnded')
+    expect(youtubeErrorKey(new YoutubeError('youtube_no_workers'))).toBe('home.youtubeNoWorkers')
+    expect(youtubeErrorKey(new YoutubeError('youtube_busy'))).toBe('home.youtubeBusy')
+  })
+})

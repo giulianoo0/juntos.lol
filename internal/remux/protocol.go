@@ -76,13 +76,16 @@ type Limits struct {
 // Capability is what a worker announces in its heartbeat when it can run
 // remote remux. Absent means it cannot, and it receives no remux jobs.
 type Capability struct {
-	ProtocolVersion int         `json:"protocolVersion"`
-	Slots           int         `json:"slots"`
-	ActiveRuns      int         `json:"activeRuns"`
-	FFmpeg          string      `json:"ffmpeg"`
-	AudioCodecs     []string    `json:"audioCodecs"`
-	Youtube         *Youtube    `json:"youtube,omitempty"`
-	Runs            []RunReport `json:"runs,omitempty"`
+	ProtocolVersion int          `json:"protocolVersion"`
+	Slots           int          `json:"slots"`
+	ActiveRuns      int          `json:"activeRuns"`
+	FFmpeg          string       `json:"ffmpeg"`
+	AudioCodecs     []string     `json:"audioCodecs"`
+	Youtube         *Youtube     `json:"youtube,omitempty"`
+	Runs            []RunReport  `json:"runs,omitempty"`
+	LiveSlots       int          `json:"liveSlots"`
+	ActiveLives     int          `json:"activeLives"`
+	Lives           []LiveReport `json:"lives,omitempty"`
 }
 
 // Youtube is the worker's word that it resolves YouTube links: yt-dlp is
@@ -90,6 +93,26 @@ type Capability struct {
 type Youtube struct {
 	Version string `json:"version"`
 	Proxied bool   `json:"proxied"`
+}
+
+// LiveState is where one live stands: starting, live, ended, or failed with
+// the code the site can act on.
+type LiveState struct {
+	State  string `json:"state"`
+	Code   string `json:"code,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// LiveReport is one live the worker has on the relay, by the room it serves.
+type LiveReport struct {
+	RoomID string    `json:"roomId"`
+	State  LiveState `json:"state"`
+}
+
+// TakesLive reports whether a live may be put on this worker: it resolves
+// YouTube and has a live slot to spare.
+func (c *Capability) TakesLive() bool {
+	return c.TakesYoutube() && c.LiveSlots > c.ActiveLives
 }
 
 // TakesYoutube reports whether a YouTube run may be dispatched here.

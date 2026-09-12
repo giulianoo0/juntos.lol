@@ -12,6 +12,7 @@ pub mod source;
 pub mod subs;
 pub mod upload;
 pub mod youtube;
+pub mod live;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +39,8 @@ pub struct RemuxConfig {
     pub put_concurrency: usize,
     pub put_global: usize,
     pub youtube: Option<youtube::Config>,
+    /// Lives on the relay at once; each is one FFmpeg copying, no encode.
+    pub live_slots: usize,
 }
 
 /// What a run reads. A container is probed and its subtitles pulled by a
@@ -62,6 +65,8 @@ pub struct Remux {
     /// Rooms whose YouTube subtitles are already published, by generation:
     /// the documents come whole, so one run per generation does it.
     vtt_done: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// Lives on the relay, one per room.
+    lives: Mutex<HashMap<String, Arc<live::Session>>>,
 }
 
 struct RunEntry {
@@ -104,6 +109,7 @@ impl Remux {
             runs: Mutex::new(HashMap::new()),
             subtitle_rooms: subs::new_rooms(),
             vtt_done: Arc::new(Mutex::new(Default::default())),
+            lives: Mutex::new(HashMap::new()),
             ffmpeg_version,
             youtube,
             cfg,
@@ -116,6 +122,55 @@ impl Remux {
 
     pub fn slots(&self) -> usize {
         self.cfg.slots
+    }
+
+    pub fn live_slots(&self) -> usize {
+        if self.youtube.is_some() { self.cfg.live_slots } else { 0 }
+    }
+
+    /// Puts a room's live on the relay, replacing one already there for the
+    /// room. Refused with a code when there is no yt-dlp or every slot is busy.
+    pub fn start_live(&self, room: &str, request: live::Request) -> Result<(), &'static str> {
+        let Some(resolver) = self.youtube.clone() else { return Err("youtube_disabled") };
+        let mut lives = self.lives.lock();
+        lives.retain(|_, session| !session.state().is_final());
+        if let Some(previous) = lives.remove(room) {
+            previous.stop();
+        }
+        if lives.len() >= self.cfg.live_slots {
+            return Err("live_busy");
+        }
+        let session = live::Session::start(resolver, self.cfg.ffmpeg_path.clone(), request);
+        lives.insert(room.to_string(), Arc::new(session));
+        Ok(())
+    }
+
+    pub fn stop_live(&self, room: &str) -> bool {
+        match self.lives.lock().remove(room) {
+            Some(session) => {
+                session.stop();
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn live_state(&self, room: &str) -> Option<live::State> {
+        self.lives.lock().get(room).map(|session| session.state())
+    }
+
+    /// Every live the caller may still care about; a finished one stays
+    /// listed until the next start prunes it, so its end is reported once.
+    pub fn lives(&self) -> Vec<serde_json::Value> {
+        self.lives
+            .lock()
+            .iter()
+            .map(|(room, session)| json!({ "roomId": room, "state": session.state() }))
+            .collect()
+    }
+
+    pub fn active_lives(&self) -> usize {
+        self.lives.lock().values().filter(|session| !session.state().is_final()).count()
     }
 
     pub fn status(&self, run_id: &str) -> Option<RunStatus> {

@@ -86,6 +86,7 @@ services:
       # plugin hop: the CDN refuses datacenter addresses as bots.
       SS_WORKER_YOUTUBE_PROXY: ${YOUTUBE_PROXY:-}
       SS_WORKER_YOUTUBE_COOKIES: ${YOUTUBE_COOKIES:-}
+      SS_WORKER_LIVE_SLOTS: ${WORKER_LIVE_SLOTS:-2}
     ports:
       - "8443:8443"
       - "${WORKER_ACME_BIND:-127.0.0.1:18081}:8081"

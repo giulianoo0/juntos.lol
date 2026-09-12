@@ -220,6 +220,11 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 			return nil, fmt.Errorf("unmarshal chapters: %w", err)
 		}
 	}
+	if v := fields["live"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.Live); err != nil {
+			return nil, fmt.Errorf("unmarshal live: %w", err)
+		}
+	}
 	if v := fields["subtitle_fonts"]; v != "" {
 		if err := json.Unmarshal([]byte(v), &r.SubtitleFonts); err != nil {
 			return nil, fmt.Errorf("unmarshal subtitle fonts: %w", err)
@@ -659,6 +664,18 @@ func (s *Store) AddSubtitleFont(ctx context.Context, id string, font SubtitleFon
 	return fonts, nil
 }
 
+// SetLive records the live a room is on; nil clears it.
+func (s *Store) SetLive(ctx context.Context, id string, live *LiveInfo) error {
+	if live == nil {
+		return s.mutateRoom(ctx, id, false, "live", "")
+	}
+	encoded, err := json.Marshal(live)
+	if err != nil {
+		return fmt.Errorf("marshal live: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "live", string(encoded))
+}
+
 func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) error {
 	c, err := json.Marshal(chapters)
 	if err != nil {
@@ -766,7 +783,7 @@ redis.call('HSET', KEYS[1],
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
-  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token')
+  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token', 'live')
 for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
   if string.sub(field, 1, 13) == 'screen_share:' then redis.call('HDEL', KEYS[1], field) end
 end
@@ -1037,4 +1054,11 @@ func (s *Store) Published(ctx context.Context, id string) (map[string]struct{}, 
 		published[name] = struct{}{}
 	}
 	return published, nil
+}
+
+// SwapSourceForTest points a room at a live with nothing else changed; tests
+// of the reporters use it instead of the HTTP route.
+func (s *Store) SwapSourceForTest(ctx context.Context, id string) error {
+	_, _, err := s.SwapSource(ctx, id, SourceLive, "live", "processing", time.Now())
+	return err
 }

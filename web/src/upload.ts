@@ -15,6 +15,7 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
 import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 import { backendFor, type YoutubeSession } from './youtube'
+import { stopLive } from './live'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -100,6 +101,7 @@ export function unregisterRemuxHandle(roomID: string, handle: ClientRemuxHandle)
 }
 
 function releaseExternal(roomID: string): void {
+  stopLive(roomID)
   const stop = externalStops.get(roomID)
   if (!stop) return
   externalStops.delete(roomID)
@@ -141,7 +143,7 @@ export function uploadActive(roomID: string): boolean {
 // room can pick the preparo back up. A picked File has no way back.
 
 export interface ResumableSource {
-  kind: 'torrent' | 'url' | 'youtube'
+  kind: 'torrent' | 'url' | 'youtube' | 'live'
   fileName: string
   magnet?: string
   filePath?: string
@@ -289,6 +291,13 @@ export async function createRoomAndUploadYoutube(
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
   const created = await createRoom(youtubeFileName(session), nickname, 'youtube')
+  if (session.summary.live) {
+    // The room starts the live once it knows who its controller is: the
+    // producer needs the member's seat, which only the room hands out.
+    saveResumableSource(created.id, { kind: 'live', fileName: youtubeFileName(session), url: session.url })
+    session.destroy()
+    return { roomID: created.id, nickname: created.nickname }
+  }
   startYoutubeUpload(created.id, 0, session)
   return { roomID: created.id, nickname: created.nickname }
 }

@@ -365,5 +365,8 @@ fn remux_heartbeat(remux: &ss_remux::Remux) -> Option<serde_json::Value> {
         "audioCodecs": ["aac", "ac3", "dts"],
         "youtube": remux.youtube.as_ref().map(|yt| json!({ "version": yt.version, "proxied": yt.proxied() })),
         "runs": remux.runs(),
+        "liveSlots": remux.live_slots(),
+        "activeLives": remux.active_lives(),
+        "lives": remux.lives(),
     }))
 }

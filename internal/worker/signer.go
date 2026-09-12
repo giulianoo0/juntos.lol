@@ -72,6 +72,14 @@ type Job struct {
 	JTI       string      `json:"jti,omitempty"`
 	Remux     any         `json:"remux,omitempty"`
 	Youtube   *YoutubeJob `json:"youtube,omitempty"`
+	Live      *LiveJob    `json:"live,omitempty"`
+}
+
+// LiveJob is where a liveStart puts the stream: the relay URL carrying the
+// publish token and the broadcast name under it.
+type LiveJob struct {
+	Relay     string `json:"relay"`
+	Broadcast string `json:"broadcast"`
 }
 
 // YoutubeJob names the page a ytResolve or a YouTube remuxStart works on.

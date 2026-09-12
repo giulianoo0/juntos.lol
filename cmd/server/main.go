@@ -76,6 +76,7 @@ func main() {
 	}
 	var swarmMu sync.Mutex
 	lastSwarm := map[string]worker.SwarmStats{}
+	torrents.OnLive = httpapi.LiveReporter(store, hub.NotifyStatus)
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
 		swarmMu.Lock()
 		same := lastSwarm[roomID] == stats
@@ -103,6 +104,7 @@ func main() {
 	hub.OnPosition(remuxOrch.Follow)
 	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
 		torrents.Charge(workerID, hb)
+		torrents.ObserveLives(workerID, hb)
 		remuxOrch.ObserveHeartbeat(workerID, hb)
 	})
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)

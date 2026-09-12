@@ -5,6 +5,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY vendor vendor
 COPY ss-remux ss-remux
 COPY src src
+# aws-lc-rs (behind the MoQ client's TLS) builds its C library with cmake.
+RUN apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
 RUN cargo build --release
 
 FROM debian:trixie-slim

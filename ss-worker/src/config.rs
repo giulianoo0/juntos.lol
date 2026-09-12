@@ -48,6 +48,7 @@ pub struct WorkerConfig {
     pub drain_deadline: Duration,
 
     pub remux_slots: usize,
+    pub live_slots: usize,
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
     pub remux_spool_bytes: u64,
@@ -194,6 +195,7 @@ impl WorkerConfig {
             stall_deadline: env_secs("SS_WORKER_STALL_SECS", 20)?,
             drain_deadline: env_secs("SS_WORKER_DRAIN_SECS", 30)?,
             remux_slots: env_parse("SS_WORKER_REMUX_SLOTS", 1)?,
+            live_slots: env_parse("SS_WORKER_LIVE_SLOTS", 2)?,
             ffmpeg_path: env("SS_WORKER_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
             ffprobe_path: env("SS_WORKER_FFPROBE").unwrap_or_else(|| "ffprobe".into()),
             remux_spool_bytes: env_parse::<u64>("SS_WORKER_REMUX_SPOOL_MIB", 512)? * 1024 * 1024,
@@ -227,10 +229,12 @@ impl WorkerConfig {
             object_bytes: self.remux_object_bytes,
             put_concurrency: self.remux_put_concurrency,
             put_global: self.remux_put_global,
+            live_slots: self.live_slots,
             youtube: Some(ss_remux::youtube::Config {
                 ytdlp_path: self.ytdlp_path.clone(),
                 proxy: self.youtube_proxy.clone(),
                 cookies_file: self.youtube_cookies.clone(),
+                ca_file: None,
             }),
         }
     }

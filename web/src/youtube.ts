@@ -17,6 +17,8 @@ export interface YoutubeSummary {
   audios: { itag: string; codec: string; language: string; original: boolean }[]
   subtitles: { language: string; title: string; auto: boolean }[]
   chapters: number
+  /** A live: no duration, no seek; it goes to the relay instead of the bucket. */
+  live?: boolean
 }
 
 /** A resolved link, ready to become a room; `start` hands the production over. */
@@ -133,6 +135,9 @@ export function youtubeErrorKey(error: unknown): string {
     case 'quota': return 'home.youtubeQuota'
     case 'youtube_blocked': return 'home.youtubeBlocked'
     case 'youtube_unavailable': return 'home.youtubeUnavailable'
+    case 'youtube_no_workers': return 'home.youtubeNoWorkers'
+    case 'youtube_busy': return 'home.youtubeBusy'
+    case 'live_ended': return 'room.liveEnded'
     case 'youtube_unsupported': return 'home.youtubeUnsupported'
     default: return 'home.youtubeFailed'
   }
