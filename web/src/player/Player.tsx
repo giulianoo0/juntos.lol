@@ -4,6 +4,7 @@ import {
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
   FileUp,
   ClipboardCopy,
+  RotateCw,
 } from 'lucide-react'
 import { NumberFlowGroup } from '@number-flow/react'
 import type Hls from 'hls.js'
@@ -126,6 +127,9 @@ interface PlayableSubtitle extends TrackInfo {
 
 const SEEK_STEP_SECONDS = 5
 const SEEK_STEP_LARGE_SECONDS = 10
+const SKIP_SECONDS = 90
+const CONTROLS_HIDE_MS = 2500
+const CONTROLS_HIDE_TOUCH_MS = 4000
 const VOLUME_STEP = 0.05
 const VOLUME_CHASE_MS = 500
 const FEEDBACK_MS = 700
@@ -244,7 +248,12 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const [bufferedRanges, setBufferedRanges] = useState<BufferedRange[]>([])
   const [playing, setPlaying] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+  // What the last pointer was, and whether the controls were hidden when it
+  // landed: a touch that only brought them back is not a tap on the video.
+  const tapRef = useRef({ touch: false, revealed: false })
+  const controlsVisibleRef = useRef(true)
   const [controlsVisible, setControlsVisible] = useState(true)
+  controlsVisibleRef.current = controlsVisible
   const [volumeOpen, setVolumeOpen] = useState(false)
   const volumeOpenRef = useRef(false)
   volumeOpenRef.current = volumeOpen
@@ -278,7 +287,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
     controlsTimerRef.current = window.setTimeout(() => {
       controlsTimerRef.current = null
       setControlsVisible(false)
-    }, 2500)
+    }, tapRef.current.touch ? CONTROLS_HIDE_TOUCH_MS : CONTROLS_HIDE_MS)
   }, [])
 
   const showFeedback = useCallback((node: ReactNode) => {
@@ -1168,12 +1177,19 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       ref={playerRef}
       className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''}`}
       onPointerMove={() => revealControls(playing)}
-      onPointerDown={() => revealControls(playing)}
+      onPointerDown={(event) => {
+        tapRef.current = { touch: event.pointerType === 'touch', revealed: !controlsVisibleRef.current }
+        revealControls(playing)
+      }}
       onFocusCapture={() => revealControls(false)}
       onBlurCapture={() => revealControls(playing)}
       onClick={(event) => {
         if (inControlStrip(event)) return
         cancelPendingTap()
+        if (tapRef.current.touch && tapRef.current.revealed) {
+          tapRef.current.revealed = false
+          return
+        }
         tapTimerRef.current = setTimeout(() => {
           tapTimerRef.current = null
           if (togglePlay()) {
@@ -1184,6 +1200,15 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       onDoubleClick={(event) => {
         if (inControlStrip(event)) return
         cancelPendingTap()
+        if (tapRef.current.touch) {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const frac = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0.5
+          if (frac < 1 / 3 || frac > 2 / 3) {
+            const delta = frac < 1 / 3 ? -SEEK_STEP_LARGE_SECONDS : SEEK_STEP_LARGE_SECONDS
+            showFeedback(seekBy(delta) ? seekFeedback(delta) : <Lock size={24} />)
+            return
+          }
+        }
         toggleFullscreen()
       }}
     >
@@ -1384,6 +1409,14 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             onClick={togglePlay}
             onPointerUp={(event) => event.currentTarget.blur()}
           >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
+          <button
+            className="control-button skip-button"
+            aria-label={t('room.skip90')}
+            title={t('room.skip90')}
+            disabled={controlsBlocked}
+            onClick={() => showFeedback(seekBy(SKIP_SECONDS) ? seekFeedback(SKIP_SECONDS) : <Lock size={24} />)}
+            onPointerUp={(event) => event.currentTarget.blur()}
+          ><RotateCw size={14} aria-hidden="true" /><small>{SKIP_SECONDS}</small></button>
           <span className="timecode">
             <NumberFlowGroup>
               <Timecode seconds={scrubSec ?? pendingSeekSec ?? shownSec} />

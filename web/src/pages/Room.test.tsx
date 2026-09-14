@@ -214,6 +214,19 @@ describe('RoomPage source swap', () => {
     expect(await screen.findByRole('button', { name: /change media|trocar mídia/i })).toBeInTheDocument()
   })
 
+  it('starts with the chat closed on a phone, where it would cover the video', async () => {
+    const matchMedia = window.matchMedia
+    window.matchMedia = ((query: string) => ({ ...matchMedia(query), matches: query.includes('900px') })) as typeof window.matchMedia
+    try {
+      renderRoom()
+      await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+      welcome('m2')
+      expect(await screen.findByRole('button', { name: /^chat$/i })).toHaveAttribute('aria-pressed', 'false')
+    } finally {
+      window.matchMedia = matchMedia
+    }
+  })
+
   it('hides the swap from everyone who is not driving the room', async () => {
     renderRoom()
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))

@@ -316,7 +316,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       }
     })()
   }, [needsPreparo, room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
-  const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>('chat')
+  // On a phone the chat is a drawer over the video, so it starts closed.
+  const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>(() => (
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? null : 'chat'
+  ))
   const chatOpen = sidePanel === 'chat'
   const setChatOpen = (value: boolean | ((open: boolean) => boolean)) => {
     setSidePanel((panel) => {
@@ -330,6 +333,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   usePresenceNotices(sync.presence, t)
   useMessageChime(sync.messages, sync.connected, nickname)
   const [sourcePanel, setSourcePanel] = useState<'torrent' | 'youtube' | null>(null)
+  // The torrent the room is playing now, when this browser is the one that
+  // opened it: the picker lists it again as a playlist instead of asking.
+  const playlist = useMemo(() => {
+    if (sourcePanel !== 'torrent' || liveRoom.sourceOrigin !== 'torrent') return null
+    const source = resumableSourceFor(room.id)
+    if (!source || source.kind !== 'torrent' || !source.magnet || source.fileName !== liveRoom.fileName) return null
+    return { magnet: source.magnet, filePath: source.filePath }
+  }, [sourcePanel, liveRoom.sourceOrigin, liveRoom.fileName, room.id])
   const [readMark, setReadMark] = useState(() => sync.messages.length)
   const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
@@ -934,6 +945,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
                 onExit={() => setSourcePanel(null)}
                 onYoutubeLink={() => setSourcePanel('youtube')}
                 onPicked={chooseTorrent}
+                initialMagnet={playlist?.magnet}
+                autoLoad={playlist !== null}
+                currentPath={playlist?.filePath}
               />
             )}
           </DialogContent>

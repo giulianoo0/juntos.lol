@@ -267,6 +267,12 @@ const rankings = new Map<string, { at: number; probes: WorkerProbe[] }>()
  * Reports progressively through `onProbe` and resolves with the ranking, best
  * first. A recent ranking is reused unless a fresh measurement is asked for.
  */
+/** Files in the order a release lists them: by name, with numbers read as
+ * numbers, so episode 2 comes before episode 10. */
+export function orderVideoFiles<T extends { name: string }>(files: T[]): T[] {
+  return [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+}
+
 export async function probeWorkers(
   infoHash: string,
   onProbe?: (probes: WorkerProbe[]) => void,
@@ -349,8 +355,8 @@ export async function openRemoteTorrent(
   }
 
   let grant: WorkerGrant | null = null
-  const files = (status.files ?? [])
-    .filter((file) => VIDEO_EXTENSION.test(file.name))
+  const files = orderVideoFiles((status.files ?? [])
+    .filter((file) => VIDEO_EXTENSION.test(file.name)))
     .map((file): TorrentVideoFile => ({
       name: file.name,
       path: file.path,
@@ -361,7 +367,6 @@ export async function openRemoteTorrent(
       get downloaded() { return currentStats.downloaded },
       get worker() { return grant && grant.fileIndex === file.index ? grant : undefined },
     }))
-    .sort((a, b) => b.size - a.size)
 
   const subtitleFiles = (status.files ?? [])
     .filter((file) => isSubtitleFileName(file.name) && file.size > 0 && file.size <= MAX_SIDE_FILE_BYTES)

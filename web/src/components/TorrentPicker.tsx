@@ -21,6 +21,11 @@ interface TorrentPickerProps {
   onYoutubeLink?: (url: string) => void
   initialSession?: TorrentSession | null
   initialMagnet?: string
+  /** Lists the initial magnet on mount, so the room's own torrent opens as
+   * a playlist instead of asking for the link again. */
+  autoLoad?: boolean
+  /** The file playing now, marked in the list. */
+  currentPath?: string
   t: Translator
 }
 
@@ -41,7 +46,7 @@ function formatBytes(bytes: number): string {
  * it opened itself; a session handed in by the caller is released only by
  * backing out of its list.
  */
-export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', t }: TorrentPickerProps) {
+export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', autoLoad = false, currentPath, t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
   const [probes, setProbes] = useState<WorkerProbe[]>([])
@@ -112,6 +117,15 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
     }
   }
 
+  const autoLoaded = useRef(false)
+  useEffect(() => {
+    if (!autoLoad || autoLoaded.current || !initialMagnet.trim()) return
+    autoLoaded.current = true
+    void load()
+    // Only the first mount lists the magnet; later changes are the user's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad, initialMagnet])
+
   const back = () => {
     if (!session) { onExit?.(); return }
     session.destroy()
@@ -177,8 +191,15 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
           {matches.length > 0 ? (
             <div className="torrent-files">
               {matches.map((file) => (
-                <button type="button" key={file.path} onClick={() => { void pick(file) }}>
-                  <span>{file.name}</span><small>{formatBytes(file.size)}</small>
+                <button
+                  type="button"
+                  key={file.path}
+                  className={file.path === currentPath ? 'is-current' : undefined}
+                  aria-current={file.path === currentPath ? 'true' : undefined}
+                  onClick={() => { void pick(file) }}
+                >
+                  <span>{file.name}</span>
+                  <small>{file.path === currentPath ? t('home.torrentPlaying') : formatBytes(file.size)}</small>
                 </button>
               ))}
             </div>
@@ -187,7 +208,13 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
       ) : null}
       <WorkerProbes probes={probes} t={t} />
       {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
-      {!listing ? (
+      {listing ? (
+        <div className="torrent-actions torrent-actions-list">
+          <button type="button" className="ui-button ui-button--ghost torrent-switch" onClick={back}>
+            <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.torrentSwitchMagnet')}
+          </button>
+        </div>
+      ) : (
         <div className="torrent-actions">
           <button
             ref={loadRef}
@@ -202,7 +229,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
             </span>
           </button>
         </div>
-      ) : null}
+      )}
     </div>
   )
 }

@@ -930,6 +930,77 @@ describe('region offset', () => {
 describe('scrubbing', () => {
   const longRoom: RoomInfo = { ...room, durationMs: 1_440_000 }
 
+  it('skips ninety seconds ahead from the control bar, for the controller only', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const { rerender } = render(
+      <ToastProvider><Player room={longRoom} isController videoRef={videoRef} send={send} t={t} /></ToastProvider>,
+    )
+    videoRef.current!.currentTime = 30
+    fireEvent.click(screen.getByRole('button', { name: /skip 90 seconds/i }))
+    expect(send).toHaveBeenCalledWith('seek', { positionMs: 120_000 })
+
+    send.mockClear()
+    rerender(<ToastProvider><Player room={longRoom} isController={false} videoRef={videoRef} send={send} t={t} /></ToastProvider>)
+    fireEvent.click(screen.getByRole('button', { name: /skip 90 seconds/i }))
+    expect(send).not.toHaveBeenCalledWith('seek', expect.anything())
+  })
+
+  it('lets a touch with hidden controls reveal them without pausing', () => {
+    vi.useFakeTimers()
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const { container } = render(<Player room={room} isController videoRef={videoRef} send={send} t={t} />)
+    const player = container.querySelector('.player-wrap')!
+    fireEvent.canPlay(videoRef.current!)
+    fireEvent.play(videoRef.current!)
+    playing(videoRef.current!)
+    act(() => vi.advanceTimersByTime(4000))
+    expect(player).toHaveClass('controls-hidden')
+
+    fireEvent.pointerDown(player, { pointerType: 'touch' })
+    fireEvent.click(player)
+    act(() => vi.advanceTimersByTime(600))
+    expect(player).not.toHaveClass('controls-hidden')
+    expect(send).not.toHaveBeenCalledWith('pause', expect.anything())
+
+    try {
+      fireEvent.pointerDown(player, { pointerType: 'touch' })
+      fireEvent.click(player)
+      act(() => vi.advanceTimersByTime(600))
+      expect(send).toHaveBeenCalledWith('pause', expect.anything())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('seeks ten seconds on a double tap at either side of the picture', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: requestFullscreen })
+    const { container } = render(<Player room={longRoom} isController videoRef={videoRef} send={send} t={t} />)
+    const player = container.querySelector('.player-wrap')! as HTMLElement
+    player.getBoundingClientRect = () => ({ left: 0, top: 0, width: 300, height: 200, right: 300, bottom: 200, x: 0, y: 0, toJSON: () => ({}) })
+    videoRef.current!.currentTime = 30
+
+    fireEvent.pointerDown(player, { pointerType: 'touch' })
+    fireEvent.doubleClick(player, { clientX: 20, clientY: 100 })
+    expect(send).toHaveBeenLastCalledWith('seek', { positionMs: 20_000 })
+    // The next step counts from where the pending seek is going.
+    fireEvent.pointerDown(player, { pointerType: 'touch' })
+    fireEvent.doubleClick(player, { clientX: 280, clientY: 100 })
+    expect(send).toHaveBeenLastCalledWith('seek', { positionMs: 30_000 })
+    expect(requestFullscreen).not.toHaveBeenCalled()
+    fireEvent.pointerDown(player, { pointerType: 'touch' })
+    fireEvent.doubleClick(player, { clientX: 150, clientY: 100 })
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    // With a mouse, a double click anywhere still toggles fullscreen.
+    fireEvent.pointerDown(player, { pointerType: 'mouse' })
+    fireEvent.doubleClick(player, { clientX: 20, clientY: 100 })
+    expect(requestFullscreen).toHaveBeenCalledTimes(2)
+  })
+
   it('sends one seek per drag, on release, at the released position', () => {
     const send = vi.fn()
     const { container } = render(

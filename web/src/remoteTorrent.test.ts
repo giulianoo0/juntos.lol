@@ -64,3 +64,13 @@ describe('probeWorkers, on the way into a room', () => {
     expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsAfterFirst)
   })
 })
+
+describe('orderVideoFiles', () => {
+  it('lists files by name, numbers in natural order, not by size', async () => {
+    const { orderVideoFiles } = await import('./remoteTorrent')
+    const names = orderVideoFiles([
+      { name: 'Ep 10.mkv', size: 900 }, { name: 'ep 2.mkv', size: 100 }, { name: 'Abertura.mkv', size: 500 },
+    ]).map((file) => file.name)
+    expect(names).toEqual(['Abertura.mkv', 'ep 2.mkv', 'Ep 10.mkv'])
+  })
+})
