@@ -1,5 +1,6 @@
 import { memo, type RefObject, useEffect, useRef, useState } from 'react'
 
+import { activeCuesAt } from './activeCues'
 import { type ContentRect, subtitleFontSize, videoContentRect } from './subtitleLayout'
 
 interface SubtitleLayerProps {
@@ -56,10 +57,10 @@ export const SubtitleLayer = memo(function SubtitleLayer({ videoRef, position, r
 
     const draw = () => {
       host.replaceChildren()
-      const cues = track?.activeCues
-      if (!cues) return
+      if (!track) return
+      const cues = activeCuesAt(track.cues as ArrayLike<VTTCue> | null, video.currentTime)
       for (let index = 0; index < cues.length; index += 1) {
-        const cue = cues[index] as VTTCue
+        const cue = cues[index]
         const line = document.createElement('div')
         line.className = 'subtitle-line'
         if (typeof cue.getCueAsHTML === 'function') line.append(cue.getCueAsHTML())

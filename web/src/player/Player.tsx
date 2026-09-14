@@ -561,11 +561,16 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
     retimeCues(track, (wanted - applied) / 1000)
     appliedDelayRef.current.set(track, wanted)
   }, [])
-  useEffect(() => {
+  // Cues move before the state lands: the subtitle layer, a child, redraws
+  // ahead of any effect here and would otherwise paint the old timing.
+  const setDelay = useCallback((ms: number) => {
+    delayRef.current = ms
     const textTracks = videoRef.current?.textTracks
-    if (!textTracks) return
-    for (let position = 0; position < textTracks.length; position += 1) applyDelay(textTracks[position])
-  }, [delayMs, applyDelay, videoRef])
+    if (textTracks) {
+      for (let position = 0; position < textTracks.length; position += 1) applyDelay(textTracks[position])
+    }
+    setDelayMs(ms)
+  }, [applyDelay, videoRef])
 
   // The host's pick goes to the room so a viewer can copy it; a local import
   // is nobody else's to copy. Nothing is sent until the host touches the
@@ -591,8 +596,8 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   }, [])
   const pickDelay = useCallback((ms: number) => {
     pickTouchedRef.current = true
-    setDelayMs(ms)
-  }, [])
+    setDelay(ms)
+  }, [setDelay])
 
   const importSubtitle = useCallback(async (file: File) => {
     let track
@@ -625,10 +630,10 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
 
   const copyFromHost = useCallback(() => {
     if (!hostSubtitles) return
-    setDelayMs(hostSubtitles.delayMs)
+    setDelay(hostSubtitles.delayMs)
     if (hostSubtitles.track === -1) setSubtitle(-1)
     else if (sharedTracks.some((track) => track.index === hostSubtitles.track)) setSubtitle(hostSubtitles.track)
-  }, [hostSubtitles, sharedTracks])
+  }, [hostSubtitles, sharedTracks, setDelay])
   const [assFailed, setAssFailed] = useState(false)
   const assFontUrls = useMemo(
     () => (room.mediaBaseUrl ? (room.subtitleFonts ?? []).map((font) => `${room.mediaBaseUrl}/subs/${font.file}`) : []),
@@ -1304,7 +1309,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       <SubtitleLayer
         videoRef={videoRef}
         position={assChosen && !assFailed ? -1 : subtitleTracks.findIndex((track) => track.index === subtitle)}
-        revision={`${room.mediaGeneration}-${mediaReload}-${room.subsVersion ?? 0}-${subtitleCount}`}
+        revision={`${room.mediaGeneration}-${mediaReload}-${room.subsVersion ?? 0}-${subtitleCount}-${delayMs}`}
       />
       {assChosen && chosenSubtitleTrack ? (
         <AssLayer
