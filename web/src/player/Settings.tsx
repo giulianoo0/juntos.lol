@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, Settings as SettingsIcon } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { useMorphingSize } from '../ui/useMorphingSize'
@@ -9,12 +9,25 @@ export interface SettingOption {
   label: string
 }
 
+export interface SettingAction {
+  id: string
+  label: string
+  icon?: ReactNode
+  onSelect: () => void
+}
+
 export interface SettingGroup {
   id: string
   label: string
   options: SettingOption[]
   current: number
   onPick: (value: number) => void
+  /** Rows above the options that do something instead of picking a value. */
+  actions?: SettingAction[]
+  /** What the closed row reads when no option matches the current value. */
+  valueLabel?: string
+  /** A control of its own in place of the option list; stays open after use. */
+  panel?: ReactNode
 }
 
 /**
@@ -73,11 +86,22 @@ export const Settings = memo(function Settings({ groups, t }: { groups: SettingG
                       onClick={() => setExpanded(isOpen ? null : group.id)}
                     >
                       <span className="settings-name">{group.label}</span>
-                      <span className="settings-value">{chosen?.label ?? ''}</span>
+                      <span className="settings-value">{chosen?.label ?? group.valueLabel ?? ''}</span>
                       <ChevronDown className="settings-chevron" size={14} aria-hidden="true" />
                     </button>
                     {isOpen ? (
                       <div className="settings-options">
+                        {(group.actions ?? []).map((action) => (
+                          <button
+                            key={action.id}
+                            className="settings-option settings-action"
+                            onClick={() => { action.onSelect(); setExpanded(null) }}
+                          >
+                            {action.icon}
+                            <span className="settings-option-label">{action.label}</span>
+                          </button>
+                        ))}
+                        {group.panel}
                         {group.options.map((option) => (
                           <button
                             key={option.value}

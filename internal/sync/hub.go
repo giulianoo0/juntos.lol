@@ -68,6 +68,7 @@ type roomConn struct {
 	hub              *Hub
 	controllerID     string
 	gating           bool
+	hostSubtitles    *HostSubtitles
 	ownerToken       string
 	gate             *playGate
 	ignored          map[string]struct{}
@@ -537,7 +538,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.send(request.client, Outbound{
 		Type: "welcome", MemberID: memberID, State: &state, ControllerID: r.controllerID,
 		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
-		Capability: request.client.capability, Gating: &gating,
+		Capability: request.client.capability, Gating: &gating, HostSubtitles: r.hostSubtitles,
 	})
 	r.send(request.client, Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
@@ -788,6 +789,8 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.gateOnStall(readyCtx, now)
 	case "gating":
 		r.handleGatingToggle(event.client, message)
+	case "subtitles":
+		r.handleHostSubtitles(event.client, message)
 	case "ignore":
 		r.handleIgnore(event.client, message)
 	case "kick", "transfer":
@@ -819,6 +822,22 @@ func (r *roomConn) handleInbound(event clientInbound) {
 	case "stillHere":
 		r.touch()
 	}
+}
+
+// handleHostSubtitles keeps the controller's subtitle pick for the room and
+// tells everyone, so a viewer can copy it. It lives in memory only: the next
+// host sends its own the moment it takes over.
+func (r *roomConn) handleHostSubtitles(sender *client, message Inbound) {
+	if sender.id != r.controllerID {
+		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
+		return
+	}
+	if message.Subtitles == nil || message.Subtitles.Track < -1 {
+		return
+	}
+	prefs := *message.Subtitles
+	r.hostSubtitles = &prefs
+	r.broadcast(Outbound{Type: "hostSubtitles", HostSubtitles: &prefs})
 }
 
 // handleTitleRequest relays a viewer's catalog pick to the whole room. The

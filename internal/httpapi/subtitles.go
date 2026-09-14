@@ -75,6 +75,114 @@ func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.C
 	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, publisher, onSubsStored))
 	rg.POST("/rooms/:id/subtitles/fleet", storeFleetSubtitles(store, cfg, publisher, onSubsStored))
 	rg.POST("/rooms/:id/subtitles/fonts", storeSubtitleFont(store, cfg, publisher, onSubsStored))
+	rg.POST("/rooms/:id/subtitles/import", importSubtitle(store, cfg, publisher, onSubsStored))
+}
+
+const maxImportedSubtitles = 8
+
+// importSubtitleRequest is one subtitle file the host picked by hand, already
+// converted by the browser. The member id must be the room's controller: a
+// guest's import stays in its own browser.
+type importSubtitleRequest struct {
+	MemberID        string  `json:"memberId" binding:"required"`
+	MediaGeneration *int    `json:"mediaGeneration" binding:"required"`
+	Language        string  `json:"language"`
+	Title           string  `json:"title"`
+	VTT             string  `json:"vtt" binding:"required"`
+	ASS             *string `json:"ass"`
+}
+
+// importSubtitle stores a host-imported track for the whole room. Imported
+// tracks are indexed from 1000 and kept apart from the extraction, so a later
+// extraction post never drops them.
+func importSubtitle(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
+	onSubsStored func(roomID string)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		storedRoom, ok := loadLiveRoom(c, store, roomID)
+		if !ok {
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSubtitlesBodyBytes)
+		var req importSubtitleRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if req.MemberID != storedRoom.ControllerID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "not_controller"})
+			return
+		}
+		if *req.MediaGeneration != storedRoom.MediaGeneration {
+			c.JSON(http.StatusConflict, gin.H{"error": "stale_generation"})
+			return
+		}
+		if !validSubtitleTitle(req.Title) || !validSubtitleVTT(req.VTT) || (req.ASS != nil && !validSubtitleASS(*req.ASS)) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		index := room.ImportedSubtitleIndexBase
+		for _, held := range storedRoom.SubtitleTracks {
+			if held.Index >= index {
+				index = held.Index + 1
+			}
+		}
+		if index-room.ImportedSubtitleIndexBase >= maxImportedSubtitles {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too_many_subtitles"})
+			return
+		}
+		language := sanitizeSubtitleLanguage(req.Language)
+		codec := "webvtt"
+		payload := req.VTT
+		if req.ASS != nil {
+			codec = "ass"
+			payload += "\x00" + *req.ASS
+		}
+		track := room.TrackInfo{Index: index, Language: language, Title: req.Title, Codec: codec, Digest: subtitleDigest(payload)}
+
+		subsDir := filepath.Join(cfg.DataDir, "rooms", roomID, "subs")
+		if err := os.MkdirAll(subsDir, 0o755); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		files := map[string]string{fmt.Sprintf("sub_%d_%s.vtt", index, language): req.VTT}
+		if req.ASS != nil {
+			files[fmt.Sprintf("sub_%d_%s.ass", index, language)] = *req.ASS
+		}
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(subsDir, name), []byte(body), 0o644); err != nil {
+				slog.ErrorContext(c.Request.Context(), "write imported subtitle failed", "room_id", roomID, "error", err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
+		if publisher != nil {
+			if err := publisher.PublishSubtitles(c.Request.Context(), roomID, subsDir); err != nil {
+				slog.ErrorContext(c.Request.Context(), "upload imported subtitle failed", "room_id", roomID, "error", err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+		}
+		imported, err := store.AddImportedSubtitle(c.Request.Context(), roomID, track, maxImportedSubtitles)
+		if err != nil {
+			switch {
+			case errors.Is(err, room.ErrNotFound):
+				c.Status(http.StatusNotFound)
+			case errors.Is(err, room.ErrSubtitleLimit):
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "too_many_subtitles"})
+			default:
+				slog.ErrorContext(c.Request.Context(), "store imported subtitle failed", "room_id", roomID, "error", err)
+				c.Status(http.StatusInternalServerError)
+			}
+			return
+		}
+		invokeSubsStoredCallback(onSubsStored, roomID)
+		c.JSON(http.StatusCreated, gin.H{"subtitleTracks": imported})
+	}
 }
 
 // fleetSubtitlesRequest is a worker's publish of the tracks its FFmpeg pass

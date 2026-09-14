@@ -728,6 +728,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             <Player
               room={liveRoom}
               isController={sync.isController}
+              memberId={sync.memberId}
+              hostSubtitles={sync.hostSubtitles}
               videoRef={videoRef}
               send={sync.send}
               t={t}

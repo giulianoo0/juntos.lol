@@ -528,6 +528,15 @@ button.timecode-chapter:hover { color: var(--text); }
 .settings-option-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-tick { flex: 0 0 auto; opacity: 0; color: #FFB794; }
 .settings-option.is-current .settings-tick { opacity: 1; }
+.settings-action { color: var(--text); }
+.settings-action > svg { flex: 0 0 auto; color: var(--text-dim); }
+.delay-control { display: flex; align-items: center; gap: 6px; padding: 4px 6px 8px; }
+.delay-step { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 10px; color: var(--text); background: rgba(255,255,255,.07); touch-action: none; user-select: none; -webkit-user-select: none; }
+.delay-step:hover { background: rgba(255,255,255,.14); }
+.delay-step:active { background: rgba(255,255,255,.2); }
+.delay-value, .delay-field { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; text-align: center; }
+.delay-value:hover { background: rgba(255,255,255,.07); }
+.delay-field { background: rgba(255,255,255,.1); outline: 1px solid rgba(255,183,148,.6); }
 
 .home-shell.is-dragging::after { content: ''; position: fixed; inset: 12px; z-index: 40; pointer-events: none; border: 1px dashed var(--primary); border-radius: 26px; background: var(--primary-soft); }
 

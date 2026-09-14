@@ -507,3 +507,87 @@ func TestStoreFleetSubtitlesOutliveTheCompletedMedia(t *testing.T) {
 		`{"claim":"client:other","mediaGeneration":0,"complete":true,"tracks":[`+track+`]}`)
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 }
+
+func postImportedSubtitle(t *testing.T, e *gin.Engine, roomID, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/subtitles/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(w, req)
+	return w
+}
+
+func newImportTestRoom(t *testing.T) (*gin.Engine, *room.Store, chan string, string) {
+	t.Helper()
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "r1", FileName: "movie.mkv", Status: "ready", ControllerID: "host", MediaGeneration: 2,
+		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	stored := make(chan string, 4)
+	e := gin.New()
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, func(id string) { stored <- id })
+	return e, store, stored, cfg.DataDir
+}
+
+func TestImportSubtitleByTheControllerReachesEveryone(t *testing.T) {
+	e, store, stored, dataDir := newImportTestRoom(t)
+
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"host","mediaGeneration":2,"language":"por","title":"Filme.srt","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	select {
+	case <-stored:
+	case <-time.After(time.Second):
+		t.Fatal("onSubsStored not called")
+	}
+	data, err := os.ReadFile(filepath.Join(dataDir, "rooms", "r1", "subs", "sub_1000_por.vtt"))
+	require.NoError(t, err)
+	require.Equal(t, validVTT, string(data))
+
+	// The extraction posting later keeps the imported track after its own.
+	w = postSubtitles(t, e, "r1", `{"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}],"mediaGeneration":2}`)
+	require.Equal(t, http.StatusCreated, w.Code)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, []room.TrackInfo{
+		{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt", Digest: subtitleDigest(validVTT)},
+		{Index: 1000, Language: "por", Title: "Filme.srt", Codec: "webvtt", Digest: subtitleDigest(validVTT)},
+	}, got.SubtitleTracks)
+
+	w = postImportedSubtitle(t, e, "r1", `{"memberId":"host","mediaGeneration":2,"language":"jpn","title":"Anime.ass","vtt":`+strconvQuote(validVTT)+`,"ass":"[Script Info]\nTitle: x\n"}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	got, err = store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleTracks, 3)
+	require.Equal(t, 1001, got.SubtitleTracks[2].Index)
+	require.Equal(t, "ass", got.SubtitleTracks[2].Codec)
+	_, err = os.Stat(filepath.Join(dataDir, "rooms", "r1", "subs", "sub_1001_jpn.ass"))
+	require.NoError(t, err)
+}
+
+func TestImportSubtitleRefusesAnyoneButTheController(t *testing.T) {
+	e, _, _, _ := newImportTestRoom(t)
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"guest","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "not_controller")
+}
+
+func TestImportSubtitleRefusesAReplacedSource(t *testing.T) {
+	e, _, _, _ := newImportTestRoom(t)
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"host","mediaGeneration":1,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestImportSubtitleRejectsBadInput(t *testing.T) {
+	e, _, _, _ := newImportTestRoom(t)
+	for _, body := range []string{
+		`{"memberId":"host","mediaGeneration":2,"language":"por","title":"x","vtt":"not vtt"}`,
+		`{"memberId":"host","mediaGeneration":2,"language":"por","title":"x"}`,
+		`{"memberId":"host","mediaGeneration":2,"language":"por","title":"x","vtt":` + strconvQuote(validVTT) + `,"ass":"nope"}`,
+	} {
+		w := postImportedSubtitle(t, e, "r1", body)
+		require.Equal(t, http.StatusBadRequest, w.Code, body)
+	}
+}

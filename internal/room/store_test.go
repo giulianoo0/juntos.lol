@@ -396,3 +396,37 @@ func TestSwarmStatsRoundTripAndClearOnSwap(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got.Preparation.Swarm, "the swarm described the old source")
 }
+
+func TestImportedSubtitlesRideAfterTheExtractedOnesAndSwapClearsThem(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{
+		ID: "abc", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}))
+	imported := TrackInfo{Index: 1000, Language: "por", Title: "Filme.srt", Codec: "webvtt", Digest: "d1"}
+
+	got, err := s.AddImportedSubtitle(t.Context(), "abc", imported, 8)
+	require.NoError(t, err)
+	require.Equal(t, []TrackInfo{imported}, got)
+
+	again, err := s.AddImportedSubtitle(t.Context(), "abc", imported, 8)
+	require.NoError(t, err)
+	require.Equal(t, []TrackInfo{imported}, again, "the same bytes import once")
+
+	extracted := TrackInfo{Index: 0, Language: "eng", Codec: "webvtt", Digest: "d0"}
+	require.NoError(t, s.SetClientSubtitles(t.Context(), "abc", []TrackInfo{extracted}, true))
+	r, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, []TrackInfo{extracted, imported}, r.SubtitleTracks)
+	require.Equal(t, 2, r.SubsVersion)
+
+	_, err = s.AddImportedSubtitle(t.Context(), "abc", TrackInfo{Index: 1001, Language: "spa", Digest: "d2"}, 1)
+	require.ErrorIs(t, err, ErrSubtitleLimit)
+
+	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
+	require.NoError(t, err)
+	r, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Empty(t, r.SubtitleTracks)
+}

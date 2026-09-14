@@ -17,6 +17,14 @@ import (
 
 var ErrNotFound = errors.New("room not found")
 
+// ErrSubtitleLimit says a room already holds as many imported subtitle tracks
+// as it may.
+var ErrSubtitleLimit = errors.New("subtitle limit reached")
+
+// ImportedSubtitleIndexBase is the first index an imported subtitle track
+// takes: far above any extraction, so the two lists never collide.
+const ImportedSubtitleIndexBase = 1000
+
 // ErrSharingClosed is a guest starting a screen in a room the host closed.
 var ErrSharingClosed = errors.New("sharing closed")
 
@@ -214,6 +222,13 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		if err := json.Unmarshal([]byte(v), &r.SubtitleTracks); err != nil {
 			return nil, fmt.Errorf("unmarshal subtitle tracks: %w", err)
 		}
+	}
+	if v := fields["imported_subtitle_tracks"]; v != "" {
+		var imported []TrackInfo
+		if err := json.Unmarshal([]byte(v), &imported); err != nil {
+			return nil, fmt.Errorf("unmarshal imported subtitle tracks: %w", err)
+		}
+		r.SubtitleTracks = append(r.SubtitleTracks, imported...)
 	}
 	if v := fields["chapters"]; v != "" {
 		if err := json.Unmarshal([]byte(v), &r.Chapters); err != nil {
@@ -752,6 +767,49 @@ func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackI
 	return s.mutateRoomBump(ctx, id, false, "subs_version", fields...)
 }
 
+// AddImportedSubtitle appends one track a host imported by hand. Imported
+// tracks live apart from the extraction, which rewrites its own list whole,
+// and ride after it on every read. The same bytes import once; the list is
+// capped at limit. The read-append-write is not atomic.
+func (s *Store) AddImportedSubtitle(ctx context.Context, id string, track TrackInfo, limit int) ([]TrackInfo, error) {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	imported := make([]TrackInfo, 0, len(current.SubtitleTracks))
+	for _, held := range current.SubtitleTracks {
+		if held.Index < ImportedSubtitleIndexBase {
+			continue
+		}
+		if held.Digest == track.Digest && held.Language == track.Language {
+			return importedOf(current.SubtitleTracks), nil
+		}
+		imported = append(imported, held)
+	}
+	if len(imported) >= limit {
+		return nil, ErrSubtitleLimit
+	}
+	imported = append(imported, track)
+	raw, err := json.Marshal(imported)
+	if err != nil {
+		return nil, fmt.Errorf("marshal imported subtitle tracks: %w", err)
+	}
+	if err := s.mutateRoomBump(ctx, id, false, "subs_version", "imported_subtitle_tracks", string(raw)); err != nil {
+		return nil, err
+	}
+	return imported, nil
+}
+
+func importedOf(tracks []TrackInfo) []TrackInfo {
+	out := make([]TrackInfo, 0, len(tracks))
+	for _, held := range tracks {
+		if held.Index >= ImportedSubtitleIndexBase {
+			out = append(out, held)
+		}
+	}
+	return out
+}
+
 // SwapSource repoints a live room at a new source, keeping its members, chat
 // and controller and clearing everything describing the previous media —
 // tracks, error, upload reservation, position, playlists and published set.
@@ -780,7 +838,7 @@ redis.call('HSET', KEYS[1],
   'audio_tracks', 'null',
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
-redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts',
+redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts', 'imported_subtitle_tracks',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token', 'live')

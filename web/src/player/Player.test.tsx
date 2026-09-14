@@ -175,7 +175,7 @@ describe('Player', () => {
     expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
   })
 
-  it('offers no subtitles at all when the room names no bucket', () => {
+  it('loads no room track without a bucket but still offers to import a file', async () => {
     const withSubs: RoomInfo = {
       ...room,
       subtitleTracks: [{ index: 0, language: 'por', title: 'Legendas', codec: 'webvtt' }],
@@ -185,7 +185,88 @@ describe('Player', () => {
     )
 
     expect(container.querySelector('track')).toBeNull()
-    expect(screen.queryByRole('button', { name: /settings|configurações/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
+    expect(screen.getByRole('button', { name: /import file/i })).toBeInTheDocument()
+    expect(screen.queryByText('Legendas')).not.toBeInTheDocument()
+    expect(container.querySelector('input[type="file"]')?.getAttribute('accept')).toBe('.srt,.ass,.ssa,.vtt,.sub')
+  })
+
+  it('keeps a guest import in this browser and picks it', async () => {
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:local-1'), revokeObjectURL: vi.fn() }))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }))
+    const { container } = render(
+      <ToastProvider>
+        <Player room={room} isController={false} memberId="m2" videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />
+      </ToastProvider>,
+    )
+    const file = new File(['1\n00:00:01,000 --> 00:00:02,000\nOi\n'], 'Filme.srt')
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } })
+
+    await waitFor(() => expect(container.querySelector('track')?.getAttribute('src')).toBe('blob:local-1'))
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/subtitles/import'))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    expect(await screen.findByTestId('setting-subtitles')).toHaveTextContent('Filme.srt')
+  })
+
+  it('sends a host import to the room and picks it once it lands', async () => {
+    const stored = { index: 1000, language: 'und', title: 'Filme.srt', codec: 'webvtt', digest: 'd' }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => (
+      String(url).includes('/subtitles/import')
+        ? new Response(JSON.stringify({ subtitleTracks: [stored] }), { status: 201 })
+        : new Response('', { status: 404 })
+    ))
+    const send = vi.fn()
+    const { container, rerender } = render(
+      <ToastProvider>
+        <Player room={{ ...room, mediaGeneration: 2 }} isController memberId="m1" videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />
+      </ToastProvider>,
+    )
+    const file = new File(['1\n00:00:01,000 --> 00:00:02,000\nOi\n'], 'Filme.srt')
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } })
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/rooms/r1/subtitles/import', expect.anything()))
+    const importCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/subtitles/import'))!
+    expect(JSON.parse(String(importCall[1]?.body))).toMatchObject({ memberId: 'm1', mediaGeneration: 2, title: 'Filme.srt' })
+    expect(container.querySelector('track')).toBeNull()
+
+    rerender(
+      <ToastProvider>
+        <Player
+          room={{ ...room, mediaGeneration: 2, subtitleTracks: [stored], mediaBaseUrl: 'https://media.example.test/rooms/r1/g2' }}
+          isController memberId="m1" videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
+        />
+      </ToastProvider>,
+    )
+    await waitFor(() => expect(container.querySelector('track')?.getAttribute('src')).toBe('https://media.example.test/rooms/r1/g2/subs/sub_1000_und.vtt?g=2&s=d'))
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    expect(await screen.findByTestId('setting-subtitles')).toHaveTextContent('Filme.srt')
+    await waitFor(() => expect(send).toHaveBeenLastCalledWith('subtitles', { subtitles: { track: 1000, delayMs: 0 } }))
+  })
+
+  it('lets a viewer copy the host subtitle pick, track and delay alike', async () => {
+    const withSubs: RoomInfo = {
+      ...room,
+      subtitleTracks: [
+        { index: 0, language: 'eng', title: 'English', codec: 'webvtt' },
+        { index: 1, language: 'por', title: 'Portugues', codec: 'webvtt' },
+      ],
+      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+    }
+    const send = vi.fn()
+    render(
+      <Player
+        room={withSubs} isController={false} memberId="m2" hostSubtitles={{ track: 1, delayMs: 500 }}
+        videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitle delay/i }))
+    fireEvent.click(screen.getByRole('button', { name: /copy from host/i }))
+
+    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
+    expect(screen.getByTestId('setting-subtitleDelay')).toHaveTextContent('+0.50 s')
+    expect(send).not.toHaveBeenCalledWith('subtitles', expect.anything())
   })
 
   it('starts media inside the controller click before sending synchronized play', async () => {

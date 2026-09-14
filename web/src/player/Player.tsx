@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import {
   FastForward, Lock, Maximize, Minimize, Pause, Play, Rewind,
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
+  FileUp,
+  ClipboardCopy,
 } from 'lucide-react'
 import { NumberFlowGroup } from '@number-flow/react'
 import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 import type { MediaRegion, PlayState, RoomInfo, TrackInfo } from '../types'
+import { DelayControl } from './DelayControl'
+import { formatDelay, retimeCues } from './subtitleDelay'
+import { publishImportedSubtitle, readSubtitleFile, SUBTITLE_FILE_ACCEPT } from './subtitleImport'
+import type { HostSubtitles } from './useSync'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
@@ -33,6 +39,9 @@ import { useToast } from '../ui/toastContext'
 interface PlayerProps {
   room: RoomInfo
   isController: boolean
+  /** This viewer's seat, which a host import is authorized by. */
+  memberId?: string
+  hostSubtitles?: HostSubtitles | null
   videoRef: MutableRefObject<HTMLVideoElement | null>
   send: (type: string, payload?: Record<string, unknown>) => void
   t: Translator
@@ -102,6 +111,18 @@ const TAP_TOGGLE_DELAY_MS = 200
  */
 const STALL_BUFFER_SEC = 1
 const NO_SUBTITLE_TRACKS: NonNullable<RoomInfo['subtitleTracks']> = []
+const NO_FONT_URLS: string[] = []
+/** Tracks imported into this browser alone are indexed from here, above any
+ * room track, and never leave. */
+const LOCAL_SUBTITLE_BASE = 100_000
+
+/** One subtitle the player can show: a room track resolved to its bucket
+ * URLs, or a file imported into this browser. */
+interface PlayableSubtitle extends TrackInfo {
+  src: string
+  assSrc: string | null
+  local: boolean
+}
 
 const SEEK_STEP_SECONDS = 5
 const SEEK_STEP_LARGE_SECONDS = 10
@@ -120,17 +141,19 @@ export interface BufferedRange {
   end: number
 }
 
-function assSource(room: RoomInfo, track: TrackInfo): string {
+type SubtitleBucket = Pick<RoomInfo, 'mediaBaseUrl' | 'mediaGeneration' | 'subsVersion'>
+
+function assSource(room: SubtitleBucket, track: TrackInfo): string {
   const version = `?g=${room.mediaGeneration}&s=${track.digest ?? room.subsVersion ?? 0}`
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.ass${version}`
 }
 
-function subtitleSource(room: RoomInfo, track: TrackInfo): string {
+function subtitleSource(room: SubtitleBucket, track: TrackInfo): string {
   const version = `?g=${room.mediaGeneration}&s=${track.digest ?? room.subsVersion ?? 0}`
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
+export function Player({ room, isController, memberId = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
   const { toast } = useToast()
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement>(null)
@@ -158,6 +181,13 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   )
   const [level, setLevel] = useState(-1)
   const [subtitle, setSubtitle] = useState(-1)
+  const [localTracks, setLocalTracks] = useState<PlayableSubtitle[]>([])
+  const localSeqRef = useRef(0)
+  const [delayMs, setDelayMs] = useState(0)
+  const delayRef = useRef(0)
+  delayRef.current = delayMs
+  const appliedDelayRef = useRef(new WeakMap<TextTrack, number>())
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [audioTrack, setAudioTrack] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -486,10 +516,110 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
 
   useEffect(() => { resumeAfterReloadRef.current = false }, [room.mediaGeneration])
 
-  const subtitleTracks = room.subtitleTracks ?? NO_SUBTITLE_TRACKS
+  const sharedTracks = room.mediaBaseUrl ? (room.subtitleTracks ?? NO_SUBTITLE_TRACKS) : NO_SUBTITLE_TRACKS
+  const { mediaBaseUrl, mediaGeneration, subsVersion } = room
+  const subtitleTracks: PlayableSubtitle[] = useMemo(() => {
+    const bucket = { mediaBaseUrl, mediaGeneration, subsVersion }
+    return [
+      ...sharedTracks.map((track) => ({
+        ...track,
+        src: subtitleSource(bucket, track),
+        assSrc: track.codec === 'ass' ? assSource(bucket, track) : null,
+        local: false,
+      })),
+      ...localTracks,
+    ]
+  }, [sharedTracks, localTracks, mediaBaseUrl, mediaGeneration, subsVersion])
   const subtitleCount = subtitleTracks.length
   const chosenSubtitleTrack = subtitleTracks.find((track) => track.index === subtitle) ?? null
-  const assChosen = chosenSubtitleTrack !== null && chosenSubtitleTrack.codec === 'ass' && !!room.mediaBaseUrl
+  const assChosen = chosenSubtitleTrack !== null && chosenSubtitleTrack.assSrc !== null
+
+  // A local import belongs to the media it was picked for.
+  useEffect(() => () => {
+    setLocalTracks((current) => {
+      for (const track of current) {
+        URL.revokeObjectURL(track.src)
+        if (track.assSrc) URL.revokeObjectURL(track.assSrc)
+      }
+      return current.length === 0 ? current : []
+    })
+  }, [room.mediaGeneration])
+
+  const applyDelay = useCallback((track: TextTrack) => {
+    const applied = appliedDelayRef.current.get(track) ?? 0
+    const wanted = delayRef.current
+    if (applied === wanted) return
+    retimeCues(track, (wanted - applied) / 1000)
+    appliedDelayRef.current.set(track, wanted)
+  }, [])
+  useEffect(() => {
+    const textTracks = videoRef.current?.textTracks
+    if (!textTracks) return
+    for (let position = 0; position < textTracks.length; position += 1) applyDelay(textTracks[position])
+  }, [delayMs, applyDelay, videoRef])
+
+  // The host's pick goes to the room so a viewer can copy it; a local import
+  // is nobody else's to copy. Nothing is sent until the host touches the
+  // pick, except to replace a previous host's pick on taking over. The room's
+  // copy is read through a ref: the host's own send echoes back as a
+  // broadcast, and following it would send again.
+  const pickTouchedRef = useRef(false)
+  const hostSubtitlesRef = useRef(hostSubtitles)
+  hostSubtitlesRef.current = hostSubtitles
+  useEffect(() => {
+    if (!isController) return
+    const pick = { track: subtitle >= LOCAL_SUBTITLE_BASE ? -1 : subtitle, delayMs }
+    if (!pickTouchedRef.current) {
+      const held = hostSubtitlesRef.current
+      if (!held || (held.track === pick.track && held.delayMs === pick.delayMs)) return
+    }
+    pickTouchedRef.current = true
+    send('subtitles', { subtitles: pick })
+  }, [isController, subtitle, delayMs, send])
+  const pickSubtitle = useCallback((index: number) => {
+    pickTouchedRef.current = true
+    setSubtitle(index)
+  }, [])
+  const pickDelay = useCallback((ms: number) => {
+    pickTouchedRef.current = true
+    setDelayMs(ms)
+  }, [])
+
+  const importSubtitle = useCallback(async (file: File) => {
+    let track
+    try {
+      track = await readSubtitleFile(file)
+    } catch {
+      toast(t('room.subtitleUnsupported'))
+      return
+    }
+    if (isController && memberId !== '') {
+      try {
+        const stored = await publishImportedSubtitle(room.id, memberId, room.mediaGeneration, track)
+        pickSubtitle(stored.index)
+        toast(t('room.subtitleImported'))
+      } catch (error) {
+        console.warn('subtitle import failed', error)
+        toast(t('room.subtitleImportFailed'))
+      }
+      return
+    }
+    const index = LOCAL_SUBTITLE_BASE + localSeqRef.current
+    localSeqRef.current += 1
+    const src = URL.createObjectURL(new Blob([track.vtt], { type: 'text/vtt' }))
+    const assSrc = track.ass !== undefined ? URL.createObjectURL(new Blob([track.ass], { type: 'text/plain' })) : null
+    setLocalTracks((current) => [...current, {
+      index, language: track.language, title: track.title, codec: assSrc ? 'ass' : 'webvtt', src, assSrc, local: true,
+    }])
+    pickSubtitle(index)
+  }, [isController, memberId, pickSubtitle, room.id, room.mediaGeneration, t, toast])
+
+  const copyFromHost = useCallback(() => {
+    if (!hostSubtitles) return
+    setDelayMs(hostSubtitles.delayMs)
+    if (hostSubtitles.track === -1) setSubtitle(-1)
+    else if (sharedTracks.some((track) => track.index === hostSubtitles.track)) setSubtitle(hostSubtitles.track)
+  }, [hostSubtitles, sharedTracks])
   const [assFailed, setAssFailed] = useState(false)
   const assFontUrls = useMemo(
     () => (room.mediaBaseUrl ? (room.subtitleFonts ?? []).map((font) => `${room.mediaBaseUrl}/subs/${font.file}`) : []),
@@ -866,22 +996,43 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
   const settingGroups: SettingGroup[] = useMemo(() => {
-    const groups: SettingGroup[] = []
-    if (room.mediaBaseUrl && subtitleTracks.length > 0) {
-      groups.push({
-        id: 'subtitles',
-        label: t('room.subtitles'),
-        current: subtitle,
-        onPick: setSubtitle,
-        options: [
-          { value: -1, label: t('room.off') },
-          ...subtitleTracks.map((track) => ({
-            value: track.index,
-            label: track.title || track.language || String(track.index + 1),
-          })),
-        ],
-      })
-    }
+    const groups: SettingGroup[] = [{
+      id: 'subtitles',
+      label: t('room.subtitles'),
+      current: subtitle,
+      onPick: pickSubtitle,
+      actions: [{
+        id: 'import',
+        label: t('room.subtitleImport'),
+        icon: <FileUp size={14} aria-hidden="true" />,
+        onSelect: () => fileInputRef.current?.click(),
+      }],
+      options: [
+        { value: -1, label: t('room.off') },
+        ...subtitleTracks.map((track) => ({
+          value: track.index,
+          label: track.title || track.language || String(track.index + 1),
+        })),
+      ],
+    }, {
+      id: 'subtitleDelay',
+      label: t('room.subtitleDelay'),
+      current: 0,
+      onPick: () => undefined,
+      options: [],
+      valueLabel: formatDelay(delayMs, t.language),
+      panel: (
+        <>
+          <DelayControl valueMs={delayMs} onChange={pickDelay} t={t} />
+          {!isController && hostSubtitles ? (
+            <button className="settings-option settings-action" onClick={copyFromHost}>
+              <ClipboardCopy size={14} aria-hidden="true" />
+              <span className="settings-option-label">{t('room.subtitleCopyHost')}</span>
+            </button>
+          ) : null}
+        </>
+      ),
+    }]
     if (audioTracks.length > 1) {
       groups.push({
         id: 'audio',
@@ -916,7 +1067,7 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
       })
     }
     return groups
-  }, [room.mediaBaseUrl, subtitleTracks, subtitle, audioTracks, audioTrack, levels, level, t])
+  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
 
   const seekMax = Math.max(timelineEnd, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
@@ -1110,12 +1261,16 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           setBufferedRanges(keepRanges(shiftRanges(readBufferedRanges(event.currentTarget), mediaOffsetSec)))
         }}
       >
-        {(room.mediaBaseUrl ? (room.subtitleTracks ?? []) : []).map((track) => (
+        {subtitleTracks.map((track) => (
           <track
             key={`${track.index}-${track.language}-${room.mediaGeneration}-${mediaReload}-${mediaOffsetMs}-${track.digest ?? room.subsVersion ?? 0}`}
             kind="subtitles"
-            onLoad={(event) => shiftTrackCues(event.currentTarget.track, mediaOffsetSec)}
-            src={subtitleSource(room, track)}
+            onLoad={(event) => {
+              shiftTrackCues(event.currentTarget.track, mediaOffsetSec)
+              appliedDelayRef.current.set(event.currentTarget.track, 0)
+              applyDelay(event.currentTarget.track)
+            }}
+            src={track.src}
             srcLang={track.language || 'und'}
             label={track.title || track.language || `Subtitle ${track.index + 1}`}
           />
@@ -1130,9 +1285,9 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
         <AssLayer
           key={`ass-${chosenSubtitleTrack.index}-${room.mediaGeneration}`}
           videoRef={videoRef}
-          subUrl={assSource(room, chosenSubtitleTrack)}
-          fontUrls={assFontUrls}
-          timeOffsetSec={mediaOffsetSec}
+          subUrl={chosenSubtitleTrack.assSrc ?? ''}
+          fontUrls={chosenSubtitleTrack.local ? NO_FONT_URLS : assFontUrls}
+          timeOffsetSec={mediaOffsetSec - delayMs / 1000}
           onFailed={setAssFailed}
         />
       ) : null}
@@ -1255,6 +1410,17 @@ export function Player({ room, isController, videoRef, send, t, syncState, serve
           ) : null}
           <span className="controls-gap" />
           <Settings groups={settingGroups} t={t} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={SUBTITLE_FILE_ACCEPT}
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              event.target.value = ''
+              if (file) void importSubtitle(file)
+            }}
+          />
           <div
             ref={volumeRef}
             className={`volume-control ${volumeOpen ? 'is-open' : ''}`}

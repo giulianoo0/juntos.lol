@@ -34,6 +34,7 @@ interface Outbound {
   targetMs?: number
   deadlineMs?: number
   gating?: boolean
+  hostSubtitles?: HostSubtitles
   media?: MediaSnapshot
   title?: {
     metaId: string
@@ -44,6 +45,13 @@ interface Outbound {
     episode?: number
     from?: string
   }
+}
+
+/** The controller's subtitle pick: a room track index (-1 for none) and the
+ * shift it watches with, for viewers who choose to copy it. */
+export interface HostSubtitles {
+  track: number
+  delayMs: number
 }
 
 interface SyncResult {
@@ -65,6 +73,7 @@ interface SyncResult {
   capability: string
   waiting: RoomWaiting | null
   gatingEnabled: boolean
+  hostSubtitles: HostSubtitles | null
   titleRequests: TitleRequest[]
   lastError: string
   errorSeq: number
@@ -121,6 +130,7 @@ export function useSync(
   const [capability, setCapability] = useState('')
   const [waiting, setWaiting] = useState<RoomWaiting | null>(null)
   const [gatingEnabled, setGatingEnabled] = useState(true)
+  const [hostSubtitles, setHostSubtitles] = useState<HostSubtitles | null>(null)
   const [titleRequests, setTitleRequests] = useState<TitleRequest[]>([])
   const [lastError, setLastError] = useState('')
   const [errorSeq, setErrorSeq] = useState(0)
@@ -283,6 +293,7 @@ export function useSync(
             setMessages(message.history ?? [])
             setCapability(message.capability ?? '')
             setGatingEnabled(message.gating ?? true)
+            setHostSubtitles(message.hostSubtitles ?? null)
             setWaiting(null)
             setRoomStatus('live')
             setRoomVersion((version) => version + 1)
@@ -312,6 +323,9 @@ export function useSync(
             break
           case 'gating':
             setGatingEnabled(message.gating ?? true)
+            break
+          case 'hostSubtitles':
+            setHostSubtitles(message.hostSubtitles ?? null)
             break
           case 'members':
             setControllerId(message.controllerId ?? '')
@@ -440,6 +454,7 @@ export function useSync(
     capability,
     waiting,
     gatingEnabled,
+    hostSubtitles,
     titleRequests,
     lastError,
     errorSeq,

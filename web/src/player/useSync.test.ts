@@ -379,3 +379,26 @@ describe('useSync', () => {
   })
 
 })
+
+describe('useSync host subtitles', () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('keeps the host subtitle pick from welcome and from later broadcasts', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    expect(result.current.hostSubtitles).toBeNull()
+
+    act(() => socket.receive({ type: 'welcome', memberId: 'm2', controllerId: 'm1', members: [], hostSubtitles: { track: 3, delayMs: 500 } }))
+    expect(result.current.hostSubtitles).toEqual({ track: 3, delayMs: 500 })
+
+    act(() => socket.receive({ type: 'hostSubtitles', hostSubtitles: { track: -1, delayMs: -250 } }))
+    expect(result.current.hostSubtitles).toEqual({ track: -1, delayMs: -250 })
+    unmount()
+  })
+})

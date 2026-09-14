@@ -813,3 +813,29 @@ func TestHubGateSurvivesAMemberDroppingMidWait(t *testing.T) {
 		}
 	}
 }
+
+func TestHubHostSubtitlesAreControllerOnlyAndGreetLateJoiners(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	prefs := HostSubtitles{Track: 1000, DelayMs: -250}
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "subtitles", Subtitles: &prefs}))
+	require.Equal(t, "not_controller", readHubEvent(t, guest).ErrCode)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "subtitles", Subtitles: &prefs}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		event := readHubEvent(t, conn)
+		require.Equal(t, "hostSubtitles", event.Type)
+		require.NotNil(t, event.HostSubtitles)
+		require.Equal(t, prefs, *event.HostSubtitles)
+	}
+
+	late := dialHubWS(t, server)
+	welcome := helloHubClient(t, late, "late", 3)
+	require.NotNil(t, welcome.HostSubtitles)
+	require.Equal(t, prefs, *welcome.HostSubtitles)
+}
