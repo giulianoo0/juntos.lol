@@ -442,7 +442,7 @@ export interface ScreenWatcher {
  * the frames to is patched (see `patches/`) to wait for the next keyframe
  * instead of dying on a delta that lands first.
  */
-export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false): Promise<ScreenWatcher> {
+export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false, latency: Watch.Latency = 'real-time'): Promise<ScreenWatcher> {
   const Watch = await import('@moq/watch')
   const { Net, Signals } = Watch
 
@@ -451,7 +451,7 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
   const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
   const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
   const sync = new Watch.Sync({
-    latency: 'real-time',
+    latency,
     connection: connection.established,
     video: videoSource.out.jitter,
     audio: audioSource.out.jitter,

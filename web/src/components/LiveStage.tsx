@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
 import { fetchScreenRelay, watchScreen, type ScreenRelay, type ScreenWatchStatus, type ScreenWatcher } from '../screenshare'
 
@@ -6,6 +7,13 @@ import { fetchScreenRelay, watchScreen, type ScreenRelay, type ScreenWatchStatus
 const RESUBSCRIBE_MS = 4000
 /** One the relay accepted but that shows nothing yet gets this long before it is reopened. */
 const LOADING_PATIENCE_MS = 20_000
+/**
+ * The producer reads the live as HLS segments through a proxy, so frames land
+ * on the relay in bursts a few seconds apart, not as a steady stream. A viewer
+ * playing at real-time latency runs dry between bursts; this many seconds of
+ * buffer ride them out, and past the ceiling playback skips ahead.
+ */
+const LIVE_LATENCY_MS = { min: 6_000, max: 15_000 }
 
 /**
  * A YouTube live on the relay: the room's broadcast painted on a canvas, the
@@ -13,6 +21,11 @@ const LOADING_PATIENCE_MS = 20_000
  * control is jumping to the edge, which is a fresh subscription — the relay
  * hands a newcomer its newest group.
  */
+// `Time.Milli` is a branded number; the cast keeps @moq/watch out of this chunk (screenshare loads it lazily).
+function liveLatency(): Watch.Latency {
+  return { min: LIVE_LATENCY_MS.min as Watch.Net.Time.Milli, max: LIVE_LATENCY_MS.max as Watch.Net.Time.Milli }
+}
+
 export function LiveStage({ roomId, memberId, capability, broadcast, title, t }: {
   roomId: string
   memberId: string
@@ -47,7 +60,7 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
     let unsubscribe: (() => void) | undefined
     let retry: ReturnType<typeof setTimeout> | null = null
     setStatus('loading')
-    void watchScreen(relay, broadcast, canvas, mutedRef.current)
+    void watchScreen(relay, broadcast, canvas, mutedRef.current, liveLatency())
       .then((watcher) => {
         if (closed) { watcher.close(); return }
         watcherRef.current = watcher
