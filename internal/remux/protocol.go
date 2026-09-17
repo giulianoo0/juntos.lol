@@ -1,10 +1,9 @@
 // Package remux holds the versioned contract of the remote remux pipeline:
-// run states, the payloads the API, the worker and the browser exchange, and
-// the codec policy. The same shapes exist in TypeScript and Rust; a change
-// here is a protocol change and bumps ProtocolVersion.
+// run states and the payloads the API, the worker and the browser exchange.
+// The same shapes exist in TypeScript and Rust; a change here is a protocol
+// change and bumps ProtocolVersion. The codec policy lives in the worker's
+// plan.rs, which is the only place that decides copy/convert.
 package remux
-
-import "fmt"
 
 const ProtocolVersion = 1
 
@@ -146,62 +145,4 @@ type Event struct {
 	State           string `json:"state"`
 	Error           string `json:"error,omitempty"`
 	ProducedMs      int64  `json:"producedMs,omitempty"`
-}
-
-type VideoVerdict int
-
-const (
-	VideoCopy VideoVerdict = iota
-	VideoReject
-)
-
-// VideoPolicy copies H264, HEVC, AV1 and VP9 — whether a device decodes them
-// is the player's problem — and rejects everything else: no hidden video
-// transcode. Mirrored by the worker's plan.rs.
-func VideoPolicy(codec string) VideoVerdict {
-	switch codec {
-	case "h264", "avc":
-		return VideoCopy
-	case "hevc", "h265":
-		return VideoCopy
-	case "av1", "vp9":
-		return VideoCopy
-	default:
-		return VideoReject
-	}
-}
-
-type AudioVerdict int
-
-const (
-	AudioCopy AudioVerdict = iota
-	AudioConvert
-	AudioReject
-)
-
-const maxAudioChannels = 8
-
-// AudioPolicy decides copy/convert/reject for one track: AAC copies, the
-// codecs with a matrix entry convert to AAC, anything else is refused.
-func AudioPolicy(codec string, channels int) (AudioVerdict, error) {
-	if channels <= 0 || channels > maxAudioChannels {
-		return AudioReject, fmt.Errorf("audio layout with %d channels is outside the supported range", channels)
-	}
-	switch codec {
-	case "aac":
-		return AudioCopy, nil
-	case "ac3", "eac3", "dts", "dca", "opus", "flac", "mp3", "vorbis":
-		return AudioConvert, nil
-	default:
-		return AudioReject, fmt.Errorf("audio codec %q has no matrix entry", codec)
-	}
-}
-
-// AACBitrateFor is the conversion bitrate per validated layout, in bits per
-// second. Stereo and mono ride 160k; 5.1 and up ride 384k.
-func AACBitrateFor(channels int) int {
-	if channels <= 2 {
-		return 160_000
-	}
-	return 384_000
 }

@@ -7,7 +7,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AudioAction {
     Copy,
-    ConvertAac { bitrate: u32 },
+    ConvertAac,
 }
 
 #[derive(Debug, Clone)]
@@ -137,18 +137,22 @@ const BITMAP_SUBTITLE_CODECS: &[&str] = &["hdmv_pgs_subtitle", "dvd_subtitle", "
 
 const MAX_AUDIO_CHANNELS: u32 = 8;
 
-fn aac_bitrate(channels: u32) -> u32 {
-    if channels <= 2 { 160_000 } else { 384_000 }
-}
+const AAC_BITRATE: u32 = 160_000;
 
-fn audio_action(codec: &str, channels: u32) -> anyhow::Result<AudioAction> {
+/// None means the track is dropped from the output — a codec outside the
+/// matrix or a layout we don't take never costs the whole file, since a
+/// BluRay rip carries its lossless track next to a usable AC3 one.
+fn audio_action(codec: &str, channels: u32) -> Option<AudioAction> {
     if channels == 0 || channels > MAX_AUDIO_CHANNELS {
-        bail!("audio layout with {channels} channels is outside the supported range");
+        return None;
     }
     match codec {
-        "aac" => Ok(AudioAction::Copy),
-        "ac3" | "eac3" | "dts" | "dca" | "opus" | "flac" | "mp3" | "vorbis" => Ok(AudioAction::ConvertAac { bitrate: aac_bitrate(channels) }),
-        other => bail!("audio codec {other:?} has no matrix entry"),
+        "aac" => Some(AudioAction::Copy),
+        "ac3" | "eac3" | "dts" | "dca" | "opus" | "flac" | "mp3" | "vorbis" | "truehd" | "mlp"
+        | "pcm_bluray" | "pcm_dvd" | "pcm_s16le" | "pcm_s24le" | "pcm_s16be" | "pcm_s24be" => {
+            Some(AudioAction::ConvertAac)
+        }
+        _ => None,
     }
 }
 
@@ -233,7 +237,11 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
             Some("audio") => {
                 let codec = stream.codec_name.clone().unwrap_or_default();
                 let channels = stream.channels.unwrap_or(0);
-                let action = audio_action(&codec, channels)?;
+                let Some(action) = audio_action(&codec, channels) else {
+                    tracing::warn!(codec = %codec, channels, "audio track skipped: outside the matrix");
+                    audio_index += 1;
+                    continue;
+                };
                 audios.push(AudioTrack {
                     input_file: 0,
                     input_index: audio_index,
@@ -281,6 +289,11 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
         }
     }
     let video_codec = video_codec.context("no video stream")?;
+    // A silent source is fine; a source whose every track was skipped is not,
+    // since that would play mute without ever saying why.
+    if audios.is_empty() && audio_index > 0 {
+        bail!("no audio track the matrix can copy or convert");
+    }
     if duration_ms == 0 {
         bail!("source reports no usable duration");
     }
@@ -332,13 +345,13 @@ pub fn ffmpeg_args(
         args.extend(["-map".into(), format!("{}:a:{}", audio.input_file, audio.input_index)]);
         match &audio.action {
             AudioAction::Copy => args.extend([format!("-c:a:{out_index}"), "copy".into()]),
-            AudioAction::ConvertAac { bitrate } => args.extend([
+            AudioAction::ConvertAac => args.extend([
                 format!("-c:a:{out_index}"),
                 "aac".into(),
                 format!("-b:a:{out_index}"),
-                bitrate.to_string(),
+                AAC_BITRATE.to_string(),
                 format!("-filter:a:{out_index}"),
-                "aformat=channel_layouts=7.1|5.1|stereo|mono".into(),
+                "aformat=channel_layouts=stereo".into(),
             ]),
         }
         var_map.push(format!(
@@ -404,17 +417,59 @@ mod tests {
         assert_eq!(plan.duration_ms, 634_500);
         assert_eq!(plan.audios.len(), 2);
         assert_eq!(plan.audios[0].action, AudioAction::Copy);
-        assert_eq!(plan.audios[1].action, AudioAction::ConvertAac { bitrate: 384_000 });
+        assert_eq!(plan.audios[1].action, AudioAction::ConvertAac);
     }
 
     #[test]
-    fn refuses_unlisted_codecs_clearly() {
+    fn converts_truehd_and_the_lossless_neighbours() {
+        for codec in ["truehd", "mlp", "pcm_bluray", "pcm_s24le"] {
+            let probe = PROBE.replace("\"ac3\"", &format!("{codec:?}"));
+            let plan = plan_streams(&probe).unwrap_or_else(|e| panic!("{codec} rejected: {e}"));
+            assert_eq!(plan.audios[1].action, AudioAction::ConvertAac, "{codec}");
+        }
+    }
+
+    #[test]
+    fn skips_the_unplayable_track_instead_of_losing_the_file() {
+        let exotic = PROBE.replace("\"ac3\"", "\"nellymoser\"");
+        let plan = plan_streams(&exotic).unwrap();
+        assert_eq!(plan.audios.len(), 1, "the good track survives alone");
+        assert_eq!(plan.audios[0].codec, "aac");
+        assert_eq!(plan.audios[0].input_index, 0);
+
+        let wide = PROBE.replace("\"channels\":6", "\"channels\":10");
+        let plan = plan_streams(&wide).unwrap();
+        assert_eq!(plan.audios.len(), 1);
+
+        // A skipped track must not shift the ffmpeg mapping of the ones after it.
+        let first_bad = PROBE.replace("\"aac\"", "\"nellymoser\"");
+        let plan = plan_streams(&first_bad).unwrap();
+        assert_eq!(plan.audios.len(), 1);
+        assert_eq!(plan.audios[0].codec, "ac3");
+        assert_eq!(plan.audios[0].input_index, 1, "the ac3 is still the second audio stream of the input");
+    }
+
+    #[test]
+    fn refuses_a_source_with_no_usable_audio() {
+        let none = PROBE.replace("\"aac\"", "\"nellymoser\"").replace("\"ac3\"", "\"nellymoser\"");
+        let err = plan_streams(&none).unwrap_err().to_string();
+        assert!(err.contains("audio"), "{err}");
+    }
+
+    #[test]
+    fn converted_audio_is_downmixed_to_stereo() {
+        let plan = plan_streams(PROBE).unwrap();
+        let args = ffmpeg_args(&["in".into()], "http://sink", "", &plan, 0.0, None);
+        let joined = args.join(" ");
+        assert!(joined.contains("aformat=channel_layouts=stereo"), "{joined}");
+        assert!(joined.contains("160000"), "{joined}");
+        assert!(!joined.contains("384000"), "{joined}");
+    }
+
+    #[test]
+    fn refuses_unlisted_video_clearly() {
         let mpeg2 = PROBE.replace("h264", "mpeg2video");
         assert!(plan_streams(&mpeg2).unwrap_err().to_string().contains("matrix"));
-        let truehd = PROBE.replace("\"ac3\"", "\"truehd\"");
-        assert!(plan_streams(&truehd).unwrap_err().to_string().contains("matrix"));
-        let wide = PROBE.replace("\"channels\":6", "\"channels\":10");
-        assert!(plan_streams(&wide).unwrap_err().to_string().contains("channels"));
     }
 
     #[test]
@@ -461,7 +516,7 @@ mod tests {
         assert!(joined.ends_with("r2_client_stream_%v.m3u8"));
         assert!(joined.contains("v:0,agroup:aud a:0,agroup:aud,language:eng,default:yes a:1,agroup:aud,language:por"));
         assert!(joined.contains("-c:a:0 copy"));
-        assert!(joined.contains("-c:a:1 aac -b:a:1 384000"));
+        assert!(joined.contains("-c:a:1 aac -b:a:1 160000"));
     }
 
     #[test]

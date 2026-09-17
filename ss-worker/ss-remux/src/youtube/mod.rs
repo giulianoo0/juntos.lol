@@ -460,7 +460,7 @@ pub fn plan_for(selection: &Selection) -> SourcePlan {
                 action: if codec == "aac" {
                     AudioAction::Copy
                 } else {
-                    AudioAction::ConvertAac { bitrate: if channels <= 2 { 160_000 } else { 384_000 } }
+                    AudioAction::ConvertAac
                 },
             }
         })
@@ -805,7 +805,7 @@ mod tests {
         let selection = select(&info).unwrap();
         assert!(selection.audios.iter().all(|a| a.format_id.starts_with("251-")));
         let plan = plan_for(&selection);
-        assert_eq!(plan.audios[0].action, AudioAction::ConvertAac { bitrate: 160_000 });
+        assert_eq!(plan.audios[0].action, AudioAction::ConvertAac);
     }
 
     #[test]
