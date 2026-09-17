@@ -1027,6 +1027,9 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .live-waiting { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 15px; background: rgba(0, 0, 0, 0.45); }
 .live-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.7)); color: #fff; }
 .live-bar-spacer { flex: 1; }
-.live-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; }
-.live-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #e0242b; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+.live-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.live-title { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; }
+.live-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #e0242b; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; white-space: nowrap; }
 .live-button { padding: 6px 12px; font-size: 13px; }
+.live-fullscreen { display: inline-flex; align-items: center; padding: 6px 8px; }
+.live-stage:fullscreen canvas { object-fit: contain; }

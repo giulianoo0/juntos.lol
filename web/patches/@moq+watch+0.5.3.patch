@@ -1,17 +1,36 @@
 diff --git a/node_modules/@moq/watch/source-CoU8Fj72.js b/node_modules/@moq/watch/source-CoU8Fj72.js
-index 1674adf..35a1985 100644
+index 1674adf..298952c 100644
 --- a/node_modules/@moq/watch/source-CoU8Fj72.js
 +++ b/node_modules/@moq/watch/source-CoU8Fj72.js
-@@ -1313,7 +1313,7 @@ var Ee = n.Milli(500), De = class {
+@@ -1146,6 +1146,8 @@ function Te(e, t) {
+ }
+ //#endregion
+ //#region src/video/decoder.ts
++// How far ahead of the playback clock a frame is handed to the decoder: enough for B-frame reordering and decode time, few enough decoded frames to keep the pool free.
++var DECODE_LEAD_MS = n.Milli(150);
+ var Ee = n.Milli(500), De = class {
+ 	in;
+ 	source;
+@@ -1273,7 +1275,7 @@ var Ee = n.Milli(500), De = class {
+ 	constructor(e) {
+ 		this.sync = e.sync, this.paced = e.paced, this.broadcast = e.broadcast, this.track = e.track, this.config = e.config, this.stats = e.stats, this.#r.run((e) => {
+ 			let t = e.get(this.paced);
+-			this.#t.set(t ? e.get(this.sync.out.buffer) : n.Milli.zero);
++			this.#t.set(t ? e.get(this.sync.out.maxBuffer) : n.Milli.zero);
+ 		}), this.#r.run(this.#i.bind(this));
+ 	}
+ 	#i(e) {
+@@ -1313,7 +1315,8 @@ var Ee = n.Milli(500), De = class {
  			optimizeForLatency: this.config.optimizeForLatency,
  			flip: !1
  		});
 -		let o;
-+		let o, needKey = !1;
++		let o, needKey = !1, fx;
++		fx = e;
  		e.spawn(async () => {
  			for (;;) {
  				let e = await a.next();
-@@ -1331,7 +1331,10 @@ var Ee = n.Milli(500), De = class {
+@@ -1331,7 +1334,12 @@ var Ee = n.Milli(500), De = class {
  				this.stats.update((e) => ({
  					frameCount: (e?.frameCount ?? 0) + 1,
  					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
@@ -19,20 +38,23 @@ index 1674adf..35a1985 100644
 +				})), o !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(o), n.Milli.fromMicro(t.timestamp)), o = t.timestamp;
 +				// A delta on a fresh or reset decoder is dropped, and so is everything up to the next keyframe; the stream picks up there instead of dying.
 +				if (needKey && s.type !== "key") continue;
++				// The jitter buffer is held here, as encoded bytes: a frame is only handed to the decoder shortly before its time. Decoded 1080p frames waiting in the output callback exhaust the hardware decoder's frame pool and stall it.
++				if (this.paced.peek() && !await this.#c(n.Milli.sub(i, DECODE_LEAD_MS), fx) && this.paced.peek()) break;
 +				try { r.decode(s), needKey = !1; } catch (err) { if (err instanceof DOMException && err.name === "DataError") { needKey = !0; continue; } throw err; }
  			}
  		});
  	}
-@@ -1353,7 +1356,7 @@ var Ee = n.Milli(500), De = class {
+@@ -1353,7 +1361,8 @@ var Ee = n.Milli(500), De = class {
  			optimizeForLatency: this.config.optimizeForLatency,
  			flip: !1
  		});
 -		let d;
-+		let d, needKey = !1;
++		let d, needKey = !1, fx;
++		fx = e;
  		e.spawn(async () => {
  			for (;;) {
  				let e = await c.next();
-@@ -1366,11 +1369,14 @@ var Ee = n.Milli(500), De = class {
+@@ -1366,11 +1375,15 @@ var Ee = n.Milli(500), De = class {
  					frameCount: (e?.frameCount ?? 0) + 1,
  					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
  				})), d !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(d), n.Milli.fromMicro(t.timestamp)), d = t.timestamp, r.state === "closed") break;
@@ -45,6 +67,7 @@ index 1674adf..35a1985 100644
 +				});
 +				// A delta on a fresh or reset decoder is dropped, and so is everything up to the next keyframe; the stream picks up there instead of dying.
 +				if (needKey && s.type !== "key") continue;
++				if (this.paced.peek() && !await this.#c(n.Milli.sub(i, DECODE_LEAD_MS), fx) && this.paced.peek()) break;
 +				try { r.decode(s), needKey = !1; } catch (err) { if (err instanceof DOMException && err.name === "DataError") { needKey = !0; continue; } throw err; }
  			}
  		});

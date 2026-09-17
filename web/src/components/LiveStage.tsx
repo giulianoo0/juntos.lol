@@ -1,3 +1,4 @@
+import { Maximize, Minimize } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
@@ -35,6 +36,8 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
   t: Translator
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [fullscreen, setFullscreen] = useState(false)
   const watcherRef = useRef<ScreenWatcher | null>(null)
   const relayRef = useRef<ScreenRelay | null>(null)
   const [status, setStatus] = useState<ScreenWatchStatus>('offline')
@@ -93,19 +96,37 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
 
   const goLive = useCallback(() => setGeneration((n) => n + 1), [])
 
+  useEffect(() => {
+    const update = () => setFullscreen(document.fullscreenElement === stageRef.current)
+    document.addEventListener('fullscreenchange', update)
+    return () => document.removeEventListener('fullscreenchange', update)
+  }, [])
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined)
+      return
+    }
+    void stageRef.current?.requestFullscreen?.().catch(() => undefined)
+  }, [])
+
   return (
-    <div className={`player-wrap live-stage ${status === 'live' ? 'is-live' : ''}`}>
+    <div ref={stageRef} className={`player-wrap live-stage ${status === 'live' ? 'is-live' : ''}`} onDoubleClick={toggleFullscreen}>
       <canvas ref={canvasRef} role="img" aria-label={title} />
       {status !== 'live' ? <div className="live-waiting">{t('room.liveWaiting')}</div> : null}
-      <div className="live-bar">
-        <span className="live-badge">{t('room.liveBadge')}</span>
-        <span className="live-title">{title}</span>
+      <div className="live-bar" onDoubleClick={(e) => e.stopPropagation()}>
+        <div className="live-heading">
+          <span className="live-badge">{t('room.liveBadge')}</span>
+          <span className="live-title">{title}</span>
+        </div>
         <span className="live-bar-spacer" />
         <button type="button" className="secondary-button live-button" onClick={() => setMuted((m) => !m)}>
           {t(muted ? 'room.liveUnmute' : 'room.liveMute')}
         </button>
         <button type="button" className="primary-button live-button" onClick={goLive} disabled={status !== 'live'}>
           {t('room.liveGoLive')}
+        </button>
+        <button type="button" className="secondary-button live-button live-fullscreen" onClick={toggleFullscreen} aria-label={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')} title={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')}>
+          {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
         </button>
       </div>
     </div>
