@@ -13,6 +13,8 @@ pub mod subs;
 pub mod upload;
 pub mod youtube;
 pub mod live;
+#[cfg(feature = "torrent")]
+pub mod torrent;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -6,7 +6,7 @@ description = "Remote torrent worker for ss: joins the swarm, serves bytes over 
 
 [dependencies]
 librqbit = { path = "vendor/librqbit" }
-ss-remux = { path = "ss-remux" }
+ss-remux = { path = "ss-remux", features = ["torrent"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }

@@ -7,7 +7,8 @@ import { JLOCAL_ORIGIN, getJLocalSnapshot, subscribeJLocal } from './status'
 export interface JLocalCapabilities {
   screen: { available: boolean; capture: boolean; h264: boolean; maxWidth: number; maxHeight: number; maxFps: number }
   audio: { appList: boolean; capture: boolean }
-  torrent: { available: boolean }
+  /** `remux`: the app prepares a torrent itself, as a worker would. */
+  torrent: { available: boolean; remux: boolean }
   /** Links prepared by the app: `tools` says why not when `available` is false. */
   youtube: { available: boolean; tools: string }
 }
@@ -48,7 +49,8 @@ function parseCapabilities(body: unknown): JLocalCapabilities | null {
       maxFps: screen.maxFps,
     },
     audio: { appList: audio.appList, capture: audio.capture === true },
-    torrent: { available: torrent.available },
+    // Older apps only list torrents: they cannot prepare one.
+    torrent: { available: torrent.available, remux: torrent.available && torrent.remux === true },
     // Older apps have no youtube block: they cannot prepare links.
     youtube: isRecord(caps.youtube)
       ? { available: caps.youtube.available === true, tools: typeof caps.youtube.tools === 'string' ? caps.youtube.tools : 'missing' }

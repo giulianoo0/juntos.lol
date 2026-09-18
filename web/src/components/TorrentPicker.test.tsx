@@ -3,8 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { translate, type Translator } from '../i18n/useT'
 import { TorrentPicker } from './TorrentPicker'
 
-vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
-vi.mock('../remoteTorrent', () => ({ torrentCapacity: vi.fn(async () => 'available') }))
+vi.mock('../torrent', () => ({ openTorrent: vi.fn(), torrentCapacity: vi.fn(async () => 'available') }))
 
 const { openTorrent } = await import('../torrent')
 

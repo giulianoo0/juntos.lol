@@ -923,7 +923,7 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .upload-morph .morph-step[data-step='menu'] .stage-title { font-size: 22px; letter-spacing: -.03em; }
 .upload-morph .stage-description { margin: 10px 0 0; color: var(--text-dim); font-size: 13.5px; line-height: 1.45; text-wrap: pretty; }
 .upload-morph .torrent-actions { justify-content: flex-start; align-items: stretch; gap: 10px; }
-.upload-morph .torrent-actions .step-cancel { flex: 1 1 auto; width: 100%; padding: 12px 18px; border-radius: 14px; font-size: 14px; }
+.upload-morph .torrent-actions .step-cancel { flex: 1 1 auto; width: 100%; padding: 12px 18px; border-radius: 999px; font-size: 14px; }
 .upload-morph .torrent-actions .stage-back { width: auto; height: auto; min-height: 44px; aspect-ratio: 1; border: 1px solid rgba(255,255,255,.08); }
 .upload-morph .source-icon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border-radius: 11px; color: #FFB794; background: rgba(255,122,69,.11); transition: background var(--t-close) var(--ease); }
 .upload-morph .source-icon .magnet-glyph { font-size: 17px; color: inherit; }
@@ -956,8 +956,8 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 
 /* Actions: the primary spans the width; disabled stays legible instead of fading to brown. */
 .upload-morph .torrent-actions { margin-top: 16px; }
-.upload-morph .torrent-actions .primary-button, .upload-morph .join-room-form .primary-button, .nickname-dialog .dialog-actions .ui-button { flex: 1 1 auto; width: 100%; padding: 12px 18px; border-radius: 14px; font-size: 14px; }
-.upload-morph .primary-button:disabled, .nickname-dialog .ui-button--primary:disabled { opacity: 1; color: rgba(255,255,255,.55); background: rgba(255,122,69,.16); box-shadow: none; }
+.upload-morph .torrent-actions .primary-button, .upload-morph .join-room-form .primary-button, .nickname-dialog .dialog-actions .ui-button { display: inline-flex; align-items: center; justify-content: center; text-align: center; flex: 1 1 auto; width: 100%; padding: 12px 18px; border-radius: 999px; font-size: 14px; }
+.upload-morph .primary-button:disabled:not(.is-loading), .nickname-dialog .ui-button--primary:disabled { opacity: 1; color: rgba(255,255,255,.55); background: rgba(255,122,69,.16); box-shadow: none; }
 .upload-morph .torrent-actions-list { margin-top: 14px; padding-top: 14px; }
 .upload-morph .torrent-actions-list .ui-button { width: auto; flex: 0 0 auto; padding: 8px 12px; border-radius: 999px; font-size: 13px; }
 .upload-morph .join-room-form { flex-direction: column; gap: 10px; margin-top: 18px; }
@@ -970,9 +970,11 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .upload-morph .torrent-summary { margin: 0 0 10px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.035); }
 .upload-morph .torrent-summary strong { font-size: 14px; }
 .upload-morph .torrent-search { margin: 0 0 10px; padding: 11px 14px; border-radius: 12px; font-size: 13.5px; }
-.upload-morph .torrent-files { max-height: min(46vh, 340px); gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: 18px; background: rgba(0,0,0,.22); }
-.upload-morph .torrent-files button { padding: 12px 14px; border-radius: 12px; background: transparent; font-size: 14px; }
-.upload-morph .torrent-files button:hover:not(:disabled) { background: rgba(255,255,255,.06); }
+.upload-morph .torrent-files { max-height: min(46vh, 340px); gap: 6px; }
+.upload-morph .torrent-files button { padding: 13px 16px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(255,255,255,.05); font-size: 14px; font-weight: 550; cursor: pointer; transition: background-color .15s ease, border-color .15s ease, transform .1s ease; }
+.upload-morph .torrent-files button:hover:not(:disabled) { border-color: rgba(255,122,69,.35); background: rgba(255,122,69,.1); }
+.upload-morph .torrent-files button:active:not(:disabled) { transform: scale(.99); }
+.upload-morph .torrent-stats { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .upload-morph .torrent-files button.is-current { background: rgba(255,122,69,.12); box-shadow: none; }
 .upload-morph .torrent-files small { font-size: 12px; }
 .upload-morph .torrent-empty { margin: 14px 0 4px; }

@@ -1,39 +1,27 @@
-use std::sync::Arc;
-
-use anyhow::Context;
 use async_trait::async_trait;
-use ss_remux::{ByteSource, SourceReader};
+use ss_remux::torrent::TorrentFiles;
+use ss_remux::SourceReader;
 
 use crate::engine::{Engine, Prio, Reader};
 
-/// One file of a torrent as the remux reads it: the engine's playhead
-/// reader, reopened by the bridge at every stride.
-pub struct TorrentSource {
-    engine: Arc<Engine>,
-    infohash: String,
-    file_index: usize,
-    size: u64,
-}
-
-impl TorrentSource {
-    pub fn new(engine: Arc<Engine>, infohash: &str, file_index: usize) -> anyhow::Result<Self> {
-        let size = engine.file_size(infohash, file_index).context("unknown file")?;
-        Ok(Self { engine, infohash: infohash.into(), file_index, size })
-    }
-}
-
 #[async_trait]
-impl ByteSource for TorrentSource {
-    fn size(&self) -> u64 {
-        self.size
+impl TorrentFiles for Engine {
+    fn file_size(&self, infohash: &str, index: usize) -> anyhow::Result<u64> {
+        Engine::file_size(self, infohash, index)
     }
 
-    fn chunk_size(&self) -> usize {
-        self.engine.read_chunk_size()
+    fn read_chunk_size(&self) -> usize {
+        Engine::read_chunk_size(self)
     }
 
-    async fn open(&self, reader: &str, position: u64) -> anyhow::Result<Box<dyn SourceReader>> {
-        let inner = self.engine.open(&self.infohash, reader, self.file_index, position, Prio::Playhead).await?;
+    async fn open_playhead(
+        &self,
+        infohash: &str,
+        reader: &str,
+        index: usize,
+        position: u64,
+    ) -> anyhow::Result<Box<dyn SourceReader>> {
+        let inner = self.open(infohash, reader, index, position, Prio::Playhead).await?;
         Ok(Box::new(TorrentReader(inner)))
     }
 }

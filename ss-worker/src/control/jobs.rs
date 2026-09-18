@@ -74,7 +74,7 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
             let Some(supervisor) = supervisor else { return err("remux_disabled", "no remux capability".into()) };
             let input = match (&job.youtube, job.infohash.as_deref(), job.file_index) {
                 (Some(yt), _, _) => ss_remux::RunInput::Youtube(ss_remux::youtube::Request { url: yt.url.clone() }),
-                (None, Some(ih), Some(index)) => match crate::torrent_source::TorrentSource::new(engine.clone(), ih, index) {
+                (None, Some(ih), Some(index)) => match ss_remux::torrent::TorrentSource::new(engine.clone(), ih, index) {
                     Ok(source) => ss_remux::RunInput::Container(Arc::new(source)),
                     Err(e) => return err("unknown_file", e.to_string()),
                 },

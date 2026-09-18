@@ -25,6 +25,10 @@ moq-native = "0.19"
 moq-mux = "0.9"
 hang = "0.20"
 url = "2"
+librqbit = { path = "../vendor/librqbit", optional = true }
+
+[features]
+torrent = ["dep:librqbit"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

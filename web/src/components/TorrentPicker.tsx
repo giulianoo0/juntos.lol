@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Translator } from '../i18n/useT'
-import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
+import { openTorrent, torrentCapacity, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { WorkerProbes } from './WorkerProbes'
-import { torrentCapacity } from '../remoteTorrent'
 import { torrentErrorKey } from '../torrentErrors'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
@@ -160,7 +159,10 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
         {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
         <h2 className="stage-title">{listing ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
       </div>
-      <p className="stage-description">{listing ? t('home.torrentChooseGuide') : t('home.torrentGuide')}</p>
+      <p className="stage-description">
+        {listing ? t('home.torrentChooseGuide') : t('home.torrentGuide')}
+        {listing ? <span className="torrent-stats"> · {stats.peers} {t('home.peers')} · {formatBytes(stats.downloadSpeed)}/s</span> : null}
+      </p>
       {!listing ? (
         <>
           <label htmlFor="magnet-link">{t('home.magnet')}</label>
@@ -177,10 +179,6 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
         </>
       ) : listed ? (
         <>
-          <div className="torrent-summary">
-            <strong>{listed.name}</strong>
-            <span>{stats.peers} {t('home.peers')} · {formatBytes(stats.downloadSpeed)}/s</span>
-          </div>
           <label className="sr-only" htmlFor="torrent-search">{t('home.torrentSearch')}</label>
           <input
             id="torrent-search"

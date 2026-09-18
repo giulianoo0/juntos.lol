@@ -816,9 +816,14 @@ impl TorrentStateLive {
     }
 
     pub(crate) fn update_only_files(&self, only_files: &HashSet<usize>) -> anyhow::Result<()> {
-        let mut g = self.lock_write("update_only_files");
-        let pt = g.get_pieces_mut()?;
-        let hns = pt.update_only_files(&self.metadata.file_infos, only_files)?;
+        // ss patch: the peers map is walked after the state lock is gone. A
+        // peer task holds its map shard while it takes the state lock, so
+        // walking the map under the state lock deadlocks against it.
+        let hns = {
+            let mut g = self.lock_write("update_only_files");
+            let pt = g.get_pieces_mut()?;
+            pt.update_only_files(&self.metadata.file_infos, only_files)?
+        };
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }
@@ -829,9 +834,11 @@ impl TorrentStateLive {
     /// streaming reader can hold a window around its cursor and let the
     /// scheduler drop everything behind it.
     pub(crate) fn update_selected_pieces(&self, selected: BF) -> anyhow::Result<()> {
-        let mut g = self.lock_write("update_selected_pieces");
-        let pt = g.get_pieces_mut()?;
-        let hns = pt.update_selected_pieces(selected)?;
+        let hns = {
+            let mut g = self.lock_write("update_selected_pieces");
+            let pt = g.get_pieces_mut()?;
+            pt.update_selected_pieces(selected)?
+        };
         if !hns.finished() {
             self.reconnect_all_not_needed_peers();
         }

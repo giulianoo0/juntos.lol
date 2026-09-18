@@ -1,5 +1,6 @@
 import { mockOpenTorrent, mocksEnabled } from './mocks'
-import { openRemoteTorrent, type OpenTorrentOptions } from './remoteTorrent'
+import { TorrentRejectedError, openRemoteTorrent, torrentCapacity as fleetCapacity, type OpenTorrentOptions } from './remoteTorrent'
+import { jlocalTorrentUsable, openJlocalTorrent } from './jlocal/torrent'
 
 export { NoWorkersError, TorrentQuotaError, TorrentRejectedError, WorkersBusyError, parseMagnet, probeWorkers } from './remoteTorrent'
 export type { OpenTorrentOptions, WorkerProbe } from './remoteTorrent'
@@ -42,10 +43,21 @@ export interface TorrentStats {
   diskBytes?: number
 }
 
+export interface TorrentStart {
+  roomId: string
+  mediaGeneration: number
+}
+
 export interface TorrentSession {
   name: string
   magnet?: string
   jobId?: string
+  infoHash?: string
+  /** Who holds the swarm: the fleet's worker (default) or the companion app. */
+  backend?: 'fleet' | 'jlocal'
+  /** Produces the room where the swarm is, when that is not the fleet;
+   * resolves null on an accepted handoff, or with the refusal. */
+  startRemux?(file: TorrentVideoFile, start: TorrentStart): Promise<string | null>
   files: TorrentVideoFile[]
   subtitleFiles: TorrentSideFile[]
   stats(): TorrentStats
@@ -57,8 +69,9 @@ export interface TorrentSession {
 }
 
 /**
- * Places the magnet on a worker; nothing is downloaded on this machine. The
- * error type says whether the failure is worth retrying.
+ * Opens the magnet where it will be prepared: the companion app when it can
+ * take it, the fleet otherwise. The app failing for any reason but the
+ * magnet itself hands the magnet to the fleet as before.
  */
 export async function openTorrent(
   magnet: string,
@@ -66,5 +79,19 @@ export async function openTorrent(
   options?: OpenTorrentOptions,
 ): Promise<TorrentSession> {
   if (mocksEnabled) return mockOpenTorrent(onStats)
+  if (await jlocalTorrentUsable()) {
+    try {
+      return await openJlocalTorrent(magnet, onStats)
+    } catch (error) {
+      if (error instanceof TorrentRejectedError) throw error
+      console.warn('jlocal could not open the torrent; trying the fleet', error)
+    }
+  }
   return await openRemoteTorrent(magnet, onStats, options)
+}
+
+/** available, busy, no_workers or disabled; the companion app counts as available. */
+export async function torrentCapacity(): Promise<string> {
+  if (!mocksEnabled && await jlocalTorrentUsable()) return 'available'
+  return await fleetCapacity()
 }

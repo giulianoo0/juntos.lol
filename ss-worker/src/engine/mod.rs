@@ -1,11 +1,9 @@
 mod admission;
 mod disk;
 mod entry;
-mod fill;
 mod floors;
 mod reaper;
 mod slots;
-mod window;
 
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
@@ -26,27 +24,13 @@ use crate::config::WorkerConfig;
 pub use admission::{is_sidecar, LeaseInfo, Rejection};
 use disk::DiskAccountant;
 use entry::{Entry, Phase};
+use ss_remux::torrent::{fill, window};
 use fill::Fill;
 pub use slots::Prio;
 
 pub type Handle = Arc<ManagedTorrent>;
 
-pub const TRACKERS: &[&str] = &[
-    "udp://tracker.opentrackr.org:1337/announce",
-    "udp://open.tracker.cl:1337/announce",
-    "udp://open.demonii.com:1337/announce",
-    "udp://tracker.torrent.eu.org:451/announce",
-    "udp://exodus.desync.com:6969/announce",
-    "udp://open.stealth.si:80/announce",
-    "udp://tracker.tiny-vps.com:6969/announce",
-    "udp://explodie.org:6969/announce",
-    "udp://tracker.dler.org:6969/announce",
-    "udp://tracker.openbittorrent.com:6969/announce",
-    "udp://tracker.moeking.me:6969/announce",
-    "https://tracker.tamersunion.org:443/announce",
-    "udp://tracker1.bt.moack.co.kr:80/announce",
-    "udp://tracker.bittor.pw:1337/announce",
-];
+pub use ss_remux::torrent::TRACKERS;
 
 pub const MAX_SIDECAR: u64 = 8 * 1024 * 1024;
 const INIT_TIMEOUT: Duration = Duration::from_secs(90);

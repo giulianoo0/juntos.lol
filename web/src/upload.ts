@@ -16,6 +16,7 @@ import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type Rem
 import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 import { backendFor, type YoutubeSession } from './youtube'
 import { stopLive } from './live'
+import { openRemoteTorrent } from './remoteTorrent'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -369,9 +370,11 @@ export interface TorrentAuth {
 }
 
 /**
- * Hands the torrent to the fleet. The worker produces the video or nobody
- * does: a refusal is reported as the room's failure, never remuxed here.
- * Progress and readiness then arrive through the room like any guest's.
+ * Hands the torrent to whoever holds its swarm: the companion app when the
+ * magnet was opened there, the fleet otherwise. An app that refuses to start
+ * hands the file to the fleet; a fleet refusal is the room's failure, never
+ * remuxed here. Progress and readiness then arrive through the room like
+ * any guest's.
  */
 export function startTorrentUpload(
   roomID: string,
@@ -390,19 +393,41 @@ export function startTorrentUpload(
   const entry = createEntry(file.size)
   uploads.set(roomID, entry)
   if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+  let current = session
   const release = () => {
-    if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
+    if (torrentSessions.get(roomID) === current) torrentSessions.delete(roomID)
   }
-  void startRemoteRemux(roomID, mediaGeneration, session, auth).then((refusal) => {
+  void (async () => {
+    let refusal = current.startRemux
+      ? await current.startRemux(file, { roomId: roomID, mediaGeneration })
+      : await startRemoteRemux(roomID, mediaGeneration, current, auth)
+    if (refusal !== null && current.backend === 'jlocal' && current.magnet && !mocksEnabled) {
+      console.warn('jlocal refused the torrent; handing it to the fleet', refusal)
+      try {
+        const fleet = await openRemoteTorrent(current.magnet)
+        const same = fleet.files.find((candidate) => candidate.index === file.index)
+        if (!same) {
+          fleet.destroy()
+        } else {
+          await fleet.select(same.path)
+          release()
+          current = fleet
+          torrentSessions.set(roomID, fleet)
+          refusal = await startRemoteRemux(roomID, mediaGeneration, fleet, auth)
+        }
+      } catch (error) {
+        refusal = `${refusal}; fleet: ${error instanceof Error ? error.message : String(error)}`
+      }
+    }
     if (refusal !== null) {
       lastFailureDetail = refusal
-      finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => { release(); session.destroy() })
+      finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => { release(); current.destroy() })
       return
     }
     remoteProductions.add(roomID)
     lastFailureDetail = null
-    finishEntry(roomID, entry, null, () => { release(); session.detach?.() })
-  })
+    finishEntry(roomID, entry, null, () => { release(); current.detach?.() })
+  })()
 }
 
 // Resolves null on an accepted handoff, or with the reason the fleet said no.

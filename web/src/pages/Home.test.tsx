@@ -6,7 +6,7 @@ import { createRoomAndUpload, createRoomAndUploadTorrent } from '../upload'
 import { openTorrent } from '../torrent'
 
 vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn(), createRoomAndUploadTorrent: vi.fn() }))
-vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
+vi.mock('../torrent', () => ({ openTorrent: vi.fn(), torrentCapacity: vi.fn(async () => 'available') }))
 vi.mock('../catalog/tmdb', () => ({
   fetchCatalog: vi.fn().mockResolvedValue([]),
   searchCatalog: vi.fn().mockResolvedValue([]),

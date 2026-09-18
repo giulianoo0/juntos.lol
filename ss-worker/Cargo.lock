@@ -4366,6 +4366,7 @@ dependencies = [
  "futures",
  "hang",
  "hex 0.4.3",
+ "librqbit",
  "moq-mux",
  "moq-native",
  "moq-net",
