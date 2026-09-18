@@ -84,6 +84,8 @@ i = await until('subtitles and chapters', (i) => (i.subtitleTracks ?? []).length
 console.log('subtitles', (i.subtitleTracks ?? []).length, (i.subtitleTracks ?? []).slice(0, 6).map((t) => `${t.language}:${t.codec}`).join(', '), 'chapters', (i.chapters ?? []).length)
 check('subtitle tracks reached the room', (i.subtitleTracks ?? []).length > 0)
 check('chapters reached the room', (i.chapters ?? []).length > 0)
+// A warm worker may already cover the whole file, so the seek proves nothing there.
+if (refuse) { await browser.close(); process.exit() }
 
 const durationS = Math.floor((i.durationMs || 1_400_000) / 1000)
 const target = Math.floor(durationS * 0.7)
@@ -113,7 +115,6 @@ const layer = await guest.evaluate(() => ({ ass: !!document.querySelector('.ass-
 console.log('guest subtitle render:', JSON.stringify(layer))
 check('guest renders a subtitle track', layer.ass || layer.cues > 0)
 await shot(guest, 'subtitles')
-if (refuse) { await browser.close(); process.exit() }
 
 // The host reloads and seeks where nothing was produced: the tab picks the
 // preparo back up from the remembered magnet, through jlocal again.
