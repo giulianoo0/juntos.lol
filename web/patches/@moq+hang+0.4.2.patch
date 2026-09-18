@@ -1,0 +1,45 @@
+diff --git a/node_modules/@moq/hang/container/consumer.js b/node_modules/@moq/hang/container/consumer.js
+index bbd9108..23c1f15 100644
+--- a/node_modules/@moq/hang/container/consumer.js
++++ b/node_modules/@moq/hang/container/consumer.js
+@@ -56,6 +56,8 @@ class Rewind {
+ // audio). A real missing group spans ~one group duration (orders of magnitude larger), so 1ms cleanly
+ // separates rounding noise from an actual gap.
+ const CONTIGUITY_TOLERANCE = Moq.Time.Micro.fromMilli(1);
++// How long delivery waits on a missing group, once later ones are buffered, before moving on without it.
++const GAP_PATIENCE_MS = 500;
+ /**
+  * True when `nextStart` continues the timeline that ends at `end`: it lands at or before `end`,
+  * within CONTIGUITY_TOLERANCE to absorb the µs rounding of independently-rounded per-sample
+@@ -100,6 +102,8 @@ export class Consumer {
+     // callers to guess from group numbers.
+     #gap = false;
+     #rewind = new Rewind(); // live edge + active boundary + discontinuity count
++    // The missing #active group delivery is stalled on, and since when.
++    #hole;
+     // Wake up the consumer when a new frame is available.
+     #notify;
+     #buffered = new Signal([]);
+@@ -286,6 +290,22 @@ export class Consumer {
+         if (this.#active === undefined)
+             return;
+         let skipped = false;
++        // A group that never arrives (lost on the way) held delivery until the whole latency
++        // budget had piled up behind it: seconds of frozen video or silence on a buffered stream.
++        // Groups do arrive slightly out of order, so the hole gets GAP_PATIENCE of wall time first.
++        const head = this.#groups[0];
++        if (head && head.consumer.sequence > this.#active) {
++            const now = performance.now();
++            if (this.#hole?.active !== this.#active)
++                this.#hole = { active: this.#active, since: now };
++            else if (now - this.#hole.since > GAP_PATIENCE_MS) {
++                console.warn(`skipping missing group: track=${this.#track.name} ${this.#active} -> ${head.consumer.sequence}`);
++                this.#active = head.consumer.sequence;
++                this.#hole = undefined;
++                this.#gap = true;
++                skipped = true;
++            }
++        }
+         // Keep skipping the oldest group while the buffered span exceeds the latency target.
+         // This also handles gaps in group sequence numbers: if #active points to a missing
+         // group, the latency span proves the missing content is too old to wait for.

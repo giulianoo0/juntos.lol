@@ -1,8 +1,60 @@
 diff --git a/node_modules/@moq/watch/source-CoU8Fj72.js b/node_modules/@moq/watch/source-CoU8Fj72.js
-index 1674adf..298952c 100644
+index 1674adf..93b296b 100644
 --- a/node_modules/@moq/watch/source-CoU8Fj72.js
 +++ b/node_modules/@moq/watch/source-CoU8Fj72.js
-@@ -1146,6 +1146,8 @@ function Te(e, t) {
+@@ -195,13 +195,14 @@ var te = class e {
+ 		this.#t = e;
+ 	}
+ 	wait(e, t) {
+-		return !this.#e || t >= (e - this.#t | 0) ? Promise.resolve() : new Promise((t) => this.#n.push({
++		// Media timestamps in microseconds pass 2^31 after ~36 minutes (a YouTube live starts far past that); `| 0` wrapped them and the decode loop waited forever.
++		return !this.#e || t >= e - this.#t ? Promise.resolve() : new Promise((t) => this.#n.push({
+ 			timestamp: e,
+ 			resolve: t
+ 		}));
+ 	}
+ 	advance(e) {
+-		this.#n.length !== 0 && (this.#n = this.#n.filter(({ timestamp: t, resolve: n }) => e < (t - this.#t | 0) || (n(), !1)));
++		this.#n.length !== 0 && (this.#n = this.#n.filter(({ timestamp: t, resolve: n }) => e < t - this.#t || (n(), !1)));
+ 	}
+ 	flush() {
+ 		for (let { resolve: e } of this.#n) e();
+@@ -435,11 +436,23 @@ var de = class {
+ 	#a;
+ 	#o = new ae();
+ 	#s = new r();
++	#cfg;
+ 	constructor(e, t, n) {
+-		this.in = { enabled: a(n?.enabled ?? !1) }, this.source = e, this.sync = t, this.#s.run(this.#c.bind(this)), this.#s.run(this.#l.bind(this)), this.#s.run(this.#u.bind(this)), this.#s.run(this.#d.bind(this)), this.#s.run(this.#f.bind(this));
++		// The catalog carries measured bitrate and jitter, so a live producer republishing it changes the raw config every few seconds; tearing the AudioContext down on each one kept the ring from ever filling. Only what the decoder reads counts, as the video side does with W().
++		this.in = { enabled: a(n?.enabled ?? !1) }, this.source = e, this.sync = t, this.#cfg = this.#s.computed((e) => {
++			let t = e.get(this.source.out.config);
++			return t ? {
++				broadcast: t.broadcast,
++				codec: t.codec,
++				container: t.container,
++				description: t.description,
++				sampleRate: t.sampleRate,
++				numberOfChannels: t.numberOfChannels
++			} : void 0;
++		}), this.#s.run(this.#c.bind(this)), this.#s.run(this.#l.bind(this)), this.#s.run(this.#u.bind(this)), this.#s.run(this.#d.bind(this)), this.#s.run(this.#f.bind(this));
+ 	}
+ 	#c(e) {
+-		let t = e.get(this.source.out.config);
++		let t = e.get(this.#cfg);
+ 		if (!t) return;
+ 		let r = e.get(this.#r) ?? t.sampleRate, i = t.numberOfChannels;
+ 		e.set(this.#e.sampleRate, r);
+@@ -496,7 +509,7 @@ var de = class {
+ 		if (!t) return;
+ 		let n = e.get(this.source.out.track);
+ 		if (!n) return;
+-		let r = e.get(this.source.out.config);
++		let r = e.get(this.#cfg);
+ 		if (!r) return;
+ 		let i = t.relativeBroadcast(e, r.broadcast);
+ 		if (!i) return;
+@@ -1146,6 +1159,8 @@ function Te(e, t) {
  }
  //#endregion
  //#region src/video/decoder.ts
@@ -11,7 +63,7 @@ index 1674adf..298952c 100644
  var Ee = n.Milli(500), De = class {
  	in;
  	source;
-@@ -1273,7 +1275,7 @@ var Ee = n.Milli(500), De = class {
+@@ -1273,7 +1288,7 @@ var Ee = n.Milli(500), De = class {
  	constructor(e) {
  		this.sync = e.sync, this.paced = e.paced, this.broadcast = e.broadcast, this.track = e.track, this.config = e.config, this.stats = e.stats, this.#r.run((e) => {
  			let t = e.get(this.paced);
@@ -20,7 +72,7 @@ index 1674adf..298952c 100644
  		}), this.#r.run(this.#i.bind(this));
  	}
  	#i(e) {
-@@ -1313,7 +1315,8 @@ var Ee = n.Milli(500), De = class {
+@@ -1313,7 +1328,8 @@ var Ee = n.Milli(500), De = class {
  			optimizeForLatency: this.config.optimizeForLatency,
  			flip: !1
  		});
@@ -30,7 +82,7 @@ index 1674adf..298952c 100644
  		e.spawn(async () => {
  			for (;;) {
  				let e = await a.next();
-@@ -1331,7 +1334,12 @@ var Ee = n.Milli(500), De = class {
+@@ -1331,7 +1347,12 @@ var Ee = n.Milli(500), De = class {
  				this.stats.update((e) => ({
  					frameCount: (e?.frameCount ?? 0) + 1,
  					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
@@ -44,7 +96,7 @@ index 1674adf..298952c 100644
  			}
  		});
  	}
-@@ -1353,7 +1361,8 @@ var Ee = n.Milli(500), De = class {
+@@ -1353,7 +1374,8 @@ var Ee = n.Milli(500), De = class {
  			optimizeForLatency: this.config.optimizeForLatency,
  			flip: !1
  		});
@@ -54,7 +106,7 @@ index 1674adf..298952c 100644
  		e.spawn(async () => {
  			for (;;) {
  				let e = await c.next();
-@@ -1366,11 +1375,15 @@ var Ee = n.Milli(500), De = class {
+@@ -1366,11 +1388,15 @@ var Ee = n.Milli(500), De = class {
  					frameCount: (e?.frameCount ?? 0) + 1,
  					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
  				})), d !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(d), n.Milli.fromMicro(t.timestamp)), d = t.timestamp, r.state === "closed") break;

@@ -9,10 +9,10 @@ const RESUBSCRIBE_MS = 4000
 /** One the relay accepted but that shows nothing yet gets this long before it is reopened. */
 const LOADING_PATIENCE_MS = 20_000
 /**
- * The producer reads the live as HLS segments through a proxy, so frames land
- * on the relay in bursts a few seconds apart, not as a steady stream. A viewer
- * playing at real-time latency runs dry between bursts; this many seconds of
- * buffer ride them out, and past the ceiling playback skips ahead.
+ * The producer paces the HLS segments it reads onto the media clock, but a
+ * segment that comes late through the proxy still leaves a hole, and an older
+ * jlocal sends them in bursts. This many seconds of buffer ride that out, and
+ * past the ceiling playback skips ahead.
  */
 const LIVE_LATENCY_MS = { min: 6_000, max: 15_000 }
 
@@ -94,7 +94,11 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
 
   useEffect(() => { watcherRef.current?.muted.set(muted) }, [muted])
 
-  const goLive = useCallback(() => setGeneration((n) => n + 1), [])
+  // Only the media starts over: a fresh subscription to the catalog could wait many seconds for the producer's next copy.
+  const goLive = useCallback(() => {
+    if (watcherRef.current) watcherRef.current.jump()
+    else setGeneration((n) => n + 1)
+  }, [])
 
   useEffect(() => {
     const update = () => setFullscreen(document.fullscreenElement === stageRef.current)

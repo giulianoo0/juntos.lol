@@ -1,5 +1,5 @@
 //! A YouTube live pushed into the MoQ relay: yt-dlp names the HLS renditions,
-//! FFmpeg copies the chosen video and audio into one MPEG-TS, and moq-mux
+//! FFmpeg copies the chosen video and audio into one fragmented MP4, and moq-mux
 //! turns that stream into the hang broadcast the site's viewer already reads
 //! for screen shares. The worker and jlocal run this unchanged.
 use std::sync::Arc;
@@ -16,6 +16,7 @@ const MAX_HEIGHT: u32 = 1080;
 const READ_BUF: usize = 64 * 1024;
 const STDERR_KEEP: usize = 4096;
 const CATALOG_REFRESH: Duration = Duration::from_secs(3);
+const FRAGMENT_US: &str = "250000";
 
 /// The renditions a live is taken from: one H.264 video playlist and, when
 /// the live offers one apart, the best audio playlist.
@@ -195,7 +196,18 @@ impl From<anyhow::Error> for Failure {
 
 /// The FFmpeg command: each playlist is an input with its own reconnects
 /// (and the proxy yt-dlp resolved through, since the URLs are bound to it),
-/// mapped verbatim into one transport stream on stdout.
+/// copied into one fragmented MP4 on stdout.
+///
+/// From MPEG-TS the importer publishes every AAC frame as its own group, one
+/// QUIC stream each, 43 a second; a third of them never reached the viewers
+/// and the audio died in the gaps. From fMP4 a group is a fragment, so audio
+/// travels a quarter second per stream and video still opens one per keyframe.
+///
+/// Read as fast as it downloads, a live comes out one whole segment at a
+/// time, seconds apart, and every viewer runs dry between them. `-readrate 1`
+/// paces each input to its timestamps instead: the demuxer starts a few
+/// segments behind the edge, and that backlog becomes a cushion held here,
+/// once, for everyone.
 pub fn ffmpeg_args(selection: &Selection, proxy: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error"]
         .iter()
@@ -207,6 +219,8 @@ pub fn ffmpeg_args(selection: &Selection, proxy: Option<&str>) -> Vec<String> {
         }
         args.extend(
             [
+                "-readrate",
+                "1",
                 "-reconnect",
                 "1",
                 "-reconnect_streamed",
@@ -234,12 +248,14 @@ pub fn ffmpeg_args(selection: &Selection, proxy: Option<&str>) -> Vec<String> {
         [
             "-c",
             "copy",
+            "-bsf:a",
+            "aac_adtstoasc",
             "-f",
-            "mpegts",
-            "-muxdelay",
-            "0",
-            "-muxpreload",
-            "0",
+            "mp4",
+            "-movflags",
+            "empty_moov+delay_moov+default_base_moof+frag_keyframe",
+            "-frag_duration",
+            FRAGMENT_US,
             "-flush_packets",
             "1",
             "pipe:1",
@@ -276,8 +292,8 @@ async fn run(
         .context("create broadcast")?;
     let catalog = moq_mux::catalog::Producer::new(&mut broadcast).context("catalog")?;
     let mut importer =
-        moq_mux::import::ContainerStream::new(broadcast.clone(), catalog.reserve(), "ts")
-            .context("ts importer")?;
+        moq_mux::import::ContainerStream::new(broadcast.clone(), catalog.reserve(), "fmp4")
+            .context("fmp4 importer")?;
 
     let mut cmd = tokio::process::Command::new(&ffmpeg_path);
     cmd.args(ffmpeg_args(selection, resolver.proxy()));
@@ -338,7 +354,7 @@ async fn run(
                 if n == 0 {
                     break;
                 }
-                importer.decode(&buf[..n]).context("ts import")?;
+                importer.decode(&buf[..n]).context("fmp4 import")?;
                 decoded += n as u64;
                 if decoded > 0 && reconnect.connected() {
                     let mut held = state.lock();
@@ -406,7 +422,8 @@ mod tests {
         let joined = args.join(" ");
         assert_eq!(args.iter().filter(|a| *a == "-i").count(), 2);
         assert_eq!(args.iter().filter(|a| *a == "-http_proxy").count(), 2);
-        assert!(joined.contains("-map 0:v:0 -map 1:a:0 -c copy -f mpegts"));
+        assert!(joined.contains("-map 0:v:0 -map 1:a:0 -c copy -bsf:a aac_adtstoasc -f mp4"));
+        assert_eq!(args.iter().filter(|a| *a == "-readrate").count(), 2);
         assert!(joined.ends_with("pipe:1"));
     }
 }

@@ -430,8 +430,21 @@ export type ScreenWatchStatus = 'offline' | 'loading' | 'live'
 export interface ScreenWatcher {
   status: Watch.Signals.Getter<ScreenWatchStatus>
   muted: Watch.Signals.Signal<boolean>
+  /** Drops what is buffered and starts over from the newest group, keeping the connection and the catalog. */
+  jump(): void
   close(): void
 }
+
+/**
+ * The jitter floor of a shared screen. 'real-time' sizes the buffer from the
+ * RTT alone (~50 ms), thinner than one late 20 ms Opus group crossing the
+ * relay, and the audio ring never rebuilds after running dry: every hiccup
+ * was a gap and then a skip. Video and audio share the one clock, so they
+ * stay in step at the cost of ~100 ms more delay.
+ */
+const SCREEN_LATENCY_MS = 120
+/** How long a jump waits between dropping the old subscriptions and opening new ones. */
+const RESUBSCRIBE_GAP_MS = 1_500
 
 /**
  * Subscribes to one publisher's path and paints it on the canvas, with the
@@ -442,35 +455,34 @@ export interface ScreenWatcher {
  * the frames to is patched (see `patches/`) to wait for the next keyframe
  * instead of dying on a delta that lands first.
  */
-export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false, latency: Watch.Latency = 'real-time'): Promise<ScreenWatcher> {
+export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false, latency?: Watch.Latency): Promise<ScreenWatcher> {
   const Watch = await import('@moq/watch')
   const { Net, Signals } = Watch
 
   const connection = relayConnection(Net, relay.url)
   const broadcast = new Watch.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(path) })
-  const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
-  const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
-  const sync = new Watch.Sync({
-    latency,
-    connection: connection.established,
-    video: videoSource.out.jitter,
-    audio: audioSource.out.jitter,
-  })
-  const video = new Watch.Video.Decoder(videoSource, sync, { enabled: true, paced: true })
-  const audioEnabled = new Signals.Signal(false)
-  const audio = new Watch.Audio.Decoder(audioSource, sync, { enabled: audioEnabled })
   const mutedSignal = new Signals.Signal(muted)
-  const emitter = new Watch.Audio.Emitter(audio, { volume: 1, muted: mutedSignal, paused: false })
-  const renderer = new Watch.Video.Renderer(video, { canvas, visible: 'always' })
 
-  // Audio is only downloaded while something can play it.
-  const signals = new Signals.Effect()
-  signals.proxy(audioEnabled, emitter.out.enabled)
+  const open = () => {
+    const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
+    const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
+    const sync = new Watch.Sync({
+      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli },
+      connection: connection.established,
+      video: videoSource.out.jitter,
+      audio: audioSource.out.jitter,
+    })
+    const video = new Watch.Video.Decoder(videoSource, sync, { enabled: true, paced: true })
+    const audioEnabled = new Signals.Signal(false)
+    const audio = new Watch.Audio.Decoder(audioSource, sync, { enabled: audioEnabled })
+    const emitter = new Watch.Audio.Emitter(audio, { volume: 1, muted: mutedSignal, paused: false })
+    const renderer = new Watch.Video.Renderer(video, { canvas, visible: 'always' })
 
-  return {
-    status: broadcast.out.status,
-    muted: mutedSignal,
-    close() {
+    // Audio is only downloaded while something can play it.
+    const signals = new Signals.Effect()
+    signals.proxy(audioEnabled, emitter.out.enabled)
+
+    return () => {
       signals.close()
       renderer.close()
       emitter.close()
@@ -479,6 +491,28 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
       sync.close()
       audioSource.close()
       videoSource.close()
+    }
+  }
+  let closeMedia = open()
+  let reopen: ReturnType<typeof setTimeout> | null = null
+
+  return {
+    status: broadcast.out.status,
+    muted: mutedSignal,
+    jump() {
+      if (reopen !== null) return
+      closeMedia()
+      closeMedia = () => undefined
+      // Resubscribing on the same connection while the relay is still tearing the old
+      // subscriptions down left the new ones starved after a few groups.
+      reopen = setTimeout(() => {
+        reopen = null
+        closeMedia = open()
+      }, RESUBSCRIBE_GAP_MS)
+    },
+    close() {
+      if (reopen !== null) clearTimeout(reopen)
+      closeMedia()
       broadcast.close()
       connection.close()
     },
