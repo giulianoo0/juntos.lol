@@ -154,9 +154,10 @@ export function Home() {
     : null
 
   const startScreenRoomNative = () => {
-    setManualOpen(false)
     if (!screenShareSupported()) { setError(t('error.screenUnsupported')); return }
+    // The panel folds only once there is a screen: cancelling the browser's picker keeps the menu.
     void requestScreenStream().then((stream) => {
+      setManualOpen(false)
       setError('')
       setDraftNickname(nickname)
       setPendingMedia({ kind: 'screen', stream })
@@ -174,6 +175,13 @@ export function Home() {
   const discardPending = (media: PendingMedia | null) => {
     if (media?.kind === 'torrent' || media?.kind === 'drive' || media?.kind === 'youtube') media.session.destroy()
     if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
+  }
+
+  // Backing out of the nickname dialog returns to the menu instead of leaving the panel folded.
+  const cancelPending = (media: PendingMedia) => {
+    discardPending(media)
+    setPendingMedia(null)
+    if (view === 'manual') setManualOpen('menu')
   }
 
   const selectFile = (file?: File) => {
@@ -316,22 +324,32 @@ export function Home() {
           <p className="stage-description">{t('home.guide')}</p>
           <div className="source-options">
             <button onClick={() => setManualOpen('file')}>
-              <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}
+              <span className="source-icon"><Upload size={18} aria-hidden="true" /></span>
+              <span className="source-copy"><strong>{t('home.uploadFile')}</strong><small>{t('home.uploadFileHint')}</small></span>
             </button>
             <button onClick={() => { setError(''); setManualOpen('magnet') }}>
-              <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.openTorrent')}
+              <span className="source-icon"><span className="magnet-glyph" aria-hidden="true">µ</span></span>
+              <span className="source-copy"><strong>{t('home.openTorrent')}</strong><small>{t('home.openTorrentHint')}</small></span>
             </button>
             <button onClick={() => { setError(''); setYoutubeDraft(''); setManualOpen('youtube') }}>
-              <YoutubeGlyph size={18} />{t('home.openYoutube')}
+              <span className="source-icon"><YoutubeGlyph size={18} /></span>
+              <span className="source-copy"><strong>{t('home.openYoutube')}</strong><small>{t('home.openYoutubeHint')}</small></span>
             </button>
             <button onClick={() => { setError(''); setManualOpen('drive') }}>
-              <FolderOpen size={18} aria-hidden="true" />{t('home.openDrive')}
+              <span className="source-icon"><FolderOpen size={18} aria-hidden="true" /></span>
+              <span className="source-copy"><strong>{t('home.openDrive')}</strong><small>{t('home.openDriveHint')}</small></span>
             </button>
-            <button onClick={startScreenRoom}>
-              <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
+            <button className="source-wide" onClick={startScreenRoom}>
+              <span className="source-icon"><MonitorUp size={18} aria-hidden="true" /></span>
+              <span className="source-copy"><strong>{t('home.shareScreen')}</strong><small>{t('home.shareScreenHint')}</small></span>
             </button>
-            <button onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>
-              <LogIn size={18} aria-hidden="true" />{t('home.joinRoom')}
+          </div>
+          <div className="source-footer">
+            <button type="button" className="source-join" onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>
+              <LogIn size={15} aria-hidden="true" />{t('home.joinRoom')}
+            </button>
+            <button type="button" className="source-catalog" onClick={() => showView('catalog')}>
+              {t('home.orCatalog')}
             </button>
           </div>
         </div>
@@ -340,7 +358,7 @@ export function Home() {
       {shownManual === 'file' ? (
         <div className="morph-step" data-step="file">
           <div className="morph-head">
-            <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
+            <span className="source-icon" aria-hidden="true"><Upload size={18} /></span>
             <h2 className="stage-title">{t('home.uploadFile')}</h2>
           </div>
           <button
@@ -357,13 +375,16 @@ export function Home() {
             <span>{t('home.dropHint')}</span>
           </button>
           {error ? <div className="error-card" role="alert">{error}</div> : null}
+          <div className="torrent-actions">
+            <button type="button" className="secondary-button step-cancel" onClick={() => setManualOpen('menu')}>{t('home.cancel')}</button>
+          </div>
         </div>
       ) : null}
 
       {shownManual === 'join' ? (
         <div className="morph-step" data-step="join">
           <div className="morph-head">
-            <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
+            <span className="source-icon" aria-hidden="true"><LogIn size={18} /></span>
             <h2 className="stage-title">{t('home.joinRoom')}</h2>
           </div>
           <p className="stage-description">{t('home.joinGuide')}</p>
@@ -387,9 +408,12 @@ export function Home() {
               aria-label={t('home.joinRoom')}
               onChange={(event) => { setJoinDraft(event.target.value); setJoinError('') }}
             />
-            <button type="submit" className="primary-button" disabled={!roomCodeFrom(joinDraft)}>
-              {t('home.joinGo')}
-            </button>
+            <div className="torrent-actions">
+              <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
+              <button type="submit" className="primary-button" disabled={!roomCodeFrom(joinDraft)}>
+                {t('home.joinGo')}
+              </button>
+            </div>
           </form>
           {joinError ? <p className="stage-error" role="alert">{joinError}</p> : null}
         </div>
@@ -399,6 +423,7 @@ export function Home() {
         <div className="morph-step" data-step="magnet">
           <TorrentPicker
             maxFileBytes={MAX_UPLOAD_BYTES}
+            icon={<span className="magnet-glyph">µ</span>}
             t={t}
             initialSession={resumed?.session ?? null}
             initialMagnet={resumed?.magnet ?? ''}
@@ -417,6 +442,7 @@ export function Home() {
       {shownManual === 'youtube' ? (
         <div className="morph-step" data-step="youtube">
           <YoutubePicker
+            icon={<YoutubeGlyph size={18} />}
             t={t}
             initialUrl={youtubeDraft}
             onExit={() => setManualOpen('menu')}
@@ -431,6 +457,11 @@ export function Home() {
 
       {shownManual === 'screen' ? (
         <div className="morph-step" data-step="screen">
+          <div className="morph-head">
+            <span className="source-icon" aria-hidden="true"><MonitorUp size={18} /></span>
+            <h2 className="stage-title">{t('home.shareScreen')}</h2>
+          </div>
+          <p className="stage-description">{t('jlocal.pickGuide')}</p>
           <JlocalPicker
             t={t}
             onExit={() => setManualOpen('menu')}
@@ -441,6 +472,7 @@ export function Home() {
               setPendingMedia({ kind: 'jlocalScreen', pick })
             }}
           />
+          <div className="torrent-actions"><StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} /></div>
         </div>
       ) : null}
 
@@ -448,6 +480,7 @@ export function Home() {
         <div className="morph-step" data-step="drive">
           <DrivePicker
             maxFileBytes={MAX_UPLOAD_BYTES}
+            icon={<FolderOpen size={18} />}
             t={t}
             onExit={() => setManualOpen('menu')}
             onPicked={(file, session) => {
@@ -578,30 +611,21 @@ export function Home() {
         open={pendingMedia !== null}
         onOpenChange={(open) => {
           if (open || !pendingMedia) return
-          discardPending(pendingMedia)
-          setPendingMedia(null)
+          cancelPending(pendingMedia)
         }}
       >
         {pendingMedia ? (
           <DialogContent
+            className="nickname-dialog"
             closeLabel={t('home.closeDialog')}
             title={t('home.dialogTitle')}
             description={t('home.dialogGuide')}
           >
-            <span className="dialog-file">
-              {pendingMedia.kind === 'screen' || pendingMedia.kind === 'jlocalScreen' ? t('home.screenDialog')
-                : pendingMedia.kind === 'stream' ? pendingMedia.pick.displayName
-                  : pendingMedia.kind === 'youtube' ? youtubeFileName(pendingMedia.session)
-                    : pendingMedia.file.name}
-            </span>
             <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
               <label htmlFor="nickname">{t('home.nickname')}</label>
               <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onFocus={caretToEndOnFocus} onChange={(event) => setDraftNickname(event.target.value)} />
               <div className="dialog-actions">
-                <Button onClick={() => {
-                  discardPending(pendingMedia)
-                  setPendingMedia(null)
-                }}>{t('home.cancel')}</Button>
+                <Button onClick={() => cancelPending(pendingMedia)}>{t('home.cancel')}</Button>
                 <Button type="submit" variant="primary">{t('home.continue')}</Button>
               </div>
             </form>

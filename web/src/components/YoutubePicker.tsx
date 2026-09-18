@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Translator } from '../i18n/useT'
 import { isYoutubeLink, openYoutube, youtubeCapacity, youtubeErrorKey, type YoutubeSession } from '../youtube'
 import { useMorphingSize } from '../ui/useMorphingSize'
@@ -10,6 +10,8 @@ import { useJLocal } from '../jlocal/status'
 interface YoutubePickerProps {
   onPicked: (session: YoutubeSession) => void
   onExit?: () => void
+  /** The source's glyph, shown in the head beside the title. */
+  icon?: ReactNode
   initialUrl?: string
   t: Translator
 }
@@ -27,7 +29,7 @@ function formatDuration(ms: number): string {
  * Turns a pasted link into a resolved video the host confirms. The session
  * it resolved is released on unmount unless it was handed over.
  */
-export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubePickerProps) {
+export function YoutubePicker({ onPicked, onExit, initialUrl = '', icon, t }: YoutubePickerProps) {
   const [url, setUrl] = useState(initialUrl)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -129,7 +131,7 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
   return (
     <div className="morph-fade" data-morphing={picking}>
       <div className="morph-head">
-        {resolved || onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
+        {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
         <h2 className="stage-title">{t('home.youtubeTitle')}</h2>
       </div>
       {!resolved ? <p className="stage-description">{t('home.youtubeGuide')}</p> : null}
@@ -180,6 +182,7 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
         </div>
       ) : null}
       <div className="torrent-actions">
+        {resolved || onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
         {!resolved ? (
           <button
             ref={loadRef}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Translator } from '../i18n/useT'
 import { openTorrent, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { WorkerProbes } from './WorkerProbes'
@@ -17,6 +17,8 @@ interface TorrentPickerProps {
   maxFileBytes: number
   onPicked: (file: TorrentVideoFile, session: TorrentSession, magnet: string) => void
   onExit?: () => void
+  /** The source's glyph, shown in the head beside the title. */
+  icon?: ReactNode
   /** A YouTube link pasted where a magnet goes is handed here instead of refused. */
   onYoutubeLink?: (url: string) => void
   initialSession?: TorrentSession | null
@@ -46,7 +48,7 @@ function formatBytes(bytes: number): string {
  * it opened itself; a session handed in by the caller is released only by
  * backing out of its list.
  */
-export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', autoLoad = false, currentPath, t }: TorrentPickerProps) {
+export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', autoLoad = false, currentPath, icon, t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
   const [probes, setProbes] = useState<WorkerProbe[]>([])
@@ -155,7 +157,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
   return (
     <div className="morph-fade" data-morphing={picking}>
       <div className="morph-head">
-        {listing || onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
+        {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
         <h2 className="stage-title">{listing ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
       </div>
       <p className="stage-description">{listing ? t('home.torrentChooseGuide') : t('home.torrentGuide')}</p>
@@ -216,6 +218,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
         </div>
       ) : (
         <div className="torrent-actions">
+          {onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
           <button
             ref={loadRef}
             type="button"

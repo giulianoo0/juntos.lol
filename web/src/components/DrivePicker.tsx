@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Translator } from '../i18n/useT'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import type { DriveEntry } from '../drive'
@@ -99,6 +99,8 @@ interface DrivePickerProps {
   maxFileBytes: number
   onPicked: (file: TorrentVideoFile, session: TorrentSession) => void
   onExit?: () => void
+  /** The source's glyph, shown in the head beside the title. */
+  icon?: ReactNode
   t: Translator
 }
 
@@ -120,7 +122,7 @@ interface SingleFile {
  * what it opened itself; confirming hands the session to the caller, which
  * destroys it when its own swap throws.
  */
-export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerProps) {
+export function DrivePicker({ maxFileBytes, onPicked, onExit, icon, t }: DrivePickerProps) {
   const [link, setLink] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -324,7 +326,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
   return (
     <div className="morph-fade">
       <div className="morph-head">
-        {showBack ? <StepBack label={t('home.back')} onClick={back} /> : null}
+        {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
         <h2 className="stage-title">{title}</h2>
       </div>
       <p className="stage-description">{guide}</p>
@@ -356,6 +358,7 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
               onChange={(event) => setLink(event.target.value)}
             />
             <div className="torrent-actions">
+              {showBack ? <StepBack label={t('home.back')} onClick={back} /> : null}
               <button
                 ref={loadRef}
                 type="submit"
@@ -399,6 +402,9 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, t }: DrivePickerPr
         </>
       )}
       {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
+      {showBack && (single || current) ? (
+        <div className="torrent-actions"><StepBack label={t('home.back')} onClick={back} /></div>
+      ) : null}
     </div>
   )
 }
