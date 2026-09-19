@@ -24,6 +24,7 @@ import {
 } from '../screenshare'
 import { previewH264, startH264Feed, systemAudioTrack, type H264Feed, type SystemAudio } from '../jlocal/h264Feed'
 import { applySoundChoice } from '../jlocal/soundChoice'
+import { loadStageVolume, saveStageVolume } from '../ui/stageVolume'
 
 /** A subscription the relay turned away (no such broadcast yet) is tried again after this long. */
 const WATCH_RETRY_MS = 4_000
@@ -99,6 +100,11 @@ export interface ScreenShareApi {
   /** My own stream, for a muted `<video>` preview. */
   preview: MediaStream | null
   muted: boolean
+  volume: number
+  /** My browser share is going out without sound: the surface offered none, or its checkbox was off. */
+  sendingSilent: boolean
+  /** Every remote screen that has told us so far carries no sound. */
+  remoteSilent: boolean
   /** Opens the picker and publishes what it returns. A dismissed picker is a no-op. */
   start(quality?: ScreenQualityId): void
   /** Publishes what the jlocal companion captures: hardware H.264, no re-encode. */
@@ -114,6 +120,7 @@ export interface ScreenShareApi {
   /** Re-sizes a live share in place, and remembers the choice for the next one. */
   setQuality(id: ScreenQualityId): void
   setMuted(muted: boolean): void
+  setVolume(volume: number): void
   setShareOpen(open: boolean): Promise<void>
   /** Binds a remote member's screen to a canvas, or unbinds it when passed null. */
   attach(memberId: string, canvas: HTMLCanvasElement | null): void
@@ -162,6 +169,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   const relayRef = useRef<ScreenRelay | null>(null)
   const attachedRef = useRef(new Map<string, Attached>())
   const mutedRef = useRef(false)
+  const volumeRef = useRef(loadStageVolume())
   const startedRef = useRef<Set<string> | null>(null)
   const canvasRefsRef = useRef(new Map<string, (canvas: HTMLCanvasElement | null) => void>())
   const noticeRef = useRef(onScreenStarted)
@@ -174,6 +182,9 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   const [stats, setStats] = useState<ScreenSendStats | null>(null)
   const [preview, setPreview] = useState<MediaStream | null>(null)
   const [muted, setMutedState] = useState(false)
+  const [volume, setVolumeState] = useState(volumeRef.current)
+  const [sendingSilent, setSendingSilent] = useState(false)
+  const [remoteAudio, setRemoteAudio] = useState<Record<string, boolean | undefined>>({})
   /** Whether the live share is the companion's feed rather than the browser's stream. */
   const [viaJlocal, setViaJlocal] = useState(false)
   const [watchStatus, setWatchStatus] = useState<Record<string, ScreenWatchStatus>>({})
@@ -203,6 +214,14 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   const stopRef = useRef(stop)
   stopRef.current = stop
 
+  // The picker decides the sound: a tab offers it behind a checkbox, a window
+  // never, a whole screen only where the OS lets the browser mix it.
+  const watchSound = useCallback((stream: MediaStream) => {
+    const [track] = stream.getAudioTracks()
+    setSendingSilent(!track || track.readyState === 'ended')
+    track?.addEventListener('ended', () => { if (streamRef.current === stream) setSendingSilent(true) }, { once: true })
+  }, [])
+
   const publish = useCallback(async (stream: MediaStream, qualityId: ScreenQualityId) => {
     setState('starting')
     setError(null)
@@ -215,6 +234,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
       setPreview(stream)
       setViaJlocal(false)
       setState('sharing')
+      watchSound(stream)
       stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
       await publisher.ready
       await setScreenLive(roomId, memberId, capability, true)
@@ -222,7 +242,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
       stop()
       throw failure
     }
-  }, [roomId, memberId, capability, stop])
+  }, [roomId, memberId, capability, stop, watchSound])
 
   const openFeed = (pick: JlocalPick) => {
     const quality = screenQuality(pick.quality)
@@ -363,9 +383,10 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
       streamRef.current = stream
       setPreview(stream)
       setStats(null)
+      watchSound(stream)
       stream.getVideoTracks()[0]?.addEventListener('ended', stop, { once: true })
     }).catch((failure: unknown) => { if (!isScreenShareCancelled(failure)) fail(failure) })
-  }, [quality, start, stop, fail])
+  }, [quality, start, stop, fail, watchSound])
 
   const setQuality = useCallback((id: ScreenQualityId) => {
     setQualityState(id)
@@ -378,6 +399,14 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     setMutedState(next)
     for (const entry of attachedRef.current.values()) entry.watcher?.muted.set(next)
   }, [])
+
+  const setVolume = useCallback((next: number) => {
+    volumeRef.current = next
+    setVolumeState(next)
+    saveStageVolume(next)
+    for (const entry of attachedRef.current.values()) entry.watcher?.volume.set(next)
+    if (next > 0 && mutedRef.current) setMuted(false)
+  }, [setMuted])
 
   const setOpen = useCallback((open: boolean) => setScreenShareOpen(roomId, memberId, capability, open), [roomId, memberId, capability])
 
@@ -475,7 +504,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     const current = relayRef.current
     if (!current) return
     const generation = entry.generation
-    void watchScreen(current, screenPath(current.base, target), entry.canvas, mutedRef.current)
+    void watchScreen(current, screenPath(current.base, target), entry.canvas, mutedRef.current, undefined, volumeRef.current)
       .then((watcher) => {
         if (entry.closed || entry.generation !== generation) { watcher.close(); return }
         entry.watcher = watcher
@@ -484,7 +513,20 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
           if (status === 'live') setSeenLive((all) => (all[target] ? all : { ...all, [target]: true }))
         }
         apply(watcher.status.peek())
-        entry.unsubscribe = watcher.status.subscribe(apply)
+        const applyAudio = (audio: boolean | undefined) => setRemoteAudio((all) => (all[target] === audio ? all : { ...all, [target]: audio }))
+        applyAudio(watcher.hasAudio.peek())
+        const offStatus = watcher.status.subscribe(apply)
+        const offAudio = watcher.hasAudio.subscribe(applyAudio)
+        entry.unsubscribe = () => {
+          offStatus()
+          offAudio()
+          setRemoteAudio((all) => {
+            if (!(target in all)) return all
+            const next = { ...all }
+            delete next[target]
+            return next
+          })
+        }
       })
       .catch(() => undefined)
   }, [])
@@ -606,6 +648,9 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     stats,
     preview,
     muted,
+    volume,
+    sendingSilent: sendingSilent && state === 'sharing' && !viaJlocal,
+    remoteSilent: Object.keys(remoteAudio).length > 0 && Object.values(remoteAudio).every((audio) => audio === false),
     start,
     startWithJlocal: startJlocal,
     switchSource,
@@ -615,6 +660,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     stop,
     setQuality,
     setMuted,
+    setVolume,
     setShareOpen: setOpen,
     attach,
     canvasRef,

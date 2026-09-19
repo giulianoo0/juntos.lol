@@ -2,6 +2,8 @@ import { Maximize, Minimize } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
+import { VolumeControl } from '../ui/VolumeControl'
+import { loadStageVolume, saveStageVolume } from '../ui/stageVolume'
 import { fetchScreenRelay, watchScreen, type ScreenRelay, type ScreenWatchStatus, type ScreenWatcher } from '../screenshare'
 
 /** A subscription the relay turned away (the producer is not there yet) is tried again after this long. */
@@ -19,8 +21,8 @@ const LIVE_LATENCY_MS = { min: 6_000, max: 15_000 }
 /**
  * A YouTube live on the relay: the room's broadcast painted on a canvas, the
  * way a shared screen is. There is no timeline and no going back; the one
- * control is jumping to the edge, which is a fresh subscription — the relay
- * hands a newcomer its newest group.
+ * control is jumping to the edge, from the red badge as on YouTube — a fresh
+ * subscription, since the relay hands a newcomer its newest group.
  */
 // `Time.Milli` is a branded number; the cast keeps @moq/watch out of this chunk (screenshare loads it lazily).
 function liveLatency(): Watch.Latency {
@@ -42,9 +44,12 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
   const relayRef = useRef<ScreenRelay | null>(null)
   const [status, setStatus] = useState<ScreenWatchStatus>('offline')
   const [muted, setMuted] = useState(false)
+  const [volume, setVolume] = useState(loadStageVolume)
   const [generation, setGeneration] = useState(0)
   const mutedRef = useRef(muted)
   mutedRef.current = muted
+  const volumeRef = useRef(volume)
+  volumeRef.current = volume
 
   useEffect(() => {
     if (!memberId || !capability) return
@@ -63,7 +68,7 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
     let unsubscribe: (() => void) | undefined
     let retry: ReturnType<typeof setTimeout> | null = null
     setStatus('loading')
-    void watchScreen(relay, broadcast, canvas, mutedRef.current, liveLatency())
+    void watchScreen(relay, broadcast, canvas, mutedRef.current, liveLatency(), volumeRef.current)
       .then((watcher) => {
         if (closed) { watcher.close(); return }
         watcherRef.current = watcher
@@ -93,6 +98,10 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
   }, [broadcast, generation])
 
   useEffect(() => { watcherRef.current?.muted.set(muted) }, [muted])
+  useEffect(() => {
+    watcherRef.current?.volume.set(volume)
+    saveStageVolume(volume)
+  }, [volume])
 
   // Only the media starts over: a fresh subscription to the catalog could wait many seconds for the producer's next copy.
   const goLive = useCallback(() => {
@@ -119,16 +128,13 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
       {status !== 'live' ? <div className="live-waiting">{t('room.liveWaiting')}</div> : null}
       <div className="live-bar" onDoubleClick={(e) => e.stopPropagation()}>
         <div className="live-heading">
-          <span className="live-badge">{t('room.liveBadge')}</span>
+          <button type="button" className="live-badge" onClick={goLive} disabled={status !== 'live'} title={t('room.liveGoLive')} aria-label={t('room.liveGoLive')}>
+            {t('room.liveBadge')}
+          </button>
           <span className="live-title">{title}</span>
         </div>
         <span className="live-bar-spacer" />
-        <button type="button" className="secondary-button live-button" onClick={() => setMuted((m) => !m)}>
-          {t(muted ? 'room.liveUnmute' : 'room.liveMute')}
-        </button>
-        <button type="button" className="primary-button live-button" onClick={goLive} disabled={status !== 'live'}>
-          {t('room.liveGoLive')}
-        </button>
+        <VolumeControl volume={volume} muted={muted} onVolume={setVolume} onMuted={setMuted} t={t} />
         <button type="button" className="secondary-button live-button live-fullscreen" onClick={toggleFullscreen} aria-label={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')} title={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')}>
           {fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
         </button>

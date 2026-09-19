@@ -1,11 +1,12 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
-import { Check, Gauge, MonitorOff, MonitorUp, Replace, Users, Volume2, VolumeX } from 'lucide-react'
+import { Check, Gauge, MonitorOff, MonitorUp, Replace, Users, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import type { ScreenShareInfo } from '../types'
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
 import { MorphingMenu } from '../ui/MorphingMenu'
+import { VolumeControl } from '../ui/VolumeControl'
 import { MORPH_EASE } from '../ui/morphTokens'
 import { playJoinChime } from '../ui/chime'
 import { useToast } from '../ui/toastContext'
@@ -78,6 +79,10 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
     const preview = previewRef.current
     if (preview) preview.srcObject = share.preview
   }, [share.preview])
+
+  useEffect(() => {
+    if (share.sendingSilent) toast(t('room.screenSendingSilentHint'))
+  }, [share.sendingSilent, toast, t])
 
   useEffect(() => {
     if (!share.error) return
@@ -156,14 +161,21 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
         <QualityMenu quality={share.quality} onPick={share.setQuality} t={t} />
       ) : null}
       {sharing && share.viaJlocal && getCachedJLocalCapabilities()?.audio.capture ? <SoundMenu t={t} /> : null}
+      {share.sendingSilent ? (
+        <span className="stage-volume is-silent" title={t('room.screenSendingSilentHint')}>
+          <VolumeX size={16} aria-hidden="true" />{t('room.screenSendingSilent')}
+        </span>
+      ) : null}
       {sharing && share.stats && viewers > 0 ? <span className="screen-stats">{formatStats(share.stats)}</span> : null}
       {hasRemote || isController ? <span className="screen-bar-sep" aria-hidden="true" /> : null}
       {hasRemote ? (
-        <IconButton
-          icon={share.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-          label={t(share.muted ? 'room.screenUnmute' : 'room.screenMute')}
-          aria-pressed={share.muted}
-          onClick={() => share.setMuted(!share.muted)}
+        <VolumeControl
+          volume={share.volume}
+          muted={share.muted}
+          onVolume={share.setVolume}
+          onMuted={share.setMuted}
+          silent={share.remoteSilent ? { label: t('room.screenNoSound'), hint: t('room.screenNoSoundHint') } : undefined}
+          t={t}
         />
       ) : null}
       {isController ? (
