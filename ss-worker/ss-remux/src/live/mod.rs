@@ -3,7 +3,7 @@
 //! turns that stream into the hang broadcast the site's viewer already reads
 //! for screen shares. The worker and jlocal run this unchanged.
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use parking_lot::Mutex;
@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
 use crate::youtube::{self, Error, Format, Info, Picked, Resolver};
+
+mod pace;
+use pace::Pacer;
 
 const MAX_HEIGHT: u32 = 1080;
 const READ_BUF: usize = 64 * 1024;
@@ -203,11 +206,9 @@ impl From<anyhow::Error> for Failure {
 /// and the audio died in the gaps. From fMP4 a group is a fragment, so audio
 /// travels a quarter second per stream and video still opens one per keyframe.
 ///
-/// Read as fast as it downloads, a live comes out one whole segment at a
-/// time, seconds apart, and every viewer runs dry between them. `-readrate 1`
-/// paces each input to its timestamps instead: the demuxer starts a few
-/// segments behind the edge, and that backlog becomes a cushion held here,
-/// once, for everyone.
+/// FFmpeg reads as fast as it downloads, a whole segment at a time; the
+/// [`Pacer`] turns that into a steady stream (see `pace.rs` for why
+/// `-readrate` could not).
 pub fn ffmpeg_args(selection: &Selection, proxy: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error"]
         .iter()
@@ -219,8 +220,6 @@ pub fn ffmpeg_args(selection: &Selection, proxy: Option<&str>) -> Vec<String> {
         }
         args.extend(
             [
-                "-readrate",
-                "1",
                 "-reconnect",
                 "1",
                 "-reconnect_streamed",
@@ -332,6 +331,7 @@ async fn run(
     });
 
     let mut closed = std::pin::pin!(reconnect.closed());
+    let mut pacer = Pacer::default();
     let mut buf = vec![0u8; READ_BUF];
     let mut decoded: u64 = 0;
     // The relay keeps a finished group only for a few seconds, and the
@@ -342,7 +342,9 @@ async fn run(
     let mut refresh = tokio::time::interval(CATALOG_REFRESH);
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        let due = pacer.next_due();
         tokio::select! {
+            _ = tokio::time::sleep_until(due.unwrap_or_else(Instant::now).into()), if due.is_some() => {}
             _ = refresh.tick() => {
                 if decoded > 0 {
                     let mut guard = catalog.lock();
@@ -354,21 +356,27 @@ async fn run(
                 if n == 0 {
                     break;
                 }
-                importer.decode(&buf[..n]).context("fmp4 import")?;
-                decoded += n as u64;
-                if decoded > 0 && reconnect.connected() {
-                    let mut held = state.lock();
-                    if *held == State::Starting {
-                        tracing::info!(broadcast = %request.broadcast, "live on the relay");
-                        *held = State::Live;
-                    }
-                }
+                pacer.push(&buf[..n]);
             }
             result = &mut closed => {
                 result.context("relay session")?;
                 return Err(anyhow::anyhow!("relay session closed").into());
             }
         }
+        for piece in pacer.ready(Instant::now()) {
+            importer.decode(&piece).context("fmp4 import")?;
+            decoded += piece.len() as u64;
+        }
+        if decoded > 0 && reconnect.connected() {
+            let mut held = state.lock();
+            if *held == State::Starting {
+                tracing::info!(broadcast = %request.broadcast, backlog = pacer.backlog(), "live on the relay");
+                *held = State::Live;
+            }
+        }
+    }
+    for piece in pacer.drain() {
+        importer.decode(&piece).context("fmp4 import")?;
     }
     let _ = importer.finish();
     let child = child_slot.lock().take();
@@ -423,7 +431,7 @@ mod tests {
         assert_eq!(args.iter().filter(|a| *a == "-i").count(), 2);
         assert_eq!(args.iter().filter(|a| *a == "-http_proxy").count(), 2);
         assert!(joined.contains("-map 0:v:0 -map 1:a:0 -c copy -bsf:a aac_adtstoasc -f mp4"));
-        assert_eq!(args.iter().filter(|a| *a == "-readrate").count(), 2);
+        assert!(!args.iter().any(|a| a == "-readrate"));
         assert!(joined.ends_with("pipe:1"));
     }
 }

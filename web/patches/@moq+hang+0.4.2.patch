@@ -1,5 +1,5 @@
 diff --git a/node_modules/@moq/hang/container/consumer.js b/node_modules/@moq/hang/container/consumer.js
-index bbd9108..23c1f15 100644
+index bbd9108..3433243 100644
 --- a/node_modules/@moq/hang/container/consumer.js
 +++ b/node_modules/@moq/hang/container/consumer.js
 @@ -56,6 +56,8 @@ class Rewind {
@@ -20,21 +20,30 @@ index bbd9108..23c1f15 100644
      // Wake up the consumer when a new frame is available.
      #notify;
      #buffered = new Signal([]);
-@@ -286,6 +290,22 @@ export class Consumer {
+@@ -286,6 +290,31 @@ export class Consumer {
          if (this.#active === undefined)
              return;
          let skipped = false;
 +        // A group that never arrives (lost on the way) held delivery until the whole latency
 +        // budget had piled up behind it: seconds of frozen video or silence on a buffered stream.
 +        // Groups do arrive slightly out of order, so the hole gets GAP_PATIENCE of wall time first.
++        // A group whose stream opened but never carries a frame stalls the same way, and the
++        // latency loop below cannot drop it (it waits on an empty head), so it gets the same patience.
 +        const head = this.#groups[0];
-+        if (head && head.consumer.sequence > this.#active) {
++        const stuck = head !== undefined && head.consumer.sequence === this.#active && head.empty && !head.done &&
++            this.#groups.some((group) => !group.empty);
++        if (head && (head.consumer.sequence > this.#active || stuck)) {
 +            const now = performance.now();
 +            if (this.#hole?.active !== this.#active)
 +                this.#hole = { active: this.#active, since: now };
 +            else if (now - this.#hole.since > GAP_PATIENCE_MS) {
-+                console.warn(`skipping missing group: track=${this.#track.name} ${this.#active} -> ${head.consumer.sequence}`);
-+                this.#active = head.consumer.sequence;
++                if (stuck) {
++                    this.#groups.shift();
++                    head.consumer.close();
++                }
++                const next = this.#groups[0];
++                console.warn(`skipping ${stuck ? "empty" : "missing"} group: track=${this.#track.name} ${this.#active} -> ${next?.consumer.sequence}`);
++                this.#active = next?.consumer.sequence ?? this.#active + 1;
 +                this.#hole = undefined;
 +                this.#gap = true;
 +                skipped = true;

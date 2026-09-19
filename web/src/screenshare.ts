@@ -430,6 +430,10 @@ export type ScreenWatchStatus = 'offline' | 'loading' | 'live'
 export interface ScreenWatcher {
   status: Watch.Signals.Getter<ScreenWatchStatus>
   muted: Watch.Signals.Signal<boolean>
+  /** 0 to 1, applied on top of `muted`. */
+  volume: Watch.Signals.Signal<number>
+  /** Whether the publisher's catalog carries sound; undefined until the catalog arrives. */
+  hasAudio: Watch.Signals.Getter<boolean | undefined>
   /** Drops what is buffered and starts over from the newest group, keeping the connection and the catalog. */
   jump(): void
   close(): void
@@ -445,6 +449,16 @@ export interface ScreenWatcher {
 const SCREEN_LATENCY_MS = 120
 /** How long a jump waits between dropping the old subscriptions and opening new ones. */
 const RESUBSCRIBE_GAP_MS = 1_500
+/**
+ * Sound that stops while the picture keeps going does not come back by
+ * itself: an audio group lost on the relay can leave the decoder waiting for
+ * good. Past this much picture without sound the audio alone is reopened,
+ * and the picture never stops.
+ */
+const AUDIO_STALL_MS = 4_000
+const AUDIO_BEHIND_MS = 3_000
+const AUDIO_WATCH_EVERY_MS = 1_000
+const AUDIO_RECOVERY_COOLDOWN_MS = 15_000
 
 /**
  * Subscribes to one publisher's path and paints it on the canvas, with the
@@ -455,13 +469,22 @@ const RESUBSCRIBE_GAP_MS = 1_500
  * the frames to is patched (see `patches/`) to wait for the next keyframe
  * instead of dying on a delta that lands first.
  */
-export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false, latency?: Watch.Latency): Promise<ScreenWatcher> {
+export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTMLCanvasElement, muted = false, latency?: Watch.Latency, volume = 1): Promise<ScreenWatcher> {
   const Watch = await import('@moq/watch')
   const { Net, Signals } = Watch
 
   const connection = relayConnection(Net, relay.url)
   const broadcast = new Watch.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(path) })
   const mutedSignal = new Signals.Signal(muted)
+  const volumeSignal = new Signals.Signal(volume)
+  const hasAudio = new Signals.Signal<boolean | undefined>(undefined)
+  const catalogWatch = new Signals.Effect()
+  catalogWatch.run((effect) => {
+    const catalog = effect.get(broadcast.out.catalog)
+    hasAudio.set(catalog === undefined ? undefined : catalog.audio !== undefined)
+  })
+
+  let media: { audio: () => Watch.Audio.Decoder | null; video: Watch.Video.Decoder; reopenAudio: () => void } | null = null
 
   const open = () => {
     const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
@@ -473,20 +496,47 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
       audio: audioSource.out.jitter,
     })
     const video = new Watch.Video.Decoder(videoSource, sync, { enabled: true, paced: true })
-    const audioEnabled = new Signals.Signal(false)
-    const audio = new Watch.Audio.Decoder(audioSource, sync, { enabled: audioEnabled })
-    const emitter = new Watch.Audio.Emitter(audio, { volume: 1, muted: mutedSignal, paused: false })
     const renderer = new Watch.Video.Renderer(video, { canvas, visible: 'always' })
 
-    // Audio is only downloaded while something can play it.
-    const signals = new Signals.Effect()
-    signals.proxy(audioEnabled, emitter.out.enabled)
+    // The decoder holds the subscription and the AudioContext, so sound can
+    // start over on its own while the picture keeps going.
+    let audio: Watch.Audio.Decoder | null = null
+    const openAudio = () => {
+      const audioEnabled = new Signals.Signal(false)
+      const decoder = new Watch.Audio.Decoder(audioSource, sync, { enabled: audioEnabled })
+      const emitter = new Watch.Audio.Emitter(decoder, { volume: volumeSignal, muted: mutedSignal, paused: false })
+      // Audio is only downloaded while something can play it.
+      const signals = new Signals.Effect()
+      signals.proxy(audioEnabled, emitter.out.enabled)
+      audio = decoder
+      return () => {
+        audio = null
+        signals.close()
+        emitter.close()
+        decoder.close()
+      }
+    }
+    let closeAudio = openAudio()
+    let reopenAudio: ReturnType<typeof setTimeout> | null = null
+    media = {
+      audio: () => audio,
+      video,
+      reopenAudio: () => {
+        if (reopenAudio !== null) return
+        closeAudio()
+        closeAudio = () => undefined
+        reopenAudio = setTimeout(() => {
+          reopenAudio = null
+          closeAudio = openAudio()
+        }, RESUBSCRIBE_GAP_MS)
+      },
+    }
 
     return () => {
-      signals.close()
+      media = null
+      if (reopenAudio !== null) clearTimeout(reopenAudio)
+      closeAudio()
       renderer.close()
-      emitter.close()
-      audio.close()
       video.close()
       sync.close()
       audioSource.close()
@@ -495,24 +545,47 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
   }
   let closeMedia = open()
   let reopen: ReturnType<typeof setTimeout> | null = null
+  const jump = () => {
+    if (reopen !== null) return
+    closeMedia()
+    closeMedia = () => undefined
+    // Resubscribing on the same connection while the relay is still tearing the old
+    // subscriptions down left the new ones starved after a few groups.
+    reopen = setTimeout(() => {
+      reopen = null
+      closeMedia = open()
+    }, RESUBSCRIBE_GAP_MS)
+  }
+
+  let silentSince: { video: number; at: number } | null = null
+  let recoveredAt = 0
+  const audioWatch = setInterval(() => {
+    const now = performance.now()
+    const videoAt = media?.video.out.timestamp.peek()
+    const audioAt = media?.audio()?.out.timestamp.peek()
+    const expectsSound = hasAudio.peek() === true && !mutedSignal.peek() && volumeSignal.peek() > 0
+    if (!expectsSound || videoAt === undefined || audioAt === undefined) { silentSince = null; return }
+    const behind = videoAt - audioAt
+    if (behind < AUDIO_BEHIND_MS) { silentSince = null; return }
+    silentSince ??= { video: videoAt, at: now }
+    if (videoAt - silentSince.video < AUDIO_STALL_MS || now - recoveredAt < AUDIO_RECOVERY_COOLDOWN_MS) return
+    console.warn(`screen audio ${Math.round(behind)} ms behind the picture, reopening it`)
+    silentSince = null
+    recoveredAt = now
+    media?.reopenAudio()
+  }, AUDIO_WATCH_EVERY_MS)
 
   return {
     status: broadcast.out.status,
     muted: mutedSignal,
-    jump() {
-      if (reopen !== null) return
-      closeMedia()
-      closeMedia = () => undefined
-      // Resubscribing on the same connection while the relay is still tearing the old
-      // subscriptions down left the new ones starved after a few groups.
-      reopen = setTimeout(() => {
-        reopen = null
-        closeMedia = open()
-      }, RESUBSCRIBE_GAP_MS)
-    },
+    volume: volumeSignal,
+    hasAudio,
+    jump,
     close() {
+      clearInterval(audioWatch)
       if (reopen !== null) clearTimeout(reopen)
       closeMedia()
+      catalogWatch.close()
       broadcast.close()
       connection.close()
     },
