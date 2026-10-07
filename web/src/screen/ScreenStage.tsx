@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
-import { Check, Gauge, MonitorOff, MonitorUp, Replace, Users, VolumeX } from 'lucide-react'
+import { Check, Gauge, Maximize, Minimize, MonitorOff, MonitorUp, Replace, Users, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import type { ScreenShareInfo } from '../types'
 import { Button } from '../ui/Button'
@@ -8,6 +8,7 @@ import { IconButton } from '../ui/IconButton'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { VolumeControl } from '../ui/VolumeControl'
 import { MORPH_EASE } from '../ui/morphTokens'
+import { useStageFullscreen } from '../ui/useStageFullscreen'
 import { playJoinChime } from '../ui/chime'
 import { useToast } from '../ui/toastContext'
 import { SCREEN_QUALITIES, screenQuality, type ScreenQualityId, type ScreenSendStats } from '../screenshare'
@@ -55,6 +56,8 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
 }) {
   const { toast } = useToast()
   const previewRef = useRef<HTMLVideoElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(stageRef)
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   /** Whether the open picker starts a share or swaps the surface of the live one. */
@@ -178,6 +181,14 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
           t={t}
         />
       ) : null}
+      {tiles.length > 0 ? (
+        <IconButton
+          icon={fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+          label={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')}
+          className="screen-fullscreen"
+          onClick={toggleFullscreen}
+        />
+      ) : null}
       {isController ? (
         <IconButton
           icon={<Users size={16} />}
@@ -196,7 +207,11 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   } as CSSProperties
 
   return (
-    <div className={`player-wrap screen-stage ${tiles.length === 0 ? 'is-empty' : ''}`}>
+    <div
+      ref={stageRef}
+      className={`player-wrap screen-stage ${tiles.length === 0 ? 'is-empty' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`}
+      onDoubleClick={tiles.length > 0 ? toggleFullscreen : undefined}
+    >
       <LayoutGroup>
         <div className={`screen-grid ${focused ? 'is-focused' : ''}`} style={gridStyle}>
           <AnimatePresence mode="popLayout">
@@ -231,7 +246,7 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
           </motion.div>
         ) : null}
       </AnimatePresence>
-      {tiles.length > 0 ? <div className="screen-bar">{controls}</div> : null}
+      {tiles.length > 0 ? <div className="screen-bar" onDoubleClick={(event) => event.stopPropagation()}>{controls}</div> : null}
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent className="jpick-dialog" title={t(pickerMode === 'switch' ? 'jlocal.switchTitle' : 'jlocal.pickTitle')} description={t(pickerMode === 'switch' ? 'jlocal.switchGuide' : 'jlocal.pickGuide')} closeLabel={t('home.closeDialog')}>
           {pickerOpen ? (

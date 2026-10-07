@@ -200,7 +200,7 @@ describe('useSync', () => {
       readiness: [{ memberId: 'm1', bufferAheadMs: 0, ready: false }],
     })
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
-      type: 'ready', positionMs: 1_000, bufferAheadMs: 4_000, stalled: false,
+      type: 'ready', positionMs: 1_000, bufferAheadMs: 4_000, stalled: false, bandwidthKbps: 0, mediaKbps: 0,
     }))
 
     act(() => socket.receive({ type: 'state', state: { playing: true, positionMs: 1_000, rate: 1, serverTimeMs: 100_000 } }))
@@ -314,7 +314,7 @@ describe('useSync', () => {
 
     act(() => { vi.advanceTimersByTime(5_000) })
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({
-      type: 'ready', positionMs: 10_000, bufferAheadMs: 120_000, stalled: false,
+      type: 'ready', positionMs: 10_000, bufferAheadMs: 120_000, stalled: false, bandwidthKbps: 0, mediaKbps: 0,
     }))
     expect(result.current.buffering).toBe(false)
     unmount()

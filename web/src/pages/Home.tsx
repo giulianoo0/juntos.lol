@@ -4,7 +4,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { FolderOpen, LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
-import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
+import { displayCaptureAvailable, isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, createScreenRoom, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
@@ -339,10 +339,12 @@ export function Home() {
               <span className="source-icon"><FolderOpen size={18} aria-hidden="true" /></span>
               <span className="source-copy"><strong>{t('home.openDrive')}</strong><small>{t('home.openDriveHint')}</small></span>
             </button>
-            <button className="source-wide" onClick={startScreenRoom}>
-              <span className="source-icon"><MonitorUp size={18} aria-hidden="true" /></span>
-              <span className="source-copy"><strong>{t('home.shareScreen')}</strong><small>{t('home.shareScreenHint')}</small></span>
-            </button>
+            {displayCaptureAvailable() ? (
+              <button className="source-wide" onClick={startScreenRoom}>
+                <span className="source-icon"><MonitorUp size={18} aria-hidden="true" /></span>
+                <span className="source-copy"><strong>{t('home.shareScreen')}</strong><small>{t('home.shareScreenHint')}</small></span>
+              </button>
+            ) : null}
           </div>
           <div className="source-footer">
             <button type="button" className="source-join" onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>

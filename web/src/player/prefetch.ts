@@ -4,6 +4,7 @@
  * one (…cs_0_154.m4s) are fetched in parallel and answered from memory.
  */
 import type { HlsConfig, Loader, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
+import { recordTransfer } from './playbackHealth'
 
 const LOOKAHEAD = 3
 const CACHE_MAX = 8
@@ -34,9 +35,16 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
       if (oldest === undefined) break
       warmed.delete(oldest)
     }
+    const at = performance.now()
     warmed.set(url, {
-      at: performance.now(),
-      promise: fetch(url).then((response) => (response.ok ? response.arrayBuffer() : null)).catch(() => null),
+      at,
+      promise: fetch(url)
+        .then((response) => (response.ok ? response.arrayBuffer() : null))
+        .then((data) => {
+          if (data) recordTransfer(at, performance.now(), data.byteLength)
+          return data
+        })
+        .catch(() => null),
     })
   }
   return class extends Base {
@@ -71,7 +79,13 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
         }
         warmed.delete(url)
       }
-      super.load(context, config, callbacks)
+      super.load(context, config, {
+        ...callbacks,
+        onSuccess: (response, stats, loaded, details) => {
+          recordTransfer(stats.loading.start, stats.loading.end, stats.loaded)
+          callbacks.onSuccess(response, stats, loaded, details)
+        },
+      })
     }
     abort(): void {
       this.answered = true

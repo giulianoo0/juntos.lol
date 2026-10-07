@@ -17,6 +17,7 @@ import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
 import {
+  displayCaptureAvailable,
   dropScreenStream,
   isScreenShareCancelled,
   requestScreenStream,
@@ -24,6 +25,7 @@ import {
   stashScreenStream,
 } from '../screenshare'
 import { ScreenStage } from '../screen/ScreenStage'
+import { PORTRAIT_PHONE, useMediaQuery } from '../ui/useMediaQuery'
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
 import { MorphPanel } from '../ui/MorphPanel'
@@ -320,7 +322,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>(() => (
     typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? null : 'chat'
   ))
-  const chatOpen = sidePanel === 'chat'
+  // Upright on a phone the chat is not a drawer but the space under the
+  // video, always there unless the chapters take its place.
+  const inlineChat = useMediaQuery(PORTRAIT_PHONE)
+  const chatOpen = inlineChat ? sidePanel !== 'chapters' : sidePanel === 'chat'
   const setChatOpen = (value: boolean | ((open: boolean) => boolean)) => {
     setSidePanel((panel) => {
       const next = typeof value === 'function' ? value(panel === 'chat') : value
@@ -698,16 +703,18 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             className={copiedShown ? 'is-confirmed' : ''}
             onClick={copyLink}
           />
-          <IconButton
-            icon={<>
-              <MessageSquare size={16} />
-              {unread > 0 ? <span className="chat-badge">{unread > 9 ? '9+' : unread}</span> : null}
-            </>}
-            label={t('chat.title')}
-            className={`chat-toggle ${chatOpen ? 'is-on' : ''}`}
-            aria-pressed={chatOpen}
-            onClick={() => setChatOpen((open) => !open)}
-          />
+          {inlineChat ? null : (
+            <IconButton
+              icon={<>
+                <MessageSquare size={16} />
+                {unread > 0 ? <span className="chat-badge">{unread > 9 ? '9+' : unread}</span> : null}
+              </>}
+              label={t('chat.title')}
+              className={`chat-toggle ${chatOpen ? 'is-on' : ''}`}
+              aria-pressed={chatOpen}
+              onClick={() => setChatOpen((open) => !open)}
+            />
+          )}
           <JlocalDownload status={jlocal} t={t} />
         </div>
         </LayoutGroup>
@@ -811,7 +818,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             t={t}
           />
         ) : (
-          <Chat open={chatOpen} onClose={closeChat} messages={chatEntries} onSend={sendChat} t={t} />
+          <Chat open={chatOpen} inline={inlineChat} onClose={closeChat} messages={chatEntries} onSend={sendChat} t={t} />
         )}
       </div>
       <input
@@ -1042,9 +1049,11 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, onScreen
           <button type="button" onClick={pick(close, onFile)}>
             <Upload size={15} aria-hidden="true" />{t('room.switchFile')}
           </button>
-          <button type="button" onClick={pick(close, onScreen)}>
-            <MonitorUp size={15} aria-hidden="true" />{t('room.switchScreen')}
-          </button>
+          {displayCaptureAvailable() ? (
+            <button type="button" onClick={pick(close, onScreen)}>
+              <MonitorUp size={15} aria-hidden="true" />{t('room.switchScreen')}
+            </button>
+          ) : null}
         </div>
       )}
     </MorphingMenu>

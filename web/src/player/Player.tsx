@@ -31,6 +31,8 @@ import { bufferAhead, holdsForBuffer } from './bufferAhead'
 import { gateSecondsFor } from './gate'
 import { bundledLoader, fetchBundle, prefetchInitSegments } from './bundle'
 import { prefetchingLoader } from './prefetch'
+import { isTouchDevice, recordMediaBitrate, TOUCH_BACK_BUFFER_SEC } from './playbackHealth'
+import { useStageFullscreen } from '../ui/useStageFullscreen'
 import { createSeekTracer, formatSeekTrace } from '../pipeline/seekTrace'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { lastUploadFailureDetail } from '../upload'
@@ -247,7 +249,6 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const timelineEnd = room.durationMs ? room.durationMs / 1000 : duration + mediaOffsetSec
   const [bufferedRanges, setBufferedRanges] = useState<BufferedRange[]>([])
   const [playing, setPlaying] = useState(false)
-  const [fullscreen, setFullscreen] = useState(false)
   // What the last pointer was, and whether the controls were hidden when it
   // landed: a touch that only brought them back is not a tap on the video.
   const tapRef = useRef({ touch: false, revealed: false })
@@ -308,12 +309,6 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       if (controlsTimerRef.current !== null) window.clearTimeout(controlsTimerRef.current)
     }
   }, [playing, volumeOpen, revealControls])
-
-  useEffect(() => {
-    const updateFullscreen = () => setFullscreen(document.fullscreenElement === playerRef.current)
-    document.addEventListener('fullscreenchange', updateFullscreen)
-    return () => document.removeEventListener('fullscreenchange', updateFullscreen)
-  }, [])
 
   useEffect(() => {
     const video = videoRef.current
@@ -423,6 +418,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           startPosition,
           maxBufferLength: 60,
           maxBufferSize: 160 * 1000 * 1000,
+          ...(isTouchDevice() ? { backBufferLength: TOUCH_BACK_BUFFER_SEC } : {}),
         }
         const bundled = bundledLoader(HlsClass.DefaultConfig.loader as Parameters<typeof bundledLoader>[0], bundle)
         config.pLoader = stripCodecs ? codecStrippingLoader(bundled as HlsModule['default']['DefaultConfig']['loader']) : bundled
@@ -435,8 +431,10 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           sourceLoaded = true
           hls.loadSource(source)
         })
-        const readLevels = () => setLevels(hls.levels.map(
-          ({ height, bitrate }) => ({ height, bitrate })))
+        const readLevels = () => {
+          setLevels(hls.levels.map(({ height, bitrate }) => ({ height, bitrate })))
+          recordMediaBitrate(hls.levels[0]?.bitrate ?? 0)
+        }
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
           setAudioTracks(hls.audioTracks)
           readLevels()
@@ -925,14 +923,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
     document.addEventListener('pointermove', onMove)
   }, [endChase])
 
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => undefined)
-      return
-    }
-    const request = playerRef.current?.requestFullscreen?.()
-    void request?.catch(() => undefined)
-  }, [])
+  const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(playerRef)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1180,7 +1171,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   return (
     <div
       ref={playerRef}
-      className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''}`}
+      className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`}
       onPointerMove={() => revealControls(playing)}
       onPointerDown={(event) => {
         tapRef.current = { touch: event.pointerType === 'touch', revealed: !controlsVisibleRef.current }

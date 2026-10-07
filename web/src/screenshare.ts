@@ -45,6 +45,11 @@ export function screenShareSupported(): boolean {
     && typeof VideoDecoder !== 'undefined'
 }
 
+/** Whether this browser can capture a screen at all: phones have no getDisplayMedia. */
+export function displayCaptureAvailable(): boolean {
+  return typeof navigator !== 'undefined' && typeof navigator.mediaDevices?.getDisplayMedia === 'function'
+}
+
 export type ScreenQualityId = 'auto' | '1080p30' | '1080p60' | '1440p60' | '2160p30' | '2160p60'
 
 /**

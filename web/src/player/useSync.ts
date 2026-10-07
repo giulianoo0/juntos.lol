@@ -1,4 +1,5 @@
 import { GATE_READY_BUFFER_MS } from './gate'
+import { playbackHealth } from './playbackHealth'
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, TitleRequest } from '../types'
 import { expectedPositionMs, needsResync } from './position'
@@ -170,7 +171,14 @@ export function useSync(
       bufferingRef.current = false
       setBuffering(false)
     }
-    send('ready', { positionMs, bufferAheadMs, stalled: bufferingRef.current })
+    const quality = typeof media.getVideoPlaybackQuality === 'function' ? media.getVideoPlaybackQuality() : null
+    send('ready', {
+      positionMs,
+      bufferAheadMs,
+      stalled: bufferingRef.current,
+      ...playbackHealth(),
+      ...(quality ? { droppedFrames: quality.droppedVideoFrames, decodedFrames: quality.totalVideoFrames } : {}),
+    })
   }, [send, videoRef])
 
   const reportBuffering = useCallback((stalled: boolean) => {

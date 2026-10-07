@@ -12,12 +12,14 @@ const FOLLOW_SLACK_PX = 48
 interface ChatProps {
   messages: ChatEntry[]
   open: boolean
+  /** Laid out in the page under the video rather than as a drawer over it. */
+  inline?: boolean
   onClose: () => void
   onSend: (text: string) => void
   t: Translator
 }
 
-export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: ChatProps) {
+export const Chat = memo(function Chat({ messages, open, inline = false, onClose, onSend, t }: ChatProps) {
   const [text, setText] = useState('')
   const [mobile, setMobile] = useState(() => matchMedia(mobileMediaQuery).matches)
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -65,13 +67,15 @@ export const Chat = memo(function Chat({ messages, open, onClose, onSend, t }: C
   }
 
   return (
-    <aside className={`chat-panel ${mobile ? 'chat-drawer' : 'chat-docked'} ${open ? 'is-open' : ''} ${reducedMotion ? 'reduced-motion' : ''}`}>
-      <header>
-        <h2>{t('chat.title')}</h2>
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('chat.close')}>
-          <X size={15} aria-hidden="true" />
-        </Button>
-      </header>
+    <aside className={`chat-panel ${inline ? 'chat-inline' : mobile ? 'chat-drawer' : 'chat-docked'} ${open ? 'is-open' : ''} ${reducedMotion ? 'reduced-motion' : ''}`}>
+      {inline ? null : (
+        <header>
+          <h2>{t('chat.title')}</h2>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label={t('chat.close')}>
+            <X size={15} aria-hidden="true" />
+          </Button>
+        </header>
+      )}
       <div className="chat-messages" ref={listRef} onScroll={onScroll}>
         {messages.length === 0 ? <p className="empty-copy">{t('chat.empty')}</p> : messages.map((message, index) => (
           <article className={`chat-message ${message.system ? 'is-system' : ''}`} key={`${message.at}-${index}`} style={{ '--i': index } as CSSProperties}>

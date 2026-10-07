@@ -4,16 +4,22 @@ import "github.com/giulianoo0/ss/internal/room"
 
 // Inbound is a WebSocket message sent from a client to the server.
 type Inbound struct {
-	Type          string        `json:"type"`
-	PositionMs    int64         `json:"positionMs,omitempty"`
-	Rate          float64       `json:"rate,omitempty"`
-	Text          string        `json:"text,omitempty"`
-	Nickname      string        `json:"nickname,omitempty"`
-	TargetID      string        `json:"targetId,omitempty"`
-	ClientTimeMs  int64         `json:"clientTimeMs,omitempty"`
-	OwnerToken    string        `json:"ownerToken,omitempty"`
-	BufferAheadMs int64         `json:"bufferAheadMs,omitempty"`
-	Stalled       bool          `json:"stalled,omitempty"`
+	Type          string  `json:"type"`
+	PositionMs    int64   `json:"positionMs,omitempty"`
+	Rate          float64 `json:"rate,omitempty"`
+	Text          string  `json:"text,omitempty"`
+	Nickname      string  `json:"nickname,omitempty"`
+	TargetID      string  `json:"targetId,omitempty"`
+	ClientTimeMs  int64   `json:"clientTimeMs,omitempty"`
+	OwnerToken    string  `json:"ownerToken,omitempty"`
+	BufferAheadMs int64   `json:"bufferAheadMs,omitempty"`
+	Stalled       bool    `json:"stalled,omitempty"`
+	// What the viewer's player measured, carried on ready reports for the logs:
+	// fragment throughput, the media's bitrate, and the decoder's frame counts.
+	BandwidthKbps int64         `json:"bandwidthKbps,omitempty"`
+	MediaKbps     int64         `json:"mediaKbps,omitempty"`
+	DroppedFrames int64         `json:"droppedFrames,omitempty"`
+	DecodedFrames int64         `json:"decodedFrames,omitempty"`
 	Enabled       *bool         `json:"enabled,omitempty"`
 	Title         *TitleRequest `json:"title,omitempty"`
 	Origin        string        `json:"origin,omitempty"`

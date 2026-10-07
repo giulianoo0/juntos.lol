@@ -96,3 +96,18 @@ it('offers no publish controls to a guest of a closed room', async () => {
   await waitFor(() => expect(fetchScreenRelay).toHaveBeenCalled())
   expect(screen.queryByRole('button', { name: en['room.screenStart'] })).toBeNull()
 })
+
+it('puts the shared screen in fullscreen, and pins it over the page on a phone without the API', async () => {
+  const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: requestFullscreen })
+  const screens = [{ memberId: 'm1', nickname: 'giuli', since: '2026-01-01T00:00:00Z' }]
+  const { unmount } = renderStage({ memberId: 'm3', isController: false, screens })
+  fireEvent.click(await screen.findByRole('button', { name: en['room.fullscreen'] }))
+  expect(requestFullscreen).toHaveBeenCalledOnce()
+  unmount()
+
+  Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: undefined })
+  renderStage({ memberId: 'm3', isController: false, screens })
+  fireEvent.click(await screen.findByRole('button', { name: en['room.fullscreen'] }))
+  expect(document.querySelector('.screen-stage')).toHaveClass('is-pseudo-fullscreen')
+})

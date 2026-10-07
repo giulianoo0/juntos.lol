@@ -535,6 +535,17 @@ describe('Player', () => {
     expect(requestFullscreen).toHaveBeenCalledOnce()
   })
 
+  it('pins the player over the page where elements cannot go fullscreen', () => {
+    Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', { configurable: true, value: undefined })
+    const { container } = render(<Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enter fullscreen' }))
+    expect(container.querySelector('.player-wrap')).toHaveClass('is-pseudo-fullscreen')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Exit fullscreen' }))
+    expect(container.querySelector('.player-wrap')).not.toHaveClass('is-pseudo-fullscreen')
+  })
+
   it('hides playing controls after inactivity and restores them on pointer movement', () => {
     vi.useFakeTimers()
     const videoRef = createRef<HTMLVideoElement>()

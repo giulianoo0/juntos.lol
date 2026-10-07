@@ -238,9 +238,10 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	client := &client{
-		conn: conn,
-		room: roomConnection,
-		send: make(chan Outbound, 64),
+		conn:      conn,
+		room:      roomConnection,
+		send:      make(chan Outbound, 64),
+		telemetry: syncTelemetry{device: deviceClass(c.Request.UserAgent())},
 	}
 	result := make(chan string, 1)
 	request := joinRequest{

@@ -1122,3 +1122,46 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .live-button { flex: 0 0 auto; padding: 6px 12px; font-size: 13px; white-space: nowrap; }
 .live-fullscreen { display: inline-flex; align-items: center; padding: 6px 8px; }
 .live-stage:fullscreen canvas { object-fit: contain; }
+
+/* Phones.
+ *
+ * Upright, the video keeps its own 16:9 shape at the top, the people
+ * watching sit under it, and the chat takes the rest of the screen instead
+ * of a drawer over the picture. Sideways, the picture takes the height and
+ * everything else steps out of the way. jlocal is a desktop app, so its
+ * pill has nothing to say on a phone. */
+@media (max-width: 620px) {
+  .home-shell { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
+  .home-header .jlocal-pill, .room-header .jlocal-pill { display: none; }
+  .center-state { min-height: 100dvh; padding: 16px; }
+  .gate-panel { width: 100%; }
+  .room-file { display: block; font-size: 13px; max-width: 100%; }
+  .header-actions { width: auto; }
+}
+@media (max-width: 620px) and (orientation: portrait) {
+  .room-layout { display: flex; flex-direction: column; }
+  .media-column { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+  .media-column > .player-wrap:not(:fullscreen):not(.is-pseudo-fullscreen) { flex: 0 0 auto; width: 100%; height: auto; aspect-ratio: 16 / 9; }
+  .presence-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .presence-row::-webkit-scrollbar { display: none; }
+  .presence-row > * { flex: 0 0 auto; }
+  .chat-panel.chat-inline { position: relative; flex: 1 1 0; min-height: 0; width: auto; margin: 10px 0 0; transform: none; opacity: 1; pointer-events: auto; border-radius: 22px; box-shadow: inset 0 1px rgba(255,255,255,.06); }
+  .chat-inline .chat-messages { padding-top: 12px; }
+  .media-column > .player-wrap:not(.is-pseudo-fullscreen)::after { height: 108px; }
+  .media-column > .player-wrap:not(.is-pseudo-fullscreen) .player-controls { bottom: 4px; padding: 6px 8px 4px; }
+  .player-controls .live-button.is-live { display: none; }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .room-shell { padding: 4px 10px; }
+  .room-header { height: 40px; }
+  .room-header .jlocal-pill { display: none; }
+  .room-layout { height: calc(100dvh - 48px); }
+  .media-column { padding-top: 0; grid-template-rows: minmax(0, 1fr); }
+  .presence-row { display: none; }
+}
+
+/* A stage in fullscreen. The iPhone fullscreens only <video>, so a canvas
+ * stage there is pinned over the page instead (useStageFullscreen). */
+.screen-stage:fullscreen { width: 100vw; height: 100vh; border-radius: 0; background: #000; }
+.player-wrap.is-pseudo-fullscreen { position: fixed; inset: 0; z-index: 70; width: 100vw; height: 100dvh; aspect-ratio: auto; border-radius: 0; background: #000; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+html.has-pseudo-fullscreen, html.has-pseudo-fullscreen body { overflow: hidden; }

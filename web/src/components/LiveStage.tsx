@@ -4,6 +4,7 @@ import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
 import { VolumeControl } from '../ui/VolumeControl'
 import { loadStageVolume, saveStageVolume } from '../ui/stageVolume'
+import { useStageFullscreen } from '../ui/useStageFullscreen'
 import { fetchScreenRelay, watchScreen, type ScreenRelay, type ScreenWatchStatus, type ScreenWatcher } from '../screenshare'
 
 /** A subscription the relay turned away (the producer is not there yet) is tried again after this long. */
@@ -39,7 +40,6 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
-  const [fullscreen, setFullscreen] = useState(false)
   const watcherRef = useRef<ScreenWatcher | null>(null)
   const relayRef = useRef<ScreenRelay | null>(null)
   const [status, setStatus] = useState<ScreenWatchStatus>('offline')
@@ -109,21 +109,10 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
     else setGeneration((n) => n + 1)
   }, [])
 
-  useEffect(() => {
-    const update = () => setFullscreen(document.fullscreenElement === stageRef.current)
-    document.addEventListener('fullscreenchange', update)
-    return () => document.removeEventListener('fullscreenchange', update)
-  }, [])
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => undefined)
-      return
-    }
-    void stageRef.current?.requestFullscreen?.().catch(() => undefined)
-  }, [])
+  const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(stageRef)
 
   return (
-    <div ref={stageRef} className={`player-wrap live-stage ${status === 'live' ? 'is-live' : ''}`} onDoubleClick={toggleFullscreen}>
+    <div ref={stageRef} className={`player-wrap live-stage ${status === 'live' ? 'is-live' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`} onDoubleClick={toggleFullscreen}>
       <canvas ref={canvasRef} role="img" aria-label={title} />
       {status !== 'live' ? <div className="live-waiting">{t('room.liveWaiting')}</div> : null}
       <div className="live-bar" onDoubleClick={(e) => e.stopPropagation()}>

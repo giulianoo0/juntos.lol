@@ -6,6 +6,7 @@ package sync
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,68 @@ type syncTelemetry struct {
 	driftedReports int64
 	lastDriftMs    int64
 	maxAbsDriftMs  int64
+
+	device        string
+	mediaKbps     int64
+	bandwidthSum  int64
+	bandwidthN    int64
+	bandwidthMin  int64
+	lastBandwidth int64
+	droppedFrames int64
+	decodedFrames int64
+}
+
+// deviceClass names the kind of browser a socket came from, coarsely enough
+// to tell a phone's stalls from a desktop's in the logs.
+func deviceClass(userAgent string) string {
+	ua := strings.ToLower(userAgent)
+	switch {
+	case strings.Contains(ua, "iphone"):
+		return "iphone"
+	case strings.Contains(ua, "ipad"):
+		return "ipad"
+	case strings.Contains(ua, "android"):
+		return "android"
+	case ua == "":
+		return "unknown"
+	default:
+		return "desktop"
+	}
+}
+
+// recordHealth keeps what the viewer's player measured about its own link.
+func (t *syncTelemetry) recordHealth(m Inbound) {
+	if m.MediaKbps > 0 {
+		t.mediaKbps = m.MediaKbps
+	}
+	if m.BandwidthKbps > 0 {
+		t.lastBandwidth = m.BandwidthKbps
+		t.bandwidthSum += m.BandwidthKbps
+		t.bandwidthN++
+		if t.bandwidthMin == 0 || m.BandwidthKbps < t.bandwidthMin {
+			t.bandwidthMin = m.BandwidthKbps
+		}
+	}
+	if m.DecodedFrames > 0 {
+		t.droppedFrames = m.DroppedFrames
+		t.decodedFrames = m.DecodedFrames
+	}
+}
+
+func (t *syncTelemetry) bandwidthAvg() int64 {
+	if t.bandwidthN == 0 {
+		return 0
+	}
+	return t.bandwidthSum / t.bandwidthN
+}
+
+// droppedPermille is the share of frames the decoder could not show in time, in
+// tenths of a percent: a weak device drops frames long before it stalls.
+func (t *syncTelemetry) droppedPermille() int64 {
+	if t.decodedFrames <= 0 {
+		return 0
+	}
+	return t.droppedFrames * 1000 / t.decodedFrames
 }
 
 // recordSync folds one steady report into the member's running story and
@@ -27,11 +90,13 @@ type syncTelemetry struct {
 func (r *roomConn) recordSync(ctx context.Context, c *client, m Inbound, now int64) {
 	t := &c.telemetry
 	t.reports++
+	t.recordHealth(m)
 	if m.Stalled && !t.wasStalled {
 		t.stalls++
 		slog.InfoContext(ctx, "viewer stalled",
-			"room_id", r.id, "member", c.member.Nickname,
-			"position_ms", m.PositionMs, "buffer_ms", m.BufferAheadMs)
+			"room_id", r.id, "member", c.member.Nickname, "device", t.device,
+			"position_ms", m.PositionMs, "buffer_ms", m.BufferAheadMs,
+			"bandwidth_kbps", t.lastBandwidth, "media_kbps", t.mediaKbps)
 	}
 	t.wasStalled = m.Stalled
 	if r.gate != nil {
@@ -70,5 +135,8 @@ func (r *roomConn) logSyncSummary(c *client) {
 		"watched", time.Since(t.joinedAt).Round(time.Second).String(),
 		"reports", t.reports, "stalls", t.stalls,
 		"drifted_reports", t.driftedReports,
-		"max_drift_ms", t.maxAbsDriftMs, "last_drift_ms", t.lastDriftMs)
+		"max_drift_ms", t.maxAbsDriftMs, "last_drift_ms", t.lastDriftMs,
+		"device", t.device, "media_kbps", t.mediaKbps,
+		"bandwidth_avg_kbps", t.bandwidthAvg(), "bandwidth_min_kbps", t.bandwidthMin,
+		"dropped_permille", t.droppedPermille())
 }
