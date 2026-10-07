@@ -29,5 +29,6 @@ RUN curl -fsSL -o /usr/local/bin/yt-dlp \
 	&& /usr/local/bin/yt-dlp --version
 
 COPY --from=build /src/target/release/ss-worker /usr/local/bin/ss-worker
+COPY --from=build /src/target/release/ss-moq-bridge /usr/local/bin/ss-moq-bridge
 WORKDIR /var/lib/ss-worker
 ENTRYPOINT ["ss-worker"]

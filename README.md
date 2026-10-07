@@ -36,6 +36,8 @@ flowchart LR
     T <-->|"DHT + trackers + peers"| P["Swarm BitTorrent"]
     B -->|"WebTransport (MoQ)"| L["Relay MoQ (Cloudflare)"]
     L -->|"WebTransport (MoQ)"| V["Navegadores dos viewers"]
+    L -->|"QUIC (MoQ)"| X["ss-moq-bridge (VPS)"]
+    X -->|"WebSocket (qmux)"| S["Safari e iPhone"]
 ```
 
 ### Preparação do vídeo, no navegador do host
@@ -178,6 +180,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `MOQ_RELAY_URL` | vazio | Relay MoQ da Cloudflare, por exemplo `https://draft-16.cloudflare.mediaoverquic.com`. Sem ele o compartilhamento de tela fica desligado. |
 | `MOQ_PUBLISH_TOKEN` | vazio | Token do relay com `publish` e `subscribe`, entregue só ao controlador da sala. |
 | `MOQ_SUBSCRIBE_TOKEN` | vazio | Token do relay só com `subscribe`, entregue aos demais participantes. |
+| `MOQ_BRIDGE_URL` | vazio (`/moq-bridge` no Compose) | Onde o WebKit assiste telas e lives. O cliente MoQ recusa o WebTransport de todo WebKit (o Safari trava sessões longas) e o relay da Cloudflare não fala WebSocket; o `ss-moq-bridge` aceita WebSocket e puxa os mesmos broadcasts do relay por QUIC, só leitura. No Safari, compartilhar a própria tela continua indisponível. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 

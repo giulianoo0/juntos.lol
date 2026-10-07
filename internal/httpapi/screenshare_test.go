@@ -27,6 +27,7 @@ func (a testMemberAuthorizer) AuthorizeMember(roomID, memberID, capability strin
 
 var screenshareCfg = config.Config{
 	MoqRelayURL: "https://relay.example.test", MoqPublishToken: "pub-token", MoqSubscribeToken: "sub-token",
+	MoqBridgeURL: "/moq-bridge",
 }
 
 type relayResponse struct {
@@ -35,6 +36,7 @@ type relayResponse struct {
 	Path    string `json:"path"`
 	Publish bool   `json:"publish"`
 	Open    bool   `json:"open"`
+	Bridge  string `json:"bridge"`
 }
 
 func newScreenshareRouter(t *testing.T, notify func(string)) (*gin.Engine, *room.Store) {
@@ -59,6 +61,7 @@ func TestScreenshareRelayByRole(t *testing.T) {
 	var host relayResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &host))
 	require.Equal(t, "https://relay.example.test/sub-token", host.URL)
+	require.Equal(t, "/moq-bridge", host.Bridge)
 	require.True(t, host.Publish)
 
 	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability","publish":true}`)

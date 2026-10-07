@@ -24,6 +24,10 @@ type Config struct {
 	MoqRelayURL       string
 	MoqPublishToken   string
 	MoqSubscribeToken string
+	// MoqBridgeURL is where WebKit viewers reach the relay's broadcasts over
+	// WebSocket (ss-moq-bridge); relative to the site, or absolute. Empty
+	// leaves them without screens.
+	MoqBridgeURL      string
 	R2AccountID       string
 	R2Bucket          string
 	R2AccessKeyID     string
@@ -101,6 +105,7 @@ func Load() (Config, error) {
 	cfg.MoqRelayURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("MOQ_RELAY_URL")), "/")
 	cfg.MoqPublishToken = strings.TrimSpace(os.Getenv("MOQ_PUBLISH_TOKEN"))
 	cfg.MoqSubscribeToken = strings.TrimSpace(os.Getenv("MOQ_SUBSCRIBE_TOKEN"))
+	cfg.MoqBridgeURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("MOQ_BRIDGE_URL")), "/")
 	if err := cfg.validateScreenshare(); err != nil {
 		return Config{}, err
 	}

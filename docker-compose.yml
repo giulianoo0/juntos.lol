@@ -20,6 +20,7 @@ services:
       MOQ_RELAY_URL: ${MOQ_RELAY_URL:-}
       MOQ_PUBLISH_TOKEN: ${MOQ_PUBLISH_TOKEN:-}
       MOQ_SUBSCRIBE_TOKEN: ${MOQ_SUBSCRIBE_TOKEN:-}
+      MOQ_BRIDGE_URL: ${MOQ_BRIDGE_URL:-/moq-bridge}
       R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
       R2_BUCKET: ${R2_BUCKET}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
@@ -96,6 +97,26 @@ services:
       - ss-worker-data:/var/lib/ss-worker
     depends_on:
       - app
+
+  # WebKit viewers' way onto the MoQ relay. Safari stalls long WebTransport
+  # sessions and the relay speaks nothing else, so they come here over
+  # WebSocket and this pulls the same broadcasts from the relay over QUIC,
+  # read-only, with the subscribe token. nginx forwards /moq-bridge to it.
+  moq-bridge:
+    build:
+      context: ./ss-worker
+    entrypoint: ["ss-moq-bridge"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "2"
+    environment:
+      SS_MOQ_UPSTREAM: ${MOQ_RELAY_URL:-}/${MOQ_SUBSCRIBE_TOKEN:-}
+      SS_MOQ_BRIDGE_ADDR: "[::]:4450"
+    ports:
+      - "127.0.0.1:4450:4450"
 
 volumes:
   ss-data:

@@ -4400,6 +4400,8 @@ dependencies = [
  "instant-acme",
  "libc",
  "librqbit",
+ "moq-native",
+ "moq-net",
  "parking_lot",
  "rand 0.8.8",
  "rcgen 0.13.2",

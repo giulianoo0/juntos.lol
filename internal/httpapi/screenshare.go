@@ -105,6 +105,7 @@ func screenshareRelay(store *room.Store, cfg config.Config, authorizer memberAut
 			"path":    ScreenBroadcastPath(storedRoom.ID, secret, request.MemberID),
 			"publish": publish,
 			"open":    storedRoom.ScreenShareOpen,
+			"bridge":  cfg.MoqBridgeURL,
 		})
 	}
 }

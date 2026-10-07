@@ -38,11 +38,22 @@ const BITRATE_SCALE = 0.2
 /** A surface smaller than its preset still gets this much, so a tiny window is not starved. */
 const MIN_BITRATE = 2_000_000
 
-/** Whether this browser can carry a screen either way: QUIC to the relay and codecs in both directions. */
+/**
+ * Whether this engine is WebKit: Safari, and every browser on iOS. Its
+ * WebTransport stalls long sessions, so it watches through the bridge, which
+ * only carries screens one way.
+ */
+export function isWebKit(userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent): boolean {
+  if (/iPhone|iPad|iPod/.test(userAgent)) return true
+  return /AppleWebKit\//.test(userAgent) && !/(Chrome|Chromium|Edg)\//.test(userAgent)
+}
+
+/** Whether this browser can send a screen: QUIC to the relay and codecs in both directions. */
 export function screenShareSupported(): boolean {
   return typeof WebTransport !== 'undefined'
     && typeof VideoEncoder !== 'undefined'
     && typeof VideoDecoder !== 'undefined'
+    && !isWebKit()
 }
 
 /** Whether this browser can capture a screen at all: phones have no getDisplayMedia. */
@@ -156,6 +167,11 @@ export function isScreenShareCancelled(error: unknown): boolean {
 /** Where a member reaches the room's screens: the relay with their token, and the paths. */
 export interface ScreenRelay {
   url: string
+  /**
+   * The WebSocket way onto the same broadcasts, for a browser whose
+   * WebTransport the MoQ client refuses (WebKit). Read-only; may be relative.
+   */
+  bridge?: string
   /** The prefix every screen of this room hangs off. */
   base: string
   /** This member's own broadcast path. */
@@ -209,6 +225,19 @@ export async function setScreenShareOpen(roomId: string, memberId: string, capab
 function relayConnection(Net: typeof Publish.Net, url: string): Publish.Net.Connection.Reload {
   // The relay speaks QUIC only; racing a WebSocket it will never answer just delays the connect.
   return new Net.Connection.Reload({ url: new URL(url), enabled: true, websocket: { enabled: false }, delay: RELAY_RETRY })
+}
+
+/**
+ * A viewer's way in: the relay itself, or the bridge when the MoQ client will
+ * not use this browser's WebTransport (it refuses every WebKit) and the
+ * server names one. The bridge speaks WebSocket only.
+ */
+function watchConnection(Net: typeof Publish.Net, relay: ScreenRelay): Publish.Net.Connection.Reload {
+  if (relay.bridge && !Net.Connection.isWebTransportSupported()) {
+    const url = new URL(relay.bridge, location.href)
+    return new Net.Connection.Reload({ url, enabled: true, websocket: { enabled: true, delay: 0 }, delay: RELAY_RETRY })
+  }
+  return relayConnection(Net, relay.url)
 }
 
 /**
@@ -478,7 +507,7 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
   const Watch = await import('@moq/watch')
   const { Net, Signals } = Watch
 
-  const connection = relayConnection(Net, relay.url)
+  const connection = watchConnection(Net, relay)
   const broadcast = new Watch.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(path) })
   const mutedSignal = new Signals.Signal(muted)
   const volumeSignal = new Signals.Signal(volume)
