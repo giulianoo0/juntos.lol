@@ -1,3 +1,4 @@
+import { incidentalAudio } from '../ui/audioUnlock'
 /**
  * The clicks the onboarding makes, synthesised rather than shipped. Only ever
  * called from a click handler: a browser refuses to start audio before a
@@ -14,7 +15,7 @@ function audio(): AudioContext | null {
     ?? (globalThis as { webkitAudioContext?: Ctor }).webkitAudioContext
   if (!Available) return null
   try {
-    context = new Available()
+    context = incidentalAudio(new Available())
     return context
   } catch {
     return null

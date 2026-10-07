@@ -1,4 +1,5 @@
 import { JLOCAL_ORIGIN } from './status'
+import { incidentalAudio } from '../ui/audioUnlock'
 
 // Screen frames captured by the companion app, published through the existing
 // browser MoQ pipeline. The app only captures: this module polls its latest
@@ -218,7 +219,7 @@ export function startSystemAudio(stream: MediaStream, isStopped: () => boolean):
     if (!AudioCtor) return
     let audioContext: AudioContext
     try {
-      audioContext = new AudioCtor({ sampleRate: AUDIO_SAMPLE_RATE, latencyHint: 'playback' })
+      audioContext = incidentalAudio(new AudioCtor({ sampleRate: AUDIO_SAMPLE_RATE, latencyHint: 'playback' }))
     } catch {
       return
     }

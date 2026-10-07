@@ -1,3 +1,4 @@
+import { incidentalAudio } from './audioUnlock'
 /**
  * The room's small sounds: a two-note blip for someone arriving and a single
  * softer one for a message from someone else.
@@ -12,7 +13,7 @@ let context: AudioContext | null = null
 
 function audio(): AudioContext | null {
   if (typeof AudioContext === 'undefined') return null
-  context ??= new AudioContext()
+  context ??= incidentalAudio(new AudioContext())
   return context
 }
 

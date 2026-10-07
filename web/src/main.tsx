@@ -7,9 +7,11 @@ import { installMockApi } from './mocks'
 import { markEngine } from './engine'
 import { registerYoutubeBackend } from './youtube'
 import { jlocalBackend } from './jlocal/youtube'
+import { installAudioUnlock } from './ui/audioUnlock'
 
 markEngine()
 installMockApi()
+installAudioUnlock()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

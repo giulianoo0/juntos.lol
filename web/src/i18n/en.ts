@@ -117,6 +117,7 @@ export const en: Record<string, string> = {
   'room.fullscreen': 'Enter fullscreen',
   'room.mute': 'Mute',
   'room.unmute': 'Unmute',
+  'room.tapForSound': 'Tap for sound',
   'room.screenNoSound': 'No sound',
   'room.screenNoSoundHint': 'Whoever is sharing is not sending audio.',
   'room.screenSendingSilent': 'No sound',

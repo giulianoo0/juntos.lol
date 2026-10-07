@@ -1,10 +1,11 @@
-import { Maximize, Minimize } from 'lucide-react'
+import { Maximize, Minimize, Volume2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
 import { VolumeControl } from '../ui/VolumeControl'
 import { loadStageVolume, saveStageVolume } from '../ui/stageVolume'
 import { useStageFullscreen } from '../ui/useStageFullscreen'
+import { unlockAudio, useAudioLocked } from '../ui/audioUnlock'
 import { fetchScreenRelay, watchScreen, type ScreenRelay, type ScreenWatchStatus, type ScreenWatcher } from '../screenshare'
 
 /** A subscription the relay turned away (the producer is not there yet) is tried again after this long. */
@@ -110,11 +111,17 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
   }, [])
 
   const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(stageRef)
+  const soundLocked = useAudioLocked()
 
   return (
     <div ref={stageRef} className={`player-wrap live-stage ${status === 'live' ? 'is-live' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`} onDoubleClick={toggleFullscreen}>
       <canvas ref={canvasRef} role="img" aria-label={title} />
       {status !== 'live' ? <div className="live-waiting">{t('room.liveWaiting')}</div> : null}
+      {status === 'live' && soundLocked && !muted ? (
+        <button type="button" className="stage-unlock" onClick={unlockAudio} onDoubleClick={(event) => event.stopPropagation()}>
+          <Volume2 size={15} aria-hidden="true" />{t('room.tapForSound')}
+        </button>
+      ) : null}
       <div className="live-bar" onDoubleClick={(e) => e.stopPropagation()}>
         <div className="live-heading">
           <button type="button" className="live-badge" onClick={goLive} disabled={status !== 'live'} title={t('room.liveGoLive')} aria-label={t('room.liveGoLive')}>

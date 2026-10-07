@@ -1,4 +1,5 @@
 import { JLOCAL_ORIGIN } from './status'
+import { incidentalAudio } from '../ui/audioUnlock'
 
 /**
  * The companion's hardware H.264 path: jlocal captures the screen with
@@ -181,7 +182,7 @@ export function systemAudioTrack(): SystemAudio | null {
   if (!AudioCtor) return null
   let context: AudioContext
   try {
-    context = new AudioCtor({ sampleRate: AUDIO_SAMPLE_RATE, latencyHint: 'playback' })
+    context = incidentalAudio(new AudioCtor({ sampleRate: AUDIO_SAMPLE_RATE, latencyHint: 'playback' }))
   } catch {
     return null
   }

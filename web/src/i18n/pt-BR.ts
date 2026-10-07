@@ -117,6 +117,7 @@ export const ptBR: Record<string, string> = {
   'room.fullscreen': 'Entrar em tela cheia',
   'room.mute': 'Silenciar',
   'room.unmute': 'Ativar som',
+  'room.tapForSound': 'Toque para ouvir',
   'room.screenNoSound': 'Tela sem som',
   'room.screenNoSoundHint': 'Quem está compartilhando não está mandando áudio.',
   'room.screenSendingSilent': 'Sem som',

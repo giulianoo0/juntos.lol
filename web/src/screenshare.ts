@@ -16,6 +16,7 @@ import type * as Publish from '@moq/publish'
 import type * as Watch from '@moq/watch'
 import type { EncodedFrame } from './jlocal/h264Feed'
 import { codecFromAnnexB } from './jlocal/h264Feed'
+import { audioLocked } from './ui/audioUnlock'
 
 const pendingStreams = new Map<string, MediaStream>()
 
@@ -598,6 +599,8 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     const videoAt = media?.video.out.timestamp.peek()
     const audioAt = media?.audio()?.out.timestamp.peek()
     const expectsSound = hasAudio.peek() === true && !mutedSignal.peek() && volumeSignal.peek() > 0
+    // Sound held back until a tap (iOS) is not stuck; reopening it would only make another held-back context.
+    if (audioLocked()) { silentSince = null; return }
     if (!expectsSound || videoAt === undefined || audioAt === undefined) { silentSince = null; return }
     const behind = videoAt - audioAt
     if (behind < AUDIO_BEHIND_MS) { silentSince = null; return }
