@@ -311,6 +311,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
   let activeSlots = 0
   let inflightBytes = 0
   const inflightAborts = new Set<AbortController>()
+  const inflightNames = new Set<string>()
   const capacityWaiters: (() => void)[] = []
   const idleWaiters: (() => void)[] = []
   const wake = () => {
@@ -361,6 +362,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       for (const object of batch) {
         queuedBytes -= object.bytes.byteLength
         inflightBytes += object.bytes.byteLength
+        inflightNames.add(object.name)
         activeSlots += 1
       }
       void uploadBatch(batch).catch(fail)
@@ -372,6 +374,7 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
     const remaining = new Set(batch)
     const settle = (object: PendingObject) => {
       if (!remaining.delete(object)) return
+      inflightNames.delete(object.name)
       activeSlots -= 1
       inflightBytes -= object.bytes.byteLength
       wake()
@@ -431,9 +434,13 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
 
   const publish = async (complete: boolean): Promise<boolean> => {
     const current = inCurrentRegion
-    const outstanding = (regionPrefix: string) => uploaded.some(
-      (name) => (regionPrefix === '' ? !/^r\d+_/.test(name) : name.startsWith(regionPrefix)),
-    )
+    // A region's playlist is ended only once nothing of it is queued, in flight or unconfirmed:
+    // the muxer outruns the uploads, and ending it early cuts the film where the uploads were.
+    const ofRegion = (regionPrefix: string) => (name: string) => (regionPrefix === '' ? !/^r\d+_/.test(name) : name.startsWith(regionPrefix))
+    const outstanding = (regionPrefix: string) => {
+      const mine = ofRegion(regionPrefix)
+      return uploaded.some(mine) || queued.some((object) => mine(object.name)) || [...inflightNames].some(mine)
+    }
     const sealing = [...sealed]
       .filter(([, entry]) => complete || !outstanding(entry.prefix))
       .map(([name, entry]) => [name, endPlaylist(entry.body, ledger.contiguousIn(entry.region, entry.playlist))] as const)
