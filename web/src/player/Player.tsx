@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import {
   FastForward, Lock, Maximize, Minimize, Pause, Play, Rewind,
-  SkipBack, SkipForward, Volume1, Volume2, VolumeX, Zap,
+  SkipBack, SkipForward, Volume1, Volume2, VolumeX,
   FileUp,
   ClipboardCopy,
   RotateCw,
@@ -18,7 +18,8 @@ import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
-import { boostOf, canBoost, MAX_LEVEL, setBoost } from './audioBoost'
+import { boostOf, canBoost, setBoost } from './audioBoost'
+import { MAX_LEVEL, snapLevel, VolumeSlider } from '../ui/VolumeSlider'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { plog } from './playerLog'
 import { Settings, type SettingGroup } from './Settings'
@@ -135,8 +136,6 @@ const CONTROLS_HIDE_MS = 2500
 const CONTROLS_HIDE_TOUCH_MS = 4000
 const VOLUME_STEP = 0.05
 const VOLUME_CHASE_MS = 500
-// Near enough to 100% to land on it, so the boost line is easy to come back to.
-const VOLUME_SNAP = 0.04
 const FEEDBACK_MS = 700
 const FRAME_WATCH_INTERVAL_MS = 1000
 const MANIFEST_RETRY_MS = 2000
@@ -856,9 +855,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const applyVolume = useCallback((value: number) => {
     const video = videoRef.current
     if (!video) return
-    const ceiling = canBoost(video) ? MAX_LEVEL : 1
-    let next = Math.min(Math.max(value, 0), ceiling)
-    if (Math.abs(next - 1) < VOLUME_SNAP) next = 1
+    const next = snapLevel(value, canBoost(video) ? MAX_LEVEL : 1)
     video.volume = Math.min(next, 1)
     setBoostState(setBoost(video, Math.max(next, 1)))
     if (next > 0 && video.muted) video.muted = false
@@ -1480,7 +1477,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             <div className="volume-panel" ref={volumePanelRef}>
               <VolumeSlider
                 level={muted ? 0 : volume * boost}
-                canBoost={videoRef.current !== null && canBoost(videoRef.current)}
+                max={videoRef.current !== null && canBoost(videoRef.current) ? MAX_LEVEL : 1}
                 onLevel={applyVolume}
                 t={t}
               />
@@ -1530,52 +1527,6 @@ function seekFeedback(delta: number): ReactNode {
       {delta > 0 ? <FastForward size={24} /> : <Rewind size={24} />}
       {delta > 0 ? `+${delta}s` : `${delta}s`}
     </>
-  )
-}
-
-/**
- * A vertical slider from 0 to 200%: the bottom half is the element's volume,
- * the top half the boost, with a line at 100% between them. A native range
- * sits transparent on top so dragging, keys and focus stay the browser's.
- */
-function VolumeSlider({ level, canBoost: boostable, onLevel, t }: {
-  level: number
-  canBoost: boolean
-  onLevel: (level: number) => void
-  t: Translator
-}) {
-  const max = boostable ? MAX_LEVEL : 1
-  const percent = Math.round(level * 100)
-  const boosted = level > 1
-  return (
-    <div className={`volume-slider ${boostable ? 'can-boost' : ''} ${boosted ? 'is-boosted' : ''}`}>
-      <span className="volume-readout">{boosted ? <Zap size={10} aria-hidden="true" /> : null}{percent}%</span>
-      <div
-        className="volume-track"
-        style={{
-          '--level': `${(Math.min(level, max) / max) * 100}%`,
-          '--base': `${(Math.min(level, 1) / max) * 100}%`,
-        } as CSSProperties}
-        onDoubleClick={() => onLevel(1)}
-      >
-        <span className="volume-fill" />
-        {boosted ? <span className="volume-fill is-boost" /> : null}
-        {boostable ? <span className="volume-boost-zone" title={t('room.volumeBoost')} /> : null}
-        {boostable ? <span className="volume-divider" /> : null}
-        <span className="volume-thumb" />
-        <input
-          className="volume-range"
-          aria-label={t('room.volume')}
-          aria-valuetext={`${percent}%`}
-          type="range"
-          min="0"
-          max={max}
-          step="0.01"
-          value={Math.min(level, max)}
-          onChange={(event) => onLevel(Number(event.target.value))}
-        />
-      </div>
-    </div>
   )
 }
 

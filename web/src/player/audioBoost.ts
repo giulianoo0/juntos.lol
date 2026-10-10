@@ -1,5 +1,4 @@
-/** The loudest the slider goes: past 1 the element is at full volume and a gain node does the rest. */
-export const MAX_LEVEL = 2
+import { MAX_LEVEL } from '../ui/VolumeSlider'
 
 type Graph = { context: AudioContext; gain: GainNode }
 
