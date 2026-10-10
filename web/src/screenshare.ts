@@ -22,8 +22,6 @@ const pendingStreams = new Map<string, MediaStream>()
 
 /** Opus for a film soundtrack, not a voice call: stereo at a rate that keeps music intact. */
 const SCREEN_AUDIO_BITRATE = 160_000
-/** How often the publisher asks the relay session what it can carry. */
-const BANDWIDTH_PROBE_MS = 500
 /** The reconnect loop never gives up on its own; leaving the room is what stops it. */
 const RELAY_RETRY = { initial: 1000, multiplier: 2, max: 5000, timeout: 0 }
 /** How long a publisher may take to get its broadcast onto the relay before sharing counts as failed. */
@@ -38,6 +36,14 @@ const KEYFRAME_INTERVAL_MS = 2_000 as NonNullable<Publish.Video.Config['keyframe
 const BITRATE_SCALE = 0.2
 /** A surface smaller than its preset still gets this much, so a tiny window is not starved. */
 const MIN_BITRATE = 2_000_000
+/**
+ * The ceiling `auto` gets for a 1080p surface at 30 fps; other sizes scale by
+ * pixels, and 60 fps gets half again. It never follows the session's send
+ * estimate: that estimate only measures what is being sent, so capping the
+ * encoder at 90% of it shrank the bitrate every half second until the picture
+ * froze at 0 Mb/s.
+ */
+const AUTO_BITRATE_1080P30 = 6_000_000
 
 /**
  * Whether this engine is WebKit: Safari, and every browser on iOS. Its
@@ -274,9 +280,8 @@ async function preferredCodec(width: number, height: number, framerate: number, 
 /**
  * The encoder knobs a preset comes down to. `maxPixels` and `frameRate` are
  * what keep 4K60 from being quietly downscaled — left unset, the encoder sizes
- * itself off the track's constraints — and `maxBitrate` doubles as the switch
- * that takes the connection's own estimate out of the decision, so a dip in
- * the uplink costs smoothness instead of collapsing the resolution.
+ * itself off the track's constraints — and `maxBitrate` is always set, so
+ * the encoder never sizes itself off the connection's estimate.
  */
 async function encoderConfig(quality: ScreenQuality, source: MediaStreamTrack): Promise<Publish.Video.Config> {
   const settings = source.getSettings()
@@ -287,14 +292,14 @@ async function encoderConfig(quality: ScreenQuality, source: MediaStreamTrack): 
   const frameRate = quality.frameRate ?? settings.frameRate ?? 30
   const maxBitrate = quality.maxBitrate && quality.width && quality.height
     ? Math.max(MIN_BITRATE, Math.round(quality.maxBitrate * (width * height) / (quality.width * quality.height)))
-    : undefined
+    : Math.max(MIN_BITRATE, Math.round(AUTO_BITRATE_1080P30 * (width * height) / (1920 * 1080) * (frameRate > 30 ? 1.5 : 1)))
   return {
-    codec: await preferredCodec(width, height, frameRate, maxBitrate ?? 8_000_000),
+    codec: await preferredCodec(width, height, frameRate, maxBitrate),
     keyframeInterval: KEYFRAME_INTERVAL_MS,
     bitrateScale: BITRATE_SCALE,
     ...(quality.width && quality.height ? { maxPixels: width * height } : {}),
     ...(quality.frameRate ? { frameRate: quality.frameRate } : {}),
-    ...(maxBitrate ? { maxBitrate } : {}),
+    maxBitrate,
   }
 }
 
@@ -352,38 +357,18 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
     name: Net.Path.from(relay.path),
     display: capture.out.display,
   })
-  const bandwidth = new Signals.Signal<number | undefined>(undefined)
   let quality = screenQuality(qualityId)
   const config = new Signals.Signal<Publish.Video.Config | undefined>(await encoderConfig(quality, videoTrack))
   // Switching to another window mid-share changes the surface's size; the
   // bitrate follows it.
   const onSurfaceChange = () => { void encoderConfig(quality, videoTrack).then((next) => config.set(next)).catch(() => undefined) }
   videoTrack.addEventListener('configurationchange', onSurfaceChange)
-  const video = new Publish.Video.Encoder('video', { broadcast, capture, enabled: true, bandwidth, config })
+  const video = new Publish.Video.Encoder('video', { broadcast, capture, enabled: true, config })
   const audio = new Publish.Audio.Encoder('audio', {
     broadcast,
     enabled: audioEnabled,
     source: audioSource,
     codec: { mime: 'opus', bitrate: SCREEN_AUDIO_BITRATE },
-  })
-
-  // Only a preset without a bitrate of its own lets the link decide: the
-  // encoder falls back to the session's estimate when no ceiling is set, so a
-  // thin uplink costs quality instead of stalling everyone.
-  const signals = new Signals.Effect()
-  signals.run((effect) => {
-    const established = effect.get(connection.established)
-    effect.set(bandwidth, undefined)
-    if (!established) return
-    let probing = false
-    effect.interval(() => {
-      if (probing) return
-      probing = true
-      void established.stats()
-        .then((stats) => { if (stats) bandwidth.set(stats.estimatedSendRate) })
-        .catch(() => undefined)
-        .finally(() => { probing = false })
-    }, BANDWIDTH_PROBE_MS)
   })
 
   const ready = new Promise<void>((resolve, reject) => {
@@ -450,7 +435,6 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
     },
     close() {
       videoTrack.removeEventListener('configurationchange', onSurfaceChange)
-      signals.close()
       audio.close()
       video.close()
       broadcast.close()
