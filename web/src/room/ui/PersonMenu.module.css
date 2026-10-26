@@ -1,0 +1,43 @@
+/* The list's quiet "…": a 28px rounded square that tints on hover. */
+.trigger {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+.trigger:active {
+  transform: scale(var(--press-scale));
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.trigger[data-popup-open] {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .trigger:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+}
+
+@media (pointer: coarse) {
+  .trigger {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}

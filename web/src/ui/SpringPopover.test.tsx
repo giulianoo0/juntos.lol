@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { SpringPopover, SpringRow, useSpringPresence } from './SpringPopover'
+import { SpringPopover, SpringRow } from './SpringPopover'
+import { useSpringPresence } from './springPresence'
 
 function Presence({ open }: { open: boolean }) {
   const presence = useSpringPresence<HTMLDivElement>(open)

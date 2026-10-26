@@ -1,6 +1,6 @@
 import { Popover } from '@base-ui-components/react/popover'
 import { useRef, useState, type ReactNode } from 'react'
-import { springPopupClass, springPositionerClass } from './SpringPopover'
+import { springPopupClass, springPositionerClass } from './springPresence'
 
 interface MorphingMenuProps {
   trigger: (open: boolean) => ReactNode

@@ -1,21 +1,23 @@
+/* The old screens' names, pointed at the lawcore's tokens (styles/tokens.css)
+   until the screens that read them move to CSS modules beside them. */
 :root {
-  --canvas: #0C0A0B; --card: #19171B; --card-hover: #221F23; --well: #08070A; --border: rgba(255,255,255,.08);
-  --primary: #FF7A45; --primary-soft: rgba(255,122,69,.16); --text: rgba(255,255,255,.92); --text-dim: rgba(255,255,255,.6); --text-faint: rgba(255,255,255,.38);
-  --danger: #F0434E; --r-control: 10px; --r-field: 13px; --r-surface: 22px;
-  --glass: linear-gradient(145deg, rgba(255,255,255,.055), rgba(255,255,255,.018)), rgba(25,23,27,.88);
-  --ease: cubic-bezier(.16,1,.3,1); --ease-move: cubic-bezier(.77,0,.175,1); --t-open: 250ms; --t-close: 150ms; --t-morph: 320ms;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: var(--text); background: var(--canvas); font-synthesis: none; text-rendering: optimizeLegibility;
+  --canvas: var(--frame-ground); --card: var(--surface); --card-hover: var(--surface-2); --well: var(--surface-2); --border: var(--line);
+  --primary-soft: color-mix(in oklab, var(--primary) 16%, transparent); --text-dim: var(--text-muted);
+  --r-control: var(--radius-lg); --r-field: var(--radius-xl); --r-surface: var(--radius-3xl);
+  --glass: var(--overlay);
+  --ease: var(--ease-out); --ease-move: var(--ease-in-out); --t-open: 250ms; --t-close: 150ms; --t-morph: var(--duration-slow);
+  font-family: var(--font-sans);
+  color: var(--text); background: var(--frame-ground); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: transparent; }
-body::before { content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(to bottom, #17100E 0%, #120C0C 34%, var(--canvas) 78%); }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--frame-ground); }
 button, input, select, textarea { font: inherit; color: inherit; }
-button { border: 1px solid var(--border); border-radius: var(--r-control); background: rgba(255,255,255,.045); padding: 9px 13px; cursor: pointer; transition: color var(--t-close) var(--ease), border-color var(--t-close) var(--ease), background var(--t-close) var(--ease), transform var(--t-close) var(--ease); }
-button:hover:not(:disabled) { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.075); }
-button:active:not(:disabled) { transform: scale(.98); }
-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 72%, white); outline-offset: 2px; }
-button:disabled { cursor: not-allowed; opacity: .45; }
+/* Zero specificity: a component's own class always wins over these. */
+:where(button) { border: 1px solid var(--border); border-radius: var(--r-control); background: var(--button-secondary-bg); padding: 9px 13px; cursor: pointer; transition: var(--transition-button); }
+:where(button:hover:not(:disabled)) { background: var(--button-secondary-hover); }
+:where(button:active:not(:disabled)) { transform: scale(var(--press-scale)); }
+:where(button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+:where(button:disabled) { cursor: not-allowed; opacity: .45; }
 a { color: inherit; text-decoration: none; }
 h1, h2, p { margin-top: 0; }
 .raised { box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 1px 2px rgba(0,0,0,.45), 0 24px 70px rgba(0,0,0,.3); }
@@ -319,8 +321,8 @@ button.timecode-chapter:hover { color: var(--text); }
 @keyframes dialog-in { from { opacity: 0; transform: translate(-50%, -46%) scale(.96) } }
 @keyframes dialog-out { to { opacity: 0; transform: translate(-50%, -48%) scale(.98) } }
 
-.ui-toast { display: flex; align-items: center; width: fit-content; max-width: min(360px, calc(100vw - 40px)); padding: 10px 15px; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; color: var(--text); background: var(--glass); backdrop-filter: blur(24px) saturate(130%); box-shadow: inset 0 1px rgba(255,255,255,.07), 0 14px 40px rgba(0,0,0,.45); font-size: 13px; line-height: 1.35; }
-.ui-toast strong { color: #FFB794; font-weight: 600; }
+.ui-toast { display: flex; align-items: center; gap: var(--space-3); width: fit-content; max-width: min(360px, calc(100vw - 40px)); min-height: var(--control-height); padding: var(--space-3) var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-full); color: var(--text); background: var(--popover-glass); -webkit-backdrop-filter: var(--popover-glass-filter); backdrop-filter: var(--popover-glass-filter); box-shadow: var(--shadow-float); font-family: var(--font-sans); font-size: var(--text-sm); line-height: var(--leading-snug); }
+.ui-toast strong { color: var(--text); font-weight: var(--weight-semibold); }
 .ui-toast .is-leave strong { color: var(--text-dim); }
 
 .sync-toggle { gap: 6px; padding-left: 7px; }
@@ -472,9 +474,6 @@ button.timecode-chapter:hover { color: var(--text); }
 .morph-menu-trigger { display: inline-flex; align-items: center; white-space: nowrap; transition: color var(--t-close) var(--ease), border-color var(--t-close) var(--ease), background var(--t-close) var(--ease); }
 .morph-menu-trigger:active:not(:disabled) { transform: none; }
 .morph-menu-trigger-row { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
-.morph-menu-backdrop { position: fixed; inset: 0; z-index: 70; }
-.morph-menu-panel { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); background: rgba(26,28,40,.97); box-shadow: 0 22px 60px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.07); }
-.morph-menu-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
 .morph-fade { opacity: 1; filter: blur(0); transform: none; transition: opacity 180ms var(--ease), filter 180ms var(--ease), transform 180ms var(--ease); }
 .morph-fade[data-morphing='true'] { opacity: 0; filter: blur(8px); transform: scale(1.02); transition-duration: 110ms; }

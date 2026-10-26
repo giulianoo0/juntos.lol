@@ -16,7 +16,8 @@ export interface SegmentOption<T extends string> {
 export function Segmented<T extends string>({ label, options, value, onChange, className = '' }: {
   label: string
   options: readonly SegmentOption<T>[]
-  value: T
+  /** Nothing chosen (a pin elsewhere): no chip. */
+  value: T | null
   onChange: (value: T) => void
   className?: string
 }) {
@@ -30,7 +31,10 @@ export function Segmented<T extends string>({ label, options, value, onChange, c
     if (!track || !chip) return undefined
     const place = (instant: boolean) => {
       const target = track.querySelector<HTMLElement>('[aria-checked="true"]')
-      if (!target) return
+      if (!target) {
+        chip.style.setProperty('--chip-width', '0px')
+        return
+      }
       if (instant) chip.dataset.instant = ''
       else delete chip.dataset.instant
       chip.style.setProperty('--chip-left', `${target.offsetLeft}px`)
@@ -58,15 +62,16 @@ export function Segmented<T extends string>({ label, options, value, onChange, c
   return (
     <div ref={trackRef} role="radiogroup" aria-label={label} className={`${styles.track} ${className}`.trim()}>
       <span ref={chipRef} className={styles.chip} aria-hidden="true" />
-      {options.map((option) => {
+      {options.map((option, index) => {
         const chosen = option.value === value
+        const reachable = chosen || (index === 0 && !options.some((other) => other.value === value))
         return (
           <button
             key={option.value}
             type="button"
             role="radio"
             aria-checked={chosen}
-            tabIndex={chosen ? 0 : -1}
+            tabIndex={reachable ? 0 : -1}
             data-value={option.value}
             className={styles.segment}
             onClick={() => onChange(option.value)}

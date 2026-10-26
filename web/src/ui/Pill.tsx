@@ -13,7 +13,7 @@ interface PillOwn {
   block?: boolean
 }
 
-export function pillClass({ tone = 'soft', size = 'lg', block = false }: PillOwn, extra = ''): string {
+function pillClass({ tone = 'soft', size = 'lg', block = false }: PillOwn, extra = ''): string {
   return [styles.pill, styles[tone], styles[size], block ? styles.block : '', extra].filter(Boolean).join(' ')
 }
 

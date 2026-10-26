@@ -3,7 +3,7 @@ import type { Person, Spotlight, Stage } from '../model'
 export type Target = { kind: 'stage' | 'person'; id: string }
 
 export type Layout =
-  | { kind: 'grid'; people: string[] }
+  | { kind: 'grid'; tiles: Target[] }
   | {
     kind: 'focus'
     /** Why this is in focus: the viewer's pin, the host's spotlight, or
@@ -21,6 +21,8 @@ export interface LayoutInput {
   pin: Target | null
   /** The viewer stepped out of the host's spotlight. */
   leftSpotlight: boolean
+  /** The viewer chose "Pessoas": everything as one grid, the pin aside. */
+  everyone?: boolean
 }
 
 function spotlightTarget(spotlight: Spotlight): Target {
@@ -37,7 +39,12 @@ function spotlightTarget(spotlight: Spotlight): Target {
 
 /** What goes where: the pin, then the spotlight, then the first stage, and
     a grid of people when nothing is on stage. */
-export function layoutOf({ people, stages, spotlight, pin, leftSpotlight }: LayoutInput): Layout {
+export function layoutOf({ people, stages, spotlight, pin, leftSpotlight, everyone = false }: LayoutInput): Layout {
+  const all: Target[] = [
+    ...stages.map(({ id }): Target => ({ kind: 'stage', id })),
+    ...people.map(({ id }): Target => ({ kind: 'person', id })),
+  ]
+  if (everyone) return { kind: 'grid', tiles: all }
   const exists = (target: Target) => target.kind === 'stage'
     ? stages.some((stage) => stage.id === target.id)
     : people.some((member) => member.id === target.id)
@@ -49,12 +56,9 @@ export function layoutOf({ people, stages, spotlight, pin, leftSpotlight }: Layo
         : stages[0] ? ['auto', { kind: 'stage', id: stages[0].id }]
           : ['auto', null]
 
-  if (!focus) return { kind: 'grid', people: people.map(({ id }) => id) }
+  if (!focus) return { kind: 'grid', tiles: all }
 
-  const side: Target[] = [
-    ...stages.map(({ id }): Target => ({ kind: 'stage', id })),
-    ...people.map(({ id }): Target => ({ kind: 'person', id })),
-  ].filter((target) => target.kind !== focus.kind || target.id !== focus.id)
+  const side = all.filter((target) => target.kind !== focus.kind || target.id !== focus.id)
   return { kind: 'focus', reason, focus, side }
 }
 

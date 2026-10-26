@@ -13,7 +13,7 @@ describe('layoutOf', () => {
   it('shows everyone in a grid when nothing is on stage', () => {
     expect(layoutOf({ people, stages: [], spotlight: null, pin: null, leftSpotlight: false })).toEqual({
       kind: 'grid',
-      people: ['giu', 'ana', 'bruno'],
+      tiles: people.map(({ id }) => ({ kind: 'person', id })),
     })
   })
 
@@ -52,6 +52,14 @@ describe('layoutOf', () => {
     const layout = layoutOf({ people, stages: [media], spotlight: { kind: 'media' }, pin: { kind: 'person', id: 'bruno' }, leftSpotlight: false })
     expect(layout.kind === 'focus' && layout.focus).toEqual({ kind: 'person', id: 'bruno' })
     expect(layout.kind === 'focus' && layout.reason).toBe('pin')
+  })
+
+  it('lays the stages and the people out as one grid when the viewer asks for everyone', () => {
+    const layout = layoutOf({ people, stages: [media], spotlight: { kind: 'media' }, pin: null, leftSpotlight: false, everyone: true })
+    expect(layout).toEqual({
+      kind: 'grid',
+      tiles: [{ kind: 'stage', id: 'media' }, ...people.map(({ id }) => ({ kind: 'person', id }))],
+    })
   })
 
   it('forgets a pin or a spotlight on something that is gone', () => {
