@@ -197,6 +197,8 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const appliedDelayRef = useRef(new WeakMap<TextTrack, number>())
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [audioTrack, setAudioTrack] = useState(0)
+  /** The pick outlives a rebuilt hls.js, which would start over on the default track. */
+  const audioTrackRef = useRef(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -440,6 +442,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
         }
         hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
           setAudioTracks(hls.audioTracks)
+          if (audioTrackRef.current > 0 && audioTrackRef.current < hls.audioTracks.length) hls.audioTrack = audioTrackRef.current
           readLevels()
           logLevels(hls, 'parsed')
           if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('manifestParsed')
@@ -1055,6 +1058,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
         current: audioTrack,
         onPick: (value) => {
           setAudioTrack(value)
+          audioTrackRef.current = value
           if (hlsRef.current) hlsRef.current.audioTrack = value
         },
         options: audioTracks.map((track, index) => ({

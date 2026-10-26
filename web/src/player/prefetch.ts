@@ -9,6 +9,13 @@ import { recordTransfer } from './playbackHealth'
 const LOOKAHEAD = 3
 const CACHE_MAX = 8
 const FRESH_MS = 30_000
+/**
+ * A warmed fetch answers hls.js outside its own loader, so none of its
+ * timeouts apply: one that stalls would hold the track in loading for good.
+ * Past this long the fragment goes to the network like any other.
+ */
+const HIT_PATIENCE_MS = 8_000
+const WARM_TIMEOUT_MS = 20_000
 
 /** The URL `step` segments after this one, or null off the naming scheme. */
 export function nextSegmentUrl(url: string, step: number): string | null {
@@ -38,7 +45,7 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
     const at = performance.now()
     warmed.set(url, {
       at,
-      promise: fetch(url)
+      promise: fetch(url, { signal: AbortSignal.timeout(WARM_TIMEOUT_MS) })
         .then((response) => (response.ok ? response.arrayBuffer() : null))
         .then((data) => {
           if (data) recordTransfer(at, performance.now(), data.byteLength)
@@ -49,6 +56,8 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
   }
   return class extends Base {
     private answered = false
+    /** Set while a warmed fetch, not the base loader, owes hls.js an answer. */
+    private waiting: { context: LoaderContext; callbacks: LoaderCallbacks<LoaderContext>; timer: number } | null = null
     load(context: LoaderContext, config: LoaderConfiguration, callbacks: LoaderCallbacks<LoaderContext>): void {
       const url = context.url ?? ''
       const whole = context.rangeStart === undefined && context.rangeEnd === undefined
@@ -60,8 +69,13 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
         const hit = warmed.get(url)
         if (hit && performance.now() - hit.at <= FRESH_MS) {
           warmed.delete(url)
-          void hit.promise.then((data) => {
+          let timer = 0
+          const patience = new Promise<null>((resolve) => { timer = window.setTimeout(() => resolve(null), HIT_PATIENCE_MS) })
+          this.waiting = { context, callbacks, timer }
+          void Promise.race([hit.promise, patience]).then((data) => {
+            window.clearTimeout(timer)
             if (this.answered) return
+            this.waiting = null
             if (!data || data.byteLength === 0) {
               super.load(context, config, callbacks)
               return
@@ -89,11 +103,20 @@ export function prefetchingLoader(Base: LoaderClass): HlsConfig['fLoader'] {
     }
     abort(): void {
       this.answered = true
+      const waiting = this.release()
       super.abort()
+      waiting?.callbacks.onAbort?.(this.stats as never, waiting.context, null)
     }
     destroy(): void {
       this.answered = true
+      this.release()
       super.destroy()
+    }
+    private release() {
+      const waiting = this.waiting
+      this.waiting = null
+      if (waiting) window.clearTimeout(waiting.timer)
+      return waiting
     }
   } as unknown as HlsConfig['fLoader']
 }
