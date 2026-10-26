@@ -40,6 +40,20 @@ func TestAccessDefaultsToOpenAndRoundTrips(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestPasswordHashVerifies(t *testing.T) {
+	hash, err := HashPassword("pipoca 123")
+	require.NoError(t, err)
+	require.Contains(t, hash, "$argon2id$")
+	require.True(t, VerifyPassword("pipoca 123", hash))
+	require.False(t, VerifyPassword("pipoca 124", hash))
+	require.False(t, VerifyPassword("pipoca 123", ""))
+	require.False(t, VerifyPassword("pipoca 123", "$argon2id$garbage"))
+
+	again, err := HashPassword("pipoca 123")
+	require.NoError(t, err)
+	require.NotEqual(t, hash, again, "every hash has its own salt")
+}
+
 func TestValidJoinMode(t *testing.T) {
 	for _, mode := range []string{JoinOpen, JoinPassword, JoinApproval} {
 		require.True(t, ValidJoinMode(mode))
