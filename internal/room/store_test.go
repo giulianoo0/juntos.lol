@@ -124,6 +124,9 @@ func TestRoomMutationsDoNotCreateMissingRoom(t *testing.T) {
 		{name: "error", mutate: func(ctx context.Context, s *Store) error {
 			return s.SetError(ctx, "missing", "media processing failed")
 		}},
+		{name: "client subtitles", mutate: func(ctx context.Context, s *Store) error {
+			return s.SetClientSubtitles(ctx, "missing", []TrackInfo{{Index: 0, Codec: "webvtt"}}, true)
+		}},
 	}
 
 	for _, tt := range tests {
@@ -254,7 +257,7 @@ func TestChatCappedAt200(t *testing.T) {
 	require.Equal(t, "message 210", msgs[199].Text)
 }
 
-func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
+func TestSetClientSubtitlesMarksTheRoomAndKeepsItsTracks(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	s := NewStore(rdb, time.Hour)
@@ -263,16 +266,9 @@ func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
 		ID: "subs", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 
-	has, err := s.HasClientSubs(t.Context(), "subs")
-	require.NoError(t, err)
-	require.False(t, has)
-
 	subs := []TrackInfo{{Index: 0, Language: "eng", Title: "Signs", Codec: "webvtt"}}
 	require.NoError(t, s.SetClientSubtitles(t.Context(), "subs", subs, true))
 
-	has, err = s.HasClientSubs(t.Context(), "subs")
-	require.NoError(t, err)
-	require.True(t, has)
 	got, err := s.Get(t.Context(), "subs")
 	require.NoError(t, err)
 	require.True(t, got.ClientSubs)
@@ -286,7 +282,7 @@ func TestSetClientSubtitlesAndHasClientSubs(t *testing.T) {
 	require.Equal(t, 2, got.BitmapSubsSkipped)
 }
 
-func TestVersionsAdvanceWithRepublishedMedia(t *testing.T) {
+func TestSubsVersionAdvancesWithEachTrackChange(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	s := NewStore(rdb, time.Hour)
@@ -296,14 +292,7 @@ func TestVersionsAdvanceWithRepublishedMedia(t *testing.T) {
 	}))
 	got, err := s.Get(t.Context(), "v")
 	require.NoError(t, err)
-	require.Equal(t, 0, got.MediaVersion)
 	require.Equal(t, 0, got.SubsVersion)
-
-	require.NoError(t, s.BumpMediaVersion(t.Context(), "v"))
-	require.NoError(t, s.BumpMediaVersion(t.Context(), "v"))
-	got, err = s.Get(t.Context(), "v")
-	require.NoError(t, err)
-	require.Equal(t, 2, got.MediaVersion)
 
 	require.NoError(t, s.SetClientSubtitles(t.Context(), "v", []TrackInfo{{Index: 0}}, false))
 	require.NoError(t, s.SetClientSubtitles(t.Context(), "v", []TrackInfo{{Index: 0}}, true))
@@ -311,26 +300,6 @@ func TestVersionsAdvanceWithRepublishedMedia(t *testing.T) {
 	got, err = s.Get(t.Context(), "v")
 	require.NoError(t, err)
 	require.Equal(t, 3, got.SubsVersion)
-}
-
-func TestBumpMediaVersionRejectsMissingRoom(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	s := NewStore(rdb, time.Hour)
-	require.ErrorIs(t, s.BumpMediaVersion(t.Context(), "missing"), ErrNotFound)
-}
-
-func TestSetClientSubtitlesRejectsMissingRoom(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	s := NewStore(rdb, time.Hour)
-
-	err := s.SetClientSubtitles(t.Context(), "missing", []TrackInfo{{Index: 0, Codec: "webvtt"}}, true)
-	require.ErrorIs(t, err, ErrNotFound)
-
-	has, err := s.HasClientSubs(t.Context(), "missing")
-	require.NoError(t, err)
-	require.False(t, has)
 }
 
 func TestGatingSettingDefaultsOnAndRoundTrips(t *testing.T) {

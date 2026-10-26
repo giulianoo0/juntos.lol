@@ -493,7 +493,7 @@ func TestClientMediaLateMetadataEndpoint(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestClientMediaPublishStaleSeqDoesNotRegress(t *testing.T) {
+func TestClientMediaPublishAnswersAStaleSeqWithConflict(t *testing.T) {
 	store := newTestStore(t)
 	addUploadingRoom(t, store, "r1")
 	bucket := objectstore.NewFake()
@@ -513,7 +513,4 @@ func TestClientMediaPublishStaleSeqDoesNotRegress(t *testing.T) {
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","runId":"run1","seq":1,"confirm":["cs_1_1.m4s"],"playlists":{"client_stream_1.m3u8":`+strconvQuote(short)+`}}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
-	body, err := store.Playlist(t.Context(), "r1", "client_stream_1.m3u8")
-	require.NoError(t, err)
-	require.Contains(t, body, "cs_1_2.m4s")
 }

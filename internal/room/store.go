@@ -681,12 +681,6 @@ func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) 
 	return s.mutateRoom(ctx, id, false, "chapters", string(c))
 }
 
-// BumpMediaVersion announces that the media behind the current generation was
-// republished in place, telling players to reload the unchanged source URL.
-func (s *Store) BumpMediaVersion(ctx context.Context, id string) error {
-	return s.mutateRoomBump(ctx, id, false, "media_version")
-}
-
 func (s *Store) SetMediaDuration(ctx context.Context, id string, durationMs int64) error {
 	return s.mutateRoom(ctx, id, false, "duration_ms", strconv.FormatInt(durationMs, 10))
 }
@@ -847,17 +841,6 @@ return {1, previous, generation}
 	previousUpload, _ = result[1].(string)
 	newGeneration, _ := result[2].(int64)
 	return previousUpload, int(newGeneration), nil
-}
-
-func (s *Store) HasClientSubs(ctx context.Context, id string) (bool, error) {
-	v, err := s.rdb.HGet(ctx, roomKey(id), "client_subs").Result()
-	if errors.Is(err, redis.Nil) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("get client subs flag: %w", err)
-	}
-	return v == "1", nil
 }
 
 func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fields ...any) error {

@@ -22,7 +22,7 @@ func TestCreatedRoomIDsAreCapitalsAndDigitsOnly(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/api/rooms",
-			strings.NewReader(`{"fileName":"movie.mkv","nickname":"giuli"}`))
+			strings.NewReader(`{"nickname":"giuli"}`))
 		req.Header.Set("Content-Type", "application/json")
 		e.ServeHTTP(w, req)
 		require.Equal(t, http.StatusCreated, w.Code)

@@ -8,7 +8,7 @@ import { useSyncExternalStore } from 'react'
  * anywhere resumes the ones still waiting.
  */
 const contexts = new Set<AudioContext>()
-// The app's own sounds (chimes, the onboarding, jlocal's feeds): resumed with the rest, but no stage waits on them.
+// The app's own sounds (chimes, jlocal's feeds): resumed with the rest, but no stage waits on them.
 const incidental = new WeakSet<AudioContext>()
 const listeners = new Set<() => void>()
 let installed = false

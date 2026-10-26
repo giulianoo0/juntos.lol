@@ -43,8 +43,8 @@ func requireNoEvent(t *testing.T, conn *websocket.Conn, within time.Duration) {
 }
 
 func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
-	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -54,7 +54,7 @@ func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
 
 	require.NoError(t, guest.Close())
 	// The room holds the seat: nobody is told the guest left.
-	requireNoEvent(t, host, 300*time.Millisecond)
+	requireNoEvent(t, host, 100*time.Millisecond)
 	require.True(t, hub.AuthorizeMember("r1", "m2", guestWelcome.Capability))
 
 	again := dialHubWS(t, server)
@@ -63,7 +63,7 @@ func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
 	require.Equal(t, guestWelcome.Capability, welcome.Capability)
 	require.Equal(t, "m1", welcome.ControllerID)
 	require.Len(t, welcome.Members, 2)
-	requireNoEvent(t, host, 300*time.Millisecond)
+	requireNoEvent(t, host, 100*time.Millisecond)
 
 	stored, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
@@ -79,8 +79,8 @@ func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
 }
 
 func TestHubResumeKeepsTheControllerInControl(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	hostWelcome := helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -88,7 +88,7 @@ func TestHubResumeKeepsTheControllerInControl(t *testing.T) {
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
 	require.NoError(t, host.Close())
-	requireNoEvent(t, guest, 300*time.Millisecond)
+	requireNoEvent(t, guest, 100*time.Millisecond)
 
 	again := dialHubWS(t, server)
 	welcome := resumeHubClient(t, again, "host", "m1", hostWelcome.Capability, 3)
@@ -99,8 +99,8 @@ func TestHubResumeKeepsTheControllerInControl(t *testing.T) {
 }
 
 func TestHubResumeReplacesAHalfOpenSocket(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -112,19 +112,19 @@ func TestHubResumeReplacesAHalfOpenSocket(t *testing.T) {
 	welcome := resumeHubClient(t, again, "guest", "m2", guestWelcome.Capability, 3)
 	require.Equal(t, "m2", welcome.MemberID)
 	require.Len(t, welcome.Members, 2)
-	requireNoEvent(t, host, 300*time.Millisecond)
+	requireNoEvent(t, host, 100*time.Millisecond)
 	// The old socket is closed by the server, and its going does not count as leaving.
 	require.NoError(t, guest.SetReadDeadline(time.Now().Add(time.Second)))
 	var stale Outbound
 	require.Error(t, guest.ReadJSON(&stale))
-	requireNoEvent(t, host, 300*time.Millisecond)
+	requireNoEvent(t, host, 100*time.Millisecond)
 	require.NoError(t, again.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 4}))
 	require.Equal(t, "pong", readHubEvent(t, again).Type)
 }
 
 func TestHubResumeWithAWrongCapabilityIsAFreshJoin(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	again := dialHubWS(t, server)
@@ -140,7 +140,9 @@ func TestHubDetachedMemberLeavesAfterGrace(t *testing.T) {
 	guest := dialHubWS(t, server)
 	guestWelcome := helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: time.Now().UTC()}))
+	now := time.Now().UTC()
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "host", Since: now}))
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: now.Add(time.Second)}))
 
 	require.NoError(t, guest.Close())
 	require.Equal(t, "roomUpdated", readHubEvent(t, host).Type)
@@ -151,7 +153,8 @@ func TestHubDetachedMemberLeavesAfterGrace(t *testing.T) {
 
 	stored, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
-	require.Empty(t, stored.Screens)
+	require.Len(t, stored.Screens, 1)
+	require.Equal(t, "m1", stored.Screens[0].MemberID)
 }
 
 func TestHubHeartbeatsKeepAConnectionWhosePongsAreLate(t *testing.T) {

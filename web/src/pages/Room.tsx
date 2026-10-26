@@ -137,8 +137,9 @@ export function RoomPage() {
       setMic: (on) => { void local.setMic(on) },
       setCam: (on) => { void local.setCam(on) },
       renderPreview: () => <PreviewVideo stream={local.previewStream} />,
-      join: ({ nickname, password }) => {
+      join: ({ nickname: typed, password }) => {
         setEntryError(undefined)
+        const nickname = typed || guestName()
         const go = () => {
           try { localStorage.setItem('ss.nickname', nickname) } catch {}
           const choice = { nickname, mic: local.mic, cam: local.cam }
