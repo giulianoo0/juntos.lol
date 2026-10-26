@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import './styles/tokens.css'
 import './theme.css'
 import App from './App.tsx'
 import { ToastProvider } from './ui/Toast'
@@ -8,7 +9,9 @@ import { markEngine } from './engine'
 import { registerYoutubeBackend } from './youtube'
 import { jlocalBackend } from './jlocal/youtube'
 import { installAudioUnlock } from './ui/audioUnlock'
+import { applyTheme } from './ui/theme'
 
+applyTheme()
 markEngine()
 installMockApi()
 installAudioUnlock()

@@ -1,0 +1,159 @@
+import { useT } from '../../i18n/useT'
+
+/* The room's words, kept beside its screens: labels only, never a line
+   under them (CLAUDE.md, "Sem subdescrição"). */
+const ptBR = {
+  mic: 'Microfone',
+  micOff: 'Microfone desligado',
+  cam: 'Câmera',
+  camOff: 'Câmera desligada',
+  share: 'Compartilhar',
+  shareTitle: 'Abrir um palco',
+  sourceScreen: 'Tela',
+  sourceFile: 'Arquivo de vídeo',
+  sourceTorrent: 'Torrent',
+  sourceYoutube: 'YouTube',
+  sourceCatalog: 'Catálogo',
+  reactions: 'Reações',
+  chat: 'Chat',
+  people: 'Pessoas',
+  leave: 'Sair',
+  copyLink: 'Copiar link da sala',
+  copied: 'Link copiado',
+  panel: 'Painel',
+  closePanel: 'Fechar painel',
+  peopleInRoom: 'Pessoas na sala',
+  message: 'Mensagem',
+  send: 'Enviar',
+  host: 'host',
+  you: 'você',
+  pin: 'Fixar',
+  unpin: 'Desafixar',
+  pinned: 'Fixado',
+  spotlit: 'Em destaque',
+  spotlightAll: 'Destacar para todos',
+  spotlightOff: 'Tirar o destaque',
+  leaveSpotlight: 'Sair do destaque',
+  mute: 'Silenciar',
+  camOffForce: 'Desligar câmera',
+  kick: 'Expulsar',
+  moreFor: 'Mais opções para {name}',
+  muteName: 'Silenciar {name}',
+  allow: 'Permitir',
+  refuse: 'Recusar',
+  admit: 'Deixar entrar',
+  wantsScreen: '{name} quer compartilhar a tela',
+  wantsMedia: '{name} quer abrir um vídeo',
+  wantsLive: '{name} quer abrir uma live',
+  knocking: '{name} quer entrar',
+  access: 'Quem pode entrar',
+  accessOpen: 'Qualquer um com o link',
+  accessPassword: 'Com senha',
+  accessApproval: 'Com aprovação',
+  accessOpenShort: 'Aberta',
+  password: 'Senha',
+  save: 'Salvar',
+  closeStage: 'Fechar palco',
+  focusOn: 'Em foco',
+  everyone: 'Pessoas',
+  close: 'Fechar',
+  roomPassword: 'Senha da sala',
+  yourName: 'Seu nome',
+  join: 'Entrar',
+  hereOne: '{names} está aqui',
+  hereMany: '{names} estão aqui',
+  andMore: '{names} e mais {n}',
+  and: '{a} e {b}',
+  nobody: 'Ninguém ainda',
+  waiting: 'Esperando o host deixar você entrar',
+  cancel: 'Cancelar',
+} as const
+
+export type RoomStrings = Record<keyof typeof ptBR, string>
+
+const en: RoomStrings = {
+  mic: 'Microphone',
+  micOff: 'Microphone off',
+  cam: 'Camera',
+  camOff: 'Camera off',
+  share: 'Share',
+  shareTitle: 'Open a stage',
+  sourceScreen: 'Screen',
+  sourceFile: 'Video file',
+  sourceTorrent: 'Torrent',
+  sourceYoutube: 'YouTube',
+  sourceCatalog: 'Catalog',
+  reactions: 'Reactions',
+  chat: 'Chat',
+  people: 'People',
+  leave: 'Leave',
+  copyLink: 'Copy room link',
+  copied: 'Link copied',
+  panel: 'Panel',
+  closePanel: 'Close panel',
+  peopleInRoom: 'People in the room',
+  message: 'Message',
+  send: 'Send',
+  host: 'host',
+  you: 'you',
+  pin: 'Pin',
+  unpin: 'Unpin',
+  pinned: 'Pinned',
+  spotlit: 'Spotlight',
+  spotlightAll: 'Spotlight for everyone',
+  spotlightOff: 'Remove spotlight',
+  leaveSpotlight: 'Leave spotlight',
+  mute: 'Mute',
+  camOffForce: 'Turn camera off',
+  kick: 'Remove',
+  moreFor: 'More for {name}',
+  muteName: 'Mute {name}',
+  allow: 'Allow',
+  refuse: 'Decline',
+  admit: 'Let in',
+  wantsScreen: '{name} wants to share their screen',
+  wantsMedia: '{name} wants to open a video',
+  wantsLive: '{name} wants to open a live',
+  knocking: '{name} wants to join',
+  access: 'Who can join',
+  accessOpen: 'Anyone with the link',
+  accessPassword: 'With a password',
+  accessApproval: 'With approval',
+  accessOpenShort: 'Open',
+  password: 'Password',
+  save: 'Save',
+  closeStage: 'Close stage',
+  focusOn: 'In focus',
+  everyone: 'People',
+  close: 'Close',
+  roomPassword: 'Room password',
+  yourName: 'Your name',
+  join: 'Join',
+  hereOne: '{names} is here',
+  hereMany: '{names} are here',
+  andMore: '{names} and {n} more',
+  and: '{a} and {b}',
+  nobody: 'Nobody yet',
+  waiting: 'Waiting for the host to let you in',
+  cancel: 'Cancel',
+}
+
+export function useRoomStrings(): RoomStrings {
+  return useT().language === 'en' ? en : ptBR
+}
+
+export function fill(text: string, values: Record<string, string | number>): string {
+  return text.replace(/\{(\w+)\}/g, (match, key: string) => (key in values ? String(values[key]) : match))
+}
+
+/** "Giu, Ana, Bruno e mais 3 estão aqui". */
+export function presentLine(strings: RoomStrings, names: string[], count: number): string {
+  if (count === 0 || names.length === 0) return strings.nobody
+  const shown = names.slice(0, 3)
+  const rest = count - shown.length
+  const listed = rest > 0
+    ? fill(strings.andMore, { names: shown.join(', '), n: rest })
+    : shown.length === 1 ? shown[0] ?? ''
+      : fill(strings.and, { a: shown.slice(0, -1).join(', '), b: shown.at(-1) ?? '' })
+  return fill(count === 1 ? strings.hereOne : strings.hereMany, { names: listed })
+}

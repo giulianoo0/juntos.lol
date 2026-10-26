@@ -1,0 +1,143 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--frame-ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 4rem;
+  padding: var(--space-3) var(--space-8);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.brand:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: var(--radius-md);
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-5) var(--space-16);
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  --avatar-ring: var(--frame-ground);
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 2.5rem);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.form,
+.join,
+.or {
+  width: 100%;
+  max-width: 23.75rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* The password field grows out of the lock with the spring. */
+.reveal {
+  transform-origin: 0 100%;
+  animation: reveal var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+@keyframes reveal {
+  from {
+    scale: 0;
+    filter: blur(var(--blur-md));
+  }
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+
+.or {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.or span {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.join {
+  display: flex;
+  gap: var(--space-3);
+}
+
+@media (max-width: 30rem) {
+  .header {
+    padding: var(--space-3) var(--space-5);
+  }
+
+  .main {
+    justify-content: flex-start;
+    gap: var(--space-10);
+    padding-top: var(--space-12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation-name: fade;
+    animation-duration: var(--duration-fast);
+    animation-timing-function: var(--ease-out);
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+}

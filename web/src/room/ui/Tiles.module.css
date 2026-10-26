@@ -1,0 +1,210 @@
+.tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-3xl);
+  background: var(--tile);
+  isolation: isolate;
+}
+
+.tile[data-size="thumb"] {
+  border-radius: var(--radius-2xl);
+}
+
+.tile[data-camera],
+.tile[data-stage] {
+  background: var(--tile-2);
+}
+
+/* Video is black in either theme. */
+.tile[data-stage="media"],
+.tile[data-stage="live"] {
+  background: var(--black);
+}
+
+/* The speaking ring: drawn inside, so the grid never moves. */
+.tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--primary);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-hover);
+}
+
+.tile[data-speaking]::after {
+  opacity: 1;
+}
+
+.video,
+.stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+}
+
+.video > *,
+.stage > * {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.name {
+  position: absolute;
+  z-index: 2;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - var(--space-8));
+  height: 1.625rem;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--scrim);
+  -webkit-backdrop-filter: var(--scrim-filter);
+  backdrop-filter: var(--scrim-filter);
+  color: var(--on-scrim);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.tile[data-size="thumb"] .name {
+  left: var(--space-3);
+  bottom: var(--space-3);
+  height: 1.375rem;
+  padding: 0 var(--space-3);
+  font-size: var(--text-2xs);
+}
+
+/* Without a camera the thumb's name is quiet ink on the tile. */
+.tile[data-size="thumb"]:not([data-camera]) .name {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--text-muted);
+  padding: 0;
+}
+
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.crown {
+  color: var(--on-scrim-muted);
+}
+
+.tile[data-size="thumb"]:not([data-camera]) .crown {
+  color: var(--text-faint);
+}
+
+.corner {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The tile's buttons wait for the pointer, and stay for a touch screen. */
+.cornerButton,
+.cornerMenu {
+  opacity: 0;
+  transition: var(--transition-button), opacity var(--duration-fast) var(--ease-hover);
+}
+
+.tile:hover .cornerButton,
+.tile:hover .cornerMenu,
+.tile:focus-within .cornerButton,
+.tile:focus-within .cornerMenu,
+.cornerMenu[data-popup-open] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .cornerButton,
+  .cornerMenu {
+    opacity: 1;
+  }
+}
+
+.cornerMenu {
+  display: grid;
+  place-items: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--scrim);
+  -webkit-backdrop-filter: var(--scrim-filter);
+  backdrop-filter: var(--scrim-filter);
+  color: var(--on-scrim);
+  cursor: pointer;
+}
+
+.cornerMenu:active {
+  transform: scale(var(--press-scale));
+}
+
+.cornerMenu:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cornerMenu:hover {
+    background: var(--scrim-strong);
+  }
+}
+
+.stageTags {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-4);
+  left: var(--space-4);
+  display: flex;
+  gap: var(--space-2);
+  max-width: calc(100% - 10rem);
+}
+
+.tile[data-size="thumb"] .stageTags {
+  top: auto;
+  bottom: var(--space-3);
+  left: var(--space-3);
+  max-width: calc(100% - var(--space-6));
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 1.625rem;
+  padding: 0 var(--space-4) 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--scrim);
+  -webkit-backdrop-filter: var(--scrim-filter);
+  backdrop-filter: var(--scrim-filter);
+  color: var(--on-scrim);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.corner .tag {
+  padding-inline: var(--space-4);
+}

@@ -1,0 +1,184 @@
+/* Pills and round buttons: one physics for every button. The hover only
+   tints, the press gives a short `--press-scale`. */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0 var(--space-6);
+  border: 0;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+.pill:not(:disabled):active {
+  transform: scale(var(--press-scale));
+}
+
+.pill:focus-visible,
+.round:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.pill:disabled,
+.round:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.sm {
+  height: 2rem;
+  padding: 0 var(--space-4);
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.md {
+  height: var(--control-height);
+  padding: 0 var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.lg {
+  height: var(--round-button);
+}
+
+.block {
+  width: 100%;
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.primary {
+  background: var(--primary-fill);
+  color: var(--white);
+}
+
+.soft {
+  background: var(--button-secondary-bg);
+  color: var(--text);
+}
+
+.danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.glass {
+  background: var(--scrim);
+  -webkit-backdrop-filter: var(--scrim-filter);
+  backdrop-filter: var(--scrim-filter);
+  color: var(--on-scrim);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .primary:not(:disabled):hover {
+    background: var(--primary-fill-hover);
+  }
+
+  .soft:not(:disabled):hover {
+    background: var(--button-secondary-hover);
+  }
+
+  .danger:not(:disabled):hover {
+    background: color-mix(in oklab, var(--danger), var(--black) 8%);
+  }
+
+  .glass:not(:disabled):hover {
+    background: var(--scrim-strong);
+  }
+}
+
+.pill[aria-pressed="true"].soft,
+.pill[data-popup-open].soft {
+  background: var(--button-secondary-hover);
+}
+
+/* The round button. */
+.round {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+.round:not(:disabled):active {
+  transform: scale(var(--press-scale));
+}
+
+.round-lg {
+  width: var(--round-button);
+  height: var(--round-button);
+}
+
+.round-md {
+  width: var(--control-height);
+  height: var(--control-height);
+}
+
+.round-soft {
+  background: var(--button-secondary-bg);
+  color: var(--text);
+}
+
+.round-primary {
+  background: var(--primary-fill);
+  color: var(--white);
+}
+
+.round-scrim {
+  background: var(--scrim);
+  -webkit-backdrop-filter: var(--scrim-filter);
+  backdrop-filter: var(--scrim-filter);
+  color: var(--on-scrim);
+}
+
+.round[data-state="off"] {
+  background: var(--status-danger-soft);
+  color: var(--status-danger-ink);
+}
+
+.round[aria-pressed="true"].round-soft,
+.round[aria-expanded="true"].round-soft,
+.round[data-popup-open].round-soft {
+  background: var(--text);
+  color: var(--background);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .round-soft:not(:disabled):not([data-state="off"]):not([aria-pressed="true"]):not([aria-expanded="true"]):hover {
+    background: var(--button-secondary-hover);
+  }
+
+  .round-primary:not(:disabled):hover {
+    background: var(--primary-fill-hover);
+  }
+
+  .round-scrim:not(:disabled):hover {
+    background: var(--scrim-strong);
+  }
+
+  .round[data-state="off"]:not(:disabled):hover {
+    background: color-mix(in oklab, var(--status-danger-soft), var(--danger) 12%);
+  }
+}

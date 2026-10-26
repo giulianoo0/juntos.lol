@@ -1,0 +1,388 @@
+/* Os tokens do lawcore (packages/ui/src/styles/tokens.css), na medida do
+   juntos: só o que a sala, a entrada e a Home usam. Os nomes são os de lá,
+   para uma receita copiada de lá funcionar aqui sem tradução. O escuro vale
+   pelo sistema e por `html[data-theme="dark"]`; `data-theme="light"` força o
+   claro. */
+
+:root {
+  --sky-300: oklch(0.76 0.11 256);
+  --sky-400: oklch(0.664 0.147 257);
+  --sky-500: oklch(0.55 0.17 258);
+  --sky-600: oklch(0.5 0.18 259);
+  --red-300: oklch(0.8 0.1 25);
+  --red-500: oklch(0.637 0.208 25);
+  --red-600: oklch(0.577 0.213 25);
+  --red-700: oklch(0.505 0.19 25);
+  --green-400: oklch(0.79 0.17 150);
+  --green-500: oklch(0.72 0.15 150);
+  --green-600: oklch(0.627 0.194 149);
+  --amber-500: oklch(0.77 0.16 70);
+  --amber-600: oklch(0.67 0.16 58);
+
+  --black: oklch(0 0 0);
+  --white: oklch(1 0 0);
+  --grey-35: #f4f4f5;
+  --grey-55: #ededed;
+  --grey-60: #ececed;
+  --grey-75: #ededee;
+  --grey-85: #e2e2e4;
+  --grey-200: oklch(0.87 0 0);
+  --grey-310: #9b9b9b;
+  --grey-350: #8e8e93;
+  --grey-460: #6e6e6e;
+  --grey-515: #5f5f63;
+  --grey-635: #3d3f40;
+  --grey-695: #2f2f2f;
+  --grey-725: #282828;
+  --grey-740: #232322;
+  --grey-760: #1f1f1f;
+  --grey-805: #151515;
+  --grey-820: #111111;
+  --grey-850: #0f0f0f;
+
+  --radius: 0.625rem;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-full: 999px;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.78125rem;
+  --text-sm: 0.84375rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5625rem;
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --tracking-snug: -0.015em;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.375rem;
+  --space-3: 0.5rem;
+  --space-4: 0.75rem;
+  --space-5: 1rem;
+  --space-6: 1.25rem;
+  --space-8: 1.5rem;
+  --space-10: 2rem;
+  --space-12: 2.5rem;
+  --space-16: 3.25rem;
+
+  --control-height: 2.25rem;
+  --control-height-sm: 1.75rem;
+  --control-height-lg: 2.5rem;
+  --touch-target: 2.75rem;
+  /* O botão redondo da doca e a pílula ao lado dele (o canvas da sala). */
+  --round-button: 2.75rem;
+
+  /* A coluna lateral da sala (Chat | Pessoas) e a coluna dos palcos. */
+  --side-width: 21.25rem;
+  --stage-column: 20rem;
+  --dialog-width: 28rem;
+
+  --blur-xs: 2px;
+  --blur-sm: 4px;
+  --blur-md: 8px;
+  --blur-lg: 16px;
+  --blur-xl: 24px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-hover: ease;
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-press: 140ms;
+  --duration-fast: 160ms;
+  --duration-base: 220ms;
+  --duration-slow: 320ms;
+  --duration-flight: 440ms;
+
+  /* O spring popover (o "Relatório" do Skrivo): sai do gatilho com um
+     quique leve (bounce 0.25, 600 ms amostrados) e volta sem nenhum
+     (criticamente amortecido, 360 ms). Toda animação da sala usa estas. */
+  --ease-spring-pop: linear(
+    0, 0.058, 0.191, 0.352, 0.513, 0.656, 0.774, 0.865, 0.932, 0.977, 1.005,
+    1.021, 1.027, 1.028, 1.026, 1.022, 1.017, 1.013, 1.009, 1.006, 1.003,
+    1.001, 1, 1, 1
+  );
+  --ease-spring-settle: linear(
+    0, 0.073, 0.222, 0.382, 0.527, 0.648, 0.742, 0.814, 0.868, 0.907, 0.935,
+    0.955, 0.969, 0.978, 0.985, 0.99, 1
+  );
+  --duration-spring-pop: 600ms;
+  --duration-spring-settle: 360ms;
+  --ease-resist: var(--ease-spring-settle);
+  --duration-resize: 280ms;
+  --ease-slide: linear(
+    0, 0.047, 0.156, 0.29, 0.427, 0.553, 0.663, 0.754, 0.826, 0.882, 0.923,
+    0.953, 0.974, 0.988, 0.997, 1.002, 1.005, 1.006, 1.006, 1.006, 1.005,
+    1.004, 1.003, 1.003, 1.002, 1
+  );
+  --duration-slide: 450ms;
+
+  --press-scale: 0.97;
+  --press-scale-card: 0.99;
+  --transition-tint:
+    background-color var(--duration-fast) var(--ease-hover),
+    border-color var(--duration-fast) var(--ease-hover),
+    color var(--duration-fast) var(--ease-hover),
+    box-shadow var(--duration-fast) var(--ease-hover);
+  --transition-press: transform var(--duration-press) var(--ease-out);
+  --transition-button: var(--transition-tint), var(--transition-press);
+
+  --layer-float: 60;
+  --layer-dialog: 80;
+  --layer-over-dialog: 90;
+
+  color-scheme: light;
+
+  /* Claro: o chão cinza, o cartão branco por cima. */
+  --background: var(--grey-75);
+  --frame-ground: var(--grey-75);
+  --frame-side: #f7f7f8;
+  --surface: var(--white);
+  --surface-2: var(--grey-60);
+  --surface-3: var(--grey-85);
+  --overlay: var(--white);
+  /* O ladrilho de quem está sem câmera, e o de quem está com ela antes do
+     primeiro quadro. */
+  --tile: var(--white);
+  --tile-2: var(--grey-85);
+
+  --text: var(--grey-820);
+  --text-muted: var(--grey-515);
+  --text-faint: var(--grey-350);
+  --line: rgb(0 0 0 / 8%);
+  --line-strong: rgb(0 0 0 / 14%);
+  --line-overlay: oklch(0.915 0 0);
+
+  --field: color-mix(in oklab, var(--grey-820) 5%, transparent);
+  --field-focus-line: color-mix(in oklab, var(--text-faint), var(--primary) 35%);
+
+  --primary: var(--sky-500);
+  --primary-hover: var(--sky-600);
+  --on-primary: var(--white);
+  /* O botão azul cheio (Compartilhar, Entrar, Permitir): o mesmo nos dois
+     temas, com tinta branca (4,9:1). */
+  --primary-fill: var(--sky-500);
+  --primary-fill-hover: var(--sky-600);
+  --danger: var(--red-600);
+  --on-danger: var(--white);
+  --focus: var(--sky-500);
+
+  --button-secondary-bg: color-mix(in oklab, var(--text) 5%, transparent);
+  --button-secondary-hover: color-mix(in oklab, var(--text) 10%, transparent);
+  /* The same, opaque over the ground: an expanding pill's face covers its neighbour. */
+  --button-secondary-solid: color-mix(in oklab, var(--text) 5%, var(--frame-ground));
+  --button-secondary-solid-hover: color-mix(in oklab, var(--text) 10%, var(--frame-ground));
+
+  --hover: color-mix(in oklab, var(--text) 5%, transparent);
+  --hover-strong: color-mix(in oklab, var(--text) 10%, transparent);
+
+  --segment-track: color-mix(in oklab, var(--black) 6%, transparent);
+  --segment-chip: var(--white);
+
+  --status-success: var(--green-600);
+  --status-danger: var(--red-600);
+  --status-danger-soft: color-mix(in oklab, var(--red-600) 12%, transparent);
+  --status-danger-ink: oklch(0.45 0.17 25);
+  --status-warning: var(--amber-600);
+
+  --popover-glass: color-mix(in oklab, var(--white) 72%, transparent);
+  --popover-glass-filter: blur(28px) saturate(160%);
+  /* Sobre a imagem (o nome no ladrilho, as tags do palco): tinta escura
+     em vidro, a mesma nos dois temas, porque o vídeo não muda com o tema. */
+  --scrim: color-mix(in oklab, var(--black) 45%, transparent);
+  --scrim-strong: color-mix(in oklab, var(--black) 62%, transparent);
+  --scrim-filter: blur(var(--blur-lg));
+  --on-scrim: var(--white);
+  --on-scrim-muted: rgb(255 255 255 / 70%);
+  --veil: color-mix(in oklab, var(--black) 40%, transparent);
+
+  --shadow-float:
+    0 1px 2px oklch(0 0 0 / 0.04), 0 16px 40px -18px oklch(0 0 0 / 0.14);
+  --shadow-chip:
+    inset 0 1px 0 oklch(1 0 0 / 0.1), 0 2px 4px -1px oklch(0 0 0 / 0.05),
+    0 0 0 1px oklch(0 0 0 / 0.06);
+
+  --hue-1: oklch(0.62 0.15 255);
+  --hue-1-bg: oklch(0.9 0.06 255);
+  --hue-1-ink: oklch(0.45 0.12 255);
+  --hue-2: oklch(0.62 0.15 150);
+  --hue-2-bg: oklch(0.9 0.06 150);
+  --hue-2-ink: oklch(0.45 0.11 150);
+  --hue-3: oklch(0.62 0.15 70);
+  --hue-3-bg: oklch(0.9 0.06 70);
+  --hue-3-ink: oklch(0.47 0.1 60);
+  --hue-4: oklch(0.62 0.15 320);
+  --hue-4-bg: oklch(0.9 0.06 320);
+  --hue-4-ink: oklch(0.47 0.13 320);
+  --hue-5: oklch(0.62 0.13 200);
+  --hue-5-bg: oklch(0.9 0.05 200);
+  --hue-5-ink: oklch(0.45 0.09 200);
+  --hue-6: oklch(0.62 0.15 25);
+  --hue-6-bg: oklch(0.9 0.06 25);
+  --hue-6-ink: oklch(0.48 0.14 25);
+  --hue-7: oklch(0.62 0.15 355);
+  --hue-7-bg: oklch(0.9 0.06 355);
+  --hue-7-ink: oklch(0.47 0.13 355);
+  --hue-8: oklch(0.62 0.15 290);
+  --hue-8-bg: oklch(0.9 0.06 290);
+  --hue-8-ink: oklch(0.47 0.13 290);
+}
+
+@media (pointer: coarse) {
+  :root {
+    --control-height: var(--touch-target);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --press-scale: 1;
+    --press-scale-card: 1;
+  }
+}
+
+/* O escuro: o mesmo bloco para o sistema e para a escolha explícita. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: var(--grey-850);
+    --frame-ground: var(--grey-850);
+    --frame-side: #1b1b1a;
+    --surface: var(--grey-760);
+    --surface-2: var(--grey-725);
+    --surface-3: var(--grey-635);
+    --overlay: var(--grey-725);
+    --tile: var(--grey-740);
+    --tile-2: #2e2e2d;
+    --text: var(--grey-55);
+    --text-muted: var(--grey-310);
+    --text-faint: var(--grey-460);
+    --line: rgb(255 255 255 / 7%);
+    --line-strong: rgb(255 255 255 / 12%);
+    --line-overlay: oklch(0.265 0 0);
+    --field: color-mix(in oklab, var(--white) 4%, transparent);
+    --field-focus-line: color-mix(in oklab, var(--text-faint), var(--primary) 30%);
+    --primary: var(--sky-400);
+    --primary-hover: var(--sky-300);
+    --on-primary: oklch(0.15 0.03 262);
+    --danger: var(--red-500);
+    --focus: var(--sky-400);
+    --hover: color-mix(in oklab, var(--text) 7%, transparent);
+    --hover-strong: color-mix(in oklab, var(--text) 12%, transparent);
+    --button-secondary-bg: color-mix(in oklab, var(--text) 7%, transparent);
+    --button-secondary-hover: color-mix(in oklab, var(--text) 12%, transparent);
+    --button-secondary-solid: color-mix(in oklab, var(--text) 7%, var(--frame-ground));
+    --button-secondary-solid-hover: color-mix(in oklab, var(--text) 12%, var(--frame-ground));
+    --segment-track: color-mix(in oklab, var(--white) 6%, transparent);
+    --segment-chip: var(--grey-725);
+    --status-success: var(--green-500);
+    --status-danger: var(--red-500);
+    --status-danger-soft: color-mix(in oklab, var(--red-500) 22%, transparent);
+    --status-danger-ink: var(--red-300);
+    --status-warning: var(--amber-500);
+    --popover-glass: color-mix(in oklab, var(--grey-725) 72%, transparent);
+    --shadow-float:
+      0 1px 2px rgb(0 0 0 / 0.4), 0 20px 44px -20px rgb(0 0 0 / 0.7);
+    --shadow-chip:
+      inset 0 1px 0 oklch(1 0 0 / 0.06), 0 0 0 1px oklch(1 0 0 / 0.07);
+    --hue-1-bg: oklch(0.42 0.08 255);
+    --hue-1-ink: oklch(0.86 0.09 255);
+    --hue-2-bg: oklch(0.42 0.08 150);
+    --hue-2-ink: oklch(0.86 0.09 150);
+    --hue-3-bg: oklch(0.44 0.08 60);
+    --hue-3-ink: oklch(0.87 0.09 60);
+    --hue-4-bg: oklch(0.42 0.08 320);
+    --hue-4-ink: oklch(0.86 0.09 320);
+    --hue-5-bg: oklch(0.42 0.07 200);
+    --hue-5-ink: oklch(0.86 0.08 200);
+    --hue-6-bg: oklch(0.43 0.08 25);
+    --hue-6-ink: oklch(0.86 0.09 25);
+    --hue-7-bg: oklch(0.42 0.08 355);
+    --hue-7-ink: oklch(0.86 0.09 355);
+    --hue-8-bg: oklch(0.42 0.08 290);
+    --hue-8-ink: oklch(0.86 0.09 290);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: var(--grey-850);
+  --frame-ground: var(--grey-850);
+  --frame-side: #1b1b1a;
+  --surface: var(--grey-760);
+  --surface-2: var(--grey-725);
+  --surface-3: var(--grey-635);
+  --overlay: var(--grey-725);
+  --tile: var(--grey-740);
+  --tile-2: #2e2e2d;
+  --text: var(--grey-55);
+  --text-muted: var(--grey-310);
+  --text-faint: var(--grey-460);
+  --line: rgb(255 255 255 / 7%);
+  --line-strong: rgb(255 255 255 / 12%);
+  --line-overlay: oklch(0.265 0 0);
+  --field: color-mix(in oklab, var(--white) 4%, transparent);
+  --field-focus-line: color-mix(in oklab, var(--text-faint), var(--primary) 30%);
+  --primary: var(--sky-400);
+  --primary-hover: var(--sky-300);
+  --on-primary: oklch(0.15 0.03 262);
+  --danger: var(--red-500);
+  --focus: var(--sky-400);
+  --hover: color-mix(in oklab, var(--text) 7%, transparent);
+  --hover-strong: color-mix(in oklab, var(--text) 12%, transparent);
+  --button-secondary-bg: color-mix(in oklab, var(--text) 7%, transparent);
+  --button-secondary-hover: color-mix(in oklab, var(--text) 12%, transparent);
+  --button-secondary-solid: color-mix(in oklab, var(--text) 7%, var(--frame-ground));
+  --button-secondary-solid-hover: color-mix(in oklab, var(--text) 12%, var(--frame-ground));
+  --segment-track: color-mix(in oklab, var(--white) 6%, transparent);
+  --segment-chip: var(--grey-725);
+  --status-success: var(--green-500);
+  --status-danger: var(--red-500);
+  --status-danger-soft: color-mix(in oklab, var(--red-500) 22%, transparent);
+  --status-danger-ink: var(--red-300);
+  --status-warning: var(--amber-500);
+  --popover-glass: color-mix(in oklab, var(--grey-725) 72%, transparent);
+  --shadow-float:
+    0 1px 2px rgb(0 0 0 / 0.4), 0 20px 44px -20px rgb(0 0 0 / 0.7);
+  --shadow-chip:
+    inset 0 1px 0 oklch(1 0 0 / 0.06), 0 0 0 1px oklch(1 0 0 / 0.07);
+  --hue-1-bg: oklch(0.42 0.08 255);
+  --hue-1-ink: oklch(0.86 0.09 255);
+  --hue-2-bg: oklch(0.42 0.08 150);
+  --hue-2-ink: oklch(0.86 0.09 150);
+  --hue-3-bg: oklch(0.44 0.08 60);
+  --hue-3-ink: oklch(0.87 0.09 60);
+  --hue-4-bg: oklch(0.42 0.08 320);
+  --hue-4-ink: oklch(0.86 0.09 320);
+  --hue-5-bg: oklch(0.42 0.07 200);
+  --hue-5-ink: oklch(0.86 0.08 200);
+  --hue-6-bg: oklch(0.43 0.08 25);
+  --hue-6-ink: oklch(0.86 0.09 25);
+  --hue-7-bg: oklch(0.42 0.08 355);
+  --hue-7-ink: oklch(0.86 0.09 355);
+  --hue-8-bg: oklch(0.42 0.08 290);
+  --hue-8-ink: oklch(0.86 0.09 290);
+}
+
+/* Sem transparência: todo vidro vira sólido, sem desfoque. */
+@media (prefers-reduced-transparency: reduce) {
+  :root:root {
+    --popover-glass: var(--overlay);
+    --popover-glass-filter: none;
+    --scrim: var(--scrim-strong);
+    --scrim-filter: none;
+  }
+}
