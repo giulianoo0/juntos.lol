@@ -148,9 +148,9 @@ const AUDIO_FRAME_BYTES = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * 2
  * thread with everything else on the page; without this much slack every
  * late read was a hole in the sound.
  */
-const AUDIO_LEAD_S = 0.12
+const AUDIO_LEAD_S = 0.25
 /** Frames queued further out than this are the link catching up after a stall: they are let go so the sound stays close to the picture. */
-const AUDIO_MAX_LEAD_S = 0.5
+const AUDIO_MAX_LEAD_S = 0.75
 
 /** Interleaved little-endian 16-bit stereo into the buffer's planar channels. */
 export function decodeInterleavedS16(frame: Uint8Array, buffer: AudioBuffer): void {

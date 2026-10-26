@@ -140,7 +140,8 @@ function displayConstraints(quality: ScreenQuality): MediaTrackConstraints {
 export function requestScreenStream(qualityId: ScreenQualityId = loadScreenQuality()): Promise<MediaStream> {
   const options: DisplayMediaStreamOptions & Record<string, unknown> = {
     video: displayConstraints(screenQuality(qualityId)),
-    audio: true,
+    // Voice-call processing would squash a film's soundtrack.
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48_000 },
     systemAudio: 'include',
     selfBrowserSurface: 'exclude',
     surfaceSwitching: 'include',
@@ -463,9 +464,15 @@ export interface ScreenWatcher {
  * RTT alone (~50 ms), thinner than one late 20 ms Opus group crossing the
  * relay, and the audio ring never rebuilds after running dry: every hiccup
  * was a gap and then a skip. Video and audio share the one clock, so they
- * stay in step at the cost of ~100 ms more delay.
+ * stay in step at the cost of a quarter second more delay.
  */
-const SCREEN_LATENCY_MS = 120
+const SCREEN_LATENCY_MS = 250
+/**
+ * Without a ceiling the player runs unbuffered: a group later than the floor
+ * is thrown away and the ring skips ahead, so the sound stuttered at every
+ * burst of the picture. With one it waits out the late group instead.
+ */
+const SCREEN_MAX_LATENCY_MS = 1_000
 /** How long a jump waits between dropping the old subscriptions and opening new ones. */
 const RESUBSCRIBE_GAP_MS = 1_500
 /**
@@ -509,7 +516,7 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
     const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
     const sync = new Watch.Sync({
-      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli },
+      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli, max: SCREEN_MAX_LATENCY_MS as Watch.Net.Time.Milli },
       connection: connection.established,
       video: videoSource.out.jitter,
       audio: audioSource.out.jitter,

@@ -83,8 +83,9 @@ h1, h2, p { margin-top: 0; }
 .screen-empty p { margin: 0; max-width: 34ch; }
 .screen-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-top: 6px; }
 .screen-bar { position: absolute; left: 50%; bottom: 14px; z-index: 2; transform: translateX(-50%); user-select: none; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 28px); padding: 6px; border-radius: 999px; border: 1px solid rgba(255,255,255,.06); background: rgba(12,13,18,.94); opacity: 0; translate: 0 8px; transition: opacity 180ms var(--ease), translate 180ms var(--ease); }
-.screen-stage:hover .screen-bar, .screen-stage:focus-within .screen-bar, .screen-bar:has([aria-expanded="true"]) { opacity: 1; translate: 0 0; }
-@media (hover: none) { .screen-bar { opacity: 1; translate: 0 0; } }
+.screen-stage.is-active .screen-bar, .screen-bar:hover, .screen-bar:has(:focus-visible), .screen-bar:has([aria-expanded="true"]), .screen-bar:has(.volume-control.is-open) { opacity: 1; translate: 0 0; }
+.screen-stage:not(.is-empty):not(.is-active) { cursor: none; }
+.screen-stage:not(.is-empty):not(.is-active):has(.screen-bar:hover, .screen-bar [aria-expanded="true"], .screen-bar .volume-control.is-open) { cursor: auto; }
 .screen-bar .ui-button, .screen-actions .ui-button, .screen-bar .icon-button { height: 34px; white-space: nowrap; flex: 0 0 auto; }
 .screen-bar .ui-button--primary, .screen-actions .ui-button--primary { padding: 0 15px; font-size: 12.5px; box-shadow: none; }
 .screen-stop { border: 0; border-radius: 999px; padding: 0 15px; font-size: 12.5px; color: var(--danger); background: rgba(240,67,78,.1); }

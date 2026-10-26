@@ -21,6 +21,10 @@ import { SoundMenu } from './SoundMenu'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
 
 /** Columns that keep every tile as close to a screen's own shape as possible. */
+/** The bar and the cursor go away after this long without the pointer moving, as on the player. */
+const BAR_HIDE_MS = 2_500
+const BAR_HIDE_TOUCH_MS = 4_000
+
 function gridColumns(count: number): number {
   if (count <= 1) return 1
   if (count <= 4) return 2
@@ -66,6 +70,24 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   const [pickerMode, setPickerMode] = useState<'start' | 'switch'>('start')
   const [pickerError, setPickerError] = useState<string | null>(null)
   const reducedMotion = useReducedMotion() ?? false
+  const [barActive, setBarActive] = useState(false)
+  const barTimerRef = useRef<number | null>(null)
+  const revealBar = useCallback((event: React.PointerEvent) => {
+    if (barTimerRef.current !== null) window.clearTimeout(barTimerRef.current)
+    setBarActive(true)
+    barTimerRef.current = window.setTimeout(() => {
+      barTimerRef.current = null
+      setBarActive(false)
+    }, event.pointerType === 'mouse' ? BAR_HIDE_MS : BAR_HIDE_TOUCH_MS)
+  }, [])
+  const hideBar = useCallback(() => {
+    if (barTimerRef.current !== null) window.clearTimeout(barTimerRef.current)
+    barTimerRef.current = null
+    setBarActive(false)
+  }, [])
+  useEffect(() => () => {
+    if (barTimerRef.current !== null) window.clearTimeout(barTimerRef.current)
+  }, [])
   const share = useScreenShare({
     roomId,
     memberId,
@@ -211,8 +233,11 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   return (
     <div
       ref={stageRef}
-      className={`player-wrap screen-stage ${tiles.length === 0 ? 'is-empty' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`}
+      className={`player-wrap screen-stage ${tiles.length === 0 ? 'is-empty' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''} ${barActive ? 'is-active' : ''}`}
       onDoubleClick={tiles.length > 0 ? toggleFullscreen : undefined}
+      onPointerMove={revealBar}
+      onPointerDown={revealBar}
+      onPointerLeave={hideBar}
     >
       <LayoutGroup>
         <div className={`screen-grid ${focused ? 'is-focused' : ''}`} style={gridStyle}>

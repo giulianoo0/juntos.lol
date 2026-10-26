@@ -32,7 +32,9 @@ export function setBoost(media: HTMLMediaElement, gain: number): number {
     try {
       const context = new AudioContext()
       const node = context.createGain()
-      context.createMediaElementSource(media).connect(node).connect(context.destination)
+      // Past full volume the peaks would clip; the limiter flattens them instead.
+      const limiter = new DynamicsCompressorNode(context, { threshold: -1, knee: 0, ratio: 20, attack: 0.003, release: 0.25 })
+      context.createMediaElementSource(media).connect(node).connect(limiter).connect(context.destination)
       graph = { context, gain: node }
       graphs.set(media, graph)
     } catch {

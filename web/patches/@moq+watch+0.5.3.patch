@@ -1,5 +1,5 @@
 diff --git a/node_modules/@moq/watch/source-CoU8Fj72.js b/node_modules/@moq/watch/source-CoU8Fj72.js
-index 1674adf..93b296b 100644
+index 1674adf..c81ae07 100644
 --- a/node_modules/@moq/watch/source-CoU8Fj72.js
 +++ b/node_modules/@moq/watch/source-CoU8Fj72.js
 @@ -195,13 +195,14 @@ var te = class e {
@@ -54,7 +54,26 @@ index 1674adf..93b296b 100644
  		if (!r) return;
  		let i = t.relativeBroadcast(e, r.broadcast);
  		if (!i) return;
-@@ -1146,6 +1159,8 @@ function Te(e, t) {
+@@ -708,9 +721,15 @@ var O = .001, k = .2, A = class {
+ 		}), this.#t.run((e) => {
+ 			let t = e.get(this.source.out.root);
+ 			if (!t) return;
+-			let n = new GainNode(t.context, { gain: e.get(this.in.volume) });
+-			t.connect(n), e.set(this.#n, n), e.run((e) => {
+-				e.get(this.#e.enabled) && (n.connect(t.context.destination), e.cleanup(() => n.disconnect()));
++			let n = new GainNode(t.context, { gain: e.get(this.in.volume) }), l = new DynamicsCompressorNode(t.context, {
++				threshold: -1,
++				knee: 0,
++				ratio: 20,
++				attack: .003,
++				release: .25
++			});
++			t.connect(n), n.connect(l), e.set(this.#n, n), e.run((e) => {
++				e.get(this.#e.enabled) && (l.connect(t.context.destination), e.cleanup(() => l.disconnect()));
+ 			});
+ 		}), this.#t.run((e) => {
+ 			let t = e.get(this.#n);
+@@ -1146,6 +1165,8 @@ function Te(e, t) {
  }
  //#endregion
  //#region src/video/decoder.ts
@@ -63,7 +82,7 @@ index 1674adf..93b296b 100644
  var Ee = n.Milli(500), De = class {
  	in;
  	source;
-@@ -1273,7 +1288,7 @@ var Ee = n.Milli(500), De = class {
+@@ -1273,7 +1294,7 @@ var Ee = n.Milli(500), De = class {
  	constructor(e) {
  		this.sync = e.sync, this.paced = e.paced, this.broadcast = e.broadcast, this.track = e.track, this.config = e.config, this.stats = e.stats, this.#r.run((e) => {
  			let t = e.get(this.paced);
@@ -72,7 +91,7 @@ index 1674adf..93b296b 100644
  		}), this.#r.run(this.#i.bind(this));
  	}
  	#i(e) {
-@@ -1313,7 +1328,8 @@ var Ee = n.Milli(500), De = class {
+@@ -1313,7 +1334,8 @@ var Ee = n.Milli(500), De = class {
  			optimizeForLatency: this.config.optimizeForLatency,
  			flip: !1
  		});
@@ -82,7 +101,7 @@ index 1674adf..93b296b 100644
  		e.spawn(async () => {
  			for (;;) {
  				let e = await a.next();
-@@ -1331,7 +1347,12 @@ var Ee = n.Milli(500), De = class {
+@@ -1331,7 +1353,12 @@ var Ee = n.Milli(500), De = class {
  				this.stats.update((e) => ({
  					frameCount: (e?.frameCount ?? 0) + 1,
  					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
@@ -96,7 +115,7 @@ index 1674adf..93b296b 100644
  			}
  		});
  	}
-@@ -1353,7 +1374,8 @@ var Ee = n.Milli(500), De = class {
+@@ -1353,7 +1380,8 @@ var Ee = n.Milli(500), De = class {
  			optimizeForLatency: this.config.optimizeForLatency,
  			flip: !1
  		});
@@ -106,7 +125,7 @@ index 1674adf..93b296b 100644
  		e.spawn(async () => {
  			for (;;) {
  				let e = await c.next();
-@@ -1366,11 +1388,15 @@ var Ee = n.Milli(500), De = class {
+@@ -1366,11 +1394,15 @@ var Ee = n.Milli(500), De = class {
  					frameCount: (e?.frameCount ?? 0) + 1,
  					bytesReceived: (e?.bytesReceived ?? 0) + t.payload.byteLength
  				})), d !== void 0 && e.continuous && this.#l(n.Milli.fromMicro(d), n.Milli.fromMicro(t.timestamp)), d = t.timestamp, r.state === "closed") break;
