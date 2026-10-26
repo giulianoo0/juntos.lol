@@ -56,6 +56,7 @@ type Hub struct {
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
 	capabilities map[string]map[string]string
+	join         joinBook
 	closed       bool
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -235,6 +236,12 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {
 		writeHandshakeError(conn, "server_stopping")
+		return
+	}
+	if errCode, sent := h.admit(conn, storedRoom, hello); errCode != "" || sent {
+		if !sent {
+			writeHandshakeError(conn, errCode)
+		}
 		return
 	}
 	client := &client{
@@ -450,7 +457,7 @@ func (r *roomConn) run() {
 				r.playing = event.State.Playing
 				r.dropGate()
 			}
-			r.broadcast(event)
+			r.deliver(event)
 			if r.dropped.Swap(false) {
 				r.broadcast(Outbound{Type: "roomUpdated"})
 			}
@@ -548,6 +555,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		Type: "members", ControllerID: r.controllerID, Members: members,
 	})
 	r.broadcastWaiting()
+	r.joined(request.client, claimsOwnership)
 	request.result <- ""
 }
 
@@ -824,6 +832,8 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.touch()
 	case "media", "hostMute", "hostCamOff":
 		r.handleCall(event.client, message)
+	case "admit", "deny":
+		r.handleAdmission(event.client, message)
 	}
 }
 

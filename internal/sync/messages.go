@@ -33,6 +33,8 @@ type Inbound struct {
 	// Mic and Cam on a media message; a field left out keeps its value.
 	Mic *bool `json:"mic,omitempty"`
 	Cam *bool `json:"cam,omitempty"`
+	// Ticket on a hello is the proof a password room's password was given.
+	Ticket string `json:"ticket,omitempty"`
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The
@@ -78,9 +80,14 @@ type Outbound struct {
 	DeadlineMs    int64               `json:"deadlineMs,omitempty"`
 	HostSubtitles *HostSubtitles      `json:"hostSubtitles,omitempty"`
 	// Mic and Cam on a forceMedia: what the host just turned off for this member.
-	Mic        *bool `json:"mic,omitempty"`
-	Cam        *bool `json:"cam,omitempty"`
-	closeAfter bool
+	Mic *bool `json:"mic,omitempty"`
+	Cam *bool `json:"cam,omitempty"`
+	// RequestID and Nickname on a knock: who is waiting in the lobby.
+	RequestID string `json:"requestId,omitempty"`
+	Nickname  string `json:"nickname,omitempty"`
+	// Set on an event from outside the loop that only the host may see.
+	toController bool
+	closeAfter   bool
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.
