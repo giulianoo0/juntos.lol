@@ -1,0 +1,135 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-dialog);
+  background: var(--veil);
+  transition: opacity var(--duration-spring-settle) var(--ease-out);
+}
+
+.backdrop[data-starting-style],
+.backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.popup {
+  position: fixed;
+  z-index: var(--layer-dialog);
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  width: min(var(--dialog-width), calc(100vw - var(--space-8)));
+  max-height: calc(100dvh - var(--space-12));
+  padding: var(--space-6);
+  overflow-y: auto;
+  translate: -50% -50%;
+  border-radius: var(--radius-3xl);
+  background: var(--overlay);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  outline: none;
+  transform-origin: 50% 50%;
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    filter var(--duration-spring-pop) var(--ease-spring-pop),
+    opacity var(--duration-base) var(--ease-out);
+}
+
+.popup[data-wide] {
+  width: min(36rem, calc(100vw - var(--space-8)));
+}
+
+.popup[data-starting-style],
+.popup[data-ending-style] {
+  scale: 0;
+  filter: blur(var(--blur-md));
+  opacity: 0;
+}
+
+.popup[data-ending-style] {
+  transition-duration: var(--duration-spring-settle);
+  transition-timing-function: var(--ease-spring-settle);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-snug);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--control-height);
+  height: var(--control-height);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--button-secondary-bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+.close:active {
+  transform: scale(var(--press-scale));
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .close:hover {
+    background: var(--button-secondary-hover);
+    color: var(--text);
+  }
+}
+
+/* A phone: a sheet from below, on the drawer's curve. */
+@media (max-width: 40rem) {
+  .popup,
+  .popup[data-wide] {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-height: 92dvh;
+    translate: none;
+    padding-bottom: calc(var(--space-6) + env(safe-area-inset-bottom));
+    border-radius: var(--radius-3xl) var(--radius-3xl) 0 0;
+    transition: transform var(--duration-slow) var(--ease-drawer);
+  }
+
+  .popup[data-starting-style],
+  .popup[data-ending-style] {
+    scale: 1;
+    filter: none;
+    opacity: 1;
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popup,
+  .popup[data-wide] {
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .popup[data-starting-style],
+  .popup[data-ending-style] {
+    scale: 1;
+    filter: none;
+    transform: none;
+    opacity: 0;
+  }
+}

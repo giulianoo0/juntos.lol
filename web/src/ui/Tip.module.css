@@ -1,0 +1,44 @@
+.positioner {
+  z-index: var(--layer-over-dialog);
+}
+
+.trigger {
+  display: inline-flex;
+}
+
+/* Ink on the page's colour, small, quick: the lawcore's tip. Text tips are
+   the one popup outside the spring (lawcore-design-eng, motion.md). */
+.tip {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--text);
+  color: var(--background);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  white-space: nowrap;
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.tip[data-starting-style],
+.tip[data-ending-style] {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+.tip[data-instant] {
+  transition-duration: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tip {
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .tip[data-starting-style],
+  .tip[data-ending-style] {
+    transform: none;
+  }
+}

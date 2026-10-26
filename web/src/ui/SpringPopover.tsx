@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactElement,
   type ReactNode,
   type RefObject,
   type TransitionEvent,
@@ -17,7 +18,7 @@ const SETTLE_FALLBACK_MS = 420
 export interface SpringPresence<T extends HTMLElement> {
   /** Render the popup while this is true: from the opening to the settle. */
   present: boolean
-  ref: RefObject<T | null>
+  ref: RefObject<T>
   /** Spread on the popup (it carries the `spring` class). */
   props: {
     'data-ending-style': '' | undefined
@@ -74,9 +75,14 @@ export function useSpringPresence<T extends HTMLElement>(open: boolean, identity
 
 /** The spring alone, for a popup with a look of its own. */
 export const springClass = styles.spring
+/** The popover's own panel and positioner, for a popover built by hand. */
+export const springPopupClass = styles.popup
+export const springPositionerClass = styles.positioner
 
 export interface SpringPopoverProps {
-  trigger: ReactNode
+  trigger?: ReactNode
+  /** The trigger element itself (an `IconPill`), instead of a plain button. */
+  triggerRender?: ReactElement<Record<string, unknown>>
   triggerClassName?: string
   /** The trigger's accessible name and hover tip, when it shows only an icon. */
   triggerLabel?: string
@@ -103,6 +109,7 @@ export interface SpringPopoverProps {
 export function SpringPopover({
   trigger,
   triggerClassName,
+  triggerRender,
   triggerLabel,
   triggerAttributes,
   title,
@@ -125,8 +132,9 @@ export function SpringPopover({
     <Popover.Root open={open} onOpenChange={change}>
       <Popover.Trigger
         className={triggerClassName}
+        render={triggerRender}
         aria-label={triggerLabel}
-        title={triggerLabel}
+        title={triggerRender ? undefined : triggerLabel}
         {...triggerAttributes}
       >
         {trigger}

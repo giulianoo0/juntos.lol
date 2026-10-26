@@ -1,0 +1,27 @@
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: var(--radius-full);
+  background: var(--avatar-bg);
+  color: var(--avatar-ink);
+  font-size: calc(var(--avatar-size) * 0.4);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  user-select: none;
+}
+
+.stack {
+  display: inline-flex;
+}
+
+/* The ring is the ground's colour, so each face cuts into the one behind. */
+.stacked {
+  box-shadow: 0 0 0 2px var(--avatar-ring, var(--frame-ground));
+}
+
+.stacked + .stacked {
+  margin-inline-start: calc(var(--avatar-size) * -0.25);
+}
