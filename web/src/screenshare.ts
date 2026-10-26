@@ -467,12 +467,6 @@ export interface ScreenWatcher {
  * stay in step at the cost of a quarter second more delay.
  */
 const SCREEN_LATENCY_MS = 250
-/**
- * Without a ceiling the player runs unbuffered: a group later than the floor
- * is thrown away and the ring skips ahead, so the sound stuttered at every
- * burst of the picture. With one it waits out the late group instead.
- */
-const SCREEN_MAX_LATENCY_MS = 1_000
 /** How long a jump waits between dropping the old subscriptions and opening new ones. */
 const RESUBSCRIBE_GAP_MS = 1_500
 /**
@@ -516,7 +510,7 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
     const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
     const sync = new Watch.Sync({
-      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli, max: SCREEN_MAX_LATENCY_MS as Watch.Net.Time.Milli },
+      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli },
       connection: connection.established,
       video: videoSource.out.jitter,
       audio: audioSource.out.jitter,
