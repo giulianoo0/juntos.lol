@@ -100,6 +100,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
           waiting={waiting}
         />
         <div className={styles.body} data-panel={panelOpen || undefined}>
+          <div className={styles.mainColumn}>
           <main className={styles.main}>
             {layout.kind === 'grid' ? (
               <div className={styles.grid} style={{ '--columns': columns } as CSSProperties} data-count={layout.tiles.length}>
@@ -132,6 +133,16 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
               </div>
             )}
           </main>
+          <Dock
+            panelOpen={panelOpen && tab === 'chat'}
+            onTogglePanel={() => {
+              if (panelOpen && tab === 'chat') { setPanelOpen(false); return }
+              setTab('chat')
+              setPanelOpen(true)
+            }}
+            onShare={share}
+          />
+          </div>
           {narrow && panelOpen ? <div className={styles.veil} onClick={() => setPanelOpen(false)} aria-hidden="true" /> : null}
           <aside className={styles.side} aria-label={strings.panel} {...(panelOpen ? {} : { inert: '' })}>
             <div className={styles.sideInner}>
@@ -139,15 +150,6 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
             </div>
           </aside>
         </div>
-        <Dock
-          panelOpen={panelOpen && tab === 'chat'}
-          onTogglePanel={() => {
-            if (panelOpen && tab === 'chat') { setPanelOpen(false); return }
-            setTab('chat')
-            setPanelOpen(true)
-          }}
-          onShare={share}
-        />
       </div>
       <Modal
         open={sharePicker !== null}

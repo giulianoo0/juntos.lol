@@ -105,6 +105,18 @@
   height: 1.125rem;
 }
 
+/* In flow, the button is as wide as its face, so the row makes room. */
+.pill[data-flow] {
+  width: auto;
+  min-width: var(--pill-size);
+}
+
+.pill[data-flow] .face {
+  position: relative;
+  inset: auto;
+  height: 100%;
+}
+
 /* The name grows 0fr → 1fr to its exact width on the critically damped
    spring, fading in over it; leaving, it fades out fast first. */
 .label {

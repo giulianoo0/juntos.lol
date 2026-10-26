@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import { openTorrent, torrentCapacity, type TorrentSession, type TorrentStats, type TorrentVideoFile, type WorkerProbe } from '../torrent'
 import { WorkerProbes } from './WorkerProbes'
 import { torrentErrorKey } from '../torrentErrors'
-import { useMorphingSize } from '../ui/useMorphingSize'
-import { useMorphingStep } from '../ui/useMorphingStep'
-import { StepBack } from '../ui/StepBack'
+import { Film, Magnet, Play } from 'lucide-react'
+import { Field } from '../ui/Field'
+import { Pill } from '../ui/Pill'
+import styles from './Picker.module.css'
 import { isYoutubeLink } from '../youtube'
 
 const EMPTY_TORRENT_STATS: TorrentStats = { peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }
@@ -16,8 +17,6 @@ interface TorrentPickerProps {
   maxFileBytes: number
   onPicked: (file: TorrentVideoFile, session: TorrentSession, magnet: string) => void
   onExit?: () => void
-  /** The source's glyph, shown in the head beside the title. */
-  icon?: ReactNode
   /** A YouTube link pasted where a magnet goes is handed here instead of refused. */
   onYoutubeLink?: (url: string) => void
   initialSession?: TorrentSession | null
@@ -47,7 +46,7 @@ function formatBytes(bytes: number): string {
  * it opened itself; a session handed in by the caller is released only by
  * backing out of its list.
  */
-export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', autoLoad = false, currentPath, icon, t }: TorrentPickerProps) {
+export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, initialSession, initialMagnet = '', autoLoad = false, currentPath, t }: TorrentPickerProps) {
   const [magnet, setMagnet] = useState(initialMagnet)
   const [loading, setLoading] = useState(false)
   const [probes, setProbes] = useState<WorkerProbe[]>([])
@@ -67,10 +66,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
   const [stats, setStats] = useState<TorrentStats>(EMPTY_TORRENT_STATS)
   const [query, setQuery] = useState('')
   const owned = useRef<TorrentSession | null>(null)
-  const loadRef = useRef<HTMLButtonElement>(null)
-  const { shown: waiting, morphing: swapping } = useMorphingStep(loading)
-  useMorphingSize(loadRef, waiting, { axis: 'width', durationMs: 260 })
-  const { shown: listed, morphing: picking } = useMorphingStep(session)
+  const listed = session
   const listing = listed !== null
 
   const needle = query.trim().toLowerCase()
@@ -154,83 +150,61 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
   }
 
   return (
-    <div className="morph-fade" data-morphing={picking}>
-      <div className="morph-head">
-        {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
-        <h2 className="stage-title">{listing ? t('home.torrentChooseFile') : t('home.torrentTitle')}</h2>
-      </div>
-      <p className="stage-description">
-        {listing ? t('home.torrentChooseGuide') : t('home.torrentGuide')}
-        {listing ? <span className="torrent-stats"> · {stats.peers} {t('home.peers')} · {formatBytes(stats.downloadSpeed)}/s</span> : null}
-      </p>
+    <div className={styles.flow}>
       {!listing ? (
-        <>
-          <label htmlFor="magnet-link">{t('home.magnet')}</label>
-          <textarea
-            id="magnet-link"
-            className="sunken magnet-input"
+        <form className={styles.ask} onSubmit={(event) => { event.preventDefault(); void load() }}>
+          <Field
+            mono
+            aria-label={t('home.magnet')}
             autoFocus
-            rows={4}
             value={magnet}
             disabled={loading}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
             placeholder="magnet:?xt=urn:btih:…"
             onChange={(event) => setMagnet(event.target.value)}
           />
-        </>
-      ) : listed ? (
+          <Pill type="submit" tone="primary" size="lg" disabled={loading || !magnet.trim()} aria-busy={loading}>
+            {t(loading ? 'home.torrentLoading' : youtubeLink ? 'home.openYoutube' : 'home.torrentLoad')}
+          </Pill>
+        </form>
+      ) : (
         <>
-          <label className="sr-only" htmlFor="torrent-search">{t('home.torrentSearch')}</label>
-          <input
-            id="torrent-search"
-            className="sunken torrent-search"
+          <Field
+            aria-label={t('home.torrentSearch')}
             autoFocus
             value={query}
             placeholder={t('home.torrentSearch')}
             onChange={(event) => setQuery(event.target.value)}
           />
           {matches.length > 0 ? (
-            <div className="torrent-files">
+            <div className={styles.list}>
               {matches.map((file) => (
                 <button
                   type="button"
                   key={file.path}
-                  className={file.path === currentPath ? 'is-current' : undefined}
+                  className={styles.row}
                   aria-current={file.path === currentPath ? 'true' : undefined}
                   onClick={() => { void pick(file) }}
                 >
-                  <span>{file.name}</span>
-                  <small>{file.path === currentPath ? t('home.torrentPlaying') : formatBytes(file.size)}</small>
+                  <span className={styles.rowIcon} aria-hidden="true">{file.path === currentPath ? <Play size={15} /> : <Film size={15} />}</span>
+                  <span className={styles.rowName} title={file.name}>{file.name}</span>
+                  <span className={styles.rowMeta}>{formatBytes(file.size)}</span>
                 </button>
               ))}
             </div>
-          ) : <p className="empty-copy torrent-empty">{t('home.torrentNoMatch')}</p>}
+          ) : <p className={styles.empty}>{t('home.torrentNoMatch')}</p>}
         </>
-      ) : null}
-      <WorkerProbes probes={probes} t={t} />
-      {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
-      {listing ? (
-        <div className="torrent-actions torrent-actions-list">
-          <button type="button" className="ui-button ui-button--ghost torrent-switch" onClick={back}>
-            <span className="magnet-glyph" aria-hidden="true">µ</span>{t('home.torrentSwitchMagnet')}
-          </button>
-        </div>
-      ) : (
-        <div className="torrent-actions">
-          {onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
-          <button
-            ref={loadRef}
-            type="button"
-            className={`primary-button torrent-load ${loading ? 'is-loading' : ''}`}
-            disabled={loading || !magnet.trim()}
-            aria-busy={loading}
-            onClick={() => { void load() }}
-          >
-            <span className="morph-fade button-label" data-morphing={swapping}>
-              {t(waiting ? 'home.torrentLoading' : youtubeLink ? 'home.openYoutube' : 'home.torrentLoad')}
-            </span>
-          </button>
-        </div>
       )}
+      <WorkerProbes probes={probes} t={t} />
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {listing ? (
+        <div className={styles.foot}>
+          <Pill tone="soft" size="sm" icon={<Magnet size={14} />} onClick={back}>{t('home.torrentSwitchMagnet')}</Pill>
+          <span className={styles.readout}>{stats.peers} {t('home.peers')} · {formatBytes(stats.downloadSpeed)}/s</span>
+        </div>
+      ) : null}
     </div>
   )
 }

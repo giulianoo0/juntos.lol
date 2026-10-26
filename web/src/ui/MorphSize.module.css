@@ -1,0 +1,38 @@
+.outer {
+  overflow: hidden;
+  transition:
+    width var(--duration-spring-settle) var(--ease-spring-settle),
+    height var(--duration-spring-settle) var(--ease-spring-settle);
+}
+
+/* The measured box sizes to its content on the axes that morph. */
+.inner[data-axis="both"],
+.inner[data-axis="width"] {
+  width: max-content;
+}
+
+.step {
+  animation: step-in var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+.step[data-first] {
+  animation: none;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    scale: 0.96;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .outer {
+    transition: none;
+  }
+
+  .step {
+    animation: none;
+  }
+}

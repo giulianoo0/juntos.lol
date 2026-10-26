@@ -52,6 +52,7 @@ export const ptBR: Record<string, string> = {
   'drive.title': 'Abrir do Google Drive',
   'drive.guide': 'Cole um link de arquivo ou pasta compartilhado como Qualquer pessoa com o link.',
   'drive.link': 'Link do Drive',
+  'drive.otherLink': 'Outro link',
   'drive.load': 'Buscar arquivos',
   'drive.loading': 'Lendo o Drive…',
   'drive.chooseGuide': 'Só o arquivo que você escolher será lido do Drive e preparado para a sala.',

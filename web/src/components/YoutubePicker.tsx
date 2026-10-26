@@ -1,17 +1,15 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import { isYoutubeLink, openYoutube, youtubeCapacity, youtubeErrorKey, type YoutubeSession } from '../youtube'
-import { useMorphingSize } from '../ui/useMorphingSize'
-import { useMorphingStep } from '../ui/useMorphingStep'
-import { StepBack } from '../ui/StepBack'
+import { Field } from '../ui/Field'
+import { Pill } from '../ui/Pill'
+import styles from './Picker.module.css'
 import { installJlocalTools, jlocalToolsStatus, type JlocalToolsStatus } from '../jlocal/youtube'
 import { useJLocal } from '../jlocal/status'
 
 interface YoutubePickerProps {
   onPicked: (session: YoutubeSession) => void
   onExit?: () => void
-  /** The source's glyph, shown in the head beside the title. */
-  icon?: ReactNode
   initialUrl?: string
   t: Translator
 }
@@ -29,17 +27,14 @@ function formatDuration(ms: number): string {
  * Turns a pasted link into a resolved video the host confirms. The session
  * it resolved is released on unmount unless it was handed over.
  */
-export function YoutubePicker({ onPicked, onExit, initialUrl = '', icon, t }: YoutubePickerProps) {
+export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubePickerProps) {
   const [url, setUrl] = useState(initialUrl)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [session, setSession] = useState<YoutubeSession | null>(null)
   const [capacity, setCapacity] = useState<string>('available')
   const owned = useRef<YoutubeSession | null>(null)
-  const loadRef = useRef<HTMLButtonElement>(null)
-  const { shown: waiting, morphing: swapping } = useMorphingStep(loading)
-  useMorphingSize(loadRef, waiting, { axis: 'width', durationMs: 260 })
-  const { shown: resolved, morphing: picking } = useMorphingStep(session)
+  const resolved = session
   const jlocal = useJLocal()
   const [tools, setTools] = useState<JlocalToolsStatus | null>(null)
 
@@ -129,79 +124,59 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', icon, t }: Yo
   const languages = summary ? summary.audios.map((audio) => audio.language).join(', ') : ''
 
   return (
-    <div className="morph-fade" data-morphing={picking}>
-      <div className="morph-head">
-        {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
-        <h2 className="stage-title">{t('home.youtubeTitle')}</h2>
-      </div>
-      {!resolved ? <p className="stage-description">{t('home.youtubeGuide')}</p> : null}
+    <div className={styles.flow}>
       {!resolved ? (
-        <>
-          <input
+        <form className={styles.ask} onSubmit={(event) => { event.preventDefault(); void load() }}>
+          <Field
             aria-label={t('home.youtubeLink')}
-            id="youtube-link"
-            className="sunken text-field youtube-input"
             autoFocus
             value={url}
             disabled={loading}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
-            placeholder="https://www.youtube.com/watch?v=…"
+            placeholder="https://youtube.com/watch?v=…"
             onChange={(event) => { setUrl(event.target.value); if (error && capacity === 'available') setError('') }}
-            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void load() } }}
           />
-        </>
+          <Pill type="submit" tone="primary" size="lg" disabled={loading || !valid} aria-busy={loading}>
+            {t(loading ? 'home.youtubeLoading' : 'home.youtubeLoad')}
+          </Pill>
+        </form>
       ) : summary ? (
-        <div className="youtube-summary">
-          {summary.thumbnail ? <img className="youtube-thumb" src={summary.thumbnail} alt="" /> : null}
-          <div className="youtube-summary-text">
-            <strong>{summary.title}</strong>
-            <span>
-              {summary.live ? <span className="live-badge">{t('home.youtubeLive')}</span> : formatDuration(summary.durationMs)} · {summary.video.height}p {summary.video.codec}
-              {resolved?.backend === 'jlocal' ? ` · ${t('home.youtubeViaJlocal')}` : ''}
-            </span>
-            <span>{t('home.youtubeAudios').replace('{n}', String(summary.audios.length))}{languages ? ` (${languages})` : ''}</span>
-            {summary.live ? null : <span>{t('home.youtubeSubtitles').replace('{n}', String(summary.subtitles.length))}</span>}
+        <div className={styles.summary}>
+          {summary.thumbnail ? <img className={styles.thumb} src={summary.thumbnail} alt="" /> : null}
+          <div className={styles.summaryText}>
+            <span className={styles.summaryTitle}>{summary.title}</span>
+            <div className={styles.chips}>
+              {summary.live
+                ? <span className={styles.chip} data-live="">{t('home.youtubeLive')}</span>
+                : <span className={styles.chip}>{formatDuration(summary.durationMs)}</span>}
+              <span className={styles.chip}>{summary.video.height}p</span>
+              {summary.audios.length > 1 ? <span className={styles.chip} title={languages}>{t('home.youtubeAudios').replace('{n}', String(summary.audios.length))}</span> : null}
+              {!summary.live && summary.subtitles.length > 0 ? <span className={styles.chip}>{t('home.youtubeSubtitles').replace('{n}', String(summary.subtitles.length))}</span> : null}
+            </div>
           </div>
         </div>
       ) : null}
-      {error ? <div className="error-card torrent-error youtube-error" role="alert">{error}</div> : null}
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {!resolved && tools && tools.status !== 'ready' && tools.status !== 'unsupported' ? (
-        <div className="youtube-tools">
+        <div className={styles.foot}>
           {tools.status === 'downloading' ? (
-            <span>{t('home.youtubeToolsDownloading').replace('{pct}', String(tools.total > 0 ? Math.min(99, Math.round((tools.done / tools.total) * 100)) : 0))}</span>
+            <span className={styles.readout}>{t('home.youtubeToolsDownloading').replace('{pct}', String(tools.total > 0 ? Math.min(99, Math.round((tools.done / tools.total) * 100)) : 0))}</span>
           ) : (
             <>
-              {tools.status === 'failed' ? <span>{t('home.youtubeToolsFailed').replace('{error}', tools.error)}</span> : null}
-              <button type="button" className="secondary-button" onClick={() => { void offerTools() }}>
-                {t('home.youtubeToolsOffer')}
-              </button>
+              {tools.status === 'failed' ? <span className={styles.readout}>{t('home.youtubeToolsFailed').replace('{error}', tools.error)}</span> : <span />}
+              <Pill tone="soft" size="sm" onClick={() => { void offerTools() }}>{t('home.youtubeToolsOffer')}</Pill>
             </>
           )}
         </div>
       ) : null}
-      <div className="torrent-actions">
-        {resolved || onExit ? <StepBack label={t('home.back')} onClick={back} /> : null}
-        {!resolved ? (
-          <button
-            ref={loadRef}
-            type="button"
-            className={`primary-button torrent-load ${loading ? 'is-loading' : ''}`}
-            disabled={loading || !valid}
-            aria-busy={loading}
-            onClick={() => { void load() }}
-          >
-            <span className="morph-fade button-label" data-morphing={swapping}>
-              {t(waiting ? 'home.youtubeLoading' : 'home.youtubeLoad')}
-            </span>
-          </button>
-        ) : (
-          <button type="button" className="primary-button" onClick={pick}>
-            {t('home.youtubeCreate')}
-          </button>
-        )}
-      </div>
+      {resolved ? (
+        <div className={styles.foot}>
+          <Pill tone="soft" size="md" onClick={back}>{t('drive.otherLink')}</Pill>
+          <Pill tone="primary" size="md" onClick={pick}>{t('home.youtubeCreate')}</Pill>
+        </div>
+      ) : null}
     </div>
   )
 }

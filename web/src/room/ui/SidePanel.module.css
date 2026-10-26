@@ -173,3 +173,26 @@
     }
   }
 }
+
+/* Chat and Pessoas trade places with a short blur, the popover's settle. */
+.view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: view-in var(--duration-spring-settle) var(--ease-spring-settle) both;
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    translate: 0 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view {
+    animation: none;
+  }
+}

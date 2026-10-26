@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import type { TorrentSession, TorrentVideoFile } from '../torrent'
 import type { DriveEntry } from '../drive'
 import { driveErrorKey } from '../driveErrors'
-import { StepBack } from '../ui/StepBack'
-import { useMorphingSize } from '../ui/useMorphingSize'
-import { useMorphingStep } from '../ui/useMorphingStep'
+import { ChevronRight, Film, Folder, Link2 } from 'lucide-react'
+import { Field } from '../ui/Field'
+import { Pill } from '../ui/Pill'
+import styles from './Picker.module.css'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
@@ -73,9 +74,6 @@ export async function drivePlaybackUrls(file: TorrentVideoFile, session: Torrent
 interface DrivePickerProps {
   maxFileBytes: number
   onPicked: (file: TorrentVideoFile, session: TorrentSession) => void
-  onExit?: () => void
-  /** The source's glyph, shown in the head beside the title. */
-  icon?: ReactNode
   t: Translator
 }
 
@@ -97,7 +95,7 @@ interface SingleFile {
  * what it opened itself; confirming hands the session to the caller, which
  * destroys it when its own swap throws.
  */
-export function DrivePicker({ maxFileBytes, onPicked, onExit, icon, t }: DrivePickerProps) {
+export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
   const [link, setLink] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -107,9 +105,6 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, icon, t }: DrivePi
   const owned = useRef<TorrentSession | null>(null)
   const extra = useRef<TorrentSession | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const loadRef = useRef<HTMLButtonElement>(null)
-  const { shown: waiting, morphing: swapping } = useMorphingStep(loading)
-  useMorphingSize(loadRef, waiting, { axis: 'width', durationMs: 260 })
 
   useEffect(() => () => {
     abortRef.current?.abort()
@@ -276,109 +271,81 @@ export function DrivePicker({ maxFileBytes, onPicked, onExit, icon, t }: DrivePi
     }
   }
 
-  const back = () => {
-    if (single) {
-      reset()
-      return
-    }
-    if (trail.length > 1) {
-      setTrail((prev) => prev.slice(0, -1))
-      setQuery('')
-      setError('')
-      return
-    }
-    if (trail.length === 1) {
-      reset()
-      return
-    }
-    onExit?.()
+  // A crumb goes back to its folder; the first one is the link itself.
+  const climb = (depth: number) => {
+    if (loading) return
+    if (depth < 0) { reset(); return }
+    setTrail((prev) => prev.slice(0, depth + 1))
+    setQuery('')
+    setError('')
   }
 
-  const showBack = listing || onExit !== undefined
-  const title = single !== null ? single.session.name : current !== null ? current.name : t('drive.title')
-  const guide = listing ? t('drive.chooseGuide') : t('drive.guide')
-
   return (
-    <div className="morph-fade">
-      <div className="morph-head">
-        {icon ? <span className="source-icon" aria-hidden="true">{icon}</span> : null}
-        <h2 className="stage-title">{title}</h2>
-      </div>
-      <p className="stage-description">{guide}</p>
-      {single ? (
-        <div className="torrent-files" aria-busy={loading}>
-          <button type="button" disabled={loading} onClick={() => { void pickSingle() }}>
-            <span>{single.file.name}</span><small>{formatBytes(single.file.size)}</small>
-          </button>
-        </div>
-      ) : !current ? (
-        <>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              void load()
-            }}
-          >
-            <label htmlFor="drive-link">{t('drive.link')}</label>
-            <input
-              id="drive-link"
-              className="sunken text-field"
-              autoFocus
-              value={link}
-              disabled={loading}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              placeholder="https://drive.google.com/file/d/…"
-              onChange={(event) => setLink(event.target.value)}
-            />
-            <div className="torrent-actions">
-              {showBack ? <StepBack label={t('home.back')} onClick={back} /> : null}
-              <button
-                ref={loadRef}
-                type="submit"
-                className={`primary-button torrent-load ${loading ? 'is-loading' : ''}`}
-                disabled={loading || !link.trim()}
-                aria-busy={loading}
-              >
-                <span className="morph-fade button-label" data-morphing={swapping}>
-                  {t(waiting ? 'drive.loading' : 'drive.load')}
-                </span>
-              </button>
-            </div>
-          </form>
-        </>
+    <div className={styles.flow}>
+      {!listing ? (
+        <form className={styles.ask} onSubmit={(event) => { event.preventDefault(); void load() }}>
+          <Field
+            aria-label={t('drive.link')}
+            autoFocus
+            value={link}
+            disabled={loading}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            placeholder="https://drive.google.com/…"
+            onChange={(event) => setLink(event.target.value)}
+          />
+          <Pill type="submit" tone="primary" size="lg" disabled={loading || !link.trim()} aria-busy={loading}>
+            {t(loading ? 'drive.loading' : 'drive.load')}
+          </Pill>
+        </form>
       ) : (
         <>
-          <label className="sr-only" htmlFor="drive-search">{t('drive.search')}</label>
-          <input
-            id="drive-search"
-            className="sunken torrent-search"
-            autoFocus
-            value={query}
-            disabled={loading}
-            placeholder={t('drive.search')}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          {folders.length + videos.length > 0 ? (
-            <div className="torrent-files" aria-busy={loading}>
+          {current ? (
+            <nav className={styles.crumbs} aria-label={t('drive.folder')}>
+              {trail.map((level, depth) => (
+                <button key={level.id} type="button" className={styles.crumb} aria-current={depth === trail.length - 1 ? 'location' : undefined} onClick={() => { if (depth < trail.length - 1) climb(depth) }}>
+                  {level.name}
+                </button>
+              )).flatMap((crumb, index) => index === 0 ? [crumb] : [<ChevronRight key={`sep-${index}`} size={14} aria-hidden="true" />, crumb])}
+            </nav>
+          ) : null}
+          {current ? (
+            <Field aria-label={t('drive.search')} autoFocus value={query} disabled={loading} placeholder={t('drive.search')} onChange={(event) => setQuery(event.target.value)} />
+          ) : null}
+          {single ? (
+            <div className={styles.list} aria-busy={loading}>
+              <button type="button" className={styles.row} disabled={loading} onClick={() => { void pickSingle() }}>
+                <span className={styles.rowIcon} aria-hidden="true"><Film size={15} /></span>
+                <span className={styles.rowName} title={single.file.name}>{single.file.name}</span>
+                <span className={styles.rowMeta}>{formatBytes(single.file.size)}</span>
+              </button>
+            </div>
+          ) : folders.length + videos.length > 0 ? (
+            <div className={styles.list} aria-busy={loading}>
               {folders.map((entry) => (
-                <button type="button" key={entry.id} disabled={loading} onClick={() => { void drill(entry) }}>
-                  <span>{entry.name}</span><small>{t('drive.folder')}</small>
+                <button type="button" key={entry.id} className={styles.row} disabled={loading} onClick={() => { void drill(entry) }}>
+                  <span className={styles.rowIcon} aria-hidden="true"><Folder size={15} /></span>
+                  <span className={styles.rowName} title={entry.name}>{entry.name}</span>
+                  <ChevronRight size={15} className={styles.rowMeta} aria-hidden="true" />
                 </button>
               ))}
               {videos.map((entry) => (
-                <button type="button" key={entry.id} disabled={loading} onClick={() => { void pickVideo(entry) }}>
-                  <span>{entry.name}</span><small>{formatBytes(entry.size)}</small>
+                <button type="button" key={entry.id} className={styles.row} disabled={loading} onClick={() => { void pickVideo(entry) }}>
+                  <span className={styles.rowIcon} aria-hidden="true"><Film size={15} /></span>
+                  <span className={styles.rowName} title={entry.name}>{entry.name}</span>
+                  <span className={styles.rowMeta}>{formatBytes(entry.size)}</span>
                 </button>
               ))}
             </div>
-          ) : <p className="empty-copy torrent-empty">{needle === '' ? t('drive.empty') : t('drive.noMatch')}</p>}
+          ) : <p className={styles.empty}>{needle === '' ? t('drive.empty') : t('drive.noMatch')}</p>}
         </>
       )}
-      {error ? <div className="error-card torrent-error" role="alert">{error}</div> : null}
-      {showBack && (single || current) ? (
-        <div className="torrent-actions"><StepBack label={t('home.back')} onClick={back} /></div>
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {listing ? (
+        <div className={styles.foot}>
+          <Pill tone="soft" size="sm" icon={<Link2 size={14} />} onClick={() => climb(-1)}>{t('drive.otherLink')}</Pill>
+        </div>
       ) : null}
     </div>
   )

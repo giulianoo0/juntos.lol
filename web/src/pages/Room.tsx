@@ -7,7 +7,7 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, FolderOpen, X } from 'lucide-react'
+import { Check, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -870,9 +870,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           return (
             <DrivePicker
               maxFileBytes={MAX_UPLOAD_BYTES}
-              icon={<FolderOpen size={18} />}
               t={t}
-              onExit={close}
               onPicked={(file, session) => { close(); chooseDrive(file, session) }}
             />
           )

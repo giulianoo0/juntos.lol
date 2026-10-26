@@ -52,6 +52,7 @@ export const en: Record<string, string> = {
   'drive.title': 'Open from Google Drive',
   'drive.guide': 'Paste a link to a file or folder shared as Anyone with the link.',
   'drive.link': 'Drive link',
+  'drive.otherLink': 'Another link',
   'drive.load': 'Find files',
   'drive.loading': 'Reading Drive…',
   'drive.chooseGuide': 'Only the file you pick will be read from Drive and prepared for the room.',

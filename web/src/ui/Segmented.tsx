@@ -42,7 +42,13 @@ export function Segmented<T extends string>({ label, options, value, onChange, c
     }
     place(!placed.current || track.matches(':has(:focus-visible)'))
     placed.current = true
-    const observer = new ResizeObserver(() => place(true))
+    // An observer reports once as soon as it starts; only a real resize
+    // after that moves the chip at once, or every pick would jump.
+    let started = false
+    const observer = new ResizeObserver(() => {
+      if (started) place(true)
+      started = true
+    })
     observer.observe(track)
     return () => observer.disconnect()
   }, [value])

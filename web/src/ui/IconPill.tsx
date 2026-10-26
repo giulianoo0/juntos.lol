@@ -12,6 +12,9 @@ export interface IconPillProps extends Omit<ButtonHTMLAttributes<HTMLButtonEleme
   size?: 'sm' | 'lg'
   /** Over a video: the dark glass. */
   tone?: 'soft' | 'scrim'
+  /** In a row of its own kind (the dock): grows in place and pushes its
+      neighbours aside instead of covering them. */
+  flow?: boolean
 }
 
 /**
@@ -21,7 +24,7 @@ export interface IconPillProps extends Omit<ButtonHTMLAttributes<HTMLButtonEleme
  * beside it, so the row never moves. The name is the tip.
  */
 export const IconPill = forwardRef<HTMLButtonElement, IconPillProps>(function IconPill(
-  { icon, label, state, active = false, size = 'lg', tone = 'soft', className = '', type = 'button', ...rest },
+  { icon, label, state, active = false, size = 'lg', tone = 'soft', flow = false, className = '', type = 'button', ...rest },
   ref,
 ) {
   return (
@@ -33,6 +36,7 @@ export const IconPill = forwardRef<HTMLButtonElement, IconPillProps>(function Ic
       data-active={active || undefined}
       data-size={size}
       data-tone={tone}
+      data-flow={flow || undefined}
       className={`${styles.pill} ${className}`.trim()}
       {...rest}
     >

@@ -115,6 +115,10 @@
   background: var(--primary);
 }
 
+.accessMenu {
+  min-width: 13rem;
+}
+
 .passwordForm {
   display: grid;
   gap: var(--space-3);

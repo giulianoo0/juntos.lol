@@ -5,6 +5,7 @@ import { AvatarStack } from '../../ui/Avatar'
 import { Field } from '../../ui/Field'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
+import { MorphSize } from '../../ui/MorphSize'
 import { SpringPopover, SpringRow } from '../../ui/SpringPopover'
 import { elapsedOf } from './chatGroups'
 import { useRoomUi } from './context'
@@ -37,15 +38,14 @@ function AccessMenu() {
   return (
     <SpringPopover
       triggerRender={<Pill tone="soft" size="sm" icon={accessIcon(vm.joinMode)} />}
-      trigger={<span className={styles.accessText}>{short}</span>}
+      trigger={<MorphSize axis="width" step={short}><span className={styles.accessText}>{short}</span></MorphSize>}
       triggerLabel={`${strings.access}: ${short}`}
       title={strings.access}
       align="end"
-      width="17rem"
       initialFocus={askPassword ? field : undefined}
       onOpenChange={(open) => { if (!open) { setAskPassword(false); setPassword('') } }}
     >
-      {({ close }) => askPassword ? (
+      {({ close }) => <MorphSize axis="height" step={askPassword ? 'password' : 'menu'}>{askPassword ? (
         <form
           className={styles.passwordForm}
           onSubmit={(event: FormEvent) => {
@@ -59,7 +59,7 @@ function AccessMenu() {
           <Pill type="submit" tone="primary" size="md" disabled={!password.trim()}>{strings.save}</Pill>
         </form>
       ) : (
-        <div role="menu" aria-label={strings.access}>
+        <div role="menu" aria-label={strings.access} className={styles.accessMenu}>
           {(['open', 'password', 'approval'] as const).map((mode) => (
             <SpringRow
               key={mode}
@@ -74,7 +74,7 @@ function AccessMenu() {
             />
           ))}
         </div>
-      )}
+      )}</MorphSize>}
     </SpringPopover>
   )
 }

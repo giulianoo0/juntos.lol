@@ -121,7 +121,7 @@ export function SidePanel({ tab, onTab, onClose }: { tab: PanelTab; onTab: (tab:
         </button>
       </div>
       <Asks requests={vm.requests} knocks={vm.knocks} />
-      {tab === 'chat' ? <ChatPanel /> : <PeopleList />}
+      <div key={tab} className={styles.view}>{tab === 'chat' ? <ChatPanel /> : <PeopleList />}</div>
     </div>
   )
 }

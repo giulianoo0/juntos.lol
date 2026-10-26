@@ -28,8 +28,8 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
       </Pill>
 
       <div className={styles.center}>
-        <IconPill label={mic ? strings.mic : strings.micOff} icon={mic ? <Mic size={18} /> : <MicOff size={18} />} state={mic ? undefined : 'off'} aria-pressed={mic} onClick={() => vm.actions.setMic(!mic)} />
-        <IconPill label={cam ? strings.cam : strings.camOff} icon={cam ? <Video size={18} /> : <VideoOff size={18} />} state={cam ? undefined : 'off'} aria-pressed={cam} onClick={() => vm.actions.setCam(!cam)} />
+        <IconPill flow label={mic ? strings.mic : strings.micOff} icon={mic ? <Mic size={18} /> : <MicOff size={18} />} state={mic ? undefined : 'off'} aria-pressed={mic} onClick={() => vm.actions.setMic(!mic)} />
+        <IconPill flow label={cam ? strings.cam : strings.camOff} icon={cam ? <Video size={18} /> : <VideoOff size={18} />} state={cam ? undefined : 'off'} aria-pressed={cam} onClick={() => vm.actions.setCam(!cam)} />
         <SpringPopover
           triggerRender={<Pill tone="primary" size="lg" className={styles.share} icon={<MonitorUp size={17} />} />}
           trigger={<span className={styles.shareText}>{strings.share}</span>}
@@ -48,7 +48,7 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
           )}
         </SpringPopover>
         <SpringPopover
-          triggerRender={<IconPill label={strings.reactions} icon={<Smile size={18} />} />}
+          triggerRender={<IconPill flow label={strings.reactions} icon={<Smile size={18} />} />}
           triggerLabel={strings.reactions}
           side="top"
           align="center"
@@ -64,10 +64,11 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
             </div>
           )}
         </SpringPopover>
-        <IconPill label={strings.chat} icon={<MessageSquare size={18} />} active={panelOpen} aria-expanded={panelOpen} onClick={onTogglePanel} />
+        <IconPill flow label={strings.chat} icon={<MessageSquare size={18} />} active={panelOpen} aria-expanded={panelOpen} onClick={onTogglePanel} />
       </div>
 
-      <Pill tone="danger" size="lg" className={styles.leave} icon={<LogOut size={16} className={styles.leaveIcon} />} aria-label={strings.leave} onClick={vm.actions.leave}>
+      <Pill tone="danger" size="lg" className={styles.leave} aria-label={strings.leave} onClick={vm.actions.leave}>
+        <LogOut size={16} className={styles.leaveIcon} aria-hidden="true" />
         <span className={styles.leaveText}>{strings.leave}</span>
       </Pill>
     </footer>

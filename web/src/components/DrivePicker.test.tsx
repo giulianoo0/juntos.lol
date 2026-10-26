@@ -47,7 +47,7 @@ describe('DrivePicker folder browsing', () => {
     await user.type(screen.getByLabelText('drive.link'), `https://drive.google.com/drive/folders/${FOLDER}`)
     await user.click(screen.getByRole('button', { name: 'drive.load' }))
 
-    await screen.findByRole('heading', { name: 'My folder' })
+    await screen.findByRole('button', { name: 'My folder', current: 'location' })
     expect(fetchMock).toHaveBeenCalledTimes(2)
 
     // One click on the row is the whole pick: the only extra request is the
