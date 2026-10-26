@@ -42,8 +42,10 @@ export interface SubscriptionPoolOptions<W> {
 export class SubscriptionPool<W extends PooledWatch> {
   private readonly entries = new Map<string, Entry<W>>()
   private readonly now: () => number
+  private readonly options: SubscriptionPoolOptions<W>
 
-  constructor(private readonly options: SubscriptionPoolOptions<W>) {
+  constructor(options: SubscriptionPoolOptions<W>) {
+    this.options = options
     this.now = options.now ?? (() => performance.now())
   }
 

@@ -17,15 +17,14 @@ import type * as Watch from '@moq/watch'
 import type { EncodedFrame } from './jlocal/h264Feed'
 import { codecFromAnnexB } from './jlocal/h264Feed'
 import { audioLocked } from './ui/audioUnlock'
+import { isWebKit, relayConnection, relayPublishSupported, watchConnection, whenPublished } from './call/moq'
+
+export { isWebKit }
 
 const pendingStreams = new Map<string, MediaStream>()
 
 /** Opus for a film soundtrack, not a voice call: stereo at a rate that keeps music intact. */
 const SCREEN_AUDIO_BITRATE = 160_000
-/** The reconnect loop never gives up on its own; leaving the room is what stops it. */
-const RELAY_RETRY = { initial: 1000, multiplier: 2, max: 5000, timeout: 0 }
-/** How long a publisher may take to get its broadcast onto the relay before sharing counts as failed. */
-const PUBLISH_READY_MS = 15_000
 /** Two seconds of GOP: a late viewer waits at most that long for its first picture. */
 const KEYFRAME_INTERVAL_MS = 2_000 as NonNullable<Publish.Video.Config['keyframeInterval']>
 /**
@@ -45,22 +44,9 @@ const MIN_BITRATE = 2_000_000
  */
 const AUTO_BITRATE_1080P30 = 6_000_000
 
-/**
- * Whether this engine is WebKit: Safari, and every browser on iOS. Its
- * WebTransport stalls long sessions, so it watches through the bridge, which
- * only carries screens one way.
- */
-export function isWebKit(userAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent): boolean {
-  if (/iPhone|iPad|iPod/.test(userAgent)) return true
-  return /AppleWebKit\//.test(userAgent) && !/(Chrome|Chromium|Edg)\//.test(userAgent)
-}
-
 /** Whether this browser can send a screen: QUIC to the relay and codecs in both directions. */
 export function screenShareSupported(): boolean {
-  return typeof WebTransport !== 'undefined'
-    && typeof VideoEncoder !== 'undefined'
-    && typeof VideoDecoder !== 'undefined'
-    && !isWebKit()
+  return relayPublishSupported()
 }
 
 /** Whether this browser can capture a screen at all: phones have no getDisplayMedia. */
@@ -230,24 +216,6 @@ export async function setScreenShareOpen(roomId: string, memberId: string, capab
   if (!response.ok) throw new Error('screenshare open flag rejected')
 }
 
-function relayConnection(Net: typeof Publish.Net, url: string): Publish.Net.Connection.Reload {
-  // The relay speaks QUIC only; racing a WebSocket it will never answer just delays the connect.
-  return new Net.Connection.Reload({ url: new URL(url), enabled: true, websocket: { enabled: false }, delay: RELAY_RETRY })
-}
-
-/**
- * A viewer's way in: the relay itself, or the bridge when the MoQ client will
- * not use this browser's WebTransport (it refuses every WebKit) and the
- * server names one. The bridge speaks WebSocket only.
- */
-function watchConnection(Net: typeof Publish.Net, relay: ScreenRelay): Publish.Net.Connection.Reload {
-  if (relay.bridge && !Net.Connection.isWebTransportSupported()) {
-    const url = new URL(relay.bridge, location.href)
-    return new Net.Connection.Reload({ url, enabled: true, websocket: { enabled: true, delay: 0 }, delay: RELAY_RETRY })
-  }
-  return relayConnection(Net, relay.url)
-}
-
 /**
  * The concrete codec strings the publisher itself probes, in the order we want
  * them tried. Hardware H.264 is the one encoder that exists on every machine
@@ -372,19 +340,7 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
     codec: { mime: 'opus', bitrate: SCREEN_AUDIO_BITRATE },
   })
 
-  const ready = new Promise<void>((resolve, reject) => {
-    if (broadcast.net.peek()) { resolve(); return }
-    const timer = setTimeout(() => {
-      stop()
-      reject(new Error('relay did not accept the broadcast in time'))
-    }, PUBLISH_READY_MS)
-    const stop = broadcast.net.subscribe((producer) => {
-      if (!producer) return
-      clearTimeout(timer)
-      stop()
-      resolve()
-    })
-  })
+  const ready = whenPublished(broadcast)
 
   let last: { frames: number; bytes: number; at: number } | null = null
 
@@ -467,12 +423,6 @@ export interface ScreenWatcher {
  * stay in step at the cost of a quarter second more delay.
  */
 const SCREEN_LATENCY_MS = 250
-/**
- * Without a ceiling the player runs unbuffered: a group later than the floor
- * is thrown away and the ring skips ahead, so the sound stuttered at every
- * burst of the picture. With one it waits out the late group instead.
- */
-const SCREEN_MAX_LATENCY_MS = 1_000
 /** How long a jump waits between dropping the old subscriptions and opening new ones. */
 const RESUBSCRIBE_GAP_MS = 1_500
 /**
@@ -516,7 +466,7 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
     const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
     const sync = new Watch.Sync({
-      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli, max: SCREEN_MAX_LATENCY_MS as Watch.Net.Time.Milli },
+      latency: latency ?? { min: SCREEN_LATENCY_MS as Watch.Net.Time.Milli },
       connection: connection.established,
       video: videoSource.out.jitter,
       audio: audioSource.out.jitter,
@@ -733,19 +683,7 @@ export async function publishEncodedScreen(relay: ScreenRelay, initial: EncodedS
     })
   })
 
-  const ready = new Promise<void>((resolve, reject) => {
-    if (broadcast.net.peek()) { resolve(); return }
-    const timer = setTimeout(() => {
-      stop()
-      reject(new Error('relay did not accept the broadcast in time'))
-    }, PUBLISH_READY_MS)
-    const stop = broadcast.net.subscribe((producer) => {
-      if (!producer) return
-      clearTimeout(timer)
-      stop()
-      resolve()
-    })
-  })
+  const ready = whenPublished(broadcast)
 
   let last: { frames: number; bytes: number; at: number } | null = null
   return {

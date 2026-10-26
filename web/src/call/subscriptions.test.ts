@@ -5,7 +5,8 @@ class FakeWatch implements PooledWatch {
   closed = false
   private listeners = new Set<(status: WatchStatus) => void>()
   private current: WatchStatus
-  constructor(public key: string, status: WatchStatus = 'offline') { this.current = status }
+  key: string
+  constructor(key: string, status: WatchStatus = 'offline') { this.key = key; this.current = status }
   status = {
     peek: () => this.current,
     subscribe: (listener: (status: WatchStatus) => void) => {
@@ -24,10 +25,10 @@ function harness() {
   let now = 0
   const opened: FakeWatch[] = []
   const pending: Array<(watch: FakeWatch) => void> = []
-  const statuses: Record<string, WatchStatus> = {}
+  const statuses: Record<string, WatchStatus | undefined> = {}
   const pool = new SubscriptionPool<FakeWatch>({
     open: (key) => new Promise<FakeWatch>((resolve) => pending.push((watch) => { opened.push(watch); resolve(watch) })).then((watch) => { watch.key = key; return watch }),
-    onStatus: (key, status) => { statuses[key] = status },
+    onStatus: (key, status) => { if (status) statuses[key] = status; else delete statuses[key] },
     now: () => now,
   })
   const settle = async (status: WatchStatus = 'offline') => {
