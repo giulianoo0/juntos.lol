@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
 import { changeRoomSource, startUrlUpload } from '../upload'
-import { requestScreenStream } from '../screenshare'
 
 vi.mock('../screenshare', () => ({
   screenShareSupported: vi.fn().mockReturnValue(true),
@@ -17,7 +16,6 @@ vi.mock('../screenshare', () => ({
     status: { peek: () => 'offline', subscribe: () => () => undefined }, muted: { set: vi.fn() }, close: vi.fn(),
   }),
   setScreenLive: vi.fn().mockResolvedValue(undefined),
-  setScreenShareOpen: vi.fn().mockResolvedValue(undefined),
   screenPath: (base: string, memberId: string) => `${base}/${memberId}.hang`,
   loadScreenQuality: vi.fn().mockReturnValue('auto'),
   saveScreenQuality: vi.fn(),
@@ -49,6 +47,38 @@ class FakeWebSocket {
   constructor() { FakeWebSocket.instances.push(this) }
 }
 
+const socket = () => FakeWebSocket.instances[FakeWebSocket.instances.length - 1]
+const receive = (message: unknown) => act(() => { socket().onmessage?.({ data: JSON.stringify(message) }) })
+const sent = () => socket().send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as Record<string, unknown>)
+
+const roomBody = (extra: Record<string, unknown> = {}) => ({
+  id: 'abc123', fileName: 'movie.mkv', status: 'ready',
+  mediaGeneration: 0, controllerId: 'm1',
+  audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+  memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
+  ...extra,
+})
+
+type Reply = { status?: number; body?: unknown }
+const json = ({ status = 200, body = {} }: Reply) => Promise.resolve({ ok: status < 400, status, json: async () => body })
+
+/** The room's three doors: its preview, its info and the password's ticket. */
+function serve({ room = roomBody(), preview = {}, join }: {
+  room?: unknown | (() => unknown)
+  preview?: Record<string, unknown>
+  join?: Reply
+} = {}) {
+  const fetchMock = vi.fn((url: string) => {
+    const path = String(url)
+    if (path.endsWith('/preview')) return json({ body: { joinMode: 'open', memberCount: 1, nicknames: ['Giuli'], ...preview } })
+    if (path.endsWith('/join')) return json(join ?? { body: { ticket: 't1' } })
+    if (path.startsWith('/api/rooms/')) return json({ body: typeof room === 'function' ? room() : room })
+    return json({ status: 404 })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
 function renderRoom() {
   return render(
     <ToastProvider>
@@ -59,573 +89,286 @@ function renderRoom() {
   )
 }
 
-describe('RoomPage join screen', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        id: 'abc123',
-        fileName: 'movie.mkv',
-        status: 'uploading',
-       
-        mediaGeneration: 0,
-        controllerId: 'm1',
-        audioTracks: null,
-        subtitleTracks: null,
-        bitmapSubsSkipped: 0,
-        memberCount: 1,
-        expiresAt: '2099-01-01T00:00:00Z',
-      }),
-    }))
-  })
+const nameField = () => screen.findByLabelText('Seu nome')
+const joinButton = () => screen.getByRole('button', { name: 'Entrar' })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
+async function enter(name = 'Giuli') {
+  fireEvent.change(await nameField(), { target: { value: name } })
+  fireEvent.click(joinButton())
+  await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+}
 
-  it('asks for a name and nothing else when the room is opened from a link', async () => {
+const welcome = (memberId: string, members = [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }]) => receive({
+  type: 'welcome', memberId, controllerId: 'm1', capability: 'cap-token', members,
+  state: { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 },
+})
+
+async function joined(memberId = 'm1') {
+  renderRoom()
+  await enter()
+  welcome(memberId)
+  await screen.findByRole('button', { name: 'Copiar link da sala' })
+}
+
+async function pickShare(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Compartilhar' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: label }))
+}
+
+beforeEach(() => {
+  localStorage.clear()
+  sessionStorage.clear()
+  vi.clearAllMocks()
+  FakeWebSocket.instances = []
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
+
+describe('entrada da sala', () => {
+  it('entra com o nome digitado, sem os espaços', async () => {
+    serve()
     renderRoom()
 
-    const field = await screen.findByLabelText(/your name|seu nome/i)
-    expect(field).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /what should we call you|como devemos chamar você/i })).toBeInTheDocument()
-    expect(document.querySelectorAll('input')).toHaveLength(1)
+    await enter('  Giuli  ')
+
+    expect(localStorage.getItem('ss.nickname')).toBe('Giuli')
+    expect(screen.queryByLabelText('Seu nome')).not.toBeInTheDocument()
   })
 
-  it('joins with the typed name when the field is submitted', async () => {
+  it('deixa entrar sem nome e vira convidado', async () => {
+    serve()
     renderRoom()
+    await nameField()
 
-    const field = await screen.findByLabelText(/your name|seu nome/i)
-    fireEvent.change(field, { target: { value: '  Giuli  ' } })
-    fireEvent.submit(field.closest('form')!)
-
-    await waitFor(() => expect(localStorage.getItem('ss.nickname')).toBe('Giuli'))
-    expect(screen.queryByRole('heading', { name: /what should we call you|como devemos chamar você/i })).not.toBeInTheDocument()
-  })
-
-  it('accepts an empty name and falls back to a generated guest name', async () => {
-    renderRoom()
-
-    const field = await screen.findByLabelText(/your name|seu nome/i)
-    fireEvent.submit(field.closest('form')!)
+    fireEvent.click(joinButton())
 
     await waitFor(() => expect(localStorage.getItem('ss.nickname')).toMatch(/^Guest-[A-Za-z0-9]{6}$/))
   })
 
-  it('skips the prompt entirely for someone who already has a name', async () => {
+  it('traz preenchido o nome de quem já entrou antes', async () => {
     localStorage.setItem('ss.nickname', 'Giuli')
+    serve()
     renderRoom()
 
-    await waitFor(() => expect(fetch).toHaveBeenCalled())
-    expect(screen.queryByLabelText(/your name|seu nome/i)).not.toBeInTheDocument()
+    expect(await nameField()).toHaveValue('Giuli')
   })
 })
 
-describe('RoomPage refetch under version churn', () => {
-  const base = {
-    id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-    mediaGeneration: 0, controllerId: 'm1',
-    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
-  }
+describe('porta com senha', () => {
+  it('troca a senha por um ticket antes de abrir o socket', async () => {
+    const fetchMock = serve({ preview: { joinMode: 'password' } })
+    renderRoom()
+    fireEvent.change(await screen.findByLabelText('Senha da sala'), { target: { value: 'pipoca' } })
 
-  beforeEach(() => {
-    localStorage.clear()
-    localStorage.setItem('ss.nickname', 'Giuli')
-    FakeWebSocket.instances = []
-    vi.stubGlobal('WebSocket', FakeWebSocket)
+    await enter()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/abc123/join', expect.objectContaining({ body: JSON.stringify({ password: 'pipoca' }) }))
+    expect(sessionStorage.getItem('ss.join-ticket.abc123')).toBe('t1')
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
+  it.each([
+    ['bad_password', 'Senha errada'],
+    ['too_many_attempts', 'Muitas tentativas. Espere um pouco'],
+  ])('fica na porta e explica um %s', async (code, message) => {
+    serve({ preview: { joinMode: 'password' }, join: { status: 403, body: { error: code } } })
+    renderRoom()
+    fireEvent.change(await screen.findByLabelText('Senha da sala'), { target: { value: 'errada' } })
+    fireEvent.change(await nameField(), { target: { value: 'Giuli' } })
+
+    fireEvent.click(joinButton())
+
+    expect(await screen.findByText(message)).toBeInTheDocument()
+    expect(FakeWebSocket.instances).toHaveLength(0)
   })
 
-  it('lands a slow refetch even when more version signals arrive meanwhile', async () => {
-    const slow: Array<(json: unknown) => void> = []
+  it('volta para a senha quando o socket recusa o ticket', async () => {
+    serve()
+    renderRoom()
+    await enter()
+
+    receive({ type: 'error', error: 'bad_ticket' })
+
+    expect(await screen.findByLabelText(/^Senha da sala/)).toBeInTheDocument()
+    expect(screen.getByText('Senha errada')).toBeInTheDocument()
+  })
+})
+
+describe('sala com aprovação', () => {
+  it('espera o host na porta até ser admitido', async () => {
+    serve({ preview: { joinMode: 'approval' } })
+    renderRoom()
+    await enter()
+
+    receive({ type: 'lobby' })
+    expect(await screen.findByText('Esperando o host deixar você entrar')).toBeInTheDocument()
+
+    welcome('m2')
+    expect(await screen.findByRole('button', { name: 'Copiar link da sala' })).toBeInTheDocument()
+  })
+
+  it('mostra ao host quem bate e manda a resposta', async () => {
+    serve()
+    await joined('m1')
+
+    receive({ type: 'knock', requestId: 'k1', nickname: 'Ana' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Deixar entrar' }))
+
+    expect(sent()).toContainEqual(expect.objectContaining({ type: 'admit', targetId: 'k1' }))
+  })
+})
+
+describe('versão da sala', () => {
+  it('aplica um refetch lento mesmo com novos sinais de versão no meio', async () => {
+    const slow: Array<(body: unknown) => void> = []
     let calls = 0
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
-      if (!String(url).includes('/api/rooms/')) return Promise.resolve({ ok: false, status: 404, json: async () => ({}) })
+      const path = String(url)
+      if (path.endsWith('/preview')) return json({ body: { joinMode: 'open', memberCount: 0, nicknames: [] } })
+      if (!path.startsWith('/api/rooms/')) return json({ status: 404 })
       calls += 1
-      if (calls === 1) return Promise.resolve({ ok: true, status: 200, json: async () => base })
+      if (calls === 1) return json({ body: roomBody() })
       return new Promise((resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
-        slow.push((json) => resolve({ ok: true, status: 200, json: async () => json }))
+        slow.push((body) => resolve({ ok: true, status: 200, json: async () => body }))
       })
     }))
-    renderRoom()
-    await screen.findByText('movie.mkv')
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    const socket = FakeWebSocket.instances[0]
-    const signal = () => act(() => { socket.onmessage?.({ data: JSON.stringify({ type: 'roomUpdated' }) }) })
+    await joined()
+    const roomUpdated = () => receive({ type: 'roomUpdated' })
 
-    signal()
     await waitFor(() => expect(slow.length).toBeGreaterThan(0))
-    signal()
-    act(() => slow[0]({ ...base, fileName: 'updated.mkv' }))
+    roomUpdated()
+    act(() => slow[0](roomBody({ fileName: 'updated.mkv' })))
 
-    await screen.findByText('updated.mkv')
+    expect(await screen.findByRole('heading', { name: 'updated.mkv' })).toBeInTheDocument()
   })
 })
 
-describe('RoomPage source swap', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    localStorage.setItem('ss.nickname', 'Giuli')
-    vi.clearAllMocks()
-    FakeWebSocket.instances = []
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-        mediaGeneration: 0, controllerId: 'm1',
-        audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-        memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
-      }),
-    }))
+describe('retomar o preparo', () => {
+  const resumable = () => localStorage.setItem('ss.resume.abc123', JSON.stringify({
+    kind: 'url', fileName: 'movie.mkv', url: 'https://example.test/movie.mkv', size: 10, savedAt: Date.now(),
+  }))
+  const gap = [{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }]
+
+  it.each([
+    ['uma região já cobre a posição', [{ n: 0, startMs: 0, producedMs: 600_000, growing: false }], undefined],
+    ['um pipeline ainda produz', gap, () => Date.now()],
+  ])('deixa a sala quieta quando %s', async (_, mediaRegions, heartbeat) => {
+    resumable()
+    serve({ room: () => roomBody({ durationMs: 600_000, mediaRegions, producerHeartbeatMs: heartbeat?.() }) })
+
+    await joined()
+
+    expect(changeRoomSource).not.toHaveBeenCalled()
+    expect(startUrlUpload).not.toHaveBeenCalled()
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
+  it.each([
+    ['nada cobre a posição da sala', undefined],
+    ['o pipeline ficou quieto', () => Date.now() - 10 * 60_000],
+  ])('reabre a fonte quando %s', async (_, heartbeat) => {
+    resumable()
+    serve({ room: () => roomBody({ durationMs: 600_000, mediaRegions: gap, producerHeartbeatMs: heartbeat?.() }) })
+
+    await joined()
+
+    await waitFor(() => expect(startUrlUpload).toHaveBeenCalledWith('abc123', 1, 'https://example.test/movie.mkv', 'movie.mkv', 10))
   })
+})
 
-  const welcome = (memberId: string) => act(() => {
-    FakeWebSocket.instances[0].onmessage?.({
-      data: JSON.stringify({
-        type: 'welcome', memberId, controllerId: 'm1', capability: 'cap-token',
-        members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }],
-        state: { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 },
-      }),
-    })
-  })
+describe('pedido de palco', () => {
+  it('convidado pede um palco ao host e abre o seletor quando ele deixa', async () => {
+    serve()
+    await joined('m2')
 
-  it('offers the swap to the controller only', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
-
-    expect(await screen.findByRole('button', { name: /change media|trocar mídia/i })).toBeInTheDocument()
-  })
-
-  it('starts with the chat closed on a phone, where it would cover the video', async () => {
-    const matchMedia = window.matchMedia
-    window.matchMedia = ((query: string) => ({ ...matchMedia(query), matches: query.includes('900px') })) as typeof window.matchMedia
-    try {
-      renderRoom()
-      await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-      welcome('m2')
-      expect(await screen.findByRole('button', { name: /^chat$/i })).toHaveAttribute('aria-pressed', 'false')
-    } finally {
-      window.matchMedia = matchMedia
-    }
-  })
-
-  it('hides the swap from everyone who is not driving the room', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m2')
-
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
-    expect(screen.queryByRole('button', { name: /change media|trocar mídia/i })).not.toBeInTheDocument()
-  })
-
-  const sentTypes = () => FakeWebSocket.instances[0].send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as Record<string, unknown>)
-  const receive = (message: unknown) => act(() => {
-    FakeWebSocket.instances[0].onmessage?.({ data: JSON.stringify(message) })
-  })
-
-  it('lets a guest ask the host for a stage, and opens the swap once the host says yes', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m2')
-
-    fireEvent.click(await screen.findByRole('button', { name: /ask the host|pedir ao anfitrião/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /^media$|^mídia$/i }))
-    expect(sentTypes()).toContainEqual({ type: 'stageRequest', kind: 'media' })
+    await pickShare('Torrent')
+    expect(sent()).toContainEqual({ type: 'stageRequest', kind: 'media' })
+    expect(screen.queryByRole('heading', { name: 'Abrir um torrent' })).not.toBeInTheDocument()
 
     receive({ type: 'stageGrant', kind: 'media', allow: true })
-    expect(await screen.findByRole('button', { name: /change media|trocar mídia/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Abrir um torrent' })).toBeInTheDocument()
   })
 
-  it('shows the host what a guest asked for and sends the answer', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
+  it('mostra ao host o pedido do convidado e manda a resposta', async () => {
+    serve()
+    await joined('m1')
     receive({ type: 'stageRequest', requestId: 'q1', memberId: 'm2', nickname: 'Ana', kind: 'screen' })
 
-    fireEvent.click(await screen.findByRole('button', { name: /^allow$|^deixar$/i }))
-    expect(sentTypes()).toContainEqual({ type: 'stageAnswer', requestId: 'q1', allow: true })
-    await waitFor(() => expect(screen.queryByRole('button', { name: /^allow$|^deixar$/i })).not.toBeInTheDocument())
+    fireEvent.click(await screen.findByRole('button', { name: 'Permitir' }))
+
+    expect(sent()).toContainEqual({ type: 'stageAnswer', requestId: 'q1', allow: true })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Permitir' })).not.toBeInTheDocument())
   })
+})
 
-  it('brings the screen stage up beside the media instead of replacing it', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
-    expect(screen.queryByRole('button', { name: /share my screen|compartilhar minha tela/i })).not.toBeInTheDocument()
+describe('palcos', () => {
+  it('põe a tela compartilhada ao lado da mídia, sem trocar a fonte', async () => {
+    serve({ room: roomBody({ screens: [{ memberId: 'm2', nickname: 'Ana', since: '2026-01-01T00:00:00Z' }] }) })
+    await joined('m1')
 
-    fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
-
-    expect(await screen.findByRole('button', { name: /share my screen|compartilhar minha tela/i })).toBeInTheDocument()
+    const stages = within(screen.getByRole('radiogroup', { name: 'Em foco' }))
+    expect(stages.getByRole('radio', { name: 'movie.mkv' })).toBeInTheDocument()
+    expect(stages.getByRole('radio', { name: 'Tela de Ana' })).toBeInTheDocument()
     expect(changeRoomSource).not.toHaveBeenCalled()
-    expect(requestScreenStream).not.toHaveBeenCalled()
   })
 })
 
-describe('RoomPage retomar o preparo', () => {
-  const roomWith = (mediaRegions: unknown, producerHeartbeatMs?: number) => ({
-    id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-    mediaGeneration: 0, controllerId: 'm1',
-    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-    durationMs: 600_000, mediaRegions, producerHeartbeatMs,
-    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
-  })
-
-  const setup = (mediaRegions: unknown, producerHeartbeatMs?: number) => {
-    localStorage.clear()
-    localStorage.setItem('ss.nickname', 'Giuli')
-    localStorage.setItem('ss.resume.abc123', JSON.stringify({
-      kind: 'url', fileName: 'movie.mkv', url: 'https://example.test/movie.mkv', size: 10, savedAt: Date.now(),
-    }))
-    vi.clearAllMocks()
-    FakeWebSocket.instances = []
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => roomWith(mediaRegions, producerHeartbeatMs) }))
+describe('espera para começar junto', () => {
+  const waiting = (memberId: string, readiness: Array<Record<string, unknown>>) => {
+    welcome(memberId, [
+      { id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' },
+      { id: 'm2', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' },
+    ])
+    receive({ type: 'waiting', targetMs: 30000, readiness })
   }
+  const panel = async () => (await screen.findByText('Esperando todo mundo carregar')).closest('[role="status"]') as HTMLElement
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
-
-  const welcome = () => act(() => {
-    FakeWebSocket.instances[0].onmessage?.({
-      data: JSON.stringify({
-        type: 'welcome', memberId: 'm1', controllerId: 'm1', capability: 'cap-token',
-        members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }],
-        state: { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 },
-      }),
-    })
-  })
-
-  it('leaves a room alone when a region already covers where it is', async () => {
-    setup([{ n: 0, startMs: 0, producedMs: 600_000, growing: false }])
+  it('deixa o host ignorar quem segura a sala', async () => {
+    serve()
     renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome()
-
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
-    expect(changeRoomSource).not.toHaveBeenCalled()
-    expect(startUrlUpload).not.toHaveBeenCalled()
-  })
-
-  it('reopens the source when nothing holds the position the room is at', async () => {
-    setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }])
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome()
-
-    await waitFor(() => expect(changeRoomSource).toHaveBeenCalled())
-  })
-
-  it('leaves a cold seek alone while a pipeline is still producing', async () => {
-    setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }], Date.now())
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome()
-
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
-    expect(changeRoomSource).not.toHaveBeenCalled()
-    expect(startUrlUpload).not.toHaveBeenCalled()
-  })
-
-  it('picks the room up once the pipeline behind it has gone quiet', async () => {
-    setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }], Date.now() - 10 * 60_000)
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome()
-
-    await waitFor(() => expect(changeRoomSource).toHaveBeenCalled())
-  })
-})
-
-describe('RoomPage header', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    localStorage.setItem('ss.nickname', 'Giuli')
-    vi.clearAllMocks()
-    FakeWebSocket.instances = []
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-        mediaGeneration: 0, controllerId: 'm1',
-        audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-        memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
-      }),
-    }))
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
-
-  const welcome = (memberId: string) => act(() => {
-    FakeWebSocket.instances[0].onmessage?.({
-      data: JSON.stringify({
-        type: 'welcome', memberId, controllerId: 'm1', capability: 'cap-token',
-        members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }],
-        state: { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 },
-      }),
-    })
-  })
-
-  const chat = (author: string, text: string) => act(() => {
-    FakeWebSocket.instances[0].onmessage?.({
-      data: JSON.stringify({
-        type: 'chat',
-        message: { author, text, at: new Date().toISOString() },
-      }),
-    })
-  })
-
-  async function joinedRoom(memberId = 'm1') {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome(memberId)
-    return await screen.findByRole('button', { name: /copy link|copiar link/i })
-  }
-
-  it('no longer offers screen sharing next to the source switcher', async () => {
-    await joinedRoom()
-
-    expect(screen.queryByRole('button', { name: /share screen|compartilhar tela/i })).not.toBeInTheDocument()
-  })
-
-  it('confirms a copied link with a toast', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, { clipboard: { writeText } })
-    const copy = await joinedRoom()
-
-    fireEvent.click(copy)
-
-    expect(writeText).toHaveBeenCalledWith('http://localhost/room/abc123')
-    expect(await screen.findByText(/link copied|link copiado/i)).toBeInTheDocument()
-    await waitFor(() => expect(copy.querySelector('.lucide-check')).toBeTruthy())
-    expect(copy).toHaveAccessibleName(/copy link|copiar link/i)
-  })
-
-  it('counts messages that arrive while the chat is shut', async () => {
-    await joinedRoom()
-    const toggle = screen.getByRole('button', { name: /^chat$/i })
-
-    fireEvent.click(toggle)
-    chat('Ana', 'oi')
-    chat('Ana', 'tudo bem?')
-
-    expect(await screen.findByText('2')).toBeInTheDocument()
-  })
-
-  it('clears the count when the chat is opened', async () => {
-    await joinedRoom()
-    const toggle = screen.getByRole('button', { name: /^chat$/i })
-    fireEvent.click(toggle)
-    chat('Ana', 'oi')
-    await screen.findByText('1')
-
-    fireEvent.click(toggle)
-
-    await waitFor(() => expect(screen.queryByText('1')).not.toBeInTheDocument())
-  })
-
-  it('gives the chat column back to the player when the chat is shut', async () => {
-    const { container } = renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
-
-    const layout = container.querySelector('.room-layout')!
-    expect(layout).toHaveClass('chat-open')
-
-    fireEvent.click(screen.getByRole('button', { name: /^chat$/i }))
-
-    expect(layout).not.toHaveClass('chat-open')
-  })
-
-  it('presents the synced start as a setting that is already on', async () => {
-    await joinedRoom()
-
-    const toggle = screen.getByRole('switch', { name: /force sync|forçar sincronizar/i })
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
-
-    fireEvent.click(toggle)
-
-    expect(FakeWebSocket.instances[0].send).toHaveBeenCalledWith(
-      JSON.stringify({ type: 'gating', enabled: false }),
-    )
-  })
-
-  it('keeps the sync setting out of a viewer\'s header', async () => {
-    await joinedRoom('m2')
-
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
-  })
-})
-
-describe('RoomPage waiting screen', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    localStorage.setItem('ss.nickname', 'Giuli')
-    vi.clearAllMocks()
-    FakeWebSocket.instances = []
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-    vi.useRealTimers()
-  })
-
-  const roomBody = (receivedBytes: number) => ({
-    id: 'abc123', fileName: 'movie.mkv', status: 'uploading',
-    mediaGeneration: 0, controllerId: 'm1',
-    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
-    preparation: {
-      sourceBytes: 100 * 1024 * 1024,
-      receivedBytes,
-      previewPhase: 'receiving',
-    },
-  })
-
-  it('keeps reading its own progress when no live update arrives', async () => {
-    let received = 10 * 1024 * 1024
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
-      ok: true, status: 200, json: async () => roomBody(received),
-    })))
-
-    renderRoom()
-    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '10'))
-
-    received = 40 * 1024 * 1024
-    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40'),
-      { timeout: 6000 })
-  }, 10_000)
-})
-
-describe('RoomPage waiting panel', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    localStorage.setItem('ss.nickname', 'Giuli')
-    vi.clearAllMocks()
-    FakeWebSocket.instances = []
-    vi.stubGlobal('WebSocket', FakeWebSocket)
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true, status: 200,
-      json: async () => ({
-        id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-        mediaGeneration: 0, controllerId: 'm1',
-        audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
-        memberCount: 2, expiresAt: '2099-01-01T00:00:00Z',
-      }),
-    }))
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
-
-  const waitingPanel = async () => {
-    const heading = await screen.findByText(/everyone to buffer|todo mundo/i)
-    return heading.closest('.waiting-panel') as HTMLElement
-  }
-
-  const joinAndWait = (memberId: string, readiness: Array<Record<string, unknown>>) => {
-    act(() => {
-      FakeWebSocket.instances[0].onmessage?.({
-        data: JSON.stringify({
-          type: 'welcome', memberId, controllerId: 'm1', capability: 'cap-token',
-          members: [
-            { id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' },
-            { id: 'm2', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' },
-          ],
-          state: { playing: false, positionMs: 30000, rate: 1, serverTimeMs: 0 },
-        }),
-      })
-    })
-    act(() => {
-      FakeWebSocket.instances[0].onmessage?.({
-        data: JSON.stringify({ type: 'waiting', targetMs: 30000, readiness }),
-      })
-    })
-  }
-
-  it('offers Ignore to the controller for whoever is holding the room up', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    joinAndWait('m1', [
+    await enter()
+    waiting('m1', [
       { memberId: 'm1', bufferAheadMs: 5000, ready: true },
       { memberId: 'm2', bufferAheadMs: 0, ready: false, stalled: true },
     ])
 
-    const panel = await waitingPanel()
-    expect(within(panel).getByText('Ana')).toBeInTheDocument()
-    fireEvent.click(within(panel).getByRole('button', { name: /ignore|ignorar/i }))
+    fireEvent.click(within(await panel()).getByRole('button', { name: 'Ignorar' }))
 
-    expect(FakeWebSocket.instances[0].send).toHaveBeenCalledWith(
-      JSON.stringify({ type: 'ignore', targetId: 'm2' }),
-    )
+    expect(sent()).toContainEqual({ type: 'ignore', targetId: 'm2' })
   })
 
-  it('does not offer Ignore for members who are already ready', async () => {
+  it.each([
+    ['quem já está pronto', 'm1', { memberId: 'm2', bufferAheadMs: 5000, ready: true }],
+    ['quem já foi ignorado', 'm1', { memberId: 'm2', bufferAheadMs: 0, ready: true, stalled: true, ignored: true }],
+    ['um convidado', 'm2', { memberId: 'm1', bufferAheadMs: 0, ready: false, stalled: true }],
+  ])('não oferece Ignorar para %s', async (_, self, other) => {
+    serve()
     renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    joinAndWait('m1', [
-      { memberId: 'm1', bufferAheadMs: 5000, ready: true },
-      { memberId: 'm2', bufferAheadMs: 5000, ready: true },
-    ])
+    await enter()
+    waiting(self, [{ memberId: self, bufferAheadMs: 5000, ready: true }, other])
 
-    const panel = await waitingPanel()
-    expect(within(panel).getByText('Ana')).toBeInTheDocument()
-    expect(within(panel).queryByRole('button', { name: /ignore|ignorar/i })).not.toBeInTheDocument()
+    expect(within(await panel()).queryByRole('button', { name: 'Ignorar' })).not.toBeInTheDocument()
   })
+})
 
-  it('keeps Ignore away from viewers', async () => {
+describe('preparo', () => {
+  it('acompanha o progresso sozinho quando o socket não traz novidade', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let received = 10 * 1024 * 1024
+    serve({ room: () => roomBody({
+      status: 'uploading',
+      preparation: { sourceBytes: 100 * 1024 * 1024, receivedBytes: received, previewPhase: 'receiving' },
+    }) })
     renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    joinAndWait('m2', [
-      { memberId: 'm1', bufferAheadMs: 0, ready: false, stalled: true },
-      { memberId: 'm2', bufferAheadMs: 5000, ready: true },
-    ])
+    await enter()
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '10'))
 
-    const panel = await waitingPanel()
-    expect(within(panel).getByText('Giuli')).toBeInTheDocument()
-    expect(within(panel).queryByRole('button', { name: /ignore|ignorar/i })).not.toBeInTheDocument()
-  })
+    received = 40 * 1024 * 1024
+    await act(() => vi.advanceTimersByTimeAsync(3_000))
 
-  it('shows an ignored member as watching separately, with no button', async () => {
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    joinAndWait('m1', [
-      { memberId: 'm1', bufferAheadMs: 5000, ready: true },
-      { memberId: 'm2', bufferAheadMs: 0, ready: true, stalled: true, ignored: true },
-    ])
-
-    const panel = await waitingPanel()
-    expect(within(panel).getByText(/watching on their own|assistindo por conta/i)).toBeInTheDocument()
-    expect(within(panel).queryByRole('button', { name: /ignore|ignorar/i })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40'))
   })
 })
