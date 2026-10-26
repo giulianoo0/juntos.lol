@@ -307,7 +307,14 @@ Regras comuns:
    hoje (legendas, faixas de áudio, volume com boost, velocidade, capítulos,
    qualidade, tela cheia, gate, etc.); o player do `/dev/sala` é só um
    marcador.
-3. e2e: `e2e-stages`, `e2e-screen`, `e2e-subtitles`, `e2e-seek`, carga.
+3. e2e: `e2e-stages`, `e2e-screen`, `e2e-subtitles`, `e2e-seek`, carga,
+   torrent real pelo Compartilhar e PiP com legenda (Document PiP e fallback),
+   com capturas.
+3a. Cleanup: apagar o que ficou morto depois da integração (`MorphPanel`,
+   `morphTokens`, `useMorphingSize`, o `MorphingMenu` de compatibilidade,
+   `chat/Chat.tsx` antigo, o resto de `sourceKind`/`createScreenRoom`/
+   `screenShareOpen`, CSS sem uso no `theme.css`, rotas e i18n órfãos),
+   conferindo com busca que nada mais usa.
 4. Revisão: skills `antislop`, `antislop-ui`, `antislop-code`,
    `antislop-human`, `antislop-copywriting`, `emil-design-eng`,
    `review-animations`, `web-design-guidelines`; `/security-review`; teste de
