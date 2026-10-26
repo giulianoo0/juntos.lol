@@ -31,7 +31,7 @@ const (
 )
 
 func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config) {
-	rg.POST("/rooms", createRoom(store, cfg))
+	rg.POST("/rooms", roomCreationLimit(cfg.RoomsPerIPPerHour, cfg.BehindCloudflare), createRoom(store, cfg))
 	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL))
 }
 
@@ -41,6 +41,9 @@ type createRoomRequest struct {
 	FileName string `json:"fileName"`
 	Nickname string `json:"nickname"`
 	Kind     string `json:"kind"`
+	// JoinMode and Password set the room's door; see joinAccess.
+	JoinMode string `json:"joinMode"`
+	Password string `json:"password"`
 }
 
 func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
@@ -75,6 +78,10 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			kind = room.SourceUpload
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		access, ok := joinAccess(c, req.JoinMode, req.Password)
+		if !ok {
 			return
 		}
 		nickname, err := displayNameOrRandom(req.Nickname)
@@ -112,6 +119,10 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			ExpiresAt:    now.Add(time.Duration(cfg.RoomTTLHours) * time.Hour),
 		}
 		if err := store.CreateWithMember(c.Request.Context(), r, member); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		if err := store.SetAccess(c.Request.Context(), id, access); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}

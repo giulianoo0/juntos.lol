@@ -102,6 +102,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterLiveRoutes(r.Group("/api"), store, cfg, authorizer, options.sourceHooks, options.torrentAccess.Service)
 	if hub != nil {
+		RegisterJoinRoutes(r.Group("/api"), store, cfg, hub, hub, hub.NotifyRoomUpdated)
 		r.GET("/ws/rooms/:id", hub.HandleWS)
 		r.GET("/api/live", func(c *gin.Context) {
 			_, members := hub.Live()
