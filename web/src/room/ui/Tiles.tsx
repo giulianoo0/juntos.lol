@@ -1,4 +1,4 @@
-import { Crown, MicOff, Pin, PinOff, Sparkles, X } from 'lucide-react'
+import { Crown, Focus, MicOff, Pin, PinOff, X } from 'lucide-react'
 import type { Person, Stage } from '../model'
 import { Avatar } from '../../ui/Avatar'
 import { RoundButton } from '../../ui/Pill'
@@ -34,7 +34,7 @@ export function PersonTile({ person, size }: { person: Person; size: TileSize })
       {size !== 'thumb' ? (
         <div className={styles.corner}>
           {pinned ? <span className={styles.tag}><Pin size={12} aria-hidden="true" />{strings.pinned}</span> : null}
-          {lit ? <span className={styles.tag}><Sparkles size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
+          {lit ? <span className={styles.tag}><Focus size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
           <RoundButton
             tone="scrim"
             size="md"
@@ -72,7 +72,7 @@ export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
           <span className={styles.nameText}>{size === 'thumb' ? stage.title : `${nameOf(stage.ownerId)} · ${stage.title}`}</span>
         </span>}
         {size !== 'thumb' && pinned ? <span className={styles.tag}><Pin size={12} aria-hidden="true" />{strings.pinned}</span> : null}
-        {size !== 'thumb' && lit ? <span className={styles.tag}><Sparkles size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
+        {size !== 'thumb' && lit ? <span className={styles.tag}><Focus size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
       </div>
       {size !== 'thumb' ? (
         <div className={styles.corner}>
@@ -90,7 +90,7 @@ export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
               size="md"
               className={styles.cornerButton}
               label={lit ? strings.spotlightOff : strings.spotlightAll}
-              icon={<Sparkles size={14} />}
+              icon={<Focus size={14} />}
               onClick={() => vm.actions.spotlight(lit ? null : stage.kind === 'screen' ? { kind: 'screen', memberId: stage.ownerId } : { kind: stage.kind })}
             />
           ) : null}

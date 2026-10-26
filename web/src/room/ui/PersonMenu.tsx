@@ -1,4 +1,4 @@
-import { Crown, Ellipsis, MicOff, Pin, PinOff, Sparkles, UserX, VideoOff } from 'lucide-react'
+import { Crown, Ellipsis, Focus, MicOff, Pin, PinOff, UserX, VideoOff } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { Person } from '../model'
 import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
@@ -39,7 +39,7 @@ export function PersonMenu({ person, trigger }: {
           {vm.isHost ? (
             <>
               <SpringRow
-                icon={<Sparkles size={16} />}
+                icon={<Focus size={16} />}
                 label={lit ? strings.spotlightOff : strings.spotlightAll}
                 onSelect={() => { vm.actions.spotlight(lit ? null : { kind: 'member', memberId: person.id }); close() }}
               />

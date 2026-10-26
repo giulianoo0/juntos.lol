@@ -7,7 +7,7 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -951,27 +951,22 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           }
         />
       )}
+      {shownOpening !== null ? (
+        <div className="stage-gate" data-leaving={openingGate === null || undefined}>
+          <RoomGate
+            inline
+            step={openingGate ?? shownOpening}
+            room={liveRoom}
+            preparation={liveRoom.preparation}
+            swarm={swarmStats}
+            wait={openingWait}
+          />
+        </div>
+      ) : null}
       <div className="stage-extras">
         {uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready'
           ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
           : null}
-        {sync.isController ? (
-          <Button
-            className={`sync-toggle ${sync.gatingEnabled ? 'is-on' : ''}`}
-            variant="ghost"
-            size="small"
-            role="switch"
-            aria-checked={sync.gatingEnabled}
-            onClick={() => {
-              if (!sync.send('gating', { enabled: !sync.gatingEnabled })) toast(t('room.offlineCommand'))
-            }}
-          >
-            <span className="sync-toggle-box" aria-hidden="true">
-              {sync.gatingEnabled ? <Check size={11} strokeWidth={3.5} /> : null}
-            </span>
-            {t('room.gating')}
-          </Button>
-        ) : null}
       </div>
       {sidePanel === 'chapters' ? (
         <div className="stage-chapters">
@@ -1002,17 +997,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
 
   return (
     <CallProvider call={call}>
-    {shownOpening !== null ? (
-      <RoomGate
-        overlay
-        leaving={openingGate === null}
-        step={openingGate}
-        room={liveRoom}
-        preparation={liveRoom.preparation}
-        swarm={swarmStats}
-        wait={openingWait}
-      />
-    ) : null}
     <RoomView vm={vm} />
     {mediaStage ? hosts.portal('media', mediaContent) : null}
     {liveRoom.live ? hosts.portal('live', liveRoom.live.status === 'error' ? (

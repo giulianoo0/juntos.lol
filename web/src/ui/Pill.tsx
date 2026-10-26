@@ -1,4 +1,5 @@
 import { forwardRef, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { Tip } from './Tip'
 import styles from './Pill.module.css'
 
 export type PillTone = 'primary' | 'soft' | 'danger' | 'glass'
@@ -54,17 +55,22 @@ export const RoundButton = forwardRef<HTMLButtonElement, RoundOwn & Omit<ButtonH
   { label, icon, state, tone = 'soft', size = 'lg', className = '', type = 'button', ...rest },
   ref,
 ) {
+  // Only an icon: its name shows as the room's tooltip, not the browser's.
   return (
-    <button
-      ref={ref}
-      type={type}
-      aria-label={label}
-      title={label}
-      data-state={state}
-      className={[styles.round, styles[`round-${tone}`], styles[`round-${size}`], className].filter(Boolean).join(' ')}
-      {...rest}
-    >
-      <span className={styles.icon} aria-hidden="true">{icon}</span>
-    </button>
+    <Tip
+      label={label}
+      render={(
+        <button
+          ref={ref}
+          type={type}
+          aria-label={label}
+          data-state={state}
+          className={[styles.round, styles[`round-${tone}`], styles[`round-${size}`], className].filter(Boolean).join(' ')}
+          {...rest}
+        >
+          <span className={styles.icon} aria-hidden="true">{icon}</span>
+        </button>
+      )}
+    />
   )
 })

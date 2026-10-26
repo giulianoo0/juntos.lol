@@ -33,9 +33,12 @@
   --pill-ink: var(--on-scrim);
 }
 
+/* Off: the danger tint laid over a solid face, never see-through, so
+   nothing behind the pill (a video, a neighbour) shows in it. */
 .pill[data-state="off"] {
-  --pill-bg: var(--status-danger-soft);
-  --pill-bg-hover: color-mix(in oklab, var(--status-danger-soft), var(--danger) 12%);
+  --pill-bg: var(--button-secondary-solid);
+  --pill-bg-hover: var(--button-secondary-solid-hover);
+  --pill-tint: var(--status-danger-soft);
   --pill-ink: var(--status-danger-ink);
 }
 
@@ -66,11 +69,15 @@
   min-width: var(--pill-size);
   padding-inline: calc((var(--pill-size) - 1.125rem) / 2);
   border-radius: var(--radius-full);
-  background: var(--pill-bg);
+  background: linear-gradient(var(--pill-tint, transparent), var(--pill-tint, transparent)), var(--pill-bg);
   color: var(--pill-ink);
   white-space: nowrap;
   pointer-events: none;
   transition: var(--transition-button);
+}
+
+.pill[data-tone="scrim"][data-state="off"] {
+  --pill-bg: var(--button-secondary-solid);
 }
 
 .pill[data-tone="scrim"] .face {
@@ -80,7 +87,7 @@
 
 @media (hover: hover) and (pointer: fine) {
   .pill:not(:disabled):hover .face {
-    background: var(--pill-bg-hover);
+    background: linear-gradient(var(--pill-tint, transparent), var(--pill-tint, transparent)), var(--pill-bg-hover);
   }
 }
 
