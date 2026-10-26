@@ -2,6 +2,7 @@ package sync
 
 import (
 	"net/url"
+	stdsync "sync"
 	"testing"
 	"time"
 
@@ -139,4 +140,42 @@ func TestOnlyTheHostAnswersAKnock(t *testing.T) {
 
 	require.NoError(t, host.WriteJSON(Inbound{Type: "admit", TargetID: "nope"}))
 	require.Equal(t, "request_not_found", readHubEvent(t, host).ErrCode)
+}
+
+type recordedActivity struct {
+	mu     stdsync.Mutex
+	events []string
+}
+
+func (a *recordedActivity) add(event string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.events = append(a.events, event)
+}
+func (a *recordedActivity) HostJoined(roomID string)  { a.add("host:" + roomID) }
+func (a *recordedActivity) RoomChanged(roomID string) { a.add("changed:" + roomID) }
+func (a *recordedActivity) RoomClosed(roomID string)  { a.add("closed:" + roomID) }
+func (a *recordedActivity) snapshot() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.events...)
+}
+
+func TestActivityFollowsTheRoom(t *testing.T) {
+	hub, hello := newJoinRoom(t, room.JoinOpen)
+	activity := &recordedActivity{}
+	hub.SetActivityNotifier(activity)
+
+	host, _ := hello(Inbound{Nickname: "host", OwnerToken: joinOwnerToken})
+	readHubEvent(t, host)
+	guest, _ := hello(Inbound{Nickname: "guest"})
+	require.Eventually(t, func() bool { return len(activity.snapshot()) == 2 }, time.Second, 10*time.Millisecond)
+	require.Equal(t, []string{"host:r2", "changed:r2"}, activity.snapshot())
+
+	require.NoError(t, guest.Close())
+	require.Eventually(t, func() bool { return len(activity.snapshot()) == 3 }, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, "changed:r2", activity.snapshot()[2], "someone leaving changes the room")
+
+	hub.NotifyRoomUpdated("r2")
+	require.Eventually(t, func() bool { return len(activity.snapshot()) == 4 }, time.Second, 10*time.Millisecond)
 }

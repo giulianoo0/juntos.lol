@@ -306,12 +306,14 @@ func (h *Hub) ResetPlayback(roomID string) {
 // media readiness. Subtitle extraction uses this path.
 func (h *Hub) NotifyRoomUpdated(roomID string) {
 	h.notify(roomID, Outbound{Type: "roomUpdated"})
+	h.roomChanged(roomID)
 }
 
 // NotifyRoomMedia is a roomUpdated that says what moved — regions, offset,
 // version — so a viewer applies it in place instead of refetching the room.
 func (h *Hub) NotifyRoomMedia(roomID string, media room.MediaSnapshot) {
 	h.notify(roomID, Outbound{Type: "roomUpdated", Media: &media})
+	h.roomChanged(roomID)
 }
 
 const progressNotifyEvery = 5 * time.Second
@@ -727,6 +729,7 @@ func (r *roomConn) resume(request joinRequest) bool {
 // finalizeLeave is a member really going: the seat, the capability, the
 // screen and, if they held it, the controls all pass on.
 func (r *roomConn) finalizeLeave(disconnected *client) {
+	defer r.hub.roomChanged(r.id)
 	r.logSyncSummary(disconnected)
 	delete(r.ignored, disconnected.id)
 	r.hub.mu.Lock()
@@ -1139,6 +1142,7 @@ func (h *Hub) reclaimIdle(id string) bool {
 	if h.onReclaimed != nil {
 		h.onReclaimed(id)
 	}
+	h.roomClosed(id)
 	slog.InfoContext(ctx, "idle room reclaimed",
 		"room_id", id, "idle_for", h.idleAfter)
 	return true

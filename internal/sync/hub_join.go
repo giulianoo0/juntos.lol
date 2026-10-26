@@ -249,6 +249,18 @@ func (r *roomConn) joined(member *client, owner bool) {
 	}
 }
 
+func (h *Hub) roomChanged(roomID string) {
+	if notifier := h.activity(); notifier != nil {
+		notifier.RoomChanged(roomID)
+	}
+}
+
+func (h *Hub) roomClosed(roomID string) {
+	if notifier := h.activity(); notifier != nil {
+		notifier.RoomClosed(roomID)
+	}
+}
+
 // deliver hands an event from outside the loop to everyone, or only to the
 // host when it is meant for the host alone.
 func (r *roomConn) deliver(event Outbound) {
