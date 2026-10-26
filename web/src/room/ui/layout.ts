@@ -1,0 +1,69 @@
+import type { Person, Spotlight, Stage } from '../model'
+
+export type Target = { kind: 'stage' | 'person'; id: string }
+
+export type Layout =
+  | { kind: 'grid'; people: string[] }
+  | {
+    kind: 'focus'
+    /** Why this is in focus: the viewer's pin, the host's spotlight, or
+        simply the first stage. */
+    reason: 'pin' | 'spotlight' | 'auto'
+    focus: Target
+    /** The column: the other stages, then the people. */
+    side: Target[]
+  }
+
+export interface LayoutInput {
+  people: Person[]
+  stages: Stage[]
+  spotlight: Spotlight | null
+  pin: Target | null
+  /** The viewer stepped out of the host's spotlight. */
+  leftSpotlight: boolean
+}
+
+function spotlightTarget(spotlight: Spotlight): Target {
+  switch (spotlight.kind) {
+    case 'media':
+    case 'live':
+      return { kind: 'stage', id: spotlight.kind }
+    case 'screen':
+      return { kind: 'stage', id: `screen:${spotlight.memberId}` }
+    case 'member':
+      return { kind: 'person', id: spotlight.memberId }
+  }
+}
+
+/** What goes where: the pin, then the spotlight, then the first stage, and
+    a grid of people when nothing is on stage. */
+export function layoutOf({ people, stages, spotlight, pin, leftSpotlight }: LayoutInput): Layout {
+  const exists = (target: Target) => target.kind === 'stage'
+    ? stages.some((stage) => stage.id === target.id)
+    : people.some((member) => member.id === target.id)
+
+  const lit = spotlight && !leftSpotlight ? spotlightTarget(spotlight) : null
+  const [reason, focus]: ['pin' | 'spotlight' | 'auto', Target | null] =
+    pin && exists(pin) ? ['pin', pin]
+      : lit && exists(lit) ? ['spotlight', lit]
+        : stages[0] ? ['auto', { kind: 'stage', id: stages[0].id }]
+          : ['auto', null]
+
+  if (!focus) return { kind: 'grid', people: people.map(({ id }) => id) }
+
+  const side: Target[] = [
+    ...stages.map(({ id }): Target => ({ kind: 'stage', id })),
+    ...people.map(({ id }): Target => ({ kind: 'person', id })),
+  ].filter((target) => target.kind !== focus.kind || target.id !== focus.id)
+  return { kind: 'focus', reason, focus, side }
+}
+
+/** How many columns the people grid takes. */
+export function gridColumns(count: number, narrow: boolean): number {
+  if (narrow) return count <= 2 ? 1 : 2
+  if (count <= 1) return 1
+  if (count <= 4) return 2
+  if (count <= 9) return 3
+  if (count <= 16) return 4
+  return 5
+}
