@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
-import { Check, Gauge, Maximize, Minimize, MonitorOff, MonitorUp, Replace, Users, Volume2, VolumeX } from 'lucide-react'
+import { Check, Gauge, Maximize, Minimize, MonitorOff, MonitorUp, Replace, Volume2, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import type { ScreenShareInfo } from '../types'
 import { Button } from '../ui/Button'
@@ -194,7 +194,7 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
         </span>
       ) : null}
       {sharing && share.stats && viewers > 0 ? <span className="screen-stats">{formatStats(share.stats)}</span> : null}
-      {hasRemote || isController ? <span className="screen-bar-sep" aria-hidden="true" /> : null}
+      {hasRemote ? <span className="screen-bar-sep" aria-hidden="true" /> : null}
       {hasRemote ? (
         <VolumeControl
           volume={share.volume}
@@ -211,15 +211,6 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
           label={t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')}
           className="screen-fullscreen"
           onClick={toggleFullscreen}
-        />
-      ) : null}
-      {isController ? (
-        <IconButton
-          icon={<Users size={16} />}
-          label={t(shareOpen ? 'room.screenOpenOn' : 'room.screenOpenOff')}
-          className={shareOpen ? 'is-on' : ''}
-          aria-pressed={shareOpen}
-          onClick={() => { void share.setShareOpen(!shareOpen).catch(() => toast(t('error.screenshare'))) }}
         />
       ) : null}
     </>

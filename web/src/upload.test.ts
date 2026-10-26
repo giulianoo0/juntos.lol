@@ -59,19 +59,26 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('upload registry', () => {
   let roomCounter = 0
-  let roomBodies: Array<{ fileName: string; nickname: string }> = []
+  let roomBodies: Array<Record<string, unknown>> = []
+  let sourceBodies: Array<Record<string, unknown>> = []
 
   beforeEach(() => {
     subtitleFakes.reset()
     roomBodies = []
+    sourceBodies = []
     roomCounter = 0
     clientPipeline.planClientRemux.mockResolvedValue(plan)
     clientPipeline.runClientRemux.mockResolvedValue(undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url: string, init: { body: string }) => {
-      roomCounter += 1
-      roomBodies.push(JSON.parse(init.body) as { fileName: string; nickname: string })
-      return { ok: true, json: async () => ({ id: `room${roomCounter}`, nickname: 'giuli' }) }
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body) as Record<string, unknown>
+      if (url === '/api/rooms') {
+        roomCounter += 1
+        roomBodies.push(body)
+        return { ok: true, json: async () => ({ id: `room${roomCounter}`, nickname: 'giuli', ownerToken: 'own' }) }
+      }
+      sourceBodies.push({ url, ...body })
+      return { ok: true, json: async () => ({ status: 'uploading', fileName: body.fileName, mediaGeneration: 1 }) }
     }))
   })
 
@@ -94,12 +101,13 @@ describe('upload registry', () => {
     return { result, file, finishRun, failRun, report }
   }
 
-  it('creates the room, then remuxes here: the server never sees a video byte', async () => {
+  it('creates an empty room, opens the file in it, then remuxes here: the server never sees a video byte', async () => {
     const { result } = await startUpload()
     expect(result.roomID).toBe('room1')
-    expect(roomBodies).toEqual([{ fileName: 'movie.mkv', nickname: 'giuli' }])
-    expect(vi.mocked(fetch)).toHaveBeenCalledOnce()
-    expect(clientPipeline.runClientRemux.mock.calls[0][0]).toMatchObject({ roomID: 'room1', mediaGeneration: 0 })
+    expect(roomBodies).toEqual([{ nickname: 'giuli' }])
+    expect(sourceBodies).toEqual([{ url: '/api/rooms/room1/source', ownerToken: 'own', kind: 'upload', fileName: 'movie.mkv' }])
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2)
+    expect(clientPipeline.runClientRemux.mock.calls[0][0]).toMatchObject({ roomID: 'room1', mediaGeneration: 1 })
   })
 
   it('reports a source this browser cannot remux, instead of handing it anywhere', async () => {
@@ -246,6 +254,7 @@ describe('torrent upload', () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input)
       if (url === '/api/rooms') return { ok: true, status: 200, json: async () => ({ id: 'room1', nickname: 'giuli', ownerToken: 'own' }) }
+      if (url === '/api/rooms/room1/source') return { ok: true, status: 200, json: async () => ({ status: 'uploading', fileName: 'episode.mkv', mediaGeneration: 1 }) }
       if (url === '/api/torrents/j1/remux') return { ok: remux.status < 300, status: remux.status, json: async () => remux.body }
       throw new Error(`unexpected fetch ${url}`)
     })
@@ -274,7 +283,7 @@ describe('torrent upload', () => {
 
     const remux = fetchMock.mock.calls.find(([url]) => String(url) === '/api/torrents/j1/remux')
     expect(remux).toBeDefined()
-    expect(JSON.parse(String(remux![1]?.body))).toMatchObject({ roomId: 'room1', mediaGeneration: 0, auth: { ownerToken: 'own' } })
+    expect(JSON.parse(String(remux![1]?.body))).toMatchObject({ roomId: 'room1', mediaGeneration: 1, auth: { ownerToken: 'own' } })
     expect(clientPipeline.planClientRemux).not.toHaveBeenCalled()
     expect(clientPipeline.runClientRemux).not.toHaveBeenCalled()
     expect(session.detach).toHaveBeenCalled()

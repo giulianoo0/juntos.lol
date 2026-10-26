@@ -13,6 +13,7 @@
  */
 import type { RoomInfo } from './types'
 import { recentPlayerLog } from './player/playerLog'
+import { stagesOf } from './room/stages'
 
 const VIDEO_PROBES: { label: string; config: VideoDecoderConfig }[] = [
   { label: 'H.264 (avc1.640028)', config: { codec: 'avc1.640028', codedWidth: 1920, codedHeight: 1080 } },
@@ -64,7 +65,7 @@ function roomLines(room: RoomInfo): string[] {
   const swarm = room.preparation?.swarm
   const lines = [
     `id: ${room.id}`,
-    `source: ${room.sourceKind}`,
+    `stages: ${stagesOf(room).map((stage) => (stage.status ? `${stage.id}:${stage.status}` : stage.id)).join(' ') || 'none'}`,
     `file: ${room.fileName}`,
     `status: ${room.status}`,
     `media generation/version: ${room.mediaGeneration}/${room.mediaVersion ?? 0}`,

@@ -4,9 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
 import { changeRoomSource, startUrlUpload } from '../upload'
-import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
+import { requestScreenStream } from '../screenshare'
 
-const screenStream = { getTracks: () => [], getVideoTracks: () => [] } as unknown as MediaStream
 vi.mock('../screenshare', () => ({
   screenShareSupported: vi.fn().mockReturnValue(true),
   displayCaptureAvailable: vi.fn().mockReturnValue(true),
@@ -32,7 +31,7 @@ vi.mock('../screenshare', () => ({
 vi.mock('../upload', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../upload')>()),
   changeRoomSource: vi.fn().mockResolvedValue({
-    status: 'uploading', sourceKind: 'upload', fileName: 'next.mkv',
+    status: 'uploading', fileName: 'next.mkv',
     mediaGeneration: 1, uploadEndpoint: '/api/upload/', streamStartBytes: 1024,
   }),
   startUrlUpload: vi.fn(),
@@ -71,7 +70,7 @@ describe('RoomPage join screen', () => {
         id: 'abc123',
         fileName: 'movie.mkv',
         status: 'uploading',
-        sourceKind: 'upload',
+       
         mediaGeneration: 0,
         controllerId: 'm1',
         audioTracks: null,
@@ -129,7 +128,7 @@ describe('RoomPage join screen', () => {
 describe('RoomPage refetch under version churn', () => {
   const base = {
     id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    mediaGeneration: 0, controllerId: 'm1',
     audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
     memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
   }
@@ -185,7 +184,7 @@ describe('RoomPage source swap', () => {
       status: 200,
       json: async () => ({
         id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-        sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+        mediaGeneration: 0, controllerId: 'm1',
         audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
         memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
       }),
@@ -237,41 +236,54 @@ describe('RoomPage source swap', () => {
     expect(screen.queryByRole('button', { name: /change media|trocar mídia/i })).not.toBeInTheDocument()
   })
 
-  it('repoints the room at a shared screen without anyone leaving', async () => {
-    vi.mocked(requestScreenStream).mockResolvedValue(screenStream)
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
-
-    fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
-
-    await waitFor(() => expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'screen'))
-    expect(requestScreenStream).toHaveBeenCalled()
-    expect(stashScreenStream).toHaveBeenCalledWith('abc123', screenStream)
+  const sentTypes = () => FakeWebSocket.instances[0].send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as Record<string, unknown>)
+  const receive = (message: unknown) => act(() => {
+    FakeWebSocket.instances[0].onmessage?.({ data: JSON.stringify(message) })
   })
 
-  it('leaves the room untouched when the screen picker is dismissed', async () => {
-    const cancelled = new DOMException('denied', 'NotAllowedError')
-    vi.mocked(requestScreenStream).mockRejectedValue(cancelled)
-    vi.mocked(isScreenShareCancelled).mockReturnValue(true)
+  it('lets a guest ask the host for a stage, and opens the swap once the host says yes', async () => {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m2')
+
+    fireEvent.click(await screen.findByRole('button', { name: /ask the host|pedir ao anfitrião/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^media$|^mídia$/i }))
+    expect(sentTypes()).toContainEqual({ type: 'stageRequest', kind: 'media' })
+
+    receive({ type: 'stageGrant', kind: 'media', allow: true })
+    expect(await screen.findByRole('button', { name: /change media|trocar mídia/i })).toBeInTheDocument()
+  })
+
+  it('shows the host what a guest asked for and sends the answer', async () => {
     renderRoom()
     await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
     welcome('m1')
+    receive({ type: 'stageRequest', requestId: 'q1', memberId: 'm2', nickname: 'Ana', kind: 'screen' })
+
+    fireEvent.click(await screen.findByRole('button', { name: /^allow$|^deixar$/i }))
+    expect(sentTypes()).toContainEqual({ type: 'stageAnswer', requestId: 'q1', allow: true })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^allow$|^deixar$/i })).not.toBeInTheDocument())
+  })
+
+  it('brings the screen stage up beside the media instead of replacing it', async () => {
+    renderRoom()
+    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
+    welcome('m1')
+    expect(screen.queryByRole('button', { name: /share my screen|compartilhar minha tela/i })).not.toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
     fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
 
-    await waitFor(() => expect(requestScreenStream).toHaveBeenCalled())
+    expect(await screen.findByRole('button', { name: /share my screen|compartilhar minha tela/i })).toBeInTheDocument()
     expect(changeRoomSource).not.toHaveBeenCalled()
-    expect(stashScreenStream).not.toHaveBeenCalled()
+    expect(requestScreenStream).not.toHaveBeenCalled()
   })
 })
 
 describe('RoomPage retomar o preparo', () => {
   const roomWith = (mediaRegions: unknown, producerHeartbeatMs?: number) => ({
     id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    mediaGeneration: 0, controllerId: 'm1',
     audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
     durationMs: 600_000, mediaRegions, producerHeartbeatMs,
     memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
@@ -357,7 +369,7 @@ describe('RoomPage header', () => {
       status: 200,
       json: async () => ({
         id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-        sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+        mediaGeneration: 0, controllerId: 'm1',
         audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
         memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
       }),
@@ -488,7 +500,7 @@ describe('RoomPage waiting screen', () => {
 
   const roomBody = (receivedBytes: number) => ({
     id: 'abc123', fileName: 'movie.mkv', status: 'uploading',
-    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    mediaGeneration: 0, controllerId: 'm1',
     audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
     memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
     preparation: {
@@ -524,7 +536,7 @@ describe('RoomPage waiting panel', () => {
       ok: true, status: 200,
       json: async () => ({
         id: 'abc123', fileName: 'movie.mkv', status: 'ready',
-        sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+        mediaGeneration: 0, controllerId: 'm1',
         audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
         memberCount: 2, expiresAt: '2099-01-01T00:00:00Z',
       }),

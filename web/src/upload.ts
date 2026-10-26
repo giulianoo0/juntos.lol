@@ -15,7 +15,6 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
 import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 import { backendFor, type YoutubeSession } from './youtube'
-import { stopLive } from './live'
 import { openRemoteTorrent } from './remoteTorrent'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
@@ -102,7 +101,6 @@ export function unregisterRemuxHandle(roomID: string, handle: ClientRemuxHandle)
 }
 
 function releaseExternal(roomID: string): void {
-  stopLive(roomID)
   const stop = externalStops.get(roomID)
   if (!stop) return
   externalStops.delete(roomID)
@@ -181,11 +179,12 @@ export function clearResumableSource(roomID: string): void {
   try { localStorage.removeItem(resumeKey(roomID)) } catch {}
 }
 
-async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
+// A room is born empty: what it plays is opened in it afterwards.
+async function createRoom(nickname: string, name?: string): Promise<CreateRoomResponse> {
   const response = await fetch('/api/rooms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileName, nickname, kind }),
+    body: JSON.stringify(name ? { nickname, name } : { nickname }),
   })
   if (!response.ok) throw new Error('create room failed')
   const created = await response.json() as CreateRoomResponse
@@ -193,34 +192,51 @@ async function createRoom(fileName: string, nickname: string, kind?: string): Pr
   return created
 }
 
-export async function createScreenRoom(nickname: string): Promise<UploadResult> {
+/** A room with nothing on yet: screens, a live or a media are opened from inside it. */
+export async function createEmptyRoom(nickname: string, name?: string): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
-  const room = await createRoom('', nickname, 'screen')
+  const room = await createRoom(nickname, name)
   return { roomID: room.id, nickname: room.nickname }
 }
 
 export interface RoomSource {
   status: string
-  sourceKind: 'upload' | 'screen'
   fileName: string
   mediaGeneration: number
 }
 
-// Repoints an existing room at a new source; everyone stays where they are.
+export type MediaSourceKind = 'upload' | 'youtube'
+
+async function postRoomSource(roomID: string, body: Record<string, unknown>): Promise<RoomSource> {
+  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(`change source failed (${response.status})`)
+  return await response.json() as RoomSource
+}
+
+/**
+ * Opens a source in the room's media stage, replacing the one there; the
+ * screens, the live and everyone in the room stay. The host, whoever opened
+ * the current media, or a guest the host let open one may.
+ */
 export async function changeRoomSource(
   roomID: string,
   memberId: string,
   capability: string,
-  kind: 'upload' | 'screen' | 'youtube',
+  kind: MediaSourceKind,
   fileName?: string,
 ): Promise<RoomSource> {
-  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, capability, kind, fileName }),
-  })
-  if (!response.ok) throw new Error(`change source failed (${response.status})`)
-  return await response.json() as RoomSource
+  return postRoomSource(roomID, { memberId, capability, kind, fileName })
+}
+
+// The creator opens the first media before the room has seated them.
+async function createRoomWithMedia(nickname: string, kind: MediaSourceKind, fileName: string): Promise<{ room: CreateRoomResponse; mediaGeneration: number }> {
+  const room = await createRoom(nickname)
+  const opened = await postRoomSource(room.id, { ownerToken: room.ownerToken ?? '', kind, fileName })
+  return { room, mediaGeneration: opened.mediaGeneration }
 }
 
 // A File is a snapshot of a path, invalidated the moment the bytes underneath
@@ -270,8 +286,8 @@ export async function createRoomAndUpload(
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
   await assertReadable(file)
-  const room = await createRoom(file.name, nickname)
-  startFileUpload(room.id, 0, file, onProgress)
+  const { room, mediaGeneration } = await createRoomWithMedia(nickname, 'upload', file.name)
+  startFileUpload(room.id, mediaGeneration, file, onProgress)
   return { roomID: room.id, nickname: room.nickname }
 }
 
@@ -281,8 +297,8 @@ export async function createRoomAndUploadTorrent(
   onProgress?: (progress: UploadProgress) => void,
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
-  const created = await createRoom(source.file.name, nickname)
-  startTorrentUpload(created.id, 0, source, onProgress)
+  const { room: created, mediaGeneration } = await createRoomWithMedia(nickname, 'upload', source.file.name)
+  startTorrentUpload(created.id, mediaGeneration, source, onProgress)
   return { roomID: created.id, nickname: created.nickname }
 }
 
@@ -291,15 +307,16 @@ export async function createRoomAndUploadYoutube(
   nickname: string,
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
-  const created = await createRoom(youtubeFileName(session), nickname, 'youtube')
   if (session.summary.live) {
     // The room starts the live once it knows who its controller is: the
     // producer needs the member's seat, which only the room hands out.
+    const created = await createRoom(nickname)
     saveResumableSource(created.id, { kind: 'live', fileName: youtubeFileName(session), url: session.url })
     session.destroy()
     return { roomID: created.id, nickname: created.nickname }
   }
-  startYoutubeUpload(created.id, 0, session)
+  const { room: created, mediaGeneration } = await createRoomWithMedia(nickname, 'youtube', youtubeFileName(session))
+  startYoutubeUpload(created.id, mediaGeneration, session)
   return { roomID: created.id, nickname: created.nickname }
 }
 
@@ -350,8 +367,8 @@ export async function createRoomAndUploadUrl(
   sideFiles: RemuxSideFile[] = [],
 ): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
-  const created = await createRoom(fileName, nickname)
-  startUrlUpload(created.id, 0, url, fileName, size, sideFiles)
+  const { room: created, mediaGeneration } = await createRoomWithMedia(nickname, 'upload', fileName)
+  startUrlUpload(created.id, mediaGeneration, url, fileName, size, sideFiles)
   return { roomID: created.id, nickname: created.nickname }
 }
 

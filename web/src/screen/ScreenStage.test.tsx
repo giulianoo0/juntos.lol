@@ -78,10 +78,10 @@ it('says nobody is sharing when the room lists no screen', async () => {
   expect(watchScreen).not.toHaveBeenCalled()
 })
 
-it('lets the host close the room to guest sharing', async () => {
+it('has no switch that opens sharing to everyone: a guest asks the host instead', () => {
   renderStage()
-  fireEvent.click(screen.getByRole('button', { name: en['room.screenOpenOn'] }))
-  await waitFor(() => expect(setScreenShareOpen).toHaveBeenCalledWith('r1', 'm1', 'cap', false))
+  expect(screen.queryByRole('button', { name: en['room.screenOpenOn'] })).toBeNull()
+  expect(setScreenShareOpen).not.toHaveBeenCalled()
 })
 
 it('remembers the picked quality', async () => {

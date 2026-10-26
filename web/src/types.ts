@@ -118,13 +118,30 @@ export interface LiveInfo {
   thumbnail?: string
   producer: 'fleet' | 'jlocal'
   broadcast: string
+  /** Who opened it; they run it besides the host. */
+  memberId?: string
+  /** The live's own progress, apart from the media's: processing, ready or error. */
+  status?: string
+  error?: string
+}
+
+/** What a room shows side by side: one media with a timeline, one live, up to four screens. */
+export type StageKind = 'media' | 'live' | 'screen'
+
+/** What the host put in front of everyone; memberId names the screen's owner or the member. */
+export interface Spotlight {
+  kind: StageKind | 'member'
+  memberId?: string
 }
 
 export interface RoomInfo {
   id: string
+  name?: string
   fileName: string
+  /** The media stage's status; 'empty' until someone opens a source. */
   status: string
-  sourceKind: 'upload' | 'screen' | 'live'
+  spotlight?: Spotlight | null
+  /** Who opened the media; they drive it besides the host. */
   sourceMemberId?: string
   sourceOrigin?: 'file' | 'torrent' | 'url' | 'youtube'
   mediaGeneration: number
@@ -142,7 +159,6 @@ export interface RoomInfo {
   chapters?: RoomChapter[] | null
   bitmapSubsSkipped: number
   producerHeartbeatMs?: number
-  screenShareOpen?: boolean
   screens?: ScreenShareInfo[] | null
   live?: LiveInfo | null
   preparation?: RoomPreparation

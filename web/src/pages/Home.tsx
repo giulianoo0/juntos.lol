@@ -5,7 +5,7 @@ import { FolderOpen, LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { displayCaptureAvailable, isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
-import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, createScreenRoom, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
+import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, createEmptyRoom, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
@@ -274,7 +274,7 @@ export function Home() {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
         } catch {}
       } else {
-        room = await createScreenRoom(draftNickname.trim())
+        room = await createEmptyRoom(draftNickname.trim())
         fileName = t('room.screenLabel')
       }
       if (media.kind === 'screen') stashScreenStream(room.roomID, media.stream)
