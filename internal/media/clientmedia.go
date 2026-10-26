@@ -159,10 +159,6 @@ func RenderClientPlaylist(baseURL, roomID string, generation int, body []byte,
 	return renderPlaylistWithBase(baseURL, roomID, generation, body, published)
 }
 
-func ClientPlaylistObjects(body []byte) []string {
-	return playlistObjects(body)
-}
-
 func IsMasterPlaylist(body []byte) bool {
 	return isMasterPlaylist(body)
 }

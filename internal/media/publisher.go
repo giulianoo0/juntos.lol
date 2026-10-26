@@ -209,27 +209,6 @@ func joinPlaylist(lines []string, segments int) (string, bool) {
 	return strings.Join(lines, "\n") + "\n", true
 }
 
-func playlistObjects(body []byte) []string {
-	if isMasterPlaylist(body) {
-		return nil
-	}
-	var objects []string
-	for line := range strings.SplitSeq(string(body), "\n") {
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case trimmed == "":
-		case strings.HasPrefix(trimmed, "#EXT-X-MAP:"):
-			if uri, ok := mapURI(trimmed); ok {
-				objects = append(objects, uri)
-			}
-		case strings.HasPrefix(trimmed, "#"):
-		default:
-			objects = append(objects, trimmed)
-		}
-	}
-	return objects
-}
-
 func isMasterPlaylist(body []byte) bool {
 	return bytes.Contains(body, []byte("#EXT-X-STREAM-INF"))
 }
