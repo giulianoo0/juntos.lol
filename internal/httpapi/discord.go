@@ -117,7 +117,8 @@ func discordRoomName(name string) string {
 	return name
 }
 
-// Card is who is in the room and what it is playing, for the Discord card.
+// Card is the room's name and door, who is in, and what it is playing, for
+// the Discord card. A live shows its YouTube thumbnail.
 func (d discordRooms) Card(ctx context.Context, roomID string) (discord.Card, error) {
 	storedRoom, err := d.store.Get(ctx, roomID)
 	if err != nil {
@@ -127,7 +128,13 @@ func (d discordRooms) Card(ctx context.Context, roomID string) (discord.Card, er
 	if err != nil {
 		return discord.Card{}, err
 	}
-	card := discord.Card{Playing: storedRoom.FileName}
+	card := discord.Card{Name: storedRoom.Name, Door: storedRoom.JoinMode, Playing: storedRoom.FileName}
+	if live := storedRoom.Live; card.Playing == "" && live != nil && live.Title != "" {
+		card.Playing = live.Title
+		if youtubeIDRe.MatchString(live.VideoID) {
+			card.Image = "https://i.ytimg.com/vi/" + live.VideoID + "/hqdefault.jpg"
+		}
+	}
 	for _, member := range members {
 		card.Members = append(card.Members, member.Nickname)
 	}

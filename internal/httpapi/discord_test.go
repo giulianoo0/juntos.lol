@@ -40,5 +40,12 @@ func TestDiscordRoomsAreRealRooms(t *testing.T) {
 
 	card, err := rooms.Card(t.Context(), created.ID)
 	require.NoError(t, err)
-	require.Equal(t, discord.Card{Members: []string{"Giuli"}}, card)
+	require.Equal(t, discord.Card{Name: "Sexta", Door: discord.DoorPassword, Members: []string{"Giuli"}}, card)
+
+	require.NoError(t, store.SetLive(t.Context(), open.ID, &room.LiveInfo{VideoID: "abcdefghijk", Title: "Lofi ao vivo"}))
+	card, err = rooms.Card(t.Context(), open.ID)
+	require.NoError(t, err)
+	require.Equal(t, discord.DoorOpen, card.Door)
+	require.Equal(t, "Lofi ao vivo", card.Playing)
+	require.Equal(t, "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg", card.Image, "a live shows its YouTube thumbnail")
 }
