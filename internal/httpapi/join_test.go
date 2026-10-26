@@ -168,3 +168,34 @@ func TestCreateRoomIsRateLimitedPerAddress(t *testing.T) {
 	}
 	require.Equal(t, http.StatusTooManyRequests, doJSON(router, http.MethodPost, "/api/rooms", `{"nickname":"giuli","kind":"screen"}`).Code)
 }
+
+func TestLockedRoomIsReadOnlyByItsMembers(t *testing.T) {
+	store := newTestStore(t)
+	router := gin.New()
+	RegisterRoomRoutes(router.Group("/api"), store, testCfg(t), anyRoomMember{})
+
+	w := doJSON(router, http.MethodPost, "/api/rooms", `{"nickname":"giuli","joinMode":"password","password":"pipoca"}`)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	w = doJSON(router, http.MethodGet, "/api/rooms/"+created.ID, "")
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.NotContains(t, w.Body.String(), "mediaBaseUrl")
+
+	request := httptest.NewRequest(http.MethodGet, "/api/rooms/"+created.ID, nil)
+	request.Header.Set("X-Member-Id", "m1")
+	request.Header.Set("X-Capability", "secret-capability")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, request)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"joinMode":"password"`)
+}
+
+type anyRoomMember struct{}
+
+func (anyRoomMember) AuthorizeMember(_, memberID, capability string) bool {
+	return memberID == "m1" && capability == "secret-capability"
+}

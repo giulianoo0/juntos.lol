@@ -1,9 +1,7 @@
-import { LayoutGroup } from 'motion/react'
-import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
+import { JlocalStatus } from '../components/JlocalPill'
 import { useJLocal } from '../jlocal/status'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Chat } from '../chat/Chat'
 import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
@@ -11,24 +9,31 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, FileVideo, Hand, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
-import { YoutubeGlyph } from '../ui/YoutubeGlyph'
+import { Check, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
 import { displayCaptureAvailable, screenShareSupported } from '../screenshare'
-import { ScreenStage } from '../screen/ScreenStage'
-import { canDriveMedia, canOpenStage, hasMedia } from '../room/stages'
-import { PORTRAIT_PHONE, useMediaQuery } from '../ui/useMediaQuery'
+import { ScreenStage, screenStartedNotice, useScreenShareNotices } from '../screen/ScreenStage'
+import { useScreenShare } from '../screen/useScreenShare'
+import { JlocalPicker } from '../screen/JlocalPicker'
+import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
+import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
+import { useStageHosts } from '../room/stageHosts'
+import { EntryScreen, RoomView, WaitingRoom } from '../room/ui'
+import { useRoomStrings } from '../room/ui/strings'
+import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
+import { claimOwnerFromHash, fetchRoomPreview, requestJoinTicket, setRoomAccess, type JoinMode, type RoomPreview } from '../join'
+import { useLocalMedia } from '../call/useLocalMedia'
+import { useCall, type CallMessage } from '../call/useCall'
+import { CallProvider, CallVideo } from '../call/CallVideo'
 import { Button } from '../ui/Button'
-import { IconButton } from '../ui/IconButton'
 import { MorphPanel } from '../ui/MorphPanel'
-import { MorphingMenu } from '../ui/MorphingMenu'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
 import { playJoinChime } from '../ui/chime'
-import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, StageKind, TitleRequest } from '../types'
+import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import type { OverlayFocus } from '../catalog/CatalogOverlay'
 const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
 import { openCatalogStream } from '../catalog/openStream'
@@ -68,12 +73,12 @@ import {
   uploadActive,
   resumableSourceFor,
   clearResumableSource,
+  ownerTokenFor,
   sourceOriginFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
 import type { TorrentStats } from '../torrent'
 
-const COPIED_MS = 1_800
 const PREPARING_POLL_MS = 3_000
 // How long a pipeline may go quiet before the room counts as unproduced: long
 // enough to outlast a cold seek, well short of the server's claim sweep.
@@ -81,9 +86,15 @@ const PRODUCER_ALIVE_MS = 90_000
 
 export function RoomPage() {
   const { id = '' } = useParams()
-  const [nickname, setNickname] = useState(() => localStorage.getItem('ss.nickname') || '')
+  const t = useT()
   const [room, setRoom] = useState<RoomInfo | null>(null)
+  const [preview, setPreview] = useState<RoomPreview | null>(null)
   const [missing, setMissing] = useState(false)
+  const [entered, setEntered] = useState<{ nickname: string; mic: boolean; cam: boolean } | null>(null)
+  const [entryError, setEntryError] = useState<string | undefined>()
+  const [busy, setBusy] = useState(false)
+  const owner = useMemo(() => claimOwnerFromHash(id) || ownerTokenFor(id) !== '', [id])
+  const local = useLocalMedia()
 
   useEffect(() => {
     if (window.location.search) window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`)
@@ -93,27 +104,97 @@ export function RoomPage() {
     const controller = new AbortController()
     void fetch(`/api/rooms/${encodeURIComponent(id)}`, { signal: controller.signal }).then(async (response) => {
       if (response.status === 404) { setMissing(true); return }
+      if (response.status === 403) return
       if (!response.ok) throw new Error('room request failed')
       setRoom(await response.json() as RoomInfo)
     }).catch((error: unknown) => {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setMissing(true)
     })
+    void fetchRoomPreview(id).then((found) => {
+      if (found) setPreview(found)
+      else setMissing(true)
+    }).catch(() => undefined)
     return () => controller.abort()
   }, [id])
 
-  const waiting: GateStep = missing ? 'expired' : !room ? 'connecting' : !nickname ? 'join' : null
-  if (waiting !== null) {
-    return (
-      <RoomGate
-        step={waiting}
-        onJoin={(value) => { localStorage.setItem('ss.nickname', value); setNickname(value) }}
-      />
-    )
+  if (missing) return <RoomGate step="expired" />
+  if (!preview) return <RoomGate step="connecting" />
+
+  const joinMode: JoinMode = owner ? 'open' : preview.joinMode
+  if (!entered) {
+    const vm: EntryViewModel = {
+      name: preview.name || room?.fileName || '',
+      joinMode,
+      present: preview.nicknames,
+      presentCount: preview.memberCount,
+      nickname: localStorage.getItem('ss.nickname') || '',
+      mic: local.mic,
+      cam: local.cam,
+      micLabel: local.devices.mics.find((device) => device.deviceId === local.selected.mic)?.label || local.micTrack?.label,
+      busy,
+      error: entryError,
+      setMic: (on) => { void local.setMic(on) },
+      setCam: (on) => { void local.setCam(on) },
+      renderPreview: () => <PreviewVideo stream={local.previewStream} />,
+      join: ({ nickname, password }) => {
+        setEntryError(undefined)
+        const go = () => {
+          try { localStorage.setItem('ss.nickname', nickname) } catch {}
+          const choice = { nickname, mic: local.mic, cam: local.cam }
+          void local.setMic(false)
+          void local.setCam(false)
+          setEntered(choice)
+        }
+        if (joinMode !== 'password') { go(); return }
+        setBusy(true)
+        void requestJoinTicket(id, password).then(go).catch((error: unknown) => {
+          const code = error instanceof Error ? error.message : 'failed'
+          setEntryError(t(code === 'bad_password' ? 'room.badPassword' : code === 'too_many_attempts' ? 'room.tooManyAttempts' : 'room.error'))
+        }).finally(() => setBusy(false))
+      },
+    }
+    return <EntryScreen vm={vm} />
   }
-  return <ConnectedRoom room={room!} nickname={nickname} />
+  return (
+    <ConnectedRoom
+      roomId={id}
+      initialRoom={room}
+      roomName={preview.name ?? ''}
+      nickname={entered.nickname}
+      initialMedia={{ mic: entered.mic, cam: entered.cam }}
+      onPasswordAgain={(bad) => {
+        setEntryError(bad ? t('room.badPassword') : undefined)
+        setPreview((current) => current ? { ...current, joinMode: 'password' } : current)
+        setEntered(null)
+      }}
+    />
+  )
 }
 
-type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'buffering' | 'failed' | 'error' | null
+function PreviewVideo({ stream }: { stream: MediaStream | null }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream
+  }, [stream])
+  return <video ref={ref} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+}
+
+/** A room behind a door answers its members only; they name themselves. */
+function fetchRoomInfo(roomId: string, memberId: string, capability: string, signal?: AbortSignal): Promise<Response> {
+  return fetch(`/api/rooms/${encodeURIComponent(roomId)}`, {
+    signal,
+    headers: memberId ? { 'X-Member-Id': memberId, 'X-Capability': capability } : undefined,
+  })
+}
+
+function emptyRoom(id: string): RoomInfo {
+  return {
+    id, fileName: '', status: 'empty', mediaGeneration: 0, controllerId: '', audioTracks: null,
+    subtitleTracks: null, bitmapSubsSkipped: 0, memberCount: 0, expiresAt: '',
+  }
+}
+
+type GateStep = 'connecting' | 'join' | 'expired' | 'denied' | 'preparing' | 'buffering' | 'failed' | 'error' | null
 
 /** One panel that changes what it asks for, rather than swapping screens. */
 function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, overlay = false, inline = false, leaving = false, failure, errorMessage }: {
@@ -175,6 +256,13 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
           <UploadAvailability progress={progress ?? null} preparation={preparation} swarm={swarm} wait={shown === 'buffering' ? wait ?? { secondsLeft: null, cold: false } : null} t={t} />
         ) : null}
 
+        {shown === 'denied' ? (
+          <div className="gate-centered">
+            <h1>{t('room.denied')}</h1>
+            <Link className="primary-button" to="/">{t('room.new')}</Link>
+          </div>
+        ) : null}
+
         {shown === 'expired' ? (
           <div className="gate-centered">
             <h1>{t('room.expired')}</h1>
@@ -215,7 +303,15 @@ function guestName(): string {
   return `Guest-${Array.from(random, (value) => alphabet[value % alphabet.length]).join('')}`
 }
 
-function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
+function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, onPasswordAgain }: {
+  roomId: string
+  initialRoom: RoomInfo | null
+  roomName: string
+  nickname: string
+  initialMedia: { mic: boolean; cam: boolean }
+  onPasswordAgain: (bad: boolean) => void
+}) {
+  const room = useMemo(() => initialRoom ?? emptyRoom(roomId), [initialRoom, roomId])
   const jlocal = useJLocal()
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -320,40 +416,22 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       }
     })()
   }, [needsPreparo, room.id, sync.memberId, sync.capability, t, toast])
-  // On a phone the chat is a drawer over the video, so it starts closed.
-  const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>(() => (
-    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? null : 'chat'
-  ))
-  // Upright on a phone the chat is not a drawer but the space under the
-  // video, always there unless the chapters take its place.
-  const inlineChat = useMediaQuery(PORTRAIT_PHONE)
-  const chatOpen = inlineChat ? sidePanel !== 'chapters' : sidePanel === 'chat'
-  const setChatOpen = (value: boolean | ((open: boolean) => boolean)) => {
-    setSidePanel((panel) => {
-      const next = typeof value === 'function' ? value(panel === 'chat') : value
-      return next ? 'chat' : panel === 'chat' ? null : panel
-    })
-  }
+  const [sidePanel, setSidePanel] = useState<'chapters' | null>(null)
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
   useMessageChime(sync.messages, sync.connected, nickname)
-  const [sourcePanel, setSourcePanel] = useState<'torrent' | 'youtube' | null>(null)
   // The torrent the room is playing now, when this browser is the one that
   // opened it: the picker lists it again as a playlist instead of asking.
   const playlist = useMemo(() => {
-    if (sourcePanel !== 'torrent' || liveRoom.sourceOrigin !== 'torrent') return null
+    if (liveRoom.sourceOrigin !== 'torrent') return null
     const source = resumableSourceFor(room.id)
     if (!source || source.kind !== 'torrent' || !source.magnet || source.fileName !== liveRoom.fileName) return null
     return { magnet: source.magnet, filePath: source.filePath }
-  }, [sourcePanel, liveRoom.sourceOrigin, liveRoom.fileName, room.id])
-  const [readMark, setReadMark] = useState(() => sync.messages.length)
-  const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
+  }, [liveRoom.sourceOrigin, liveRoom.fileName, room.id])
   const [sourceError, setSourceError] = useState<string>('')
   const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
-  const [copied, setCopied] = useState(false)
-  const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // The media, the live and the screens play side by side; the socket knows
   // who the host is before a refetch does.
@@ -363,10 +441,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const mayOpenMedia = canOpenStage(stageRoom, sync.stages, sync.memberId, 'media')
   const mayOpenLive = canOpenStage(stageRoom, sync.stages, sync.memberId, 'live')
   const mayShareScreen = canOpenStage(stageRoom, sync.stages, sync.memberId, 'screen')
-  const [screenWanted, setScreenWanted] = useState(false)
   const screens = liveRoom.screens ?? []
-  const showScreens = screens.length > 0 || screenWanted || sync.stages.granted.screen !== undefined
-    || (!roomHasMedia && !liveRoom.live)
   const { stageUsed } = sync
   useEffect(() => {
     const answer = sync.stages.answer
@@ -388,11 +463,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }, [liveRoom.live, room.id])
   const selfNickname = sync.members.find((member) => member.id === sync.memberId)?.nickname ?? ''
   const [catalogOpen, setCatalogOpen] = useState(false)
-  const [transferTo, setTransferTo] = useState<Member | null>(null)
-  const transferControls = (member: Member) => {
-    if (liveRoom.sourceOrigin === 'file' && liveRoom.sourceMemberId === sync.memberId) setTransferTo(member)
-    else sync.send('transfer', { targetId: member.id })
-  }
   useEffect(() => {
     if (!sync.memberId || !sync.connected) return
     const origin = sourceOriginFor(room.id)
@@ -434,7 +504,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
   const swapSource = async (run: () => Promise<void>) => {
     setSourceError('')
-    setSourcePanel(null)
     setSwapProbes([])
     try {
       await run()
@@ -515,13 +584,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     })
   }
 
-  // A screen is a stage of its own beside the media: picking it only brings
-  // the screen panel up, where sharing starts.
-  const chooseScreen = () => {
-    if (!screenShareSupported()) { setSourceError('error.screenUnsupported'); return }
-    setScreenWanted(true)
-  }
-
   const chatEntries = useMemo((): ChatEntry[] => [
     ...sync.messages,
     ...sync.presence.map((event) => ({
@@ -537,12 +599,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (!preparing || sync.connected) return
     const controller = new AbortController()
     const timer = window.setInterval(() => {
-      void fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
+      void fetchRoomInfo(room.id, sync.memberId, sync.capability, controller.signal)
         .then(async (response) => { if (response.ok) setLiveRoom(await response.json() as RoomInfo) })
         .catch(() => undefined)
     }, PREPARING_POLL_MS)
     return () => { window.clearInterval(timer); controller.abort() }
-  }, [preparing, sync.connected, room.id])
+  }, [preparing, sync.connected, room.id, sync.memberId, sync.capability])
 
   const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
   useEffect(() => {
@@ -578,7 +640,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         let fetched = -1
         while (fetched !== state.latest) {
           fetched = state.latest
-          const response = await fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
+          const response = await fetchRoomInfo(room.id, sync.memberId, sync.capability, controller.signal)
           if (response.ok) setLiveRoom(await response.json() as RoomInfo)
         }
       } catch (error) {
@@ -590,7 +652,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         state.controller = null
       }
     })()
-  }, [sync.roomVersion, room.id])
+  }, [sync.roomVersion, room.id, sync.memberId, sync.capability])
   useEffect(() => {
     const state = refetch.current
     return () => {
@@ -599,10 +661,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       state.latest = 0
     }
   }, [room.id])
-
-  useEffect(() => {
-    if (chatOpen) setReadMark(sync.messages.length)
-  }, [chatOpen, sync.messages.length])
 
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {
@@ -620,7 +678,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     chooseCatalogStream,
   )
 
-  const closeChat = useCallback(() => setChatOpen(false), [])
   const send = sync.send
   const sendChat = useCallback((text: string) => send('chat', { text }), [send])
 
@@ -632,13 +689,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       return
     }
     toast(t('room.copiedToast'))
-    setCopied(true)
   }
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), COPIED_MS)
-    return () => window.clearTimeout(timer)
-  }, [copied])
 
   // The media getting ready, or failing, holds its own stage; the screens and
   // the live beside it play on.
@@ -666,8 +717,269 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     setCatalogOpen(true)
   }
 
+  const strings = useRoomStrings()
+  const hosts = useStageHosts()
+  const callSend = useCallback((message: CallMessage) => {
+    const { type, ...payload } = message
+    sync.send(type, payload)
+  }, [sync.send])
+  const call = useCall({
+    roomId: room.id,
+    memberId: sync.memberId,
+    capability: sync.capability,
+    send: callSend,
+    members: sync.members,
+    initial: initialMedia,
+  })
+  const { receive } = call
+  useEffect(() => {
+    if (sync.forced) receive({ type: 'forceMedia', ...sync.forced })
+  }, [sync.forced, receive])
+  const screenShare = useScreenShare({
+    roomId: room.id,
+    memberId: sync.memberId,
+    nickname: selfNickname,
+    capability: sync.capability,
+    isController: sync.isController,
+    shareOpen: mayShareScreen,
+    screens,
+    onScreenStarted: screenStartedNotice(toast, t),
+  })
+  useScreenShareNotices(screenShare, t)
+  const [jlocalPickError, setJlocalPickError] = useState<string | null>(null)
+
+  const people: Person[] = sync.members.map((member) => ({
+    id: member.id,
+    name: member.nickname,
+    host: member.id === sync.controllerId,
+    mic: member.id === sync.memberId ? call.mic : Boolean(member.mic),
+    cam: member.id === sync.memberId ? call.cam : Boolean(member.cam),
+    speaking: Boolean(call.speaking[member.id]),
+    hostMuted: Boolean(member.hostMuted),
+    hostCamOff: Boolean(member.hostCamOff),
+  }))
+  const roomStages = stagesOf(stageRoom)
+  const viewStages: ViewStage[] = roomStages.map((stage) => ({
+    id: stage.id,
+    kind: stage.kind,
+    title: stage.kind === 'screen' ? strings.screenOf.replace('{name}', stage.title) : stage.kind === 'live' ? stage.title || t('stage.kind.live') : liveRoom.fileName || nowPlaying?.name || t('stage.kind.media'),
+    ownerId: stage.ownerId ?? '',
+  }))
+  const spotlight = currentSpotlight(stageRoom, sync.stages)
+  const sources: ShareSource[] = [
+    ...(screenShareSupported() && displayCaptureAvailable() ? ['screen' as const] : []),
+    'file', 'torrent', 'youtube', 'catalog',
+  ]
+  const memberIdByName = new Map(sync.members.map((member) => [member.nickname, member.id]))
+  const chat: ViewChatMessage[] = chatEntries.map((entry, index) => ({
+    id: `${entry.at}:${index}`,
+    authorId: entry.system ? '' : memberIdByName.get(entry.author) ?? entry.author,
+    author: entry.author,
+    text: entry.system ? `${entry.author} ${entry.text}` : entry.text,
+    at: Date.parse(entry.at),
+    system: entry.system,
+  }))
+  const mayOpen = (source: ShareSource) => source === 'screen' ? mayShareScreen : source === 'youtube' ? (mayOpenMedia || mayOpenLive) : mayOpenMedia
+
+  const vm: RoomViewModel = {
+    name: liveRoom.name || roomName || liveRoom.fileName || t('room.screenLabel'),
+    link: `${window.location.host}/room/${room.id}`,
+    startedAt: liveRoom.createdAt ? Date.parse(liveRoom.createdAt) : Date.now(),
+    joinMode: (liveRoom.joinMode ?? 'open') as JoinMode,
+    selfId: sync.memberId,
+    isHost: sync.isController,
+    people,
+    stages: viewStages,
+    spotlight: spotlight as RoomViewModel['spotlight'],
+    requests: sync.isController ? sync.stages.requests.map((request) => ({ id: request.requestId, memberId: request.memberId, name: request.nickname, kind: request.kind })) : [],
+    knocks: sync.isController ? sync.knocks.map((knock) => ({ id: knock.requestId, name: knock.nickname })) : [],
+    chat,
+    sources,
+    actions: {
+      setMic: call.setMic,
+      setCam: call.setCam,
+      share: (source) => {
+        setSourceError('')
+        if (source === 'catalog') { setCatalogFocus(null); setCatalogOpen(true); return }
+        if (!mayOpen(source)) {
+          if (!sync.stages.asked.includes(source === 'screen' ? 'screen' : 'media')) sync.requestStage(source === 'screen' ? 'screen' : 'media')
+          toast(t('stage.waiting'))
+          return
+        }
+        if (source === 'file') fileInputRef.current?.click()
+        if (source === 'screen') {
+          if (!screenShareSupported()) { setSourceError('error.screenUnsupported'); return }
+          if (!isJLocalCaptureAvailable()) screenShare.start()
+        }
+      },
+      react: (emoji) => { sendChat(emoji) },
+      sendChat,
+      leave: () => { leaveIdle(); window.location.assign('/') },
+      copyLink: () => { void copyLink() },
+      spotlight: (next) => { sync.setSpotlight(next as Parameters<typeof sync.setSpotlight>[0]) },
+      answerRequest: (requestId, allow) => { sync.answerStage(requestId, allow) },
+      admit: (knockId) => { sync.admit(knockId) },
+      deny: (knockId) => { sync.deny(knockId) },
+      hostMute: call.hostMute,
+      hostCamOff: call.hostCamOff,
+      kick: (memberId) => { sync.send('kick', { targetId: memberId }) },
+      setAccess: (mode, password) => {
+        void setRoomAccess(room.id, sync.memberId, sync.capability, mode, password)
+          .then(() => sync.refreshRoom())
+          .catch(() => toast(t('room.changeFailed')))
+      },
+      closeStage: (stage) => {
+        if (stage.kind === 'screen' && stage.ownerId === sync.memberId) { screenShare.stop(); return }
+        sync.closeStage(stage.kind, stage.kind === 'screen' ? stage.ownerId : undefined)
+      },
+    },
+    slots: {
+      renderVideo: (memberId) => <CallVideo memberId={memberId} />,
+      renderStage: (stage) => hosts.slot(stage.id),
+      renderShare: (source, close) => {
+        if (!mayOpen(source)) return null
+        if (source === 'torrent') {
+          return (
+            <TorrentPicker
+              maxFileBytes={MAX_UPLOAD_BYTES}
+              t={t}
+              onExit={close}
+              onYoutubeLink={close}
+              onPicked={(file, session) => { close(); chooseTorrent(file, session) }}
+              initialMagnet={playlist?.magnet}
+              autoLoad={playlist !== null}
+              currentPath={playlist?.filePath}
+            />
+          )
+        }
+        if (source === 'youtube') {
+          return <YoutubePicker t={t} onExit={close} onPicked={(session) => { close(); chooseYoutube(session) }} />
+        }
+        if (source === 'screen' && isJLocalCaptureAvailable()) {
+          return (
+            <JlocalPicker
+              t={t}
+              busy={screenShare.state === 'starting'}
+              error={jlocalPickError}
+              mode="start"
+              onPick={(pick) => {
+                setJlocalPickError(null)
+                screenShare.startWithJlocal(pick).then(close).catch((failure: unknown) => {
+                  const message = failure instanceof Error ? failure.message : ''
+                  setJlocalPickError(t(message.includes('permission') ? 'jlocal.permission' : 'jlocal.failed'))
+                })
+              }}
+              onExit={close}
+            />
+          )
+        }
+        return null
+      },
+    },
+  }
+
+  const mediaStage = roomStages.find((stage) => stage.kind === 'media')
+  const mediaContent = mediaStage ? (
+    <div className="stage-media">
+      {mediaGate ?? (
+        <Player
+          room={liveRoom}
+          isController={canDrive}
+          memberId={sync.memberId}
+          hostSubtitles={sync.hostSubtitles}
+          videoRef={videoRef}
+          send={sync.send}
+          t={t}
+          syncState={sync.state}
+          serverOffsetMs={sync.serverOffsetMs}
+          swarm={swarmStats}
+          mediaOffsetMsRef={mediaOffsetMsRef}
+          seekRef={playerSeekRef}
+          coldWaitRef={coldWaitRef}
+          coldForRef={coldForRef}
+          remoteSteerAtRef={remoteSteerAtRef}
+          autoplayBlocked={sync.autoplayBlocked}
+          gatedStart={sync.waiting !== null}
+          onBuffering={sync.reportBuffering}
+          onWait={onWait}
+          onChapters={() => setSidePanel((panel) => panel === 'chapters' ? null : 'chapters')}
+          overlay={
+            <>
+              {sync.waiting !== null ? (
+                <WaitingPanel
+                  waiting={sync.waiting}
+                  members={sync.members}
+                  isController={sync.isController}
+                  selfId={sync.memberId}
+                  onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
+                  t={t}
+                />
+              ) : null}
+              {nextEpisode.pending && nowPlaying ? (
+                <NextEpisodeCard
+                  video={nextEpisode.pending.video}
+                  poster={nowPlaying.poster}
+                  seconds={nextEpisode.seconds}
+                  onPlayNow={nextEpisode.playNow}
+                  onDismiss={nextEpisode.dismiss}
+                />
+              ) : null}
+            </>
+          }
+        />
+      )}
+      <div className="stage-extras">
+        {uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready'
+          ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
+          : null}
+        {sync.isController ? (
+          <Button
+            className={`sync-toggle ${sync.gatingEnabled ? 'is-on' : ''}`}
+            variant="ghost"
+            size="small"
+            role="switch"
+            aria-checked={sync.gatingEnabled}
+            onClick={() => {
+              if (!sync.send('gating', { enabled: !sync.gatingEnabled })) toast(t('room.offlineCommand'))
+            }}
+          >
+            <span className="sync-toggle-box" aria-hidden="true">
+              {sync.gatingEnabled ? <Check size={11} strokeWidth={3.5} /> : null}
+            </span>
+            {t('room.gating')}
+          </Button>
+        ) : null}
+        <JlocalStatus status={jlocal} t={t} />
+      </div>
+      {sidePanel === 'chapters' ? (
+        <div className="stage-chapters">
+          <ChaptersPanel
+            chapters={liveRoom.chapters ?? []}
+            open
+            onClose={() => setSidePanel(null)}
+            onSeek={canDrive ? (seconds) => {
+              const throughPlayer = playerSeekRef.current
+              if (throughPlayer) throughPlayer(seconds)
+              else sync.send('seek', { positionMs: Math.round(seconds * 1000) })
+            } : undefined}
+            videoRef={videoRef}
+            t={t}
+          />
+        </div>
+      ) : null}
+    </div>
+  ) : null
+
+  if (sync.door === 'password' || sync.door === 'badPassword') {
+    return <PasswordAgain bad={sync.door === 'badPassword'} onAgain={onPasswordAgain} />
+  }
+  if (sync.door === 'denied') return <RoomGate step="denied" />
+  if (sync.door === 'lobby') {
+    return <WaitingRoom vm={{ name: vm.name, nickname, cancel: () => { leaveIdle(); window.location.assign('/') } }} />
+  }
+
   return (
-    <>
+    <CallProvider call={call}>
     {shownOpening !== null ? (
       <RoomGate
         overlay
@@ -679,495 +991,124 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         wait={openingWait}
       />
     ) : null}
-    <main className="room-shell room-enter">
-      <header className="room-header">
-        <LayoutGroup id="jlocal">
-        <div className="room-heading"><span className="room-file">{liveRoom.name || liveRoom.fileName || liveRoom.live?.title || t('room.screenLabel')}</span><JlocalStatus status={jlocal} t={t} /></div>
-        <div className="header-actions">
-          {roomHasMedia && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
-            ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
-            : null}
-          {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
-          <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
-          {sync.isController && roomHasMedia ? (
-            <Button
-              className={`sync-toggle ${sync.gatingEnabled ? 'is-on' : ''}`}
-              variant="ghost"
-              size="small"
-              role="switch"
-              aria-checked={sync.gatingEnabled}
-              onClick={() => {
-                if (!sync.send('gating', { enabled: !sync.gatingEnabled })) toast(t('room.offlineCommand'))
-              }}
-            >
-              <span className="sync-toggle-box" aria-hidden="true">
-                {sync.gatingEnabled ? <Check size={11} strokeWidth={3.5} /> : null}
-              </span>
-              {t('room.gating')}
-            </Button>
-          ) : null}
-          {roomHasMedia && canDrive && sync.memberId ? (
-            <Button variant="ghost" size="small" onClick={() => sync.closeStage('media')}>
-              <X size={13} aria-hidden="true" />{t('stage.closeMedia')}
-            </Button>
-          ) : null}
-          {liveRoom.live && (sync.isController || liveRoom.live.memberId === sync.memberId) ? (
-            <Button variant="ghost" size="small" onClick={() => sync.closeStage('live')}>
-              <X size={13} aria-hidden="true" />{t('stage.closeLive')}
-            </Button>
-          ) : null}
-          {mayOpenMedia || mayOpenLive ? (
-            <MediaSwitch
-              t={t}
-              onOpen={() => setSourceError('')}
-              onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
-              onTorrent={() => setSourcePanel('torrent')}
-              onYoutube={() => setSourcePanel('youtube')}
-              onFile={() => fileInputRef.current?.click()}
-              onScreen={mayShareScreen ? chooseScreen : undefined}
-            />
-          ) : (
-            <>
-              <StageAsk asked={sync.stages.asked} onAsk={sync.requestStage} t={t} />
-              <Button className="catalog-open" onClick={() => { setCatalogFocus(null); setCatalogOpen(true) }}>
-                <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
-              </Button>
-            </>
-          )}
-          <IconButton
-            icon={
-              <span className="morph-fade" data-morphing={copyMorphing}>
-                {copiedShown ? <Check size={16} /> : <Link2 size={16} />}
-              </span>
-            }
-            label={t('room.copy')}
-            className={copiedShown ? 'is-confirmed' : ''}
-            onClick={copyLink}
-          />
-          {inlineChat ? null : (
-            <IconButton
-              icon={<>
-                <MessageSquare size={16} />
-                {unread > 0 ? <span className="chat-badge">{unread > 9 ? '9+' : unread}</span> : null}
-              </>}
-              label={t('chat.title')}
-              className={`chat-toggle ${chatOpen ? 'is-on' : ''}`}
-              aria-pressed={chatOpen}
-              onClick={() => setChatOpen((open) => !open)}
-            />
-          )}
-          <JlocalDownload status={jlocal} t={t} />
-        </div>
-        </LayoutGroup>
-      </header>
-      <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
-        <section className="media-column">
-          <div style={{ display: 'grid', gridAutoRows: 'minmax(0, 1fr)', gap: 10, minHeight: 0 }}>
-          {showScreens ? (
-            <ScreenStage
-              roomId={room.id}
-              memberId={sync.memberId}
-              nickname={selfNickname}
-              capability={sync.capability}
-              isController={sync.isController}
-              shareOpen={mayShareScreen}
-              screens={screens}
-              viewers={sync.members.filter((member) => member.id !== sync.memberId).length}
-              t={t}
-            />
-          ) : null}
-          {liveRoom.live ? (
-            liveRoom.live.status === 'error' ? (
-              <div className="player-wrap" style={{ display: 'grid', placeItems: 'center', padding: 16 }} role="alert">
-                <p>{liveErrorText(liveRoom.live.error, t)}</p>
-              </div>
-            ) : (
-              <LiveStage
-                roomId={room.id}
-                memberId={sync.memberId}
-                capability={sync.capability}
-                broadcast={liveRoom.live.broadcast}
-                title={liveRoom.live.title}
-                t={t}
-              />
-            )
-          ) : null}
-          {mediaGate ?? (roomHasMedia ? (
-            <Player
-              room={liveRoom}
-              isController={canDrive}
-              memberId={sync.memberId}
-              hostSubtitles={sync.hostSubtitles}
-              videoRef={videoRef}
-              send={sync.send}
-              t={t}
-              syncState={sync.state}
-              serverOffsetMs={sync.serverOffsetMs}
-              swarm={swarmStats}
-              mediaOffsetMsRef={mediaOffsetMsRef}
-              seekRef={playerSeekRef}
-              coldWaitRef={coldWaitRef}
-              coldForRef={coldForRef}
-              remoteSteerAtRef={remoteSteerAtRef}
-              autoplayBlocked={sync.autoplayBlocked}
-              gatedStart={sync.waiting !== null}
-              onBuffering={sync.reportBuffering}
-              onWait={onWait}
-              onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
-              overlay={
-                <>
-                  {sync.waiting !== null ? (
-                    <WaitingPanel
-                      waiting={sync.waiting}
-                      members={sync.members}
-                      isController={sync.isController}
-                      selfId={sync.memberId}
-                      onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
-                      t={t}
-                    />
-                  ) : null}
-                  {nextEpisode.pending && nowPlaying ? (
-                    <NextEpisodeCard
-                      video={nextEpisode.pending.video}
-                      poster={nowPlaying.poster}
-                      seconds={nextEpisode.seconds}
-                      onPlayNow={nextEpisode.playNow}
-                      onDismiss={nextEpisode.dismiss}
-                    />
-                  ) : null}
-                </>
-              }
-            />
-          ) : null)}
-          </div>
-          <div className="presence-row">
-            {sync.members.map((member) => (
-              <MemberChip
-                key={member.id}
-                member={member}
-                isController={member.id === sync.controllerId}
-                holdsFile={liveRoom.sourceOrigin === 'file' && member.id === liveRoom.sourceMemberId}
-                canAct={sync.isController && member.id !== sync.memberId}
-                onTransfer={() => transferControls(member)}
-                onKick={() => sync.send('kick', { targetId: member.id })}
-                t={t}
-              />
-            ))}
-          </div>
-        </section>
-        {sidePanel === 'chapters' ? (
-          <ChaptersPanel
-            chapters={liveRoom.chapters ?? []}
-            open
-            onClose={() => setSidePanel('chat')}
-            onSeek={canDrive ? (seconds) => {
-              const throughPlayer = playerSeekRef.current
-              if (throughPlayer) throughPlayer(seconds)
-              else sync.send('seek', { positionMs: Math.round(seconds * 1000) })
-            } : undefined}
-            videoRef={videoRef}
-            t={t}
-          />
-        ) : (
-          <Chat open={chatOpen} inline={inlineChat} onClose={closeChat} messages={chatEntries} onSend={sendChat} t={t} />
-        )}
+    <RoomView vm={vm} />
+    {mediaStage ? hosts.portal('media', mediaContent) : null}
+    {liveRoom.live ? hosts.portal('live', liveRoom.live.status === 'error' ? (
+      <div className="player-wrap" style={{ display: 'grid', placeItems: 'center', padding: 16 }} role="alert">
+        <p>{liveErrorText(liveRoom.live.error, t)}</p>
       </div>
-      <input
-        ref={fileInputRef}
-        hidden
-        type="file"
-        accept="video/*,.mkv"
-        onChange={(event) => chooseFile(event.target.files?.[0])}
-      />
-      {swapProbes.length > 0 && shownGate === 'preparing' ? <div className="swap-probes"><WorkerProbes probes={swapProbes} t={t} /></div> : null}
-      {sourceError ? <div className="error-card compact" role="alert">{t(sourceError)}</div> : null}
-      {sync.isController && sync.stages.requests.length > 0 ? (
-        <div className="request-stack" aria-live="polite">
-          {sync.stages.requests.map((request) => (
-            <div key={request.requestId} className="request-card raised" data-stage-request={request.kind}>
-              <div className="request-copy">
-                <p><strong>{request.nickname}</strong> {t('stage.asked')} <strong>{t(`stage.kind.${request.kind}`)}</strong></p>
-                <button type="button" className="request-open" onClick={() => sync.answerStage(request.requestId, true)}>
-                  {t('stage.allow')}
-                </button>
-              </div>
-              <button
-                type="button"
-                className="dialog-close request-dismiss"
-                aria-label={t('stage.deny')}
-                onClick={() => sync.answerStage(request.requestId, false)}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {visibleRequests.length > 0 ? (
-        <div className="request-stack" aria-live="polite">
-          {visibleRequests.map((request) => (
-            <div key={request.id} className="request-card raised">
-              {request.poster ? <img src={request.poster} alt="" /> : null}
-              <div className="request-copy">
-                <p><strong>{request.from}</strong> {t('request.asked')} <strong>{request.name}</strong>
-                  {request.season != null && request.episode != null && (request.season > 0 || request.episode > 0)
-                    ? ` · S${String(request.season).padStart(2, '0')}E${String(request.episode).padStart(2, '0')}`
-                    : ''}
-                </p>
-                {sync.isController ? (
-                  <button type="button" className="request-open" onClick={() => openRequestedTitle(request)}>
-                    {t('request.viewSources')}
-                  </button>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                className="dialog-close request-dismiss"
-                aria-label={t('request.dismiss')}
-                onClick={() => setDismissedRequests((current) => [...current, request.id])}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {catalogOpen ? (
-        <Suspense fallback={null}>
-          <CatalogOverlay
-            mode={sync.isController ? 'host' : 'viewer'}
-            focus={catalogFocus}
-            onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
-            onPickStream={chooseCatalogStream}
-            onRequestTitle={(open, episode) => {
-              sync.send('titleRequest', {
-                title: {
-                  metaId: open.meta.id,
-                  metaType: open.meta.type,
-                  name: open.meta.name,
-                  poster: open.meta.poster,
-                  season: episode.season,
-                  episode: episode.episode,
-                },
-              })
-            }}
-          />
-        </Suspense>
-      ) : null}
-      <StillThere
-        deadlineMs={sync.stillThereDeadlineMs}
-        serverOffsetMs={sync.serverOffsetMs}
-        onStay={() => sync.send('stillHere')}
-        onExpired={leaveIdle}
+    ) : (
+      <LiveStage
+        roomId={room.id}
+        memberId={sync.memberId}
+        capability={sync.capability}
+        broadcast={liveRoom.live.broadcast}
+        title={liveRoom.live.title}
         t={t}
       />
-      <Dialog open={transferTo !== null} onOpenChange={(open) => { if (!open) setTransferTo(null) }}>
-        {transferTo ? (
-          <DialogContent
-            className="still-there-dialog"
-            closeLabel={t('room.transferCancel')}
-            title={t('room.transferFileTitle')}
-            description={t('room.transferFileGuide')}
-            onCloseClick={() => setTransferTo(null)}
-          >
-            <div className="closed-idle-actions">
-              <button
-                type="button"
-                className="primary-button"
-                autoFocus
-                onClick={() => { sync.send('transfer', { targetId: transferTo.id }); setTransferTo(null) }}
-              >
-                {t('room.transferConfirm')}
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setTransferTo(null)}>
-                {t('room.transferCancel')}
-              </button>
+    )) : null}
+    {roomStages.filter((stage) => stage.kind === 'screen').map((stage) => hosts.portal(stage.id, (
+      <ScreenStage
+        share={screenShare}
+        only={stage.ownerId ?? ''}
+        memberId={sync.memberId}
+        viewers={sync.members.filter((member) => member.id !== sync.memberId).length}
+        t={t}
+      />
+    )))}
+    <input
+      ref={fileInputRef}
+      hidden
+      type="file"
+      accept="video/*,.mkv"
+      onChange={(event) => chooseFile(event.target.files?.[0])}
+    />
+    {swapProbes.length > 0 && shownGate === 'preparing' ? <div className="swap-probes"><WorkerProbes probes={swapProbes} t={t} /></div> : null}
+    {sourceError ? <div className="error-card compact" role="alert">{t(sourceError)}</div> : null}
+    {visibleRequests.length > 0 ? (
+      <div className="request-stack" aria-live="polite">
+        {visibleRequests.map((request) => (
+          <div key={request.id} className="request-card raised">
+            {request.poster ? <img src={request.poster} alt="" /> : null}
+            <div className="request-copy">
+              <p><strong>{request.from}</strong> {t('request.asked')} <strong>{request.name}</strong>
+                {request.season != null && request.episode != null && (request.season > 0 || request.episode > 0)
+                  ? ` · S${String(request.season).padStart(2, '0')}E${String(request.episode).padStart(2, '0')}`
+                  : ''}
+              </p>
+              {sync.isController ? (
+                <button type="button" className="request-open" onClick={() => openRequestedTitle(request)}>
+                  {t('request.viewSources')}
+                </button>
+              ) : null}
             </div>
-          </DialogContent>
-        ) : null}
-      </Dialog>
-      <Dialog open={sync.left} onOpenChange={() => undefined}>
-        {sync.left ? (
-          <DialogContent
-            className="still-there-dialog"
-            closeLabel={t('room.closedIdleHome')}
-            title={t(sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
-            description={t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
-            onCloseClick={() => { window.location.assign("/") }}
-          >
-            <div className="closed-idle-actions">
-              <button type="button" className="primary-button" autoFocus onClick={() => window.location.reload()}>
-                {t('room.closedIdleRejoin')}
-              </button>
-              <Link className="secondary-button" to="/">{t('room.closedIdleHome')}</Link>
-            </div>
-          </DialogContent>
-        ) : null}
-      </Dialog>
-      <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
-        {sourcePanel !== null ? (
-          <DialogContent
-            className="torrent-dialog"
-            closeLabel={t('home.closeDialog')}
-            hideTitle
-            title={t(sourcePanel === 'youtube' ? 'home.youtubeTitle' : 'home.torrentTitle')}
-          >
-            {sourcePanel === 'youtube' ? (
-              <YoutubePicker
-                t={t}
-                onExit={() => setSourcePanel(null)}
-                onPicked={(session) => { setSourcePanel(null); chooseYoutube(session) }}
-              />
-            ) : (
-              <TorrentPicker
-                maxFileBytes={MAX_UPLOAD_BYTES}
-                t={t}
-                onExit={() => setSourcePanel(null)}
-                onYoutubeLink={() => setSourcePanel('youtube')}
-                onPicked={chooseTorrent}
-                initialMagnet={playlist?.magnet}
-                autoLoad={playlist !== null}
-                currentPath={playlist?.filePath}
-              />
-            )}
-          </DialogContent>
-        ) : null}
-      </Dialog>
-    </main>
-    </>
-  )
-}
-
-// The film icon marks whose computer the video is on; for the controller, a
-// right-click opens what can be done to that person.
-function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKick, t }: {
-  member: Member
-  isController: boolean
-  holdsFile: boolean
-  canAct: boolean
-  onTransfer: () => void
-  onKick: () => void
-  t: Translator
-}) {
-  const className = `member-chip ${isController ? 'is-controller' : ''}`
-  const body = (
-    <>
-      {member.nickname}
-      {isController ? <Crown size={12} aria-hidden="true" /> : null}
-      {holdsFile ? (
-        <span className="member-holds-file" title={t('room.holdsFile').replace('{name}', member.nickname)}>
-          <FileVideo size={12} aria-hidden="true" />
-        </span>
-      ) : null}
-    </>
-  )
-  if (!canAct) return <span className={className}>{body}</span>
-  const pick = (close: () => void, action: () => void) => () => { close(); action() }
-  return (
-    <MorphingMenu
-      openOn="contextmenu"
-      haspopup="menu"
-      minWidth={0}
-      ariaLabel={t('room.memberMenu').replace('{name}', member.nickname)}
-      triggerClassName={className}
-      panelClassName="media-switch-panel"
-      trigger={() => body}
-    >
-      {(close) => (
-        <div className="media-switch-menu">
-          <button type="button" onClick={pick(close, onTransfer)}>
-            <Crown size={15} aria-hidden="true" />{t('room.transferHost')}
-          </button>
-          <button type="button" onClick={pick(close, onKick)}>
-            <UserX size={15} aria-hidden="true" />{t('room.kickMember')}
-          </button>
-        </div>
-      )}
-    </MorphingMenu>
-  )
-}
-
-/** The one entry point for putting something else on, as a MorphingMenu. */
-function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, onScreen, t }: {
-  onOpen: () => void
-  onCatalog: () => void
-  onTorrent: () => void
-  onYoutube: () => void
-  onFile: () => void
-  onScreen?: () => void
-  t: Translator
-}) {
-  const pick = (close: () => void, action: () => void) => () => { close(); action() }
-  return (
-    <MorphingMenu
-      align="end"
-      haspopup="menu"
-      minWidth={0}
-      onOpen={onOpen}
-      triggerClassName="media-switch-pill"
-      panelClassName="media-switch-panel"
-      trigger={() => <><Replace size={15} aria-hidden="true" />{t('room.changeMedia')}</>}
-    >
-      {(close) => (
-        <div className="media-switch-menu">
-          <button type="button" onClick={pick(close, onCatalog)}>
-            <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
-          </button>
-          <button type="button" onClick={pick(close, onTorrent)}>
-            <span className="magnet-glyph" aria-hidden="true">µ</span>{t('room.switchTorrent')}
-          </button>
-          <button type="button" onClick={pick(close, onYoutube)}>
-            <YoutubeGlyph size={15} />{t('room.switchYoutube')}
-          </button>
-          <button type="button" onClick={pick(close, onFile)}>
-            <Upload size={15} aria-hidden="true" />{t('room.switchFile')}
-          </button>
-          {onScreen && displayCaptureAvailable() ? (
-            <button type="button" onClick={pick(close, onScreen)}>
-              <MonitorUp size={15} aria-hidden="true" />{t('room.switchScreen')}
-            </button>
-          ) : null}
-        </div>
-      )}
-    </MorphingMenu>
-  )
-}
-
-/** A guest's way onto a stage: ask the host for one kind. */
-function StageAsk({ asked, onAsk, t }: {
-  asked: StageKind[]
-  onAsk: (kind: StageKind) => void
-  t: Translator
-}) {
-  const kinds: StageKind[] = ['screen', 'media', 'live']
-  return (
-    <MorphingMenu
-      align="end"
-      haspopup="menu"
-      minWidth={0}
-      triggerClassName="media-switch-pill stage-ask"
-      panelClassName="media-switch-panel"
-      trigger={() => <><Hand size={15} aria-hidden="true" />{t('stage.ask')}</>}
-    >
-      {(close) => (
-        <div className="media-switch-menu">
-          {kinds.map((kind) => (
             <button
-              key={kind}
               type="button"
-              data-stage-ask={kind}
-              disabled={asked.includes(kind)}
-              title={asked.includes(kind) ? t('stage.waiting') : undefined}
-              onClick={() => { close(); onAsk(kind) }}
+              className="dialog-close request-dismiss"
+              aria-label={t('request.dismiss')}
+              onClick={() => setDismissedRequests((current) => [...current, request.id])}
             >
-              {kind === 'screen' ? <MonitorUp size={15} aria-hidden="true" /> : kind === 'live' ? <YoutubeGlyph size={15} /> : <FileVideo size={15} aria-hidden="true" />}
-              {t(`stage.kind.${kind}`)}
+              <X size={13} aria-hidden="true" />
             </button>
-          ))}
-        </div>
-      )}
-    </MorphingMenu>
+          </div>
+        ))}
+      </div>
+    ) : null}
+    {catalogOpen ? (
+      <Suspense fallback={null}>
+        <CatalogOverlay
+          mode={mayOpenMedia ? 'host' : 'viewer'}
+          focus={catalogFocus}
+          onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
+          onPickStream={chooseCatalogStream}
+          onRequestTitle={(open, episode) => {
+            sync.send('titleRequest', {
+              title: {
+                metaId: open.meta.id,
+                metaType: open.meta.type,
+                name: open.meta.name,
+                poster: open.meta.poster,
+                season: episode.season,
+                episode: episode.episode,
+              },
+            })
+          }}
+        />
+      </Suspense>
+    ) : null}
+    <StillThere
+      deadlineMs={sync.stillThereDeadlineMs}
+      serverOffsetMs={sync.serverOffsetMs}
+      onStay={() => sync.send('stillHere')}
+      onExpired={leaveIdle}
+      t={t}
+    />
+    <Dialog open={sync.left} onOpenChange={() => undefined}>
+      {sync.left ? (
+        <DialogContent
+          className="still-there-dialog"
+          closeLabel={t('room.closedIdleHome')}
+          title={t(sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
+          description={t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
+          onCloseClick={() => { window.location.assign("/") }}
+        >
+          <div className="closed-idle-actions">
+            <button type="button" className="primary-button" autoFocus onClick={() => window.location.reload()}>
+              {t('room.closedIdleRejoin')}
+            </button>
+            <Link className="secondary-button" to="/">{t('room.closedIdleHome')}</Link>
+          </div>
+        </DialogContent>
+      ) : null}
+    </Dialog>
+    </CallProvider>
   )
+}
+
+/** A password room turned the hello away: back to the entrance for it. */
+function PasswordAgain({ bad, onAgain }: { bad: boolean; onAgain: (bad: boolean) => void }) {
+  useEffect(() => { onAgain(bad) }, [bad, onAgain])
+  return <RoomGate step="connecting" />
 }
 
 function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {

@@ -146,6 +146,8 @@ export interface RoomInfo {
   /** The media stage's status; 'empty' until someone opens a source. */
   status: string
   spotlight?: Spotlight | null
+  joinMode?: 'open' | 'password' | 'approval'
+  createdAt?: string
   /** Who opened the media; they drive it besides the host. */
   sourceMemberId?: string
   sourceOrigin?: 'file' | 'torrent' | 'url' | 'youtube'

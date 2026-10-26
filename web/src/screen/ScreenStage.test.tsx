@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { ScreenStage } from './ScreenStage'
+import { useScreenShare } from './useScreenShare'
 import { ToastProvider } from '../ui/Toast'
 import { en } from '../i18n/en'
 import { fetchScreenRelay, loadScreenQuality, setScreenShareOpen, watchScreen } from '../screenshare'
@@ -28,10 +29,17 @@ const t = Object.assign((key: string) => en[key] ?? key, {
   setLanguage: () => undefined,
 })
 
-function renderStage(props: Partial<Parameters<typeof ScreenStage>[0]> = {}) {
+type HarnessProps = Omit<Parameters<typeof useScreenShare>[0], 'onScreenStarted'> & { viewers: number }
+
+function Harness({ viewers, ...props }: HarnessProps) {
+  const share = useScreenShare(props)
+  return <ScreenStage share={share} memberId={props.memberId} viewers={viewers} t={t} />
+}
+
+function renderStage(props: Partial<HarnessProps> = {}) {
   return render(
     <ToastProvider>
-      <ScreenStage
+      <Harness
         roomId="r1"
         memberId="m1"
         nickname="giuli"
@@ -40,7 +48,6 @@ function renderStage(props: Partial<Parameters<typeof ScreenStage>[0]> = {}) {
         shareOpen
         screens={[]}
         viewers={1}
-        t={t}
         {...props}
       />
     </ToastProvider>,

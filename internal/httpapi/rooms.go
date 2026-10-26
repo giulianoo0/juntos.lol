@@ -31,10 +31,20 @@ const (
 	maxRoomNameBytes       = 80
 )
 
-func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config) {
+func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer ...memberAuthorizer) {
+	var members memberAuthorizer
+	if len(authorizer) > 0 {
+		members = authorizer[0]
+	}
 	rg.POST("/rooms", roomCreationLimit(cfg.RoomsPerIPPerHour, cfg.BehindCloudflare), createRoom(store, cfg))
-	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL))
+	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL, members))
 }
+
+// Headers a member names itself with on reads of a room behind a door.
+const (
+	memberIDHeader   = "X-Member-Id"
+	capabilityHeader = "X-Capability"
+)
 
 // createRoomRequest names the room and its creator. A room is born empty:
 // what it plays arrives later through /source, /live or a screen.
@@ -151,7 +161,7 @@ func validRoomText(value string, maxBytes int) bool {
 // getRoom answers with the room and the bucket base its media is served from. The
 // base carries the media generation, so a source swap cannot be answered with the
 // previous source's files.
-func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
+func getRoom(store *room.Store, mediaBaseURL string, authorizer memberAuthorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, err := store.Get(c.Request.Context(), c.Param("id"))
 		if errors.Is(err, room.ErrNotFound) {
@@ -162,6 +172,15 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
+		// Behind a password or the host's approval, what plays and where its
+		// files are is for those inside; the door is /preview.
+		if r.JoinMode != "" && r.JoinMode != room.JoinOpen {
+			memberID, capability := c.GetHeader(memberIDHeader), c.GetHeader(capabilityHeader)
+			if authorizer == nil || !authorizer.AuthorizeMember(r.ID, memberID, capability) {
+				c.JSON(http.StatusForbidden, gin.H{"error": "room_locked", "joinMode": r.JoinMode})
+				return
+			}
+		}
 		members, err := store.Members(c.Request.Context(), r.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
@@ -171,6 +190,7 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{
 			"id":                  r.ID,
 			"name":                r.Name,
+			"joinMode":            joinModeOf(r),
 			"fileName":            r.FileName,
 			"status":              r.Status,
 			"mediaGeneration":     r.MediaGeneration,
@@ -199,4 +219,11 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"mediaBaseUrl":        strings.TrimSuffix(mediaBaseURL+"/"+media.MediaPrefix(r.ID, r.MediaGeneration), "/"),
 		})
 	}
+}
+
+func joinModeOf(r *room.Room) string {
+	if r.JoinMode == "" {
+		return room.JoinOpen
+	}
+	return r.JoinMode
 }

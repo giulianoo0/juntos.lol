@@ -3,6 +3,7 @@ import { playbackHealth } from './playbackHealth'
 import { useCallback, useEffect, useReducer, useRef, useState, type MutableRefObject } from 'react'
 import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, Spotlight, StageKind, TitleRequest } from '../types'
 import { initialStages, stagesReducer, type StagesState } from '../room/stages'
+import { joinTicketFor } from '../join'
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
 
@@ -43,6 +44,8 @@ interface Outbound {
   nickname?: string
   allow?: boolean
   spotlight?: Spotlight
+  mic?: boolean
+  cam?: boolean
   title?: {
     metaId: string
     metaType: 'movie' | 'series'
@@ -102,7 +105,19 @@ interface SyncResult {
   setSpotlight: (spotlight: Spotlight | null) => boolean
   /** Opening the stage spent the grant. */
   stageUsed: (kind: StageKind) => void
+  /** Where this browser stands at the room's door: in, asked for the password, waiting for the host, turned away. */
+  door: Door
+  /** Try the door again, after a password got its ticket. */
+  retryDoor: () => void
+  /** Host: who is waiting in the lobby of an approval room. */
+  knocks: { requestId: string; nickname: string }[]
+  admit: (requestId: string) => boolean
+  deny: (requestId: string) => boolean
+  /** What the host just turned off for this member; the seq changes on each. */
+  forced: { mic?: boolean; cam?: boolean; seq: number } | null
 }
+
+export type Door = 'in' | 'password' | 'badPassword' | 'lobby' | 'denied'
 
 const TITLE_REQUEST_LIMIT = 20
 
@@ -158,6 +173,10 @@ export function useSync(
   const [kicked, setKicked] = useState(false)
   const titleSeqRef = useRef(0)
   const [stages, dispatchStage] = useReducer(stagesReducer, initialStages)
+  const [door, setDoor] = useState<Door>('in')
+  const [doorNonce, setDoorNonce] = useState(0)
+  const [knocks, setKnocks] = useState<{ requestId: string; nickname: string }[]>([])
+  const [forced, setForced] = useState<{ mic?: boolean; cam?: boolean; seq: number } | null>(null)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
     const socket = socketRef.current
@@ -218,6 +237,8 @@ export function useSync(
     let disposed = false
     let attempt = 0
     let retry: number | null = null
+    // A password room said no: the door stays shut until a ticket is in hand.
+    let halted = false
 
     const connect = () => {
       if (disposed) return
@@ -292,12 +313,13 @@ export function useSync(
           nickname,
           clientTimeMs,
           ownerToken: ownerTokenFor(roomId),
+          ...(joinTicketFor(roomId) ? { ticket: joinTicketFor(roomId) } : {}),
           ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
         }))
       }
       socket.onclose = () => {
         setConnected(false)
-        if (disposed || socketRef.current !== socket) return
+        if (disposed || halted || socketRef.current !== socket) return
         const backoff = Math.min(RECONNECT_MIN_MS * 2 ** attempt, RECONNECT_MAX_MS)
         attempt += 1
         retry = window.setTimeout(connect, backoff * (0.75 + Math.random() * 0.5))
@@ -312,7 +334,31 @@ export function useSync(
           setServerOffsetMs(offset)
         }
         switch (message.type) {
+          case 'lobby':
+            setDoor('lobby')
+            break
+          case 'admitted':
+            setDoor('in')
+            break
+          case 'denied':
+            halted = true
+            setDoor('denied')
+            break
+          case 'knock':
+            if (message.requestId) {
+              const knock = { requestId: message.requestId, nickname: message.nickname ?? '' }
+              setKnocks((current) => current.some((item) => item.requestId === knock.requestId) ? current : [...current, knock])
+            }
+            break
+          case 'forceMedia':
+            setForced((current) => ({
+              ...(message.mic !== undefined ? { mic: message.mic } : {}),
+              ...(message.cam !== undefined ? { cam: message.cam } : {}),
+              seq: (current?.seq ?? 0) + 1,
+            }))
+            break
           case 'welcome':
+            setDoor('in')
             seatRef.current = { roomId, memberId: message.memberId ?? '', capability: message.capability ?? '' }
             for (const payload of pendingChatRef.current.splice(0)) socket.send(JSON.stringify({ type: 'chat', ...payload }))
             setMemberId(message.memberId ?? '')
@@ -335,6 +381,10 @@ export function useSync(
             setWaiting({ targetMs: message.targetMs ?? 0, readiness: message.readiness ?? [] })
             break
           case 'error':
+            if (message.error === 'password_required' || message.error === 'bad_ticket') {
+              halted = true
+              setDoor(message.error === 'bad_ticket' ? 'badPassword' : 'password')
+            }
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
             if (message.error === 'kicked') {
@@ -449,7 +499,7 @@ export function useSync(
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [nickname, roomId, send, sendReadiness, videoRef, left])
+  }, [nickname, roomId, send, sendReadiness, videoRef, left, doorNonce])
   const leave = useCallback(() => {
     setLeft(true)
     setStillThereDeadlineMs(null)
@@ -493,6 +543,17 @@ export function useSync(
     send('spotlight', spotlight ? { kind: spotlight.kind, ...(spotlight.memberId ? { targetId: spotlight.memberId } : {}) } : {})
   ), [send])
   const stageUsed = useCallback((kind: StageKind) => dispatchStage({ type: 'used', kind }), [])
+  const retryDoor = useCallback(() => {
+    setDoor('in')
+    setDoorNonce((nonce) => nonce + 1)
+  }, [])
+  const answerKnock = useCallback((type: 'admit' | 'deny', requestId: string) => {
+    if (!send(type, { targetId: requestId })) return false
+    setKnocks((current) => current.filter((knock) => knock.requestId !== requestId))
+    return true
+  }, [send])
+  const admit = useCallback((requestId: string) => answerKnock('admit', requestId), [answerKnock])
+  const deny = useCallback((requestId: string) => answerKnock('deny', requestId), [answerKnock])
 
   return {
     state,
@@ -529,5 +590,11 @@ export function useSync(
     closeStage,
     setSpotlight,
     stageUsed,
+    door,
+    retryDoor,
+    knocks,
+    admit,
+    deny,
+    forced,
   }
 }

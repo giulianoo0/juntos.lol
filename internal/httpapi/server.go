@@ -75,7 +75,11 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
-	RegisterRoomRoutes(r.Group("/api"), store, cfg)
+	var roomReaders memberAuthorizer
+	if hub != nil {
+		roomReaders = hub
+	}
+	RegisterRoomRoutes(r.Group("/api"), store, cfg, roomReaders)
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
 	options.clientMediaHooks.NotifyPlaylists = waiter.Notify

@@ -102,6 +102,7 @@ func previewRoom(store *room.Store) gin.HandlerFunc {
 			nicknames = append(nicknames, member.Nickname)
 		}
 		c.JSON(http.StatusOK, gin.H{
+			"name":        storedRoom.Name,
 			"joinMode":    storedRoom.JoinMode,
 			"memberCount": len(members),
 			"nicknames":   nicknames,

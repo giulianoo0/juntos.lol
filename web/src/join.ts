@@ -9,6 +9,7 @@
 export type JoinMode = 'open' | 'password' | 'approval'
 
 export interface RoomPreview {
+  name?: string
   joinMode: JoinMode
   memberCount: number
   /** Up to five, oldest first. */

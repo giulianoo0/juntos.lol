@@ -2,7 +2,6 @@ import { forwardRef, useCallback, useEffect, useRef, useState, type CSSPropertie
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/react'
 import { Check, Gauge, Maximize, Minimize, MonitorOff, MonitorUp, Replace, Volume2, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import type { ScreenShareInfo } from '../types'
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
 import { MorphingMenu } from '../ui/MorphingMenu'
@@ -12,8 +11,9 @@ import { useStageFullscreen } from '../ui/useStageFullscreen'
 import { unlockAudio, useAudioLocked } from '../ui/audioUnlock'
 import { playJoinChime } from '../ui/chime'
 import { useToast } from '../ui/toastContext'
+import type { Translator as T } from '../i18n/useT'
 import { SCREEN_QUALITIES, screenQuality, type ScreenQualityId, type ScreenSendStats } from '../screenshare'
-import { useScreenShare, type JlocalPick, type ScreenTile } from './useScreenShare'
+import type { JlocalPick, ScreenShareApi as ScreenShare, ScreenTile } from './useScreenShare'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { JlocalPicker } from './JlocalPicker'
@@ -47,19 +47,35 @@ function formatStats(stats: ScreenSendStats): string {
  * Every decision about publishing and subscribing lives in the hook; this is
  * only how it looks.
  */
-export function ScreenStage({ roomId, memberId, nickname, capability, isController, shareOpen, screens, viewers, t }: {
-  roomId: string
+/** The room's toasts about screens, once for all of them. */
+export function useScreenShareNotices(share: ScreenShare, t: T): void {
+  const { toast } = useToast()
+  useEffect(() => {
+    if (share.sendingSilent) toast(t('room.screenSendingSilentHint'))
+  }, [share.sendingSilent, toast, t])
+  useEffect(() => {
+    if (!share.error) return
+    toast(t(share.error === 'closed' ? 'room.screenClosedNotice' : share.error === 'full' ? 'room.screenFull' : 'error.screenshare'))
+  }, [share.error, toast, t])
+}
+
+/** What the room's screen share says when someone else's screen goes up. */
+export function screenStartedNotice(toast: (node: React.ReactNode) => void, t: T) {
+  return (started: { nickname: string }) => {
+    toast(<span><strong>{started.nickname}</strong> {t('room.screenStarted')}</span>)
+    playJoinChime()
+  }
+}
+
+/** One screen of the room as a stage of its own (`only`), or every screen. */
+export function ScreenStage({ share, only, memberId, viewers, t }: {
+  share: ScreenShare
+  only?: string
   memberId: string
-  nickname: string
-  capability: string
-  isController: boolean
-  shareOpen: boolean
-  screens: ScreenShareInfo[]
   /** How many others are in the room; nothing is sent until one of them subscribes, so the readout waits for them. */
   viewers: number
   t: Translator
 }) {
-  const { toast } = useToast()
   const previewRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(stageRef)
@@ -88,35 +104,13 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   useEffect(() => () => {
     if (barTimerRef.current !== null) window.clearTimeout(barTimerRef.current)
   }, [])
-  const share = useScreenShare({
-    roomId,
-    memberId,
-    nickname,
-    capability,
-    isController,
-    shareOpen,
-    screens,
-    onScreenStarted: (started) => {
-      toast(<span><strong>{started.nickname}</strong> {t('room.screenStarted')}</span>)
-      playJoinChime()
-    },
-  })
 
   useEffect(() => {
     const preview = previewRef.current
     if (preview) preview.srcObject = share.preview
   }, [share.preview])
 
-  useEffect(() => {
-    if (share.sendingSilent) toast(t('room.screenSendingSilentHint'))
-  }, [share.sendingSilent, toast, t])
-
-  useEffect(() => {
-    if (!share.error) return
-    toast(t(share.error === 'closed' ? 'room.screenClosedNotice' : share.error === 'full' ? 'room.screenFull' : 'error.screenshare'))
-  }, [share.error, toast, t])
-
-  const tiles = share.screens
+  const tiles = only ? share.screens.filter((tile) => tile.memberId === only) : share.screens
   const focused = focusedId !== null && tiles.length > 1 && tiles.some((tile) => tile.memberId === focusedId) ? focusedId : null
 
   useEffect(() => {
@@ -158,6 +152,7 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
   const sharing = share.state === 'sharing' || share.state === 'starting'
   const canPublish = share.supported && share.mayPublish && !share.full
   const hasRemote = tiles.some((tile) => !tile.self)
+  const ownTile = tiles.some((tile) => tile.self)
   const hint = !share.supported ? t('room.screenUnsupported')
     : share.full ? t('room.screenFull')
     : canPublish ? t('room.screenHostHint')
@@ -169,7 +164,7 @@ export function ScreenStage({ roomId, memberId, nickname, capability, isControll
 
   const controls = (
     <>
-      {canPublish ? (
+      {canPublish && (!only || ownTile) ? (
         sharing
           ? (
             <>
