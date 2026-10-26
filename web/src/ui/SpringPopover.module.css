@@ -1,0 +1,148 @@
+/* The lawcore's spring popover in the juntos's tokens: frosted, rounded, a
+   1px line and the one float shadow; it springs out of its trigger and
+   settles back. */
+
+.positioner {
+  z-index: var(--layer-float);
+  outline: none;
+}
+
+.popup {
+  box-sizing: border-box;
+  width: 16rem;
+  max-width: calc(100vw - var(--space-8));
+  max-height: var(--available-height);
+  padding: var(--space-2);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2xl);
+  background: var(--popover-glass);
+  -webkit-backdrop-filter: var(--popover-glass-filter);
+  backdrop-filter: var(--popover-glass-filter);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  outline: none;
+  transform-origin: var(--transform-origin);
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    filter var(--duration-spring-pop) var(--ease-spring-pop);
+}
+
+/* The spring alone, for a popup with a look of its own: its rules must not
+   set `transition`, `scale` or `filter`. */
+.spring {
+  transform-origin: var(--transform-origin);
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    filter var(--duration-spring-pop) var(--ease-spring-pop);
+}
+
+.popup[data-starting-style],
+.popup[data-ending-style],
+.spring[data-starting-style],
+.spring[data-ending-style] {
+  scale: 0;
+  filter: blur(var(--blur-md));
+}
+
+.popup[data-ending-style],
+.spring[data-ending-style] {
+  transition-duration: var(--duration-spring-settle);
+  transition-timing-function: var(--ease-spring-settle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .popup,
+  .spring {
+    transition: opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .popup[data-starting-style],
+  .popup[data-ending-style],
+  .spring[data-starting-style],
+  .spring[data-ending-style] {
+    scale: 1;
+    filter: none;
+    opacity: 0;
+  }
+}
+
+.title {
+  margin: 0;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--space-3);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-xl);
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: var(--transition-tint);
+}
+
+.row[data-tone="danger"] {
+  color: var(--status-danger-ink);
+}
+
+.row:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .row:not(:disabled):hover {
+    background: var(--hover);
+  }
+}
+
+.row:focus-visible {
+  outline: none;
+  background: var(--hover);
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--space-10);
+  height: var(--space-10);
+  border-radius: var(--radius-lg);
+  background: var(--hover);
+}
+
+.row[data-tone="danger"] .mark {
+  background: var(--status-danger-soft);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.check {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rule {
+  height: 1px;
+  margin: var(--space-1) var(--space-3);
+  background: var(--line);
+}

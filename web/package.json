@@ -13,6 +13,7 @@
     "postinstall": "patch-package && node scripts/sync-parser.mjs"
   },
   "dependencies": {
+    "@base-ui-components/react": "^1.0.0-rc.0",
     "@mediabunny/aac-encoder": "^1.55.2",
     "@mediabunny/ac3": "^1.55.2",
     "@mediabunny/dts": "^1.55.2",
