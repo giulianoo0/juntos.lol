@@ -66,10 +66,11 @@ export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
     <div className={styles.tile} data-size={size} data-stage={stage.kind}>
       <div className={styles.stage}>{vm.slots.renderStage(stage, size === 'focus' ? 'focus' : 'thumb')}</div>
       <div className={styles.stageTags}>
-        <span className={styles.tag}>
+        {/* The player keeps its own title; the header names the media. */}
+        {stage.kind === 'media' && size !== 'thumb' ? null : <span className={styles.tag}>
           <Avatar id={stage.ownerId} name={nameOf(stage.ownerId)} size={18} />
           <span className={styles.nameText}>{size === 'thumb' ? stage.title : `${nameOf(stage.ownerId)} · ${stage.title}`}</span>
-        </span>
+        </span>}
         {size !== 'thumb' && pinned ? <span className={styles.tag}><Pin size={12} aria-hidden="true" />{strings.pinned}</span> : null}
         {size !== 'thumb' && lit ? <span className={styles.tag}><Sparkles size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
       </div>

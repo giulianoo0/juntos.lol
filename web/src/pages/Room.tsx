@@ -1,5 +1,3 @@
-import { JlocalStatus } from '../components/JlocalPill'
-import { useJLocal } from '../jlocal/status'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMessageChime } from '../chat/useMessageChime'
@@ -314,7 +312,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   onPasswordAgain: (bad: boolean) => void
 }) {
   const room = useMemo(() => initialRoom ?? emptyRoom(roomId), [initialRoom, roomId])
-  const jlocal = useJLocal()
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaOffsetMsRef = useRef(0)
@@ -791,7 +788,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     id: `${entry.at}:${index}`,
     authorId: entry.system ? '' : memberIdByName.get(entry.author) ?? entry.author,
     author: entry.author,
-    text: entry.system ? `${entry.author} ${entry.text}` : entry.text,
+    text: entry.text,
     at: Date.parse(entry.at),
     system: entry.system,
   }))
@@ -977,7 +974,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
             {t('room.gating')}
           </Button>
         ) : null}
-        <JlocalStatus status={jlocal} t={t} />
       </div>
       {sidePanel === 'chapters' ? (
         <div className="stage-chapters">

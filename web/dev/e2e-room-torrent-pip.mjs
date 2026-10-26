@@ -24,10 +24,13 @@ async function person(name) {
   return page
 }
 
-async function enter(page, nickname) {
+const password = process.env.PASSWORD ?? ''
+
+async function enter(page, nickname, withPassword = false) {
   const field = page.getByRole('textbox').first()
   await field.waitFor({ timeout: 30_000 })
   await field.fill(nickname)
+  if (withPassword) await page.locator('input[type=password]').fill(password)
   await page.getByRole('button', { name: 'Entrar', exact: true }).click()
 }
 
@@ -39,6 +42,10 @@ const playing = (page) => page.waitForFunction(() => {
 const host = await person('host')
 await host.goto(base)
 await host.getByRole('textbox', { name: 'Nome da sala' }).fill('E2E torrent')
+if (password) {
+  await host.getByRole('button', { name: /senha/i }).first().click()
+  await host.getByPlaceholder('Senha').fill(password)
+}
 await host.getByRole('button', { name: 'Criar sala' }).click()
 await host.waitForURL(/\/room\//, { timeout: 30_000 })
 const roomUrl = host.url().split('#')[0]
@@ -62,7 +69,11 @@ await host.screenshot({ path: `${shots}/torrent-host.png` })
 
 const guest = await person('convidado')
 await guest.goto(roomUrl)
-await enter(guest, 'convidado')
+if (password) {
+  const outsider = await fetch(`${base}/api/rooms/${roomUrl.split('/').pop()}`)
+  console.log('sala trancada para quem está de fora:', outsider.status)
+}
+await enter(guest, 'convidado', Boolean(password))
 await guest.locator('video.video').waitFor({ timeout: 120_000 })
 await guest.evaluate(() => void document.querySelector('video.video')?.play().catch(() => {}))
 await playing(guest)
@@ -72,10 +83,11 @@ await guest.screenshot({ path: `${shots}/torrent-guest.png` })
 
 await host.getByRole('button', { name: /Configurações/i }).click({ force: true })
 await host.getByRole('button', { name: /^Legendas/ }).click()
-const rows = host.getByTestId('setting-subtitles').getByRole('button')
+const rows = host.getByTestId('setting-subtitles').locator('button:not(.settings-action)')
 const labels = await rows.allInnerTexts()
-console.log('legendas', labels.length)
-await rows.nth(Math.min(1, labels.length - 1)).click()
+console.log('legendas', labels.length, labels.slice(0, 4).join(' | ').replace(/\n/g, ' '))
+const track = labels.findIndex((label) => !/Desligad|Off/i.test(label))
+await rows.nth(track >= 0 ? track : Math.min(1, labels.length - 1)).click()
 await host.keyboard.press('Escape')
 await host.locator('canvas.ass-layer, .subtitle-layer, .player-subtitles').first().waitFor({ state: 'attached', timeout: 60_000 }).catch(() => console.log('camada de legenda não apareceu na página'))
 
