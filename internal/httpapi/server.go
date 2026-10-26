@@ -90,6 +90,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		screenAuthorizer = hub
 	}
 	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
+	RegisterCallRoutes(r.Group("/api"), store, cfg, screenAuthorizer)
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
 	var authorizer memberAuthorizer
 	if hub != nil {
