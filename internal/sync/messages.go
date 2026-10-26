@@ -1,6 +1,10 @@
 package sync
 
-import "github.com/giulianoo0/ss/internal/room"
+import (
+	"encoding/json"
+
+	"github.com/giulianoo0/ss/internal/room"
+)
 
 // Inbound is a WebSocket message sent from a client to the server.
 type Inbound struct {
@@ -36,6 +40,19 @@ type Inbound struct {
 	Kind      string `json:"kind,omitempty"`
 	RequestID string `json:"requestId,omitempty"`
 	Allow     bool   `json:"allow,omitempty"`
+}
+
+// decodeHello reads the first message of a socket, which must be a hello
+// with a nickname fit to show.
+func decodeHello(data []byte) (Inbound, bool) {
+	var hello Inbound
+	if err := json.Unmarshal(data, &hello); err != nil {
+		return Inbound{}, false
+	}
+	if hello.Type != "hello" || !validNickname(hello.Nickname) {
+		return Inbound{}, false
+	}
+	return hello, true
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The

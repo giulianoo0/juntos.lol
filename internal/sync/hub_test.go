@@ -275,7 +275,7 @@ func TestHubIdleCleanupPreservesActiveUpload(t *testing.T) {
 	}
 }
 
-func newHubTestServer(t *testing.T, cfg config.Config) (*Hub, *room.Store, *httptest.Server) {
+func newHubTestServer(t testing.TB, cfg config.Config) (*Hub, *room.Store, *httptest.Server) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	mr := miniredis.RunT(t)
@@ -308,7 +308,7 @@ func newHubTestServer(t *testing.T, cfg config.Config) (*Hub, *room.Store, *http
 	return hub, store, server
 }
 
-func dialHubWS(t *testing.T, server *httptest.Server, rawQuery ...string) *websocket.Conn {
+func dialHubWS(t testing.TB, server *httptest.Server, rawQuery ...string) *websocket.Conn {
 	t.Helper()
 	serverURL, err := url.Parse(server.URL)
 	require.NoError(t, err)
@@ -326,7 +326,7 @@ func dialHubWS(t *testing.T, server *httptest.Server, rawQuery ...string) *webso
 	return conn
 }
 
-func helloHubClient(t *testing.T, conn *websocket.Conn, nickname string, clientTimeMs int64) Outbound {
+func helloHubClient(t testing.TB, conn *websocket.Conn, nickname string, clientTimeMs int64) Outbound {
 	t.Helper()
 	require.NoError(t, conn.WriteJSON(Inbound{
 		Type: "hello", Nickname: nickname, ClientTimeMs: clientTimeMs,
@@ -340,7 +340,7 @@ func helloHubClient(t *testing.T, conn *websocket.Conn, nickname string, clientT
 	return welcome
 }
 
-func readHubEvent(t *testing.T, conn *websocket.Conn) Outbound {
+func readHubEvent(t testing.TB, conn *websocket.Conn) Outbound {
 	t.Helper()
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
 	var event Outbound

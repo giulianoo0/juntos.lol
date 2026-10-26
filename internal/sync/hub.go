@@ -228,18 +228,19 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return
 	}
-	var hello Inbound
-	if err := conn.ReadJSON(&hello); err != nil {
+	_, data, err := conn.ReadMessage()
+	if err != nil {
 		return
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return
 	}
-	nickname := hello.Nickname
-	if hello.Type != "hello" || !validNickname(nickname) {
+	hello, ok := decodeHello(data)
+	if !ok {
 		writeHandshakeError(conn, "invalid_hello")
 		return
 	}
+	nickname := hello.Nickname
 
 	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {
