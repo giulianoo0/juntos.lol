@@ -487,11 +487,11 @@ func TestHubGatingSettingIsControllerOnly(t *testing.T) {
 	}
 }
 
-func TestHubGateSkipsScreenRooms(t *testing.T) {
+func TestHubGateSkipsARoomWithoutMedia(t *testing.T) {
 	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
-		ID: "r1", Status: "ready", SourceKind: room.SourceScreen, ControllerID: "m1",
+		ID: "r1", Status: room.StatusEmpty, ControllerID: "m1",
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	host := dialHubWS(t, server)

@@ -50,7 +50,7 @@ func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
 	guest := dialHubWS(t, server)
 	guestWelcome := helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: time.Now().UTC()}, false))
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: time.Now().UTC()}))
 
 	require.NoError(t, guest.Close())
 	// The room holds the seat: nobody is told the guest left.
@@ -140,7 +140,7 @@ func TestHubDetachedMemberLeavesAfterGrace(t *testing.T) {
 	guest := dialHubWS(t, server)
 	guestWelcome := helloHubClient(t, guest, "guest", 2)
 	require.Equal(t, "members", readHubEvent(t, host).Type)
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: time.Now().UTC()}, false))
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: time.Now().UTC()}))
 
 	require.NoError(t, guest.Close())
 	require.Equal(t, "roomUpdated", readHubEvent(t, host).Type)

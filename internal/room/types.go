@@ -59,18 +59,30 @@ type PlayState struct {
 	ServerTimeMs int64   `json:"serverTimeMs"`
 }
 
+// StatusEmpty is the media stage of a room nobody has opened anything in:
+// a room is born this way, and its screens and live play beside it.
+const StatusEmpty = "empty"
+
+// The kinds of stage a room shows side by side: one media with a timeline
+// (file, torrent, YouTube video), one live, and up to MaxScreenShares
+// screens. A member is not a stage, but a spotlight can point at one.
 const (
-	SourceUpload = "upload"
-	SourceScreen = "screen"
-	// SourceYoutube is an upload whose producer is a worker or the host's
-	// companion app reading a YouTube link; the room prepares like any upload.
-	SourceYoutube = "youtube"
-	// SourceLive is a YouTube live on the MoQ relay: no timeline, no seek,
-	// everyone watches the edge the producer publishes.
-	SourceLive = "live"
+	StageMedia  = "media"
+	StageLive   = "live"
+	StageScreen = "screen"
+	StageMember = "member"
 )
 
+// Spotlight is what the host puts in front of everyone. MemberID names the
+// screen's owner, or the member, for those two kinds.
+type Spotlight struct {
+	Kind     string `json:"kind"`
+	MemberID string `json:"memberId,omitempty"`
+}
+
 // LiveInfo describes the live a room is on and who puts it on the relay.
+// Status follows the producer (processing, ready, error) apart from the
+// media's, since the two play at once.
 type LiveInfo struct {
 	VideoID   string `json:"videoId"`
 	Title     string `json:"title"`
@@ -80,14 +92,18 @@ type LiveInfo struct {
 	Broadcast string `json:"broadcast"`
 	WorkerID  string `json:"workerId,omitempty"`
 	JobID     string `json:"jobId,omitempty"`
+	// MemberID opened the live and may run it besides the host.
+	MemberID string `json:"memberId,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Room is the aggregate stored under room:{id}.
 type Room struct {
 	ID                  string         `json:"id"`
+	Name                string         `json:"name,omitempty"`
 	FileName            string         `json:"fileName"`
 	Status              string         `json:"status"`
-	SourceKind          string         `json:"sourceKind"`
 	MediaGeneration     int            `json:"mediaGeneration"`
 	MediaVersion        int            `json:"mediaVersion"`
 	SubsVersion         int            `json:"subsVersion"`
@@ -108,11 +124,17 @@ type Room struct {
 	ClientSubs          bool           `json:"clientSubs,omitempty"`
 	Preparation         Preparation    `json:"preparation"`
 	ProducerHeartbeatMs int64          `json:"producerHeartbeatMs,omitempty"`
-	ScreenShareOpen     bool           `json:"screenShareOpen"`
 	Screens             []ScreenShare  `json:"screens,omitempty"`
 	Live                *LiveInfo      `json:"live,omitempty"`
+	Spotlight           *Spotlight     `json:"spotlight,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	ExpiresAt           time.Time      `json:"expiresAt"`
+}
+
+// HasMedia reports whether the room's media stage holds a source, in any
+// state from arriving to failed.
+func (r *Room) HasMedia() bool {
+	return r.Status != "" && r.Status != StatusEmpty
 }
 
 // MediaSnapshot is the part of a room a publish can change, carried inside

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +30,7 @@ func sourceRoom(t *testing.T, cfg config.Config, store *room.Store) *gin.Engine 
 	t.Helper()
 	now := time.Now()
 	require.NoError(t, store.CreateWithMember(t.Context(), &room.Room{
-		ID: "r1", FileName: "first.mkv", Status: "ready", SourceKind: room.SourceUpload,
+		ID: "r1", FileName: "first.mkv", Status: "ready", OwnerToken: "owner-secret",
 		ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 		AudioTracks:    []room.TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}},
 		SubtitleTracks: []room.TrackInfo{{Index: 0, Language: "eng", Codec: "webvtt"}},
@@ -42,38 +43,6 @@ func sourceRoom(t *testing.T, cfg config.Config, store *room.Store) *gin.Engine 
 	return gin.New()
 }
 
-func TestChangeSourceToScreen(t *testing.T) {
-	cfg := testCfg(t)
-	store := newTestStore(t)
-	e := sourceRoom(t, cfg, store)
-	var notified []string
-	var reset []string
-	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
-		NotifyStatus:  func(_, status string) { notified = append(notified, status) },
-		ResetPlayback: func(id string) { reset = append(reset, id) },
-	})
-
-	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"screen"}`)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	got, err := store.Get(t.Context(), "r1")
-	require.NoError(t, err)
-	require.Equal(t, "ready", got.Status)
-	require.Equal(t, room.SourceScreen, got.SourceKind)
-	require.Equal(t, 1, got.MediaGeneration)
-	require.Empty(t, got.AudioTracks)
-	require.Empty(t, got.SubtitleTracks)
-	require.Empty(t, got.FileName)
-	require.NoDirExists(t, filepath.Join(cfg.DataDir, "rooms", "r1"))
-	require.Equal(t, []string{"ready"}, notified)
-	require.Equal(t, []string{"r1"}, reset)
-
-	members, err := store.Members(t.Context(), "r1")
-	require.NoError(t, err)
-	require.Len(t, members, 1)
-	require.Equal(t, "m1", got.ControllerID)
-}
-
 func TestChangeSourceToUploadReopensTheUploadWindow(t *testing.T) {
 	cfg := testCfg(t)
 	store := newTestStore(t)
@@ -82,38 +51,112 @@ func TestChangeSourceToUploadReopensTheUploadWindow(t *testing.T) {
 	require.NoError(t, store.ReserveUpload(t.Context(), "r1", "claim-one", time.Now()))
 
 	canceled := make([]string, 0, 1)
+	var notified, reset []string
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
-		CancelMedia: func(roomID string) { canceled = append(canceled, roomID) },
+		CancelMedia:   func(roomID string) { canceled = append(canceled, roomID) },
+		NotifyStatus:  func(_, status string) { notified = append(notified, status) },
+		ResetPlayback: func(id string) { reset = append(reset, id) },
 	})
 
 	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"upload","fileName":"second.mkv"}`)
 	require.Equal(t, http.StatusOK, w.Code)
+	require.NotContains(t, w.Body.String(), "sourceKind")
 
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
 	require.Equal(t, "uploading", got.Status)
 	require.Equal(t, "second.mkv", got.FileName)
-	require.Equal(t, room.SourceUpload, got.SourceKind)
+	require.Equal(t, 1, got.MediaGeneration)
+	require.Equal(t, "m1", got.SourceMemberID)
+	require.Empty(t, got.AudioTracks)
+	require.Empty(t, got.SubtitleTracks)
+	require.NoDirExists(t, filepath.Join(cfg.DataDir, "rooms", "r1"))
 	require.Equal(t, []string{"r1"}, canceled)
+	require.Equal(t, []string{"uploading"}, notified)
+	require.Equal(t, []string{"r1"}, reset)
 
 	require.NoError(t, store.ReserveUpload(t.Context(), "r1", "claim-two", time.Now()))
 }
 
-func TestChangeSourceRejectsEveryoneButTheController(t *testing.T) {
+func TestChangeSourceLeavesTheScreensAndTheLiveUp(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Since: time.Now()}))
+	require.NoError(t, store.SetLive(t.Context(), "r1", &room.LiveInfo{VideoID: "v", Broadcast: "b", Status: "ready"}))
+	var liveCanceled []string
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
+		CancelLive: func(roomID string) { liveCanceled = append(liveCanceled, roomID) },
+	})
+
+	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"youtube","fileName":"A/B test"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, got.Screens, 1)
+	require.NotNil(t, got.Live)
+	require.Empty(t, liveCanceled)
+}
+
+func TestAGrantedGuestOpensTheMediaAndHoldsIt(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	var used []string
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{
+		allowed: true, stages: map[string]bool{"m2/media": true}, used: &used,
+	}, SourceHooks{})
+
+	w := postSource(t, e, "r1", `{"memberId":"m2","capability":"secret-capability","kind":"upload","fileName":"guest.mkv"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, []string{"m2/media"}, used, "opening spends the grant")
+
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "m2", got.SourceMemberID)
+	require.Equal(t, "m1", got.ControllerID)
+}
+
+func TestChangeSourceRejectsAMemberWithoutAGrant(t *testing.T) {
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	e := sourceRoom(t, cfg, store)
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
 
-	require.NoError(t, store.SetController(t.Context(), "r1", "m9"))
-	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"screen"}`)
+	w := postSource(t, e, "r1", `{"memberId":"m2","capability":"secret-capability","kind":"upload","fileName":"x.mkv"}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
-	require.Contains(t, w.Body.String(), "not_controller")
+	require.Contains(t, w.Body.String(), "stage_not_granted")
 
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
-	require.Equal(t, room.SourceUpload, got.SourceKind)
+	require.Equal(t, "first.mkv", got.FileName)
 	require.FileExists(t, filepath.Join(cfg.DataDir, "rooms", "r1", "original.mkv"))
+}
+
+// The room's creator opens its first media before the room has seated them,
+// with the token that proves they made it.
+func TestTheOwnerTokenOpensMediaWithoutASeat(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
+
+	w := postSource(t, e, "r1", `{"ownerToken":"not-it","kind":"upload","fileName":"x.mkv"}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
+
+	w = postSource(t, e, "r1", `{"ownerToken":"owner-secret","kind":"upload","fileName":"x.mkv"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status          string `json:"status"`
+		MediaGeneration int    `json:"mediaGeneration"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, "uploading", resp.Status)
+	require.Equal(t, 1, resp.MediaGeneration)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "m1", got.SourceMemberID)
 }
 
 func TestChangeSourceRejectsBadInput(t *testing.T) {
@@ -128,10 +171,11 @@ func TestChangeSourceRejectsBadInput(t *testing.T) {
 		code int
 	}{
 		{name: "unknown kind", body: `{"memberId":"m1","capability":"secret-capability","kind":"webcam"}`, code: http.StatusBadRequest},
+		{name: "a screen is not a media source", body: `{"memberId":"m1","capability":"secret-capability","kind":"screen"}`, code: http.StatusBadRequest},
 		{name: "upload without a file name", body: `{"memberId":"m1","capability":"secret-capability","kind":"upload"}`, code: http.StatusBadRequest},
 		{name: "upload with a path", body: `{"memberId":"m1","capability":"secret-capability","kind":"upload","fileName":"../escape.mkv"}`, code: http.StatusBadRequest},
-		{name: "no capability", body: `{"memberId":"m1","kind":"screen"}`, code: http.StatusBadRequest},
-		{name: "wrong capability", body: `{"memberId":"m1","capability":"guessed","kind":"screen"}`, code: http.StatusForbidden},
+		{name: "no proof at all", body: `{"memberId":"m1","kind":"upload","fileName":"x.mkv"}`, code: http.StatusForbidden},
+		{name: "wrong capability", body: `{"memberId":"m1","capability":"guessed","kind":"upload","fileName":"x.mkv"}`, code: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -141,28 +185,66 @@ func TestChangeSourceRejectsBadInput(t *testing.T) {
 	require.FileExists(t, filepath.Join(cfg.DataDir, "rooms", "r1", "original.mkv"))
 }
 
+func TestClosingTheMediaEmptiesItsStageOnly(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	sourceRoom(t, cfg, store)
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Since: time.Now()}))
+	require.NoError(t, store.SetLive(t.Context(), "r1", &room.LiveInfo{VideoID: "v", Broadcast: "b", Status: "ready"}))
+	var canceled, liveCanceled, statuses, reset []string
+	hooks := SourceHooks{
+		CancelMedia:   func(id string) { canceled = append(canceled, id) },
+		CancelLive:    func(id string) { liveCanceled = append(liveCanceled, id) },
+		NotifyStatus:  func(_, status string) { statuses = append(statuses, status) },
+		ResetPlayback: func(id string) { reset = append(reset, id) },
+	}
+
+	require.NoError(t, CloseStage(t.Context(), store, cfg, hooks, "r1", room.StageMedia))
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, room.StatusEmpty, got.Status)
+	require.False(t, got.HasMedia())
+	require.Empty(t, got.FileName)
+	require.Empty(t, got.SourceMemberID)
+	require.Equal(t, 1, got.MediaGeneration)
+	require.Len(t, got.Screens, 1)
+	require.NotNil(t, got.Live)
+	require.NoDirExists(t, filepath.Join(cfg.DataDir, "rooms", "r1"))
+	require.Equal(t, []string{"r1"}, canceled)
+	require.Empty(t, liveCanceled)
+	require.Equal(t, []string{room.StatusEmpty}, statuses)
+	require.Equal(t, []string{"r1"}, reset)
+}
+
+func TestClosingTheLiveLeavesTheMedia(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	sourceRoom(t, cfg, store)
+	require.NoError(t, store.SetLive(t.Context(), "r1", &room.LiveInfo{VideoID: "v", Broadcast: "b", Status: "ready"}))
+	var canceled, liveCanceled, updated []string
+	hooks := SourceHooks{
+		CancelMedia:       func(id string) { canceled = append(canceled, id) },
+		CancelLive:        func(id string) { liveCanceled = append(liveCanceled, id) },
+		NotifyRoomUpdated: func(id string) { updated = append(updated, id) },
+	}
+
+	require.NoError(t, CloseStage(t.Context(), store, cfg, hooks, "r1", room.StageLive))
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Nil(t, got.Live)
+	require.Equal(t, "ready", got.Status)
+	require.Equal(t, "first.mkv", got.FileName)
+	require.Empty(t, canceled)
+	require.Equal(t, []string{"r1"}, liveCanceled)
+	require.Equal(t, []string{"r1"}, updated)
+}
+
 func TestChangeSourceMissingRoom(t *testing.T) {
 	cfg := testCfg(t)
 	store := newTestStore(t)
 	e := gin.New()
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
 
-	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"screen"}`)
+	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"upload","fileName":"x.mkv"}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestCreateScreenRoomNeedsNoFile(t *testing.T) {
-	cfg := testCfg(t)
-	store := newTestStore(t)
-	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), store, cfg)
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/rooms", strings.NewReader(`{"kind":"screen","nickname":"giuli"}`))
-	req.Header.Set("Content-Type", "application/json")
-	e.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusCreated, w.Code)
-	require.Contains(t, w.Body.String(), `"sourceKind":"screen"`)
-	require.Contains(t, w.Body.String(), `"status":"ready"`)
 }

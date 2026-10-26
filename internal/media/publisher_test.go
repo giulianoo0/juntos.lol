@@ -83,7 +83,7 @@ func TestPublisherResendsSubtitlesAfterASourceSwap(t *testing.T) {
 		[]byte("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n"), 0o644))
 	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))
 
-	_, generation, err := store.SwapSource(t.Context(), "r1", "upload", "next.mkv", "uploading", time.Now())
+	_, generation, err := store.SwapSource(t.Context(), "r1", "m1", "next.mkv", "uploading", time.Now())
 	require.NoError(t, err)
 	require.Equal(t, 1, generation)
 	require.NoError(t, publisher.PublishSubtitles(t.Context(), "r1", subsDir))

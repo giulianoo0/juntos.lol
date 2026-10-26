@@ -21,7 +21,7 @@ func TestCreateRoom(t *testing.T) {
 	cfg := testCfg(t)
 	RegisterRoomRoutes(e.Group("/api"), s, cfg)
 	w := httptest.NewRecorder()
-	body := `{"fileName":"movie.mkv","nickname":"giuli"}`
+	body := `{"nickname":"giuli","name":"Sexta do terror"}`
 	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	e.ServeHTTP(w, req)
@@ -32,7 +32,10 @@ func TestCreateRoom(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.ID, 8)
 	got, _ := s.Get(context.Background(), resp.ID)
-	require.Equal(t, "uploading", got.Status)
+	require.Equal(t, room.StatusEmpty, got.Status, "a room is born without media")
+	require.False(t, got.HasMedia())
+	require.Equal(t, "Sexta do terror", got.Name)
+	require.Empty(t, got.FileName)
 }
 
 func TestCreateRoomRegistersController(t *testing.T) {
@@ -40,7 +43,7 @@ func TestCreateRoomRegistersController(t *testing.T) {
 	e := gin.New()
 	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 	w := httptest.NewRecorder()
-	body := `{"fileName":"movie.mkv","nickname":"giuli"}`
+	body := `{"nickname":"giuli"}`
 	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	e.ServeHTTP(w, req)
@@ -56,7 +59,6 @@ func TestCreateRoomRegistersController(t *testing.T) {
 	got, err := s.Get(ctx, resp.ID)
 	require.NoError(t, err)
 	require.Equal(t, "m1", got.ControllerID)
-	require.Equal(t, "movie.mkv", got.FileName)
 	members, err := s.Members(ctx, resp.ID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -69,7 +71,7 @@ func TestCreateRoomGeneratesNicknameWhenOmitted(t *testing.T) {
 	e := gin.New()
 	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/rooms", strings.NewReader(`{"fileName":"movie.mkv"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/rooms", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	e.ServeHTTP(w, req)
 
@@ -92,20 +94,20 @@ func TestCreateRoomRejectsOversizedOrUnsafeFields(t *testing.T) {
 		body string
 	}{
 		{
-			name: "oversized filename",
-			body: `{"fileName":"` + strings.Repeat("a", 256) + `","nickname":"giuli"}`,
+			name: "oversized name",
+			body: `{"name":"` + strings.Repeat("a", 81) + `","nickname":"giuli"}`,
 		},
 		{
-			name: "path filename",
-			body: `{"fileName":"../movie.mkv","nickname":"giuli"}`,
+			name: "control character name",
+			body: `{"name":"sex\nta","nickname":"giuli"}`,
 		},
 		{
 			name: "control character nickname",
-			body: `{"fileName":"movie.mkv","nickname":"giu\nli"}`,
+			body: `{"nickname":"giu\nli"}`,
 		},
 		{
 			name: "oversized body",
-			body: `{"fileName":"movie.mkv","nickname":"` + strings.Repeat("a", 4096) + `"}`,
+			body: `{"nickname":"` + strings.Repeat("a", 4096) + `"}`,
 		},
 	}
 
@@ -128,9 +130,10 @@ func TestGetRoom(t *testing.T) {
 	e := gin.New()
 	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 
-	r := &room.Room{ID: "abc12345", FileName: "movie.mkv", Status: "uploading",
+	r := &room.Room{ID: "abc12345", Name: "Sexta", FileName: "movie.mkv", Status: "uploading",
 		ControllerID: "m1", CreatedAt: time.Now(), ExpiresAt: time.Now().Add(5 * time.Hour)}
 	require.NoError(t, s.Create(context.Background(), r))
+	require.NoError(t, s.SetSpotlight(context.Background(), r.ID, &room.Spotlight{Kind: room.StageMedia}))
 	require.NoError(t, s.AddMember(context.Background(), r.ID, room.Member{
 		ID: "m1", Nickname: "giuli", JoinedAt: time.Now(),
 	}))
@@ -141,7 +144,9 @@ func TestGetRoom(t *testing.T) {
 	require.Equal(t, 200, w.Code)
 	var resp struct {
 		ID             string
+		Name           string
 		Status         string
+		Spotlight      *room.Spotlight
 		MemberCount    int
 		AudioTracks    []room.TrackInfo
 		SubtitleTracks []room.TrackInfo
@@ -150,6 +155,10 @@ func TestGetRoom(t *testing.T) {
 	require.Equal(t, "abc12345", resp.ID)
 	require.Equal(t, "uploading", resp.Status)
 	require.Equal(t, 1, resp.MemberCount)
+	require.Equal(t, "Sexta", resp.Name)
+	require.Equal(t, &room.Spotlight{Kind: room.StageMedia}, resp.Spotlight)
+	require.NotContains(t, w.Body.String(), "sourceKind")
+	require.NotContains(t, w.Body.String(), "screenShareOpen")
 }
 
 func TestGetRoomCarriesTheProducerHeartbeat(t *testing.T) {

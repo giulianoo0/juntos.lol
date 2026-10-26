@@ -112,7 +112,7 @@ func TestCommitPublishRefusesAfterSourceSwap(t *testing.T) {
 	s := commitStore(t)
 	addRoomWithClaim(t, s, "r1", "client:a")
 
-	_, _, err := s.SwapSource(t.Context(), "r1", SourceUpload, "other.mkv", "uploading", time.Now())
+	_, _, err := s.SwapSource(t.Context(), "r1", "m1", "other.mkv", "uploading", time.Now())
 	require.NoError(t, err)
 
 	_, err = s.CommitPublish(t.Context(), "r1", PublishCommit{
@@ -140,7 +140,7 @@ func TestSwapSourceClearsProducerFencing(t *testing.T) {
 		Claim: "client:a", RunID: "run1", Seq: 9, Digest: "d9",
 	})
 	require.NoError(t, err)
-	_, generation, err := s.SwapSource(t.Context(), "r1", SourceUpload, "other.mkv", "uploading", time.Now())
+	_, generation, err := s.SwapSource(t.Context(), "r1", "m1", "other.mkv", "uploading", time.Now())
 	require.NoError(t, err)
 	require.Equal(t, 1, generation)
 	require.NoError(t, s.ReserveUpload(t.Context(), "r1", "client:b", time.Now()))

@@ -236,7 +236,7 @@ func TestStoreClientSubtitlesRejectsAnExtractionFromAReplacedSource(t *testing.T
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: "r1", FileName: "first.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
-	_, generation, err := store.SwapSource(t.Context(), "r1", room.SourceUpload, "second.mkv", "uploading", now)
+	_, generation, err := store.SwapSource(t.Context(), "r1", "m1", "second.mkv", "uploading", now)
 	require.NoError(t, err)
 	require.Equal(t, 1, generation)
 
@@ -572,6 +572,13 @@ func TestImportSubtitleRefusesAnyoneButTheController(t *testing.T) {
 	w := postImportedSubtitle(t, e, "r1", `{"memberId":"guest","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "not_controller")
+}
+
+func TestImportSubtitleByWhoeverOpenedTheMedia(t *testing.T) {
+	e, store, _, _ := newImportTestRoom(t)
+	require.NoError(t, store.SetSourceHolder(t.Context(), "r1", "guest", "file"))
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"guest","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 }
 
 func TestImportSubtitleRefusesAReplacedSource(t *testing.T) {

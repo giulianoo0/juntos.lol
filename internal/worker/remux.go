@@ -159,8 +159,9 @@ func (o *RemuxOrchestrator) capableWorker(workerID string) bool {
 }
 
 // Start reserves the room's producer claim and dispatches the first run.
-// Authorization is the room's ownerToken (bootstrap) or a connected
-// controller's capability; both require the session owning the torrent job.
+// Authorization is the room's ownerToken (bootstrap) or the capability of a
+// connected host or of whoever opened the media; both require the session
+// owning the torrent job.
 func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, req remux.StartRequest,
 	authorizeMember func(memberID, capability string) bool) (*remux.StartResponse, error) {
 	job, err := o.Service.Get(ctx, sessionID, jobID)
@@ -198,7 +199,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		}
 	case req.Auth.MemberID != "" && req.Auth.Capability != "":
 		if authorizeMember == nil || !authorizeMember(req.Auth.MemberID, req.Auth.Capability) ||
-			storedRoom.ControllerID != req.Auth.MemberID {
+			storedRoom.ControllerID != req.Auth.MemberID && storedRoom.SourceMemberID != req.Auth.MemberID {
 			return nil, ErrRemuxDenied
 		}
 	default:

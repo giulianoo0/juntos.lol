@@ -41,8 +41,8 @@ func TestHubDropsScreenShareOnDisconnect(t *testing.T) {
 	require.Equal(t, "members", readHubEvent(t, host).Type)
 
 	now := time.Now().UTC()
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "host", Since: now}, true))
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: now.Add(time.Second)}, false))
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "host", Since: now}))
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: now.Add(time.Second)}))
 
 	require.NoError(t, guest.Close())
 	require.Equal(t, "roomUpdated", readHubEvent(t, host).Type)

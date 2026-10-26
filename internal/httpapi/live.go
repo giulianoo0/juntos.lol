@@ -16,8 +16,9 @@ import (
 )
 
 // A live is a YouTube stream put on the MoQ relay by a producer: a worker
-// of the fleet, or the host's companion app. The room turns into a live
-// room (no timeline, no seek) and its status follows the producer's word.
+// of the fleet, or the companion app of whoever opened it. It is a stage of
+// its own beside the media (no timeline, no seek), and its status follows
+// the producer's word.
 
 const (
 	LiveProducerFleet  = "fleet"
@@ -51,13 +52,13 @@ type liveStateRequest struct {
 
 // RegisterLiveRoutes mounts the live start and the companion app's state
 // report. service may be nil: then only the companion app can produce.
-func RegisterLiveRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer memberAuthorizer,
+func RegisterLiveRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer stageAuthorizer,
 	hooks SourceHooks, service *worker.Service) {
 	rg.POST("/rooms/:id/live", startLive(store, cfg, authorizer, hooks, service))
-	rg.POST("/rooms/:id/live/state", reportLive(store, authorizer, hooks.NotifyStatus))
+	rg.POST("/rooms/:id/live/state", reportLive(store, authorizer, hooks.NotifyRoomUpdated))
 }
 
-func liveController(c *gin.Context, store *room.Store, authorizer memberAuthorizer, memberID, capability string) (*room.Room, bool) {
+func loadLiveStageRoom(c *gin.Context, store *room.Store) (*room.Room, bool) {
 	roomID := c.Param("id")
 	if !validMediaRoomID(roomID) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
@@ -72,18 +73,10 @@ func liveController(c *gin.Context, store *room.Store, authorizer memberAuthoriz
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return nil, false
 	}
-	if authorizer == nil || !authorizer.AuthorizeMember(roomID, memberID, capability) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
-		return nil, false
-	}
-	if storedRoom.ControllerID != memberID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "not_controller"})
-		return nil, false
-	}
 	return storedRoom, true
 }
 
-func startLive(store *room.Store, cfg config.Config, authorizer memberAuthorizer, hooks SourceHooks, service *worker.Service) gin.HandlerFunc {
+func startLive(store *room.Store, cfg config.Config, authorizer stageAuthorizer, hooks SourceHooks, service *worker.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.ScreenshareEnabled() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "live_disabled"})
@@ -107,8 +100,8 @@ func startLive(store *room.Store, cfg config.Config, authorizer memberAuthorizer
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "youtube_no_workers"})
 			return
 		}
-		storedRoom, ok := liveController(c, store, authorizer, req.MemberID, req.Capability)
-		if !ok {
+		storedRoom, ok := loadLiveStageRoom(c, store)
+		if !ok || !authorizeStage(c, authorizer, storedRoom, req.MemberID, req.Capability, room.StageLive, true) {
 			return
 		}
 		ctx := c.Request.Context()
@@ -117,17 +110,10 @@ func startLive(store *room.Store, cfg config.Config, authorizer memberAuthorizer
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		if hooks.CancelMedia != nil {
-			hooks.CancelMedia(storedRoom.ID)
-		}
-		_, generation, err := store.SwapSource(ctx, storedRoom.ID, room.SourceLive, req.Title, "processing", time.Now())
-		if err != nil {
-			slog.ErrorContext(ctx, "swap room to live", "room_id", storedRoom.ID, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		if hooks.ResetPlayback != nil {
-			hooks.ResetPlayback(storedRoom.ID)
+		// One live per room: the one on now gives way; the media and the
+		// screens stay.
+		if hooks.CancelLive != nil {
+			hooks.CancelLive(storedRoom.ID)
 		}
 		live := &room.LiveInfo{
 			VideoID:   videoID,
@@ -135,16 +121,19 @@ func startLive(store *room.Store, cfg config.Config, authorizer memberAuthorizer
 			Thumbnail: req.Thumbnail,
 			Producer:  req.Producer,
 			Broadcast: LiveBroadcastPath(storedRoom.ID, secret),
+			MemberID:  req.MemberID,
+			Status:    "processing",
 		}
 		if req.Producer == LiveProducerFleet {
 			job, err := service.StartLive(ctx, storedRoom.ID, CanonicalYoutubeURL(videoID), cfg.MoqRelayURL+"/"+cfg.MoqPublishToken, live.Broadcast)
 			if err != nil {
 				code := liveStartCode(err)
-				_ = store.SetError(ctx, storedRoom.ID, code)
-				if hooks.NotifyStatus != nil {
-					hooks.NotifyStatus(storedRoom.ID, "error")
+				live.Status, live.Error = "error", code
+				_ = store.SetLive(ctx, storedRoom.ID, live)
+				if hooks.NotifyRoomUpdated != nil {
+					hooks.NotifyRoomUpdated(storedRoom.ID)
 				}
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": code, "mediaGeneration": generation})
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": code})
 				return
 			}
 			live.WorkerID, live.JobID = job.WorkerID, job.ID
@@ -153,14 +142,12 @@ func startLive(store *room.Store, cfg config.Config, authorizer memberAuthorizer
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		if hooks.NotifyStatus != nil {
-			hooks.NotifyStatus(storedRoom.ID, "processing")
+		if hooks.NotifyRoomUpdated != nil {
+			hooks.NotifyRoomUpdated(storedRoom.ID)
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"status":          "processing",
-			"sourceKind":      room.SourceLive,
-			"mediaGeneration": generation,
-			"broadcast":       live.Broadcast,
+			"status":    live.Status,
+			"broadcast": live.Broadcast,
 		})
 	}
 }
@@ -179,9 +166,9 @@ func liveStartCode(err error) string {
 	return code
 }
 
-// reportLive is the companion app's producer speaking through the host's
-// tab: the live is on, over, or lost.
-func reportLive(store *room.Store, authorizer memberAuthorizer, notify func(roomID, status string)) gin.HandlerFunc {
+// reportLive is the companion app's producer speaking through the tab of
+// whoever opened the live: it is on, over, or lost.
+func reportLive(store *room.Store, authorizer stageAuthorizer, notify func(roomID string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxLiveBodyBytes)
 		var req liveStateRequest
@@ -189,12 +176,20 @@ func reportLive(store *room.Store, authorizer memberAuthorizer, notify func(room
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		storedRoom, ok := liveController(c, store, authorizer, req.MemberID, req.Capability)
+		storedRoom, ok := loadLiveStageRoom(c, store)
 		if !ok {
 			return
 		}
-		if storedRoom.SourceKind != room.SourceLive || storedRoom.Live == nil || storedRoom.Live.Producer != LiveProducerJlocal {
+		if authorizer == nil || !authorizer.AuthorizeMember(storedRoom.ID, req.MemberID, req.Capability) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
+			return
+		}
+		if storedRoom.Live == nil || storedRoom.Live.Producer != LiveProducerJlocal {
 			c.JSON(http.StatusConflict, gin.H{"error": "not_live"})
+			return
+		}
+		if storedRoom.ControllerID != req.MemberID && storedRoom.Live.MemberID != req.MemberID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "not_stage_owner"})
 			return
 		}
 		applyLiveState(c.Request.Context(), store, notify, storedRoom, remux.LiveState{State: req.State, Code: req.Code, Detail: req.Detail})
@@ -202,56 +197,50 @@ func reportLive(store *room.Store, authorizer memberAuthorizer, notify func(room
 	}
 }
 
-// applyLiveState moves the room with its producer: live is ready, and the
-// end or a failure is an error the host can act on by picking again.
-func applyLiveState(ctx context.Context, store *room.Store, notify func(roomID, status string), storedRoom *room.Room, state remux.LiveState) {
-	var status string
+// applyLiveState moves the live with its producer: on is ready, and the end
+// or a failure is an error its owner can act on by picking again.
+func applyLiveState(ctx context.Context, store *room.Store, notify func(roomID string), storedRoom *room.Room, state remux.LiveState) {
+	live := *storedRoom.Live
 	switch state.State {
 	case "live":
-		if storedRoom.Status == "ready" {
+		if live.Status == "ready" {
 			return
 		}
-		status = "ready"
-		if err := store.SetStatus(ctx, storedRoom.ID, status); err != nil {
-			return
-		}
+		live.Status, live.Error = "ready", ""
 	case "ended":
-		if storedRoom.Status == "error" {
+		if live.Status == "error" {
 			return
 		}
-		status = "error"
-		if err := store.SetError(ctx, storedRoom.ID, "live_ended"); err != nil {
-			return
-		}
+		live.Status, live.Error = "error", "live_ended"
 	case "failed":
-		if storedRoom.Status == "error" {
+		if live.Status == "error" {
 			return
 		}
-		status = "error"
 		code := state.Code
 		if code == "" {
 			code = "youtube_tool"
 		}
 		slog.Info("live failed", "room_id", storedRoom.ID, "code", code, "detail", state.Detail)
-		if err := store.SetError(ctx, storedRoom.ID, code); err != nil {
-			return
-		}
+		live.Status, live.Error = "error", code
 	default:
 		return
 	}
+	if err := store.SetLive(ctx, storedRoom.ID, &live); err != nil {
+		return
+	}
 	if notify != nil {
-		notify(storedRoom.ID, status)
+		notify(storedRoom.ID)
 	}
 }
 
-// LiveReporter turns a worker's live reports into room status, ignoring a
-// worker that is not the room's producer of record.
-func LiveReporter(store *room.Store, notify func(roomID, status string)) func(roomID, workerID string, state remux.LiveState) {
+// LiveReporter turns a worker's live reports into the live's status,
+// ignoring a worker that is not the room's producer of record.
+func LiveReporter(store *room.Store, notify func(roomID string)) func(roomID, workerID string, state remux.LiveState) {
 	return func(roomID, workerID string, state remux.LiveState) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		storedRoom, err := store.Get(ctx, roomID)
-		if err != nil || storedRoom.SourceKind != room.SourceLive || storedRoom.Live == nil {
+		if err != nil || storedRoom.Live == nil {
 			return
 		}
 		if storedRoom.Live.Producer != LiveProducerFleet || storedRoom.Live.WorkerID != workerID {

@@ -30,6 +30,12 @@ type Inbound struct {
 	// held; the server hands it back while it is still being kept.
 	MemberID   string `json:"memberId,omitempty"`
 	Capability string `json:"capability,omitempty"`
+	// Kind names a stage (media, live, screen; member too for a spotlight)
+	// on stageRequest, stageClose and spotlight; RequestID and Allow are the
+	// host's stageAnswer.
+	Kind      string `json:"kind,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
+	Allow     bool   `json:"allow,omitempty"`
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The
@@ -74,6 +80,11 @@ type Outbound struct {
 	Title         *TitleRequest       `json:"title,omitempty"`
 	DeadlineMs    int64               `json:"deadlineMs,omitempty"`
 	HostSubtitles *HostSubtitles      `json:"hostSubtitles,omitempty"`
+	RequestID     string              `json:"requestId,omitempty"`
+	Kind          string              `json:"kind,omitempty"`
+	Nickname      string              `json:"nickname,omitempty"`
+	Allow         *bool               `json:"allow,omitempty"`
+	Spotlight     *room.Spotlight     `json:"spotlight,omitempty"`
 	closeAfter    bool
 }
 
