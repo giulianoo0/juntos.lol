@@ -25,6 +25,7 @@ type serverOptions struct {
 	workerLink        gin.HandlerFunc
 	pluginSessions    *Sessions
 	pluginQuota       *Quota
+	discord           http.Handler
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
@@ -118,6 +119,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		r.GET("/ws/worker-link", options.workerLink)
 	}
 	RegisterRelayRoute(r, options.torrentAccess.Service)
+	registerDiscordRoute(r, options.discord)
 	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
 	registerFrontend(r, cfg.WebDir)
 	return r
