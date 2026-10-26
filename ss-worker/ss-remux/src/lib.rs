@@ -570,7 +570,30 @@ impl Remux {
         }
         entry.status.lock().state = state::DRAINING;
         run_sink.close_producer();
-        match (&mut upload_task).await {
+        // ffmpeg can finish long before the uploads do (many small audio
+        // segments, ~600 ms a PUT): keep confirming what landed, so the
+        // region grows with the uploads instead of all at the end.
+        let mut ticker = tokio::time::interval(Duration::from_secs(2));
+        let uploads = loop {
+            tokio::select! {
+                result = &mut upload_task => break result,
+                _ = ticker.tick() => {
+                    publisher.absorb(&mut uploaded_rx);
+                    match publisher.round(&run_sink, true, false).await {
+                        Ok(_) => {}
+                        Err(e) if e.downcast_ref::<publish::Revoked>().is_some() => {
+                            upload_task.abort();
+                            cleanup(&bridge);
+                            run_sink.destroy().await;
+                            return Err(e);
+                        }
+                        Err(e) => tracing::warn!(error = %e, "publish round failed; retrying"),
+                    }
+                    entry.status.lock().produced_ms = publisher.produced_ms(&run_sink);
+                }
+            }
+        };
+        match uploads {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 cleanup(&bridge);
