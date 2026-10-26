@@ -119,6 +119,9 @@ type Room struct {
 	Live                *LiveInfo      `json:"live,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	ExpiresAt           time.Time      `json:"expiresAt"`
+
+	// JoinMode is how the room is entered: open, password or approval.
+	JoinMode string `json:"joinMode,omitempty"`
 }
 
 // MediaSnapshot is the part of a room a publish can change, carried inside
