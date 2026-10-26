@@ -182,6 +182,9 @@
 
   --button-secondary-bg: color-mix(in oklab, var(--text) 5%, transparent);
   --button-secondary-hover: color-mix(in oklab, var(--text) 10%, transparent);
+  /* The same, opaque over the ground: an expanding pill's face covers its neighbour. */
+  --button-secondary-solid: color-mix(in oklab, var(--text) 5%, var(--frame-ground));
+  --button-secondary-solid-hover: color-mix(in oklab, var(--text) 10%, var(--frame-ground));
 
   --hover: color-mix(in oklab, var(--text) 5%, transparent);
   --hover-strong: color-mix(in oklab, var(--text) 10%, transparent);
@@ -281,6 +284,8 @@
     --hover-strong: color-mix(in oklab, var(--text) 12%, transparent);
     --button-secondary-bg: color-mix(in oklab, var(--text) 7%, transparent);
     --button-secondary-hover: color-mix(in oklab, var(--text) 12%, transparent);
+    --button-secondary-solid: color-mix(in oklab, var(--text) 7%, var(--frame-ground));
+    --button-secondary-solid-hover: color-mix(in oklab, var(--text) 12%, var(--frame-ground));
     --segment-track: color-mix(in oklab, var(--white) 6%, transparent);
     --segment-chip: var(--grey-725);
     --status-success: var(--green-500);
@@ -340,6 +345,8 @@
   --hover-strong: color-mix(in oklab, var(--text) 12%, transparent);
   --button-secondary-bg: color-mix(in oklab, var(--text) 7%, transparent);
   --button-secondary-hover: color-mix(in oklab, var(--text) 12%, transparent);
+  --button-secondary-solid: color-mix(in oklab, var(--text) 7%, var(--frame-ground));
+  --button-secondary-solid-hover: color-mix(in oklab, var(--text) 12%, var(--frame-ground));
   --segment-track: color-mix(in oklab, var(--white) 6%, transparent);
   --segment-chip: var(--grey-725);
   --status-success: var(--green-500);

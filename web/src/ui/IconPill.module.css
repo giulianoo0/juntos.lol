@@ -4,8 +4,8 @@
    where it always sits. */
 .pill {
   --pill-size: var(--round-button);
-  --pill-bg: var(--button-secondary-bg);
-  --pill-bg-hover: var(--button-secondary-hover);
+  --pill-bg: var(--button-secondary-solid);
+  --pill-bg-hover: var(--button-secondary-solid-hover);
   --pill-ink: var(--text);
 
   position: relative;
@@ -62,6 +62,7 @@
   inset-inline-end: 0;
   display: inline-flex;
   align-items: center;
+  width: max-content;
   min-width: var(--pill-size);
   padding-inline: calc((var(--pill-size) - 1.125rem) / 2);
   border-radius: var(--radius-full);
