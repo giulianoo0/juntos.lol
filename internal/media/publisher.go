@@ -3,7 +3,9 @@ package media
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -44,10 +46,31 @@ func NewPublisher(store *room.Store, bucket objectstore.Store, _ string) *Publis
 	}
 }
 
+var prefixKey []byte
+
+// SetPrefixKey makes every room's media path carry a mark only the server can
+// compute, so knowing a room's id is not enough to read its files from the
+// bucket. Set once at startup; without it the paths are the bare id.
+func SetPrefixKey(key []byte) { prefixKey = key }
+
+// RoomKey is that mark for one room: what its media path carries and what a
+// locked room's playlists ask for. Empty without a prefix key.
+func RoomKey(roomID string) string {
+	if len(prefixKey) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, prefixKey)
+	mac.Write([]byte(roomID))
+	return hex.EncodeToString(mac.Sum(nil))[:24]
+}
+
 // MediaPrefix is where one generation of a room's media lives. The generation
 // is in the path because segment names repeat, and those URLs are handed to
 // the edge as immutable for a year.
 func MediaPrefix(roomID string, generation int) string {
+	if key := RoomKey(roomID); key != "" {
+		return "rooms/" + roomID + "/" + key + "/g" + strconv.Itoa(generation) + "/"
+	}
 	return "rooms/" + roomID + "/g" + strconv.Itoa(generation) + "/"
 }
 

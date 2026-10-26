@@ -78,7 +78,7 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("salt password: %w", err)
 	}
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	key := argonKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, argonMemory, argonTime, argonThreads,
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
@@ -107,6 +107,16 @@ func VerifyPassword(password, encoded string) bool {
 	if err != nil || len(want) == 0 || len(want) > 64 {
 		return false
 	}
-	got := argon2.IDKey([]byte(password), salt, passes, memory, threads, uint32(len(want)))
+	got := argonKey([]byte(password), salt, passes, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+// argonSlots caps how many hashes run at once: each holds argonMemory KiB,
+// and the box has no swap.
+var argonSlots = make(chan struct{}, 3)
+
+func argonKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	argonSlots <- struct{}{}
+	defer func() { <-argonSlots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
 }

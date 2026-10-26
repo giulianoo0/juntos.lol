@@ -85,7 +85,8 @@ export async function setRoomAccess(roomId: string, memberId: string, capability
 export function claimOwnerFromHash(roomId: string, hash = typeof location === 'undefined' ? '' : location.hash): boolean {
   const token = new URLSearchParams(hash.replace(/^#/, '')).get('owner')
   if (!token) return false
-  try { localStorage.setItem(ownerKey(roomId), token) } catch { /* the link still works this once */ }
+  // A token already kept wins: a link someone sends cannot swap the owner out.
+  try { if (!localStorage.getItem(ownerKey(roomId))) localStorage.setItem(ownerKey(roomId), token) } catch { /* the link still works this once */ }
   if (typeof history !== 'undefined' && typeof location !== 'undefined') {
     history.replaceState(history.state, '', location.pathname + location.search)
   }

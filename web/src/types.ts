@@ -172,4 +172,6 @@ export interface RoomInfo {
   memberCount: number
   expiresAt: string
   mediaBaseUrl?: string
+  /** A locked room's playlists ask for it. */
+  mediaKey?: string
 }

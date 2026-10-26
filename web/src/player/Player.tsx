@@ -31,7 +31,7 @@ import { TorrentReadout } from '../components/TorrentReadout'
 import { WaitLabel } from './WaitLabel'
 import { bufferAhead, holdsForBuffer } from './bufferAhead'
 import { gateSecondsFor } from './gate'
-import { bundledLoader, fetchBundle, prefetchInitSegments } from './bundle'
+import { bundledLoader, fetchBundle, mediaRoot, prefetchInitSegments } from './bundle'
 import { prefetchingLoader } from './prefetch'
 import { isTouchDevice, recordMediaBitrate, TOUCH_BACK_BUFFER_SEC } from './playbackHealth'
 import { useStageFullscreen } from '../ui/useStageFullscreen'
@@ -334,8 +334,9 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
     const video = videoRef.current
     if (!video) return
     const generation = room.mediaGeneration
-    const source = `/media/${encodeURIComponent(room.id)}/hls/${masterName}?g=${generation}&v=${mediaReload}`
-    const bundle = fetchBundle(room.id, masterName)
+    const root = mediaRoot(room.id, room.mediaKey)
+    const source = `${root}/hls/${masterName}?g=${generation}&v=${mediaReload}`
+    const bundle = fetchBundle(root, masterName)
     void bundle.then(prefetchInitSegments)
     let disposed = false
     setUnplayable(null)

@@ -587,7 +587,7 @@ func (r *roomConn) handleSource(sender *client, message Inbound) {
 	}
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	stored, err := r.hub.store.Get(ctx, r.id)
-	if err == nil && stored.SourceMemberID != "" && stored.SourceMemberID != sender.id && sender.id != r.controllerID {
+	if err == nil && stored.SourceMemberID != sender.id && sender.id != r.controllerID {
 		cancel()
 		return
 	}

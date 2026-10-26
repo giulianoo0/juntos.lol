@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,7 +58,12 @@ func (a *API) call(ctx context.Context, method, path string, asBot bool, message
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("discord %s %s: %w", method, path, err)
+		// The path and the URL in a *url.Error carry the interaction token.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return "", fmt.Errorf("discord %s: %w", method, err)
 	}
 	defer response.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))

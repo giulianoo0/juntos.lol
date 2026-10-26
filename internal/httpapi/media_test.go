@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
+	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -39,6 +40,26 @@ func TestServePlaylistReturnsWhatWasPublished(t *testing.T) {
 	require.Equal(t, "application/vnd.apple.mpegurl", w.Header().Get("Content-Type"))
 	require.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
 	require.Equal(t, "no-store", w.Header().Get("Cache-Control"), "a playlist is never cached")
+}
+
+func TestLockedRoomPlaylistsNeedTheRoomKey(t *testing.T) {
+	media.SetPrefixKey([]byte("test key"))
+	t.Cleanup(func() { media.SetPrefixKey(nil) })
+	store := newTestStore(t)
+	addMediaTestRoom(t, store, "r1")
+	require.NoError(t, store.SetAccess(t.Context(), "r1", room.Access{Mode: room.JoinApproval}))
+	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": testPlaylist}))
+	engine := mediaEngine(store)
+
+	for _, path := range []string{"/media/r1/hls/master.m3u8", "/media/r1/k/guess/hls/master.m3u8", "/media/r1/bundle?master=master.m3u8"} {
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusNotFound, w.Code, path)
+	}
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/k/"+media.RoomKey("r1")+"/hls/master.m3u8", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, media.MediaPrefix("r1", 2), media.RoomKey("r1"), "the bucket path carries the key too")
 }
 
 func TestServePlaylistRefusesAnythingButAPlaylist(t *testing.T) {

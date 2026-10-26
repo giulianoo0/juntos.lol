@@ -5,9 +5,12 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -46,6 +49,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	media.SetPrefixKey(mediaPrefixKey(cfg))
 	publisher := media.NewPublisher(store, bucket, cfg.MediaPublicURL)
 
 	ctx := context.Background()
@@ -146,4 +150,18 @@ func main() {
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// mediaPrefixKey must survive restarts, or a room's media would move out from
+// under it: MEDIA_KEY when set, otherwise derived from the bucket's secret.
+func mediaPrefixKey(cfg config.Config) []byte {
+	if key := os.Getenv("MEDIA_KEY"); key != "" {
+		return []byte(key)
+	}
+	if cfg.R2SecretAccessKey == "" {
+		return nil
+	}
+	mac := hmac.New(sha256.New, []byte(cfg.R2SecretAccessKey))
+	mac.Write([]byte("juntos media prefix"))
+	return mac.Sum(nil)
 }

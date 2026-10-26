@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/subtle"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -23,6 +25,10 @@ import (
 func RegisterMediaRoutes(r gin.IRoutes, store *room.Store, waiter *playlistWaiter) {
 	r.GET("/media/:id/hls/*filepath", servePlaylist(store, waiter))
 	r.GET("/media/:id/bundle", serveBundle(store))
+	// A locked room's key rides in the path, so the playlists a master names
+	// resolve under it with no query to carry over.
+	r.GET("/media/:id/k/:key/hls/*filepath", servePlaylist(store, waiter))
+	r.GET("/media/:id/k/:key/bundle", serveBundle(store))
 }
 
 // serveBundle hands a master and every media playlist it names in one response,
@@ -44,6 +50,10 @@ func serveBundle(store *room.Store) gin.HandlerFunc {
 		}
 		if err != nil {
 			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if !mediaKeyAccepted(c, storedRoom) {
+			c.Status(http.StatusNotFound)
 			return
 		}
 		body, err := store.Playlist(ctx, roomID, master)
@@ -127,7 +137,7 @@ func servePlaylist(store *room.Store, waiter *playlistWaiter) gin.HandlerFunc {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
-		if !storedRoom.ExpiresAt.After(time.Now()) {
+		if !storedRoom.ExpiresAt.After(time.Now()) || !mediaKeyAccepted(c, storedRoom) {
 			c.Status(http.StatusNotFound)
 			return
 		}
@@ -221,4 +231,14 @@ func acceptsGzip(header string) bool {
 func validMediaRoomID(roomID string) bool {
 	return roomID != "." && !strings.ContainsAny(roomID, "*?[]") &&
 		filepath.IsLocal(roomID) && filepath.Base(roomID) == roomID
+}
+
+// mediaKeyAccepted keeps a locked room's playlists, and the bucket paths they
+// name, to those who were let in: the key comes with the room, which only its
+// members can read.
+func mediaKeyAccepted(c *gin.Context, r *room.Room) bool {
+	if r.JoinMode == "" || r.JoinMode == room.JoinOpen {
+		return true
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Param("key")), []byte(media.RoomKey(r.ID))) == 1
 }

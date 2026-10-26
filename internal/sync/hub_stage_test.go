@@ -121,6 +121,11 @@ func TestStageGrantsRunOut(t *testing.T) {
 
 func TestTheMediaOwnerDrivesThePlayback(t *testing.T) {
 	_, store, host, guest, _ := twoMembers(t)
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "source", Origin: "file"}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 2}))
+	require.Equal(t, "pong", readHubEvent(t, guest).Type)
+	require.Empty(t, storedRoom(t, store).SourceMemberID, "a guest cannot claim a room with no media")
+
 	_, _, err := store.SwapSource(t.Context(), "r1", "m2", "movie.mkv", "ready", time.Now())
 	require.NoError(t, err)
 	require.NoError(t, store.SetGatingDisabled(t.Context(), "r1", true))
@@ -221,6 +226,11 @@ func TestANewHostInheritsTheOpenStageRequests(t *testing.T) {
 
 func TestOnlyTheMediaOwnerOrTheHostNamesTheSourceOrigin(t *testing.T) {
 	_, store, host, guest, _ := twoMembers(t)
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "source", Origin: "file"}))
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 2}))
+	require.Equal(t, "pong", readHubEvent(t, guest).Type)
+	require.Empty(t, storedRoom(t, store).SourceMemberID, "a guest cannot claim a room with no media")
+
 	_, _, err := store.SwapSource(t.Context(), "r1", "m1", "movie.mkv", "uploading", time.Now())
 	require.NoError(t, err)
 

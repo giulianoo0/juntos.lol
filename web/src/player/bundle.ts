@@ -35,10 +35,16 @@ export function initSegmentsIn(bundle: PlaylistBundle | null): string[] {
 
 const BUNDLE_WAIT_MS = 1500
 
+/** Where a room's playlists are served; a locked room's key rides in the path. */
+export function mediaRoot(roomID: string, key?: string): string {
+  const room = `/media/${encodeURIComponent(roomID)}`
+  return key ? `${room}/k/${encodeURIComponent(key)}` : room
+}
+
 /** Fetches a region's bundle; a failure is no bundle, never an error. */
-export async function fetchBundle(roomID: string, masterName: string): Promise<PlaylistBundle | null> {
+export async function fetchBundle(root: string, masterName: string): Promise<PlaylistBundle | null> {
   try {
-    const response = await fetch(`/media/${encodeURIComponent(roomID)}/bundle?master=${encodeURIComponent(masterName)}`)
+    const response = await fetch(`${root}/bundle?master=${encodeURIComponent(masterName)}`)
     if (!response.ok) return null
     const body = await response.json() as Partial<PlaylistBundle>
     if (typeof body.master !== 'string' || typeof body.playlists !== 'object' || body.playlists === null) return null

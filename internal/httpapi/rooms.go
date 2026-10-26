@@ -216,6 +216,7 @@ func getRoom(store *room.Store, mediaBaseURL string, authorizer memberAuthorizer
 			"memberCount":         len(members),
 			"createdAt":           r.CreatedAt,
 			"expiresAt":           r.ExpiresAt,
+			"mediaKey":            media.RoomKey(r.ID),
 			"mediaBaseUrl":        strings.TrimSuffix(mediaBaseURL+"/"+media.MediaPrefix(r.ID, r.MediaGeneration), "/"),
 		})
 	}
