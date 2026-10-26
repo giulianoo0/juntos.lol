@@ -35,6 +35,8 @@ func TestLoadDefaults(t *testing.T) {
 	require.Equal(t, 8080, cfg.Port)
 	require.Equal(t, int64(51200), cfg.MaxUploadMB)
 	require.Equal(t, "web/dist", cfg.WebDir)
+	require.Equal(t, 60, cfg.RoomIdleSeconds, "an empty room is reclaimed quickly")
+	require.Equal(t, 30, cfg.RoomsPerIPPerHour, "room creation is capped")
 }
 
 func TestLoadRefusesIncompleteMediaStorage(t *testing.T) {
@@ -65,15 +67,6 @@ func TestLoadAllowsARoomTTLMatchingTheMediaLifecycle(t *testing.T) {
 	require.Equal(t, 5, cfg.RoomTTLHours)
 }
 
-func TestLoadDefaultsToReclaimingAnEmptyRoomQuickly(t *testing.T) {
-	setMediaEnv(t)
-
-	cfg, err := Load()
-
-	require.NoError(t, err)
-	require.Equal(t, 60, cfg.RoomIdleSeconds)
-}
-
 func TestLoadTrimsTheMediaOrigin(t *testing.T) {
 	setMediaEnv(t)
 	t.Setenv("MEDIA_PUBLIC_URL", "https://media.example.test/")
@@ -82,13 +75,6 @@ func TestLoadTrimsTheMediaOrigin(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "https://media.example.test", cfg.MediaPublicURL)
-}
-
-func TestLoadCapsRoomCreationByDefault(t *testing.T) {
-	setMediaEnv(t)
-	cfg, err := Load()
-	require.NoError(t, err)
-	require.Equal(t, 30, cfg.RoomsPerIPPerHour)
 }
 
 func TestLoadDiscordApp(t *testing.T) {

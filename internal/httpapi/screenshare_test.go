@@ -10,9 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
@@ -195,12 +193,6 @@ func TestScreenshareLiveListsEveryPublisher(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestTheOpenSwitchIsGone(t *testing.T) {
-	router, _ := newScreenshareRouter(t, nil)
-	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/open", `{"memberId":"m1","capability":"secret-capability","open":false}`)
-	require.Equal(t, http.StatusNotFound, w.Code)
-}
-
 func doScreenshareJSON(router http.Handler, path, body string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
@@ -225,29 +217,4 @@ func TestScreenshareCapsSimultaneousScreens(t *testing.T) {
 	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m9","capability":"secret-capability","live":true}`)
 	require.Equal(t, http.StatusConflict, w.Code)
 	require.JSONEq(t, `{"error":"too_many_screens"}`, w.Body.String())
-
-	// A member already listed may re-announce without counting twice.
-	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m1","capability":"secret-capability","live":true}`)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	stored, err := store.Get(t.Context(), "r1")
-	require.NoError(t, err)
-	require.Len(t, stored.Screens, room.MaxScreenShares)
-}
-
-func TestScreenshareUnreadableShareIsSkipped(t *testing.T) {
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { rdb.Close() })
-	store := room.NewStore(rdb, 5*time.Hour)
-	now := time.Now()
-	require.NoError(t, store.Create(t.Context(), &room.Room{
-		ID: "r1", Status: room.StatusEmpty, ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	}))
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "giuli", Since: now}))
-	mr.HSet("room:r1", "screen_share:m2", "{not json")
-	stored, err := store.Get(t.Context(), "r1")
-	require.NoError(t, err)
-	require.Len(t, stored.Screens, 1)
-	require.Equal(t, "m1", stored.Screens[0].MemberID)
 }

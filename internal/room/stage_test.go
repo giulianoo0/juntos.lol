@@ -68,7 +68,7 @@ func TestNameAndSpotlightRoundTrip(t *testing.T) {
 	require.Nil(t, got.Spotlight)
 }
 
-func TestScreenSharesAreCappedWithoutAnOpenFlag(t *testing.T) {
+func TestScreenSharesAreCappedButARestartIsNotOneMore(t *testing.T) {
 	s, _ := newStageStore(t)
 	now := time.Now()
 	require.NoError(t, s.Create(t.Context(), &Room{ID: "r1", Status: StatusEmpty, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
@@ -77,6 +77,19 @@ func TestScreenSharesAreCappedWithoutAnOpenFlag(t *testing.T) {
 	}
 	require.ErrorIs(t, s.StartScreenShare(t.Context(), "r1", ScreenShare{MemberID: "m5", Since: now}), ErrTooManyScreens)
 	require.NoError(t, s.StartScreenShare(t.Context(), "r1", ScreenShare{MemberID: "m4", Since: now}), "restarting your own screen is not one more")
+}
+
+func TestAnUnreadableScreenShareIsSkipped(t *testing.T) {
+	s, mr := newStageStore(t)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{ID: "r1", Status: StatusEmpty, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+	require.NoError(t, s.StartScreenShare(t.Context(), "r1", ScreenShare{MemberID: "m1", Nickname: "giuli", Since: now}))
+	mr.HSet("room:r1", "screen_share:m2", "{not json")
+
+	got, err := s.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, got.Screens, 1)
+	require.Equal(t, "m1", got.Screens[0].MemberID)
 }
 
 // A room made before stages coexisted kept the live's progress in the room's

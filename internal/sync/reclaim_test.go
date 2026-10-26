@@ -11,50 +11,31 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-func TestUnfinishedWorkProtectsAPreparingRoom(t *testing.T) {
+func TestUnfinishedWork(t *testing.T) {
 	now := time.Now()
-	r := &room.Room{Status: "uploading", CreatedAt: now.Add(-2 * time.Minute)}
-
-	require.NotEmpty(t, unfinishedWork(r, now))
-}
-
-func TestUnfinishedWorkGivesUpOnARoomStuckPreparing(t *testing.T) {
-	now := time.Now()
-	r := &room.Room{Status: "uploading", CreatedAt: now.Add(-11 * time.Minute)}
-
-	require.Empty(t, unfinishedWork(r, now))
-}
-
-func TestUnfinishedWorkReclaimsAFailedRoomAtOnce(t *testing.T) {
-	now := time.Now()
-	for _, r := range []*room.Room{
-		{Status: "error", CreatedAt: now},
-		{Status: "uploading", ErrorMessage: "plan failed", CreatedAt: now},
-	} {
-		require.Empty(t, unfinishedWork(r, now))
+	tests := []struct {
+		name       string
+		room       room.Room
+		unfinished bool
+	}{
+		{"protects a preparing room", room.Room{Status: "uploading", CreatedAt: now.Add(-2 * time.Minute)}, true},
+		{"gives up on a room stuck preparing", room.Room{Status: "uploading", CreatedAt: now.Add(-11 * time.Minute)}, false},
+		{"reclaims a failed room at once", room.Room{Status: "error", CreatedAt: now}, false},
+		{"reclaims a room whose plan failed at once", room.Room{Status: "uploading", ErrorMessage: "plan failed", CreatedAt: now}, false},
+		{"keeps a room whose source is still arriving", room.Room{
+			Status: "ready", CreatedAt: now.Add(-time.Minute),
+			Preparation: room.Preparation{SourceBytes: 1000, ReceivedBytes: 400},
+		}, true},
+		{"releases a finished room", room.Room{
+			Status: "ready", CreatedAt: now.Add(-time.Minute),
+			Preparation: room.Preparation{SourceBytes: 1000, ReceivedBytes: 1000},
+		}, false},
 	}
-}
-
-func TestUnfinishedWorkKeepsARoomWhoseSourceIsStillArriving(t *testing.T) {
-	now := time.Now()
-	r := &room.Room{
-		Status:      "ready",
-		CreatedAt:   now.Add(-time.Minute),
-		Preparation: room.Preparation{SourceBytes: 1000, ReceivedBytes: 400},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.unfinished, unfinishedWork(&tt.room, now) != "")
+		})
 	}
-
-	require.NotEmpty(t, unfinishedWork(r, now))
-}
-
-func TestUnfinishedWorkReleasesAFinishedRoom(t *testing.T) {
-	now := time.Now()
-	r := &room.Room{
-		Status:      "ready",
-		CreatedAt:   now.Add(-time.Minute),
-		Preparation: room.Preparation{SourceBytes: 1000, ReceivedBytes: 1000},
-	}
-
-	require.Empty(t, unfinishedWork(r, now))
 }
 
 func TestAbandonedSweepReclaimsAnEmptyRoomNobodyIsWatching(t *testing.T) {

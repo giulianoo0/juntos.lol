@@ -38,17 +38,7 @@ func TestServePlaylistReturnsWhatWasPublished(t *testing.T) {
 	require.Equal(t, testPlaylist, w.Body.String())
 	require.Equal(t, "application/vnd.apple.mpegurl", w.Header().Get("Content-Type"))
 	require.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestServePlaylistIsNeverCached(t *testing.T) {
-	store := newTestStore(t)
-	addMediaTestRoom(t, store, "r1")
-	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": testPlaylist}))
-
-	w := httptest.NewRecorder()
-	mediaEngine(store).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/hls/master.m3u8", nil))
-
-	require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	require.Equal(t, "no-store", w.Header().Get("Cache-Control"), "a playlist is never cached")
 }
 
 func TestServePlaylistRefusesAnythingButAPlaylist(t *testing.T) {
@@ -69,36 +59,31 @@ func TestServePlaylistRefusesAnythingButAPlaylist(t *testing.T) {
 	}
 }
 
-func TestServePlaylistRequiresAPublishedName(t *testing.T) {
-	store := newTestStore(t)
-	addMediaTestRoom(t, store, "r1")
+func TestServePlaylistIsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "a name that was never published", path: "/media/r1/hls/absent.m3u8"},
+		{name: "an expired room", path: "/media/gone/hls/master.m3u8"},
+		{name: "an unknown room", path: "/media/nope/hls/master.m3u8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			addMediaTestRoom(t, store, "r1")
+			now := time.Now()
+			require.NoError(t, store.Create(t.Context(), &room.Room{
+				ID: "gone", Status: "ready", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute),
+			}))
+			require.NoError(t, store.SetPlaylists(t.Context(), "gone", map[string]string{"master.m3u8": testPlaylist}))
 
-	w := httptest.NewRecorder()
-	mediaEngine(store).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/r1/hls/absent.m3u8", nil))
+			w := httptest.NewRecorder()
+			mediaEngine(store).ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, nil))
 
-	require.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestServePlaylistRequiresLiveRoom(t *testing.T) {
-	store := newTestStore(t)
-	now := time.Now()
-	require.NoError(t, store.Create(t.Context(), &room.Room{
-		ID: "gone", Status: "ready", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute),
-	}))
-	require.NoError(t, store.SetPlaylists(t.Context(), "gone", map[string]string{"master.m3u8": testPlaylist}))
-
-	w := httptest.NewRecorder()
-	mediaEngine(store).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/media/gone/hls/master.m3u8", nil))
-
-	require.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestServePlaylistRejectsAnUnknownRoom(t *testing.T) {
-	w := httptest.NewRecorder()
-	mediaEngine(newTestStore(t)).ServeHTTP(w,
-		httptest.NewRequest(http.MethodGet, "/media/nope/hls/master.m3u8", nil))
-
-	require.Equal(t, http.StatusNotFound, w.Code)
+			require.Equal(t, http.StatusNotFound, w.Code)
+		})
+	}
 }
 
 func TestServePlaylistReportsStoreFailure(t *testing.T) {

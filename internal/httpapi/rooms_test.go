@@ -15,35 +15,12 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-func TestCreateRoom(t *testing.T) {
-	s := newTestStore(t)
-	e := gin.New()
-	cfg := testCfg(t)
-	RegisterRoomRoutes(e.Group("/api"), s, cfg)
-	w := httptest.NewRecorder()
-	body := `{"nickname":"giuli","name":"Sexta do terror"}`
-	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	e.ServeHTTP(w, req)
-	require.Equal(t, 201, w.Code)
-	var resp struct {
-		ID string
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Len(t, resp.ID, 8)
-	got, _ := s.Get(context.Background(), resp.ID)
-	require.Equal(t, room.StatusEmpty, got.Status, "a room is born without media")
-	require.False(t, got.HasMedia())
-	require.Equal(t, "Sexta do terror", got.Name)
-	require.Empty(t, got.FileName)
-}
-
-func TestCreateRoomRegistersController(t *testing.T) {
+func TestCreateRoomIsBornEmptyWithItsCreatorInControl(t *testing.T) {
 	s := newTestStore(t)
 	e := gin.New()
 	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
 	w := httptest.NewRecorder()
-	body := `{"nickname":"giuli"}`
+	body := `{"nickname":"giuli","name":"Sexta do terror"}`
 	req := httptest.NewRequest("POST", "/api/rooms", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	e.ServeHTTP(w, req)
@@ -53,11 +30,15 @@ func TestCreateRoomRegistersController(t *testing.T) {
 		ExpiresAt time.Time
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.ID, 8)
 	require.False(t, resp.ExpiresAt.IsZero())
 
 	ctx := context.Background()
 	got, err := s.Get(ctx, resp.ID)
 	require.NoError(t, err)
+	require.Equal(t, room.StatusEmpty, got.Status, "a room is born without media")
+	require.Equal(t, "Sexta do terror", got.Name)
+	require.Empty(t, got.FileName)
 	require.Equal(t, "m1", got.ControllerID)
 	members, err := s.Members(ctx, resp.ID)
 	require.NoError(t, err)
