@@ -371,6 +371,11 @@ pub fn ffmpeg_args(
         "fmp4".into(),
         "-hls_flags".into(),
         "independent_segments".into(),
+        // A dub that starts late in the MKV keeps that delay only in the
+        // init's edit list, which MSE ignores; frag_discont writes it into
+        // each fragment's tfdt, so the track plays where it was muxed.
+        "-hls_segment_options".into(),
+        "movflags=+frag_discont".into(),
         "-master_pl_name".into(),
         format!("{prefix}master.m3u8"),
         "-hls_segment_filename".into(),
@@ -517,6 +522,7 @@ mod tests {
         assert!(joined.contains("v:0,agroup:aud a:0,agroup:aud,language:eng,default:yes a:1,agroup:aud,language:por"));
         assert!(joined.contains("-c:a:0 copy"));
         assert!(joined.contains("-c:a:1 aac -b:a:1 160000"));
+        assert!(joined.contains("-hls_segment_options movflags=+frag_discont"));
     }
 
     #[test]
