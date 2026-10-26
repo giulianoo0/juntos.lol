@@ -43,8 +43,8 @@ func requireNoEvent(t *testing.T, conn *websocket.Conn, within time.Duration) {
 }
 
 func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
-	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -79,8 +79,8 @@ func TestHubResumeKeepsMemberAndScreen(t *testing.T) {
 }
 
 func TestHubResumeKeepsTheControllerInControl(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	hostWelcome := helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -99,8 +99,8 @@ func TestHubResumeKeepsTheControllerInControl(t *testing.T) {
 }
 
 func TestHubResumeReplacesAHalfOpenSocket(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	guest := dialHubWS(t, server)
@@ -123,8 +123,8 @@ func TestHubResumeReplacesAHalfOpenSocket(t *testing.T) {
 }
 
 func TestHubResumeWithAWrongCapabilityIsAFreshJoin(t *testing.T) {
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)
 	helloHubClient(t, host, "host", 1)
 	again := dialHubWS(t, server)
