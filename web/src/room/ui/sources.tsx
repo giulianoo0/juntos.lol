@@ -1,4 +1,4 @@
-import { Compass, Film, Magnet, MonitorUp } from 'lucide-react'
+import { Compass, Film, FolderOpen, Magnet, MonitorUp } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { ShareSource } from '../model'
 import { YoutubeGlyph } from '../../ui/YoutubeGlyph'
@@ -9,6 +9,7 @@ export const sourceIcon: Record<ShareSource, ReactNode> = {
   file: <Film size={16} />,
   torrent: <Magnet size={16} />,
   youtube: <YoutubeGlyph size={16} />,
+  drive: <FolderOpen size={16} />,
   catalog: <Compass size={16} />,
 }
 
@@ -17,5 +18,6 @@ export const sourceLabel = (strings: RoomStrings): Record<ShareSource, string> =
   file: strings.sourceFile,
   torrent: strings.sourceTorrent,
   youtube: strings.sourceYoutube,
+  drive: strings.sourceDrive,
   catalog: strings.sourceCatalog,
 })

@@ -67,7 +67,7 @@ export interface ChatMessage {
 }
 
 /** What the "Compartilhar" menu opens. */
-export type ShareSource = 'screen' | 'file' | 'torrent' | 'youtube' | 'catalog'
+export type ShareSource = 'screen' | 'file' | 'torrent' | 'youtube' | 'drive' | 'catalog'
 
 export interface RoomActions {
   setMic: (on: boolean) => void

@@ -148,7 +148,7 @@ export function DevRoom() {
     requests,
     knocks,
     chat,
-    sources: ['screen', 'file', 'torrent', 'youtube', 'catalog'],
+    sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
     actions: {
       setMic: (on) => update(selfId, { mic: on, hostMuted: false }),
       setCam: (on) => update(selfId, { cam: on, hostCamOff: false }),

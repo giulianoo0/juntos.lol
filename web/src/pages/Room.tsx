@@ -9,7 +9,7 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, X } from 'lucide-react'
+import { Check, FolderOpen, X } from 'lucide-react'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
@@ -42,6 +42,7 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
+import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { YoutubePicker } from '../components/YoutubePicker'
 import { LiveStage } from '../components/LiveStage'
 import { startYoutubeLive, stopLive } from '../live'
@@ -523,6 +524,19 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     })
   }
 
+  const chooseDrive = (file: TorrentVideoFile, session: TorrentSession) => {
+    void swapSource(async () => {
+      try {
+        const playback = await drivePlaybackUrls(file, session)
+        const next = await openMedia('upload', file.name)
+        startUrlUpload(room.id, next.mediaGeneration, playback.url, file.name, file.size, playback.sideFiles)
+      } catch (error) {
+        session.destroy()
+        throw error
+      }
+    })
+  }
+
   const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
     void swapSource(async () => {
       let next
@@ -769,7 +783,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const spotlight = currentSpotlight(stageRoom, sync.stages)
   const sources: ShareSource[] = [
     ...(screenShareSupported() && displayCaptureAvailable() ? ['screen' as const] : []),
-    'file', 'torrent', 'youtube', 'catalog',
+    'file', 'torrent', 'youtube', 'drive', 'catalog',
   ]
   const memberIdByName = new Map(sync.members.map((member) => [member.nickname, member.id]))
   const chat: ViewChatMessage[] = chatEntries.map((entry, index) => ({
@@ -851,6 +865,17 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
               initialMagnet={playlist?.magnet}
               autoLoad={playlist !== null}
               currentPath={playlist?.filePath}
+            />
+          )
+        }
+        if (source === 'drive') {
+          return (
+            <DrivePicker
+              maxFileBytes={MAX_UPLOAD_BYTES}
+              icon={<FolderOpen size={18} />}
+              t={t}
+              onExit={close}
+              onPicked={(file, session) => { close(); chooseDrive(file, session) }}
             />
           )
         }

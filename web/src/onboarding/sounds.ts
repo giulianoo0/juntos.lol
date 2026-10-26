@@ -60,13 +60,6 @@ export function playBack(): void {
   play({ from: 620, to: 380, duration: 0.09, gain: 0.04, type: 'sine' })
 }
 
-export function playError(): void {
-  play({ from: 400, to: 300, duration: 0.1, gain: 0.05, type: 'sine' })
-  const ctx = audio()
-  if (!ctx) return
-  window.setTimeout(() => play({ from: 300, to: 200, duration: 0.18, gain: 0.045, type: 'sine' }), 95)
-}
-
 export function playFinish(): void {
   play({ from: 620, to: 660, duration: 0.11, gain: 0.05, type: 'sine' })
   const ctx = audio()

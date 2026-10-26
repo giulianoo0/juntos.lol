@@ -40,19 +40,6 @@ export interface JlocalPick {
   audio: boolean
 }
 
-const pendingPicks = new Map<string, JlocalPick>()
-
-/** A pick made on the home page waits here until the room knows who we are. */
-export function stashJlocalPick(roomId: string, pick: JlocalPick): void {
-  pendingPicks.set(roomId, pick)
-}
-
-export function takeJlocalPick(roomId: string): JlocalPick | null {
-  const pick = pendingPicks.get(roomId) ?? null
-  pendingPicks.delete(roomId)
-  return pick
-}
-
 /** Why sharing stopped short. A picker the member dismissed is not an error. */
 export type ScreenShareError = 'closed' | 'full' | 'failed'
 
@@ -440,11 +427,6 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   // A stream granted on the home page is published as soon as the room knows who we are.
   useEffect(() => {
     if (!memberId || !capability) return
-    const pick = takeJlocalPick(roomId)
-    if (pick) {
-      if (mayPublish && supported) void startJlocal(pick).catch(() => undefined)
-      return
-    }
     const granted = takeScreenStream(roomId)
     if (!granted) return
     if (!mayPublish || !supported) {

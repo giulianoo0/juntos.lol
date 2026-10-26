@@ -1,4 +1,3 @@
-import { getCachedJLocalCapabilities } from './capabilities'
 import { JLOCAL_ORIGIN } from './status'
 
 // Companion-app system-audio controls. Every helper is fire-and-forget safe:
@@ -65,11 +64,6 @@ export async function fetchJLocalWindows(signal?: AbortSignal): Promise<JLocalWi
   } catch {
     return []
   }
-}
-
-/** Sync gate for any audio UI. Pure read of the cached advertisement. */
-export function isJLocalAudioCaptureAvailable(): boolean {
-  return getCachedJLocalCapabilities()?.audio.capture === true
 }
 
 export interface JLocalAudioApp {

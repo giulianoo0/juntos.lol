@@ -302,24 +302,6 @@ export async function createRoomAndUploadTorrent(
   return { roomID: created.id, nickname: created.nickname }
 }
 
-export async function createRoomAndUploadYoutube(
-  session: YoutubeSession,
-  nickname: string,
-): Promise<UploadResult> {
-  if (mocksEnabled) return mockCreateRoom(nickname)
-  if (session.summary.live) {
-    // The room starts the live once it knows who its controller is: the
-    // producer needs the member's seat, which only the room hands out.
-    const created = await createRoom(nickname)
-    saveResumableSource(created.id, { kind: 'live', fileName: youtubeFileName(session), url: session.url })
-    session.destroy()
-    return { roomID: created.id, nickname: created.nickname }
-  }
-  const { room: created, mediaGeneration } = await createRoomWithMedia(nickname, 'youtube', youtubeFileName(session))
-  startYoutubeUpload(created.id, mediaGeneration, session)
-  return { roomID: created.id, nickname: created.nickname }
-}
-
 /** The room's file name for a video: its title, or the id when there is none. */
 export function youtubeFileName(session: YoutubeSession): string {
   const title = session.summary.title.trim()
@@ -357,19 +339,6 @@ export function startYoutubeUpload(
     lastFailureDetail = null
     finishEntry(roomID, entry, null, () => undefined)
   })
-}
-
-export async function createRoomAndUploadUrl(
-  url: string,
-  fileName: string,
-  size: number,
-  nickname: string,
-  sideFiles: RemuxSideFile[] = [],
-): Promise<UploadResult> {
-  if (mocksEnabled) return mockCreateRoom(nickname)
-  const { room: created, mediaGeneration } = await createRoomWithMedia(nickname, 'upload', fileName)
-  startUrlUpload(created.id, mediaGeneration, url, fileName, size, sideFiles)
-  return { roomID: created.id, nickname: created.nickname }
 }
 
 export function startFileUpload(

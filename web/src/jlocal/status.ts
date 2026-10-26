@@ -11,10 +11,9 @@ export interface JLocalSnapshot {
   connected: boolean
   version: string | null
   connecting: boolean
-  modalOpen: boolean
 }
 
-const initial: JLocalSnapshot = { connected: false, version: null, connecting: false, modalOpen: false }
+const initial: JLocalSnapshot = { connected: false, version: null, connecting: false }
 let snapshot: JLocalSnapshot = initial
 const listeners = new Set<() => void>()
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -77,17 +76,13 @@ export function connectJLocal(): void {
   void refresh(true)
 }
 
-export function setJLocalModal(open: boolean): void {
-  if (snapshot.modalOpen !== open) emit({ ...snapshot, modalOpen: open })
-}
-
 /** Test-only reset for the module singleton. */
 export function resetJLocalForTests(): void {
   probeEpoch += 1
   snapshot = initial
 }
 
-export function useJLocal(): JLocalSnapshot & { connect: () => void; setModal: (open: boolean) => void } {
+export function useJLocal(): JLocalSnapshot & { connect: () => void } {
   const snap = useSyncExternalStore(subscribeJLocal, getJLocalSnapshot, getJLocalSnapshot)
-  return { ...snap, connect: connectJLocal, setModal: setJLocalModal }
+  return { ...snap, connect: connectJLocal }
 }

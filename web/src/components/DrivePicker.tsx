@@ -6,7 +6,6 @@ import { driveErrorKey } from '../driveErrors'
 import { StepBack } from '../ui/StepBack'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
-import { changeRoomSource, startRoomUpload } from '../upload'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
@@ -69,30 +68,6 @@ export async function drivePlaybackUrls(file: TorrentVideoFile, session: Torrent
     })
     .filter((side): side is DriveSideFile => side !== null)
   return { url: driveMediaUrl(entry.id), sideFiles }
-}
-
-/**
- * Swaps an existing room onto a Drive pick. The room sees the same
- * `kind='upload'` it sees for torrents; the bytes then remux here through
- * the unchanged `rangeInput` reader (a `url` source builds one in
- * `remuxJob`), with Drive's subtitle sidecars riding along as sidecar URLs.
- * The caller owns the session afterwards and destroys it when the swap
- * throws, exactly like the torrent path.
- */
-export async function confirmDrivePick(
-  target: DriveRoomTarget,
-  file: TorrentVideoFile,
-  session: TorrentSession,
-): Promise<void> {
-  await session.select(file.path)
-  const { url, sideFiles } = await drivePlaybackUrls(file, session)
-  const next = await changeRoomSource(target.roomID, target.memberId, target.capability, 'upload', file.name)
-  startRoomUpload(
-    target.roomID,
-    next.mediaGeneration,
-    { kind: 'url', url, name: file.name, size: file.size },
-    sideFiles,
-  )
 }
 
 interface DrivePickerProps {
