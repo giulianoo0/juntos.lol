@@ -235,7 +235,15 @@ Regras comuns:
    `renderStage(stage)`), a integração liga.
 4. Uma rota de desenvolvimento (`/dev/sala`) que monta a sala com um
    `RoomViewModel` falso e interativo, para ver tudo sem servidor.
-5. Home simplificada: criar sala (nome, senha opcional) e entrar por código.
+5. Home simplificada (artboard `Home.dc.html` do canvas): criar sala (nome, senha
+   opcional atrás do botão de cadeado) e entrar por código, com a pílula
+   "Adicionar ao Discord" no topo. Botões só de ícone que ganham nome no hover
+   (o cadeado da Home, os do cabeçalho e da doca) seguem a **pílula que expande**
+   do cabeçalho do lawcore (`apps/web/src/components/expanding-pill.tsx` e
+   `.module.css`): o botão mantém o tamanho na fileira, a face cresce por cima
+   em direção ao início, o nome entra com `grid-template-columns` 0fr→1fr em
+   280 ms na mola criticamente amortecida (`--ease-resist`), some rápido ao sair,
+   e pelo teclado aparece sem animação.
    As fontes (arquivo, torrent/catálogo, YouTube) saem da Home e vão para o menu
    Compartilhar; reaproveite os componentes existentes de catálogo e
    seleção, só como UI.
