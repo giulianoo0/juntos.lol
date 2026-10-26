@@ -302,7 +302,11 @@ Regras comuns:
 
 1. Merge na ordem B → D → A → E → C, resolvendo os pontos compartilhados.
 2. Integração: `pages/Room.tsx` passa a montar `web/src/room/ui` com o
-   `RoomViewModel` feito de `useSync` + `useCall` + `stages` + `join`.
+   `RoomViewModel` feito de `useSync` + `useCall` + `stages` + `join`. O palco
+   de mídia é o `Player` atual inteiro, com todos os controles e opções de
+   hoje (legendas, faixas de áudio, volume com boost, velocidade, capítulos,
+   qualidade, tela cheia, gate, etc.); o player do `/dev/sala` é só um
+   marcador.
 3. e2e: `e2e-stages`, `e2e-screen`, `e2e-subtitles`, `e2e-seek`, carga.
 4. Revisão: skills `antislop`, `antislop-ui`, `antislop-code`,
    `antislop-human`, `antislop-copywriting`, `emil-design-eng`,
