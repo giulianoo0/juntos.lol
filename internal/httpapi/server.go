@@ -85,13 +85,13 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if hub != nil {
 		onSubsStored = hub.NotifyRoomUpdated
 	}
-	var screenAuthorizer memberAuthorizer
+	var screenAuthorizer stageAuthorizer
 	if hub != nil {
 		screenAuthorizer = hub
 	}
 	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
-	var authorizer memberAuthorizer
+	var authorizer stageAuthorizer
 	if hub != nil {
 		authorizer = hub
 	}

@@ -28,6 +28,7 @@ const (
 	maxCreateRoomBodyBytes = 4 << 10
 	maxFileNameBytes       = 255
 	maxNicknameBytes       = 64
+	maxRoomNameBytes       = 80
 )
 
 func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config) {
@@ -35,12 +36,11 @@ func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Confi
 	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL))
 }
 
-// createRoomRequest's Kind selects what the room starts out playing; it is optional
-// so older clients, which only create upload rooms, keep working.
+// createRoomRequest names the room and its creator. A room is born empty:
+// what it plays arrives later through /source, /live or a screen.
 type createRoomRequest struct {
-	FileName string `json:"fileName"`
 	Nickname string `json:"nickname"`
-	Kind     string `json:"kind"`
+	Name     string `json:"name"`
 }
 
 func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
@@ -51,29 +51,8 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		kind := req.Kind
-		if kind == "" {
-			kind = room.SourceUpload
-		}
-		status := "uploading"
-		fileName := req.FileName
-		switch kind {
-		case room.SourceUpload:
-			if !validFileName(fileName) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-				return
-			}
-		case room.SourceScreen:
-			status = "ready"
-			fileName = ""
-		case room.SourceYoutube:
-			// The file name is the video's title, which may carry a slash.
-			if !validRoomText(fileName, maxFileNameBytes) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-				return
-			}
-			kind = room.SourceUpload
-		default:
+		name := strings.TrimSpace(req.Name)
+		if name != "" && !validRoomText(name, maxRoomNameBytes) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
@@ -103,9 +82,8 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		member := room.Member{ID: "m1", Nickname: nickname, JoinedAt: now}
 		r := &room.Room{
 			ID:           id,
-			FileName:     fileName,
-			Status:       status,
-			SourceKind:   kind,
+			Name:         name,
+			Status:       room.StatusEmpty,
 			ControllerID: member.ID,
 			OwnerToken:   ownerToken,
 			CreatedAt:    now,
@@ -120,8 +98,8 @@ func createRoom(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			"id":         id,
 			"ownerToken": ownerToken,
 			"nickname":   nickname,
-			"sourceKind": kind,
-			"status":     status,
+			"name":       name,
+			"status":     r.Status,
 			"expiresAt":  r.ExpiresAt,
 		})
 	}
@@ -181,9 +159,9 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, gin.H{
 			"id":                  r.ID,
+			"name":                r.Name,
 			"fileName":            r.FileName,
 			"status":              r.Status,
-			"sourceKind":          r.SourceKind,
 			"mediaGeneration":     r.MediaGeneration,
 			"mediaVersion":        r.MediaVersion,
 			"durationMs":          r.DurationMs,
@@ -200,9 +178,9 @@ func getRoom(store *room.Store, mediaBaseURL string) gin.HandlerFunc {
 			"chapters":            r.Chapters,
 			"bitmapSubsSkipped":   r.BitmapSubsSkipped,
 			"producerHeartbeatMs": r.ProducerHeartbeatMs,
-			"screenShareOpen":     r.ScreenShareOpen,
 			"screens":             r.Screens,
 			"live":                r.Live,
+			"spotlight":           r.Spotlight,
 			"preparation":         r.Preparation,
 			"memberCount":         len(members),
 			"createdAt":           r.CreatedAt,

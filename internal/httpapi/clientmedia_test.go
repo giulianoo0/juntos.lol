@@ -486,7 +486,7 @@ func TestClientMediaLateMetadataEndpoint(t *testing.T) {
 	w = postJSON(t, e, "/api/rooms/r1/client-media/metadata",
 		`{"token":"meta:wrong","chapters":[{"startMs":0,"endMs":1000,"title":"x"}]}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
-	_, _, err = store.SwapSource(t.Context(), "r1", room.SourceUpload, "other.mkv", "uploading", time.Now())
+	_, _, err = store.SwapSource(t.Context(), "r1", "m1", "other.mkv", "uploading", time.Now())
 	require.NoError(t, err)
 	w = postJSON(t, e, "/api/rooms/r1/client-media/metadata",
 		`{"token":"`+claimResp.MetadataToken+`","chapters":[{"startMs":0,"endMs":1000,"title":"x"}]}`)

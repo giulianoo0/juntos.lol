@@ -15,7 +15,6 @@ const room: RoomInfo = {
   id: 'r1',
   fileName: 'movie.mkv',
   status: 'ready',
-  sourceKind: 'upload',
   mediaGeneration: 0,
   controllerId: 'm1',
   audioTracks: null,
@@ -533,6 +532,37 @@ describe('Player', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Enter fullscreen' }))
 
     expect(requestFullscreen).toHaveBeenCalledOnce()
+  })
+
+  it('carries the video and its subtitles into a picture-in-picture window and brings them back', async () => {
+    const pipDocument = document.implementation.createHTMLDocument('pip')
+    let hide: (() => void) | undefined
+    const pipWindow = {
+      document: pipDocument,
+      close: vi.fn(() => hide?.()),
+      addEventListener: (type: string, fn: () => void) => { if (type === 'pagehide') hide = fn },
+    }
+    const requestWindow = vi.fn().mockResolvedValue(pipWindow)
+    Object.defineProperty(window, 'documentPictureInPicture', { configurable: true, value: { requestWindow } })
+    try {
+      const { container } = render(<Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Picture-in-picture' }))
+      await waitFor(() => expect(pipDocument.querySelector('video')).not.toBeNull())
+      expect(container.querySelector('video')).toBeNull()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Exit picture-in-picture' }))
+      expect(container.querySelector('.player-wrap video')).not.toBeNull()
+      expect(pipWindow.close).toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Picture-in-picture' })).toBeInTheDocument()
+    } finally {
+      Reflect.deleteProperty(window, 'documentPictureInPicture')
+    }
+  })
+
+  it('offers no picture-in-picture where the browser has no way to keep the subtitles', () => {
+    render(<Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
+    expect(screen.queryByRole('button', { name: 'Picture-in-picture' })).toBeNull()
   })
 
   it('pins the player over the page where elements cannot go fullscreen', () => {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -76,7 +77,7 @@ func main() {
 	}
 	var swarmMu sync.Mutex
 	lastSwarm := map[string]worker.SwarmStats{}
-	torrents.OnLive = httpapi.LiveReporter(store, hub.NotifyStatus)
+	torrents.OnLive = httpapi.LiveReporter(store, hub.NotifyRoomUpdated)
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
 		swarmMu.Lock()
 		same := lastSwarm[roomID] == stats
@@ -107,6 +108,23 @@ func main() {
 		torrents.ObserveLives(workerID, hb)
 		remuxOrch.ObserveHeartbeat(workerID, hb)
 	})
+	sourceHooks := httpapi.SourceHooks{
+		NotifyStatus:      hub.NotifyStatus,
+		NotifyRoomUpdated: hub.NotifyRoomUpdated,
+		ResetPlayback:     hub.ResetPlayback,
+		CancelMedia: func(roomID string) {
+			remuxOrch.CancelRoom(roomID)
+			torrents.CancelRoomMedia(roomID)
+		},
+		CancelLive: torrents.CancelRoomLive,
+	}
+	hub.OnStageClose(func(roomID, kind string) {
+		closeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		if err := httpapi.CloseStage(closeCtx, store, cfg, sourceHooks, roomID, kind); err != nil {
+			slog.Error("close stage failed", "room_id", roomID, "kind", kind, "error", err)
+		}
+	})
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)
 
@@ -118,10 +136,7 @@ func main() {
 			NotifyRoomMedia:    hub.NotifyRoomMedia,
 			NotifyRoomProgress: hub.NotifyRoomProgress,
 		}),
-		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, ResetPlayback: hub.ResetPlayback, CancelMedia: func(roomID string) {
-			remuxOrch.CancelRoom(roomID)
-			torrents.CancelRoom(roomID)
-		}}),
+		httpapi.WithSourceHooks(sourceHooks),
 		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents,
 			Remux: remuxOrch, Authorizer: hub.AuthorizeMember}, workerHub.HandleLink),
 		httpapi.WithPluginFetch(sessions, quota),

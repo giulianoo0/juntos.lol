@@ -1,6 +1,10 @@
 package sync
 
-import "github.com/giulianoo0/ss/internal/room"
+import (
+	"encoding/json"
+
+	"github.com/giulianoo0/ss/internal/room"
+)
 
 // Inbound is a WebSocket message sent from a client to the server.
 type Inbound struct {
@@ -30,6 +34,25 @@ type Inbound struct {
 	// held; the server hands it back while it is still being kept.
 	MemberID   string `json:"memberId,omitempty"`
 	Capability string `json:"capability,omitempty"`
+	// Kind names a stage (media, live, screen; member too for a spotlight)
+	// on stageRequest, stageClose and spotlight; RequestID and Allow are the
+	// host's stageAnswer.
+	Kind      string `json:"kind,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
+	Allow     bool   `json:"allow,omitempty"`
+}
+
+// decodeHello reads the first message of a socket, which must be a hello
+// with a nickname fit to show.
+func decodeHello(data []byte) (Inbound, bool) {
+	var hello Inbound
+	if err := json.Unmarshal(data, &hello); err != nil {
+		return Inbound{}, false
+	}
+	if hello.Type != "hello" || !validNickname(hello.Nickname) {
+		return Inbound{}, false
+	}
+	return hello, true
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The
@@ -74,6 +97,11 @@ type Outbound struct {
 	Title         *TitleRequest       `json:"title,omitempty"`
 	DeadlineMs    int64               `json:"deadlineMs,omitempty"`
 	HostSubtitles *HostSubtitles      `json:"hostSubtitles,omitempty"`
+	RequestID     string              `json:"requestId,omitempty"`
+	Kind          string              `json:"kind,omitempty"`
+	Nickname      string              `json:"nickname,omitempty"`
+	Allow         *bool               `json:"allow,omitempty"`
+	Spotlight     *room.Spotlight     `json:"spotlight,omitempty"`
 	closeAfter    bool
 }
 

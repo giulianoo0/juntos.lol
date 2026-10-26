@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -16,32 +18,42 @@ import (
 
 const maxSourceBodyBytes = 4 << 10
 
-// SourceHooks lets a room change what it is playing without httpapi depending on
-// the media pipeline. Both are nil-safe, and CancelMedia runs before the old files
-// are removed so ffmpeg is not left writing into a directory being deleted.
-// ResetPlayback runs once the room points at the new source, before its status
-// is announced, so members drop the old clock before they look for new media.
+// SourceHooks lets a room change what its stages play without httpapi
+// depending on the media pipeline. All are nil-safe. CancelMedia stops the
+// media's production and runs before the old files are removed, so ffmpeg is
+// not left writing into a directory being deleted; CancelLive stops the live's
+// producer and nothing else. ResetPlayback runs once the room points at the
+// new source, before its status is announced, so members drop the old clock
+// before they look for new media. NotifyRoomUpdated tells members to refetch
+// the room, for changes that are not the media's status.
 type SourceHooks struct {
-	CancelMedia   func(roomID string)
-	NotifyStatus  func(roomID, status string)
-	ResetPlayback func(roomID string)
+	CancelMedia       func(roomID string)
+	CancelLive        func(roomID string)
+	NotifyStatus      func(roomID, status string)
+	NotifyRoomUpdated func(roomID string)
+	ResetPlayback     func(roomID string)
 }
 
+// changeSourceRequest is a member's seat, or the creator's ownerToken while
+// the room has not seated them yet. Kind is upload or youtube: a YouTube
+// title may carry a slash a file name may not.
 type changeSourceRequest struct {
-	MemberID   string `json:"memberId" binding:"required"`
-	Capability string `json:"capability" binding:"required"`
+	MemberID   string `json:"memberId"`
+	Capability string `json:"capability"`
+	OwnerToken string `json:"ownerToken"`
 	Kind       string `json:"kind" binding:"required"`
 	FileName   string `json:"fileName"`
 }
 
-// RegisterSourceRoute mounts the controller-only endpoint that repoints a live room
-// at a new source; members, chat and the controller all survive the swap.
+// RegisterSourceRoute mounts the endpoint that repoints the room's media
+// stage at a new source; members, chat, controller, screens and live all
+// survive the swap.
 func RegisterSourceRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
-	authorizer memberAuthorizer, hooks SourceHooks) {
+	authorizer stageAuthorizer, hooks SourceHooks) {
 	rg.POST("/rooms/:id/source", changeSource(store, cfg, authorizer, hooks))
 }
 
-func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthorizer,
+func changeSource(store *room.Store, cfg config.Config, authorizer stageAuthorizer,
 	hooks SourceHooks) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roomID := c.Param("id")
@@ -74,12 +86,14 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
-		if authorizer == nil || !authorizer.AuthorizeMember(roomID, req.MemberID, req.Capability) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
-			return
-		}
-		if storedRoom.ControllerID != req.MemberID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "not_controller"})
+		holder := req.MemberID
+		if req.OwnerToken != "" {
+			if storedRoom.OwnerToken == "" || subtle.ConstantTimeCompare([]byte(req.OwnerToken), []byte(storedRoom.OwnerToken)) != 1 {
+				c.JSON(http.StatusForbidden, gin.H{"error": "not_owner"})
+				return
+			}
+			holder = storedRoom.ControllerID
+		} else if !authorizeStage(c, authorizer, storedRoom, req.MemberID, req.Capability, room.StageMedia, true) {
 			return
 		}
 
@@ -92,12 +106,8 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
-		kind := req.Kind
-		if kind == room.SourceYoutube {
-			kind = room.SourceUpload
-		}
 		_, generation, err := store.SwapSource(
-			c.Request.Context(), roomID, kind, fileName, status, time.Now())
+			c.Request.Context(), roomID, holder, fileName, status, time.Now())
 		if errors.Is(err, room.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
 			return
@@ -116,25 +126,57 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":          status,
-			"sourceKind":      kind,
 			"fileName":        fileName,
 			"mediaGeneration": generation,
 		})
 	}
 }
 
-// sourceTarget validates the requested source and reports the status the room should
-// land in: an upload must be prepared first, a shared screen is live immediately.
+// CloseStage takes the media or the live down when its owner or the host
+// closes it: production stops and the stage empties, and the rest of the
+// room plays on. Screens end in the hub, which has nothing to stop.
+func CloseStage(ctx context.Context, store *room.Store, cfg config.Config, hooks SourceHooks, roomID, kind string) error {
+	switch kind {
+	case room.StageMedia:
+		if hooks.CancelMedia != nil {
+			hooks.CancelMedia(roomID)
+		}
+		if err := os.RemoveAll(filepath.Join(cfg.DataDir, "rooms", roomID)); err != nil {
+			return err
+		}
+		if _, _, err := store.SwapSource(ctx, roomID, "", "", room.StatusEmpty, time.Now()); err != nil {
+			return err
+		}
+		if hooks.ResetPlayback != nil {
+			hooks.ResetPlayback(roomID)
+		}
+		if hooks.NotifyStatus != nil {
+			hooks.NotifyStatus(roomID, room.StatusEmpty)
+		}
+	case room.StageLive:
+		if hooks.CancelLive != nil {
+			hooks.CancelLive(roomID)
+		}
+		if err := store.SetLive(ctx, roomID, nil); err != nil {
+			return err
+		}
+		if hooks.NotifyRoomUpdated != nil {
+			hooks.NotifyRoomUpdated(roomID)
+		}
+	}
+	return nil
+}
+
+// sourceTarget validates the requested source and reports the status the room
+// should land in.
 func sourceTarget(req changeSourceRequest) (status, fileName string, ok bool) {
 	switch req.Kind {
-	case room.SourceUpload:
+	case "upload":
 		if !validFileName(req.FileName) {
 			return "", "", false
 		}
 		return "uploading", req.FileName, true
-	case room.SourceScreen:
-		return "ready", "", true
-	case room.SourceYoutube:
+	case "youtube":
 		if !validRoomText(req.FileName, maxFileNameBytes) {
 			return "", "", false
 		}

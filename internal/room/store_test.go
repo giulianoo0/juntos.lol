@@ -41,7 +41,7 @@ func TestSetChaptersRoundTripsAndSwapClearsThem(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chapters, got.Chapters)
 
-	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
+	_, _, err = s.SwapSource(t.Context(), "abc", "m1", "other.mkv", "uploading", now)
 	require.NoError(t, err)
 	got, err = s.Get(t.Context(), "abc")
 	require.NoError(t, err)
@@ -367,7 +367,7 @@ func TestSwapSourceClearsThePublishedMediaOfTheOldSource(t *testing.T) {
 	require.NoError(t, store.SetPlaylists(t.Context(), "r1", map[string]string{"master.m3u8": "#EXTM3U\n"}))
 	require.NoError(t, store.MarkPublished(t.Context(), "r1", "stream_1_000.m4s"))
 
-	_, generation, err := store.SwapSource(t.Context(), "r1", "upload", "next.mkv", "uploading", now)
+	_, generation, err := store.SwapSource(t.Context(), "r1", "m1", "next.mkv", "uploading", now)
 	require.NoError(t, err)
 	require.Equal(t, 1, generation)
 
@@ -390,7 +390,7 @@ func TestSwarmStatsRoundTripAndClearOnSwap(t *testing.T) {
 	got, err = s.Get(t.Context(), "abc")
 	require.NoError(t, err)
 	require.Equal(t, &SwarmStats{Peers: 12, DownSpeed: 3_000_000, HaveBytes: 500, SelectedBytes: 1000}, got.Preparation.Swarm)
-	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
+	_, _, err = s.SwapSource(t.Context(), "abc", "m1", "other.mkv", "uploading", now)
 	require.NoError(t, err)
 	got, err = s.Get(t.Context(), "abc")
 	require.NoError(t, err)
@@ -424,7 +424,7 @@ func TestImportedSubtitlesRideAfterTheExtractedOnesAndSwapClearsThem(t *testing.
 	_, err = s.AddImportedSubtitle(t.Context(), "abc", TrackInfo{Index: 1001, Language: "spa", Digest: "d2"}, 1)
 	require.ErrorIs(t, err, ErrSubtitleLimit)
 
-	_, _, err = s.SwapSource(t.Context(), "abc", SourceUpload, "other.mkv", "uploading", now)
+	_, _, err = s.SwapSource(t.Context(), "abc", "m1", "other.mkv", "uploading", now)
 	require.NoError(t, err)
 	r, err = s.Get(t.Context(), "abc")
 	require.NoError(t, err)

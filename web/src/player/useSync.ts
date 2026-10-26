@@ -1,7 +1,8 @@
 import { GATE_READY_BUFFER_MS } from './gate'
 import { playbackHealth } from './playbackHealth'
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, TitleRequest } from '../types'
+import { useCallback, useEffect, useReducer, useRef, useState, type MutableRefObject } from 'react'
+import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, Spotlight, StageKind, TitleRequest } from '../types'
+import { initialStages, stagesReducer, type StagesState } from '../room/stages'
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
 
@@ -37,6 +38,11 @@ interface Outbound {
   gating?: boolean
   hostSubtitles?: HostSubtitles
   media?: MediaSnapshot
+  requestId?: string
+  kind?: StageKind
+  nickname?: string
+  allow?: boolean
+  spotlight?: Spotlight
   title?: {
     metaId: string
     metaType: 'movie' | 'series'
@@ -84,6 +90,18 @@ interface SyncResult {
   leave: () => void
   send: (type: string, payload?: Record<string, unknown>) => boolean
   reportBuffering: (stalled: boolean) => void
+  /** Requests, grants and the spotlight around the room's stages (see room/stages). */
+  stages: StagesState
+  /** A guest asks the host to open a stage of this kind. */
+  requestStage: (kind: StageKind) => boolean
+  /** The host answers a request from its inbox. */
+  answerStage: (requestId: string, allow: boolean) => boolean
+  /** The host or the owner takes a stage down; a screen is named by its owner. */
+  closeStage: (kind: StageKind, targetId?: string) => boolean
+  /** The host puts a stage or a member in front of everyone; null takes it down. */
+  setSpotlight: (spotlight: Spotlight | null) => boolean
+  /** Opening the stage spent the grant. */
+  stageUsed: (kind: StageKind) => void
 }
 
 const TITLE_REQUEST_LIMIT = 20
@@ -139,6 +157,7 @@ export function useSync(
   const [left, setLeft] = useState(false)
   const [kicked, setKicked] = useState(false)
   const titleSeqRef = useRef(0)
+  const [stages, dispatchStage] = useReducer(stagesReducer, initialStages)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
     const socket = socketRef.current
@@ -223,6 +242,7 @@ export function useSync(
         }
         knownMembersRef.current = roster
         setMembers(next)
+        dispatchStage({ type: 'members', ids: next.map((member) => member.id) })
       }
 
       const start = async (media: HTMLVideoElement) => {
@@ -350,6 +370,20 @@ export function useSync(
             if (message.media) setMediaPatch(message.media)
             else setRoomVersion((version) => version + 1)
             break
+          case 'stageRequest':
+            if (message.requestId && message.memberId && message.kind) {
+              dispatchStage({ type: 'stageRequest', requestId: message.requestId, memberId: message.memberId, nickname: message.nickname ?? '', kind: message.kind })
+            }
+            break
+          case 'stageGrant':
+            if (message.kind) dispatchStage({ type: 'stageGrant', kind: message.kind, allow: message.allow === true, at: Date.now() })
+            break
+          case 'stageClosed':
+            if (message.kind) dispatchStage({ type: 'stageClosed', kind: message.kind })
+            break
+          case 'spotlight':
+            dispatchStage({ type: 'spotlight', spotlight: message.spotlight ?? null })
+            break
           case 'titleRequest': {
             const title = message.title
             if (!title) break
@@ -442,6 +476,23 @@ export function useSync(
     }
   }, [sendReadiness, waitingForStart, videoRef])
   const refreshRoom = useCallback(() => setRoomVersion((version) => version + 1), [])
+  const requestStage = useCallback((kind: StageKind) => {
+    if (!send('stageRequest', { kind })) return false
+    dispatchStage({ type: 'asked', kind })
+    return true
+  }, [send])
+  const answerStage = useCallback((requestId: string, allow: boolean) => {
+    if (!send('stageAnswer', { requestId, allow })) return false
+    dispatchStage({ type: 'answered', requestId })
+    return true
+  }, [send])
+  const closeStage = useCallback((kind: StageKind, targetId?: string) => (
+    send('stageClose', targetId ? { kind, targetId } : { kind })
+  ), [send])
+  const setSpotlight = useCallback((spotlight: Spotlight | null) => (
+    send('spotlight', spotlight ? { kind: spotlight.kind, ...(spotlight.memberId ? { targetId: spotlight.memberId } : {}) } : {})
+  ), [send])
+  const stageUsed = useCallback((kind: StageKind) => dispatchStage({ type: 'used', kind }), [])
 
   return {
     state,
@@ -472,5 +523,11 @@ export function useSync(
     leave,
     send,
     reportBuffering,
+    stages,
+    requestStage,
+    answerStage,
+    closeStage,
+    setSpotlight,
+    stageUsed,
   }
 }

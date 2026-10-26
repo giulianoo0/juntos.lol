@@ -90,7 +90,6 @@ const room: RoomInfo = {
   id: 'r1',
   fileName: 'movie.mkv',
   status: 'ready',
-  sourceKind: 'upload',
   mediaGeneration: 3,
   mediaVersion: 0,
   subsVersion: 0,

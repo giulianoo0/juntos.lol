@@ -48,6 +48,7 @@ func (c *client) readPump() {
 	c.conn.SetPongHandler(func(string) error {
 		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
+	limiter := newRateLimiter(clientMessageRules, defaultMessageRule)
 	for {
 		var message Inbound
 		if err := c.conn.ReadJSON(&message); err != nil {
@@ -59,8 +60,15 @@ func (c *client) readPump() {
 		if message.Type == "hello" {
 			continue
 		}
+		event := clientInbound{client: c, message: message}
+		if decision := limiter.allow(message.Type, time.Now()); !decision.ok {
+			if !decision.first {
+				continue
+			}
+			event = clientInbound{client: c, rateLimited: true}
+		}
 		select {
-		case c.room.inbound <- clientInbound{client: c, message: message}:
+		case c.room.inbound <- event:
 		case <-c.room.hub.ctx.Done():
 			return
 		}

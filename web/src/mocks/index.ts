@@ -104,7 +104,6 @@ function mockRoom(id: string, elapsedMs: number): RoomInfo {
     id,
     fileName: 'Frieren.S02E02.A.Real.Hero.1080p.mkv',
     status: ready ? 'ready' : 'uploading',
-    sourceKind: 'upload',
     mediaGeneration: 0,
     controllerId: 'mock-member',
     audioTracks: [{ index: 0, language: 'jpn', title: 'Japanese', codec: 'aac' }],

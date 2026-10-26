@@ -53,9 +53,12 @@ type Hub struct {
 
 	onPosition func(roomID string, positionMs int64)
 
+	onStageClose func(roomID, kind string)
+
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
 	capabilities map[string]map[string]string
+	grants       map[string]map[stageGrantKey]time.Time
 	closed       bool
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -79,8 +82,10 @@ type roomConn struct {
 	progressMu       stdsync.Mutex
 	lastProgressAt   time.Time
 
-	nextMember int
-	clients    map[string]*client
+	nextMember    int
+	nextRequest   int
+	stageRequests []*stageRequest
+	clients       map[string]*client
 	// Seats whose socket dropped, kept for resumeGrace so the same member can
 	// come back as themselves: same id, same capability, screen still up.
 	detached map[string]*detachedSeat
@@ -117,6 +122,9 @@ var resumeGrace = 45 * time.Second
 type clientInbound struct {
 	client  *client
 	message Inbound
+	// rateLimited stands in for a dropped message: the room tells the
+	// sender, since only the room writes to its socket.
+	rateLimited bool
 }
 
 func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
@@ -140,6 +148,7 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 		stallCooldown: stallRegateCooldown,
 		rooms:         make(map[string]*roomConn),
 		capabilities:  make(map[string]map[string]string),
+		grants:        make(map[string]map[stageGrantKey]time.Time),
 		ctx:           ctx,
 		cancel:        cancel,
 		upgrader: websocket.Upgrader{
@@ -219,18 +228,19 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return
 	}
-	var hello Inbound
-	if err := conn.ReadJSON(&hello); err != nil {
+	_, data, err := conn.ReadMessage()
+	if err != nil {
 		return
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return
 	}
-	nickname := hello.Nickname
-	if hello.Type != "hello" || !validNickname(nickname) {
+	hello, ok := decodeHello(data)
+	if !ok {
 		writeHandshakeError(conn, "invalid_hello")
 		return
 	}
+	nickname := hello.Nickname
 
 	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {
@@ -380,6 +390,7 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 	if h.rooms[roomID] == connection {
 		delete(h.rooms, roomID)
 		delete(h.capabilities, roomID)
+		delete(h.grants, roomID)
 	}
 	h.mu.Unlock()
 }
@@ -548,12 +559,16 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		Type: "members", ControllerID: r.controllerID, Members: members,
 	})
 	r.broadcastWaiting()
+	if r.controllerID == memberID {
+		r.replayStageRequests()
+	}
 	request.result <- ""
 }
 
 // handleSource records which browser holds the room's source. Only the one
-// running the pipeline says so, and only the origins the room knows are
-// kept; everyone then refetches the room to learn it.
+// running the pipeline says so — the member who opened the media, or the
+// host whose reload made them a new member — and only the origins the room
+// knows are kept; everyone then refetches the room to learn it.
 func (r *roomConn) handleSource(sender *client, message Inbound) {
 	switch message.Origin {
 	case "file", "torrent", "url", "youtube":
@@ -561,7 +576,14 @@ func (r *roomConn) handleSource(sender *client, message Inbound) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
-	err := r.hub.store.SetSourceHolder(ctx, r.id, sender.id, message.Origin)
+	stored, err := r.hub.store.Get(ctx, r.id)
+	if err == nil && stored.SourceMemberID != "" && stored.SourceMemberID != sender.id && sender.id != r.controllerID {
+		cancel()
+		return
+	}
+	if err == nil {
+		err = r.hub.store.SetSourceHolder(ctx, r.id, sender.id, message.Origin)
+	}
 	cancel()
 	if err != nil {
 		slog.ErrorContext(r.hub.ctx, "record source holder failed", "room_id", r.id, "error", err)
@@ -594,6 +616,7 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		}
 		r.controllerID = target.id
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
+		r.replayStageRequests()
 	case "kick":
 		target.kicked = true
 		r.send(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
@@ -721,6 +744,7 @@ func (r *roomConn) resume(request joinRequest) bool {
 func (r *roomConn) finalizeLeave(disconnected *client) {
 	r.logSyncSummary(disconnected)
 	delete(r.ignored, disconnected.id)
+	r.forgetStageRequests(disconnected.id)
 	r.hub.mu.Lock()
 	delete(r.hub.capabilities[r.id], disconnected.id)
 	r.hub.mu.Unlock()
@@ -737,7 +761,8 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 	} else if stopped && len(r.clients) > 0 {
 		r.broadcast(Outbound{Type: "roomUpdated"})
 	}
-	if disconnected.id == r.controllerID {
+	promoted := disconnected.id == r.controllerID
+	if promoted {
 		members := r.members()
 		if len(members) == 0 {
 			r.controllerID = ""
@@ -750,6 +775,9 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 	}
 	if len(r.clients) > 0 {
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
+		if promoted {
+			r.replayStageRequests()
+		}
 	}
 	if r.gate != nil {
 		if len(r.clients) == 0 {
@@ -761,6 +789,10 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 }
 
 func (r *roomConn) handleInbound(event clientInbound) {
+	if event.rateLimited {
+		r.send(event.client, Outbound{Type: "error", ErrCode: "rate_limited"})
+		return
+	}
 	message := event.message
 	switch message.Type {
 	case "heartbeat":
@@ -798,6 +830,14 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.handleMemberAction(event.client, message)
 	case "source":
 		r.handleSource(event.client, message)
+	case "stageRequest":
+		r.handleStageRequest(event.client, message)
+	case "stageAnswer":
+		r.handleStageAnswer(event.client, message)
+	case "stageClose":
+		r.handleStageClose(event.client, message)
+	case "spotlight":
+		r.handleSpotlight(event.client, message)
 	case "chat":
 		if !validChat(message.Text) {
 			r.send(event.client, Outbound{Type: "error", ErrCode: "invalid_chat"})
@@ -867,7 +907,9 @@ func (r *roomConn) handleTitleRequest(sender *client, message Inbound) {
 }
 
 func (r *roomConn) handleState(sender *client, message Inbound) {
-	if sender.id != r.controllerID {
+	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+	defer cancel()
+	if !r.mayDrive(ctx, sender) {
 		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
 		return
 	}
@@ -877,8 +919,6 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	if r.hub.onPosition != nil && message.Type != "rate" {
 		go r.hub.onPosition(r.id, message.PositionMs)
 	}
-	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
-	defer cancel()
 	state, err := r.hub.store.GetState(ctx, r.id)
 	if err != nil {
 		slog.ErrorContext(ctx, "load state for websocket command failed", "room_id", r.id, "error", err)

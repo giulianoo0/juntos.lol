@@ -402,3 +402,76 @@ describe('useSync host subtitles', () => {
     unmount()
   })
 })
+
+describe('useSync stages', () => {
+  beforeEach(() => {
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.spyOn(Date, 'now').mockReturnValue(100_000)
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  const sent = (socket: FakeWebSocket) => socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as Record<string, unknown>)
+
+  it('asks the host for a stage and keeps the answer', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    act(() => { result.current.requestStage('screen') })
+    expect(sent(socket)).toContainEqual({ type: 'stageRequest', kind: 'screen' })
+    expect(result.current.stages.asked).toEqual(['screen'])
+
+    act(() => socket.receive({ type: 'stageGrant', kind: 'screen', allow: true }))
+    expect(result.current.stages.asked).toEqual([])
+    expect(result.current.stages.granted.screen).toBe(100_000)
+    expect(result.current.stages.answer).toMatchObject({ kind: 'screen', allow: true })
+
+    act(() => socket.receive({ type: 'stageClosed', kind: 'screen' }))
+    expect(result.current.stages.granted.screen).toBeUndefined()
+    expect(result.current.stages.closed).toMatchObject({ kind: 'screen' })
+    unmount()
+  })
+
+  it('gives the host an inbox it answers from, emptied of whoever left', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    act(() => socket.receive({ type: 'stageRequest', requestId: 'q1', memberId: 'm2', nickname: 'ana', kind: 'media' }))
+    act(() => socket.receive({ type: 'stageRequest', requestId: 'q2', memberId: 'm3', nickname: 'bia', kind: 'screen' }))
+    expect(result.current.stages.requests.map((request) => request.requestId)).toEqual(['q1', 'q2'])
+
+    act(() => { result.current.answerStage('q1', true) })
+    expect(sent(socket)).toContainEqual({ type: 'stageAnswer', requestId: 'q1', allow: true })
+    expect(result.current.stages.requests.map((request) => request.requestId)).toEqual(['q2'])
+
+    act(() => socket.receive({ type: 'members', controllerId: 'm1', members: [{ id: 'm1', nickname: 'giuli', joinedAt: '' }] }))
+    expect(result.current.stages.requests).toEqual([])
+    unmount()
+  })
+
+  it('closes stages and moves the spotlight through the socket, and follows the host spotlight', () => {
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    act(() => { result.current.closeStage('screen', 'm3') })
+    act(() => { result.current.setSpotlight({ kind: 'live' }) })
+    act(() => { result.current.setSpotlight(null) })
+    expect(sent(socket)).toEqual(expect.arrayContaining([
+      { type: 'stageClose', kind: 'screen', targetId: 'm3' },
+      { type: 'spotlight', kind: 'live' },
+      { type: 'spotlight' },
+    ]))
+
+    expect(result.current.stages.spotlight).toBeUndefined()
+    act(() => socket.receive({ type: 'spotlight', spotlight: { kind: 'screen', memberId: 'm3' } }))
+    expect(result.current.stages.spotlight).toEqual({ kind: 'screen', memberId: 'm3' })
+    act(() => socket.receive({ type: 'spotlight' }))
+    expect(result.current.stages.spotlight).toBeNull()
+    unmount()
+  })
+})

@@ -19,10 +19,34 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-type testMemberAuthorizer struct{ allowed bool }
+// testMemberAuthorizer stands in for the hub: every "m…" member with the
+// test capability is seated, and stages lists the "member/kind" grants it
+// holds besides the host's. Spent grants land in used.
+type testMemberAuthorizer struct {
+	allowed bool
+	stages  map[string]bool
+	used    *[]string
+}
 
 func (a testMemberAuthorizer) AuthorizeMember(roomID, memberID, capability string) bool {
 	return a.allowed && roomID == "r1" && strings.HasPrefix(memberID, "m") && capability == "secret-capability"
+}
+
+func (a testMemberAuthorizer) AuthorizeStage(r *room.Room, memberID, capability, kind string, consume bool) bool {
+	if !a.AuthorizeMember(r.ID, memberID, capability) {
+		return false
+	}
+	if r.ControllerID == memberID {
+		return true
+	}
+	key := memberID + "/" + kind
+	if !a.stages[key] {
+		return false
+	}
+	if consume && a.used != nil {
+		*a.used = append(*a.used, key)
+	}
+	return true
 }
 
 var screenshareCfg = config.Config{
@@ -35,25 +59,28 @@ type relayResponse struct {
 	Base    string `json:"base"`
 	Path    string `json:"path"`
 	Publish bool   `json:"publish"`
-	Open    bool   `json:"open"`
 	Bridge  string `json:"bridge"`
 }
 
-func newScreenshareRouter(t *testing.T, notify func(string)) (*gin.Engine, *room.Store) {
+func newScreenshareRouter(t *testing.T, notify func(string), stages ...string) (*gin.Engine, *room.Store) {
 	t.Helper()
 	store := newTestStore(t)
 	now := time.Now()
 	require.NoError(t, store.CreateWithMember(t.Context(), &room.Room{
-		ID: "r1", Status: "ready", SourceKind: room.SourceScreen, ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		ID: "r1", Status: room.StatusEmpty, ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}, room.Member{ID: "m1", Nickname: "giuli", JoinedAt: now}))
 	require.NoError(t, store.AddMember(t.Context(), "r1", room.Member{ID: "m2", Nickname: "enzoka", JoinedAt: now}))
+	granted := map[string]bool{}
+	for _, key := range stages {
+		granted[key] = true
+	}
 	router := gin.New()
-	RegisterScreenshareRoutes(router.Group("/api"), store, screenshareCfg, testMemberAuthorizer{allowed: true}, notify)
+	RegisterScreenshareRoutes(router.Group("/api"), store, screenshareCfg, testMemberAuthorizer{allowed: true, stages: granted}, notify)
 	return router, store
 }
 
 func TestScreenshareRelayByRole(t *testing.T) {
-	router, store := newScreenshareRouter(t, nil)
+	router, _ := newScreenshareRouter(t, nil)
 
 	// Without asking to publish, even the host only gets the subscribe token.
 	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability"}`)
@@ -66,31 +93,54 @@ func TestScreenshareRelayByRole(t *testing.T) {
 
 	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability","publish":true}`)
 	require.Equal(t, http.StatusOK, w.Code)
+	require.NotContains(t, w.Body.String(), `"open"`)
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &host))
 	require.Equal(t, "https://relay.example.test/pub-token", host.URL)
 	require.True(t, host.Publish)
-	require.True(t, host.Open)
 	require.Regexp(t, `^juntos/r1/[0-9a-f]{32}$`, host.Base)
 	require.Equal(t, host.Base+"/m1.hang", host.Path)
 
-	// Sharing is open by default, so a guest gets a publish token of their own
-	// on a path of their own.
+	// A guest the host has not let share only watches.
 	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m2","capability":"secret-capability","publish":true}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	var guest relayResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &guest))
+	require.Equal(t, "https://relay.example.test/sub-token", guest.URL)
+	require.False(t, guest.Publish)
+	require.Equal(t, host.Base, guest.Base, "every screen of a room hangs off one base")
+	require.Equal(t, host.Base+"/m2.hang", guest.Path)
+}
+
+func TestAGrantedGuestGetsThePublishTokenAndStarts(t *testing.T) {
+	router, store := newScreenshareRouter(t, nil, "m2/screen")
+	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m2","capability":"secret-capability","publish":true}`)
 	require.Equal(t, http.StatusOK, w.Code)
 	var guest relayResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &guest))
 	require.Equal(t, "https://relay.example.test/pub-token", guest.URL)
 	require.True(t, guest.Publish)
-	require.Equal(t, host.Base, guest.Base, "every screen of a room hangs off one base")
-	require.Equal(t, host.Base+"/m2.hang", guest.Path)
 
-	require.NoError(t, store.SetScreenShareOpen(t.Context(), "r1", false))
-	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m2","capability":"secret-capability","publish":true}`)
+	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m2","capability":"secret-capability","live":true}`)
 	require.Equal(t, http.StatusOK, w.Code)
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &guest))
-	require.Equal(t, "https://relay.example.test/sub-token", guest.URL)
-	require.False(t, guest.Publish)
-	require.False(t, guest.Open)
+	r, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, r.Screens, 1)
+	require.Equal(t, "enzoka", r.Screens[0].Nickname)
+}
+
+func TestScreenshareRefusesAGuestWithoutAGrant(t *testing.T) {
+	router, store := newScreenshareRouter(t, nil)
+	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m2","capability":"secret-capability","live":true}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.JSONEq(t, `{"error":"stage_not_granted"}`, w.Body.String())
+
+	// Stopping is always allowed: a share has to be able to take itself down.
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Since: time.Now()}))
+	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m2","capability":"secret-capability","live":false}`)
+	require.Equal(t, http.StatusOK, w.Code)
+	r, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, r.Screens)
 }
 
 func TestScreenshareRelayDisabled(t *testing.T) {
@@ -118,7 +168,7 @@ func TestScreenshareRelayRequiresRoomMember(t *testing.T) {
 
 func TestScreenshareLiveListsEveryPublisher(t *testing.T) {
 	var notified []string
-	router, store := newScreenshareRouter(t, func(id string) { notified = append(notified, id) })
+	router, store := newScreenshareRouter(t, func(id string) { notified = append(notified, id) }, "m2/screen")
 
 	for _, member := range []string{"m1", "m2"} {
 		w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"`+member+`","capability":"secret-capability","live":true}`)
@@ -145,57 +195,10 @@ func TestScreenshareLiveListsEveryPublisher(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestScreenshareClosedRefusesGuestPublish(t *testing.T) {
-	router, store := newScreenshareRouter(t, nil)
-	require.NoError(t, store.SetScreenShareOpen(t.Context(), "r1", false))
-
-	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m2","capability":"secret-capability","live":true}`)
-	require.Equal(t, http.StatusForbidden, w.Code)
-	require.JSONEq(t, `{"error":"sharing_closed"}`, w.Body.String())
-
-	// The host is never blocked by their own switch.
-	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m1","capability":"secret-capability","live":true}`)
-	require.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestScreenshareOpenSwitch(t *testing.T) {
-	var notified []string
-	router, store := newScreenshareRouter(t, func(id string) { notified = append(notified, id) })
-	for _, member := range []string{"m1", "m2"} {
-		doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"`+member+`","capability":"secret-capability","live":true}`)
-	}
-	notified = nil
-
-	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/open", `{"memberId":"m2","capability":"secret-capability","open":false}`)
-	require.Equal(t, http.StatusForbidden, w.Code)
-
-	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/open", `{"memberId":"m1","capability":"secret-capability","open":false}`)
-	require.Equal(t, http.StatusOK, w.Code)
-	r, err := store.Get(t.Context(), "r1")
-	require.NoError(t, err)
-	require.False(t, r.ScreenShareOpen)
-	require.Len(t, r.Screens, 1, "closing the room keeps the host's own screen")
-	require.Equal(t, "m1", r.Screens[0].MemberID)
-	require.Equal(t, []string{"r1"}, notified)
-
-	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/open", `{"memberId":"m1","capability":"secret-capability","open":true}`)
-	require.Equal(t, http.StatusOK, w.Code)
-	r, err = store.Get(t.Context(), "r1")
-	require.NoError(t, err)
-	require.True(t, r.ScreenShareOpen)
-
-	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/open", `{"memberId":"m1","capability":"secret-capability"}`)
-	require.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestSwapSourceClearsScreens(t *testing.T) {
-	_, store := newScreenshareRouter(t, nil)
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "giuli", Since: time.Now()}, true))
-	_, _, err := store.SwapSource(t.Context(), "r1", room.SourceScreen, "", "ready", time.Now())
-	require.NoError(t, err)
-	r, err := store.Get(t.Context(), "r1")
-	require.NoError(t, err)
-	require.Empty(t, r.Screens)
+func TestTheOpenSwitchIsGone(t *testing.T) {
+	router, _ := newScreenshareRouter(t, nil)
+	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/open", `{"memberId":"m1","capability":"secret-capability","open":false}`)
+	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func doScreenshareJSON(router http.Handler, path, body string) *httptest.ResponseRecorder {
@@ -207,7 +210,11 @@ func doScreenshareJSON(router http.Handler, path, body string) *httptest.Respons
 }
 
 func TestScreenshareCapsSimultaneousScreens(t *testing.T) {
-	router, store := newScreenshareRouter(t, nil)
+	stages := []string{}
+	for i := 2; i <= room.MaxScreenShares+5; i++ {
+		stages = append(stages, fmt.Sprintf("m%d/screen", i))
+	}
+	router, store := newScreenshareRouter(t, nil, stages...)
 	for i := 3; i <= room.MaxScreenShares+5; i++ {
 		require.NoError(t, store.AddMember(t.Context(), "r1", room.Member{ID: fmt.Sprintf("m%d", i), Nickname: "x", JoinedAt: time.Now()}))
 	}
@@ -235,9 +242,9 @@ func TestScreenshareUnreadableShareIsSkipped(t *testing.T) {
 	store := room.NewStore(rdb, 5*time.Hour)
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
-		ID: "r1", Status: "ready", SourceKind: room.SourceScreen, ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		ID: "r1", Status: room.StatusEmpty, ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
-	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "giuli", Since: now}, true))
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m1", Nickname: "giuli", Since: now}))
 	mr.HSet("room:r1", "screen_share:m2", "{not json")
 	stored, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)

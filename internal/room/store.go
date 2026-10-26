@@ -25,9 +25,6 @@ var ErrSubtitleLimit = errors.New("subtitle limit reached")
 // takes: far above any extraction, so the two lists never collide.
 const ImportedSubtitleIndexBase = 1000
 
-// ErrSharingClosed is a guest starting a screen in a room the host closed.
-var ErrSharingClosed = errors.New("sharing closed")
-
 // ErrTooManyScreens is one screen more than MaxScreenShares.
 var ErrTooManyScreens = errors.New("too many screens")
 
@@ -74,7 +71,7 @@ func (s *Store) Create(ctx context.Context, r *Room) error {
 		p.HSet(ctx, key,
 			"file_name", r.FileName,
 			"status", r.Status,
-			"source_kind", r.SourceKind,
+			"name", r.Name,
 			"media_generation", r.MediaGeneration,
 			"controller_id", r.ControllerID,
 			"owner_token", r.OwnerToken,
@@ -115,7 +112,7 @@ func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
 		p.HSet(ctx, key,
 			"file_name", r.FileName,
 			"status", r.Status,
-			"source_kind", r.SourceKind,
+			"name", r.Name,
 			"media_generation", r.MediaGeneration,
 			"controller_id", r.ControllerID,
 			"owner_token", r.OwnerToken,
@@ -252,11 +249,24 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		}
 		r.BitmapSubsSkipped = n
 	}
+	if v := fields["spotlight"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.Spotlight); err != nil {
+			return nil, fmt.Errorf("unmarshal spotlight: %w", err)
+		}
+	}
+	r.Name = fields["name"]
 	r.SourceMemberID = fields["source_member_id"]
 	r.SourceOrigin = fields["source_origin"]
-	r.SourceKind = fields["source_kind"]
-	if r.SourceKind == "" {
-		r.SourceKind = SourceUpload
+	// Before stages coexisted, a screen or live room kept that stage's
+	// progress in the room's own status; read back, the media is empty.
+	switch fields["source_kind"] {
+	case "screen":
+		r.Status = StatusEmpty
+	case "live":
+		if r.Live != nil && r.Live.Status == "" {
+			r.Live.Status, r.Live.Error = r.Status, r.ErrorMessage
+		}
+		r.Status, r.ErrorMessage = StatusEmpty, ""
 	}
 	if v := fields["media_generation"]; v != "" {
 		n, err := strconv.Atoi(v)
@@ -280,9 +290,6 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 		r.SubsVersion = n
 	}
 	r.GatingEnabled = fields["gating_disabled"] != "1"
-	// Sharing is open unless a host closed it, so a room made before the flag
-	// existed still lets everyone share.
-	r.ScreenShareOpen = fields["screen_closed"] != "1"
 	screens, err := parseScreenShares(fields)
 	if err != nil {
 		return nil, err
@@ -441,55 +448,37 @@ func parseScreenShares(fields map[string]string) ([]ScreenShare, error) {
 	return screens, nil
 }
 
-// SetScreenShareOpen records whether members other than the controller may
-// publish a screen.
-func (s *Store) SetScreenShareOpen(ctx context.Context, id string, open bool) error {
-	value := "1"
-	if open {
-		value = "0"
-	}
-	return s.mutateRoom(ctx, id, false, "screen_closed", value)
-}
-
 // MaxScreenShares is how many members may publish at once: every viewer
 // pays one relay subscription and one decoder per screen.
 const MaxScreenShares = 4
 
 // StartScreenShare records that a member is publishing, so a viewer knows
 // which broadcast to subscribe to instead of probing a relay that keeps no
-// history and announces nothing. The check that the room is open to this
-// member and has room for one more happens in the same step as the write, so
-// a host closing the room cannot lose the race against a guest starting.
-func (s *Store) StartScreenShare(ctx context.Context, id string, share ScreenShare, controller bool) error {
+// history and announces nothing. The count and the write are one step, so
+// two members starting at once cannot both take the last place.
+func (s *Store) StartScreenShare(ctx context.Context, id string, share ScreenShare) error {
 	payload, err := json.Marshal(ScreenShare{Nickname: share.Nickname, Since: share.Since})
 	if err != nil {
 		return fmt.Errorf("marshal screen share: %w", err)
 	}
-	allowClosed := "0"
-	if controller {
-		allowClosed = "1"
-	}
 	result, err := s.rdb.Eval(ctx, `
 if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
-if ARGV[1] == '0' and redis.call('HGET', KEYS[1], 'screen_closed') == '1' then return -2 end
-if redis.call('HEXISTS', KEYS[1], ARGV[2]) == 0 then
+if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then
   local count = 0
   for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
     if string.sub(field, 1, 13) == 'screen_share:' then count = count + 1 end
   end
-  if count >= tonumber(ARGV[4]) then return -3 end
+  if count >= tonumber(ARGV[3]) then return -3 end
 end
-redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 return 1
-`, []string{roomKey(id)}, allowClosed, screenSharePrefix+share.MemberID, string(payload), MaxScreenShares).Int64()
+`, []string{roomKey(id)}, screenSharePrefix+share.MemberID, string(payload), MaxScreenShares).Int64()
 	if err != nil {
 		return fmt.Errorf("start screen share: %w", err)
 	}
 	switch result {
 	case -1:
 		return ErrNotFound
-	case -2:
-		return ErrSharingClosed
 	case -3:
 		return ErrTooManyScreens
 	}
@@ -506,28 +495,17 @@ func (s *Store) StopScreenShare(ctx context.Context, id, memberID string) (bool,
 	return removed > 0, nil
 }
 
-// StopScreenSharesExcept ends every share but one, which is how closing a room
-// to guest sharing leaves the host's own screen up. Reports whether anything
-// was actually dropped.
-func (s *Store) StopScreenSharesExcept(ctx context.Context, id, keepMemberID string) (bool, error) {
-	fields, err := s.rdb.HKeys(ctx, roomKey(id)).Result()
+// SetSpotlight records what the host put in front of everyone; nil takes
+// it down.
+func (s *Store) SetSpotlight(ctx context.Context, id string, spotlight *Spotlight) error {
+	if spotlight == nil {
+		return s.mutateRoom(ctx, id, false, "spotlight", "")
+	}
+	encoded, err := json.Marshal(spotlight)
 	if err != nil {
-		return false, fmt.Errorf("list room fields: %w", err)
+		return fmt.Errorf("marshal spotlight: %w", err)
 	}
-	var drop []string
-	for _, field := range fields {
-		memberID, ok := strings.CutPrefix(field, screenSharePrefix)
-		if ok && memberID != keepMemberID {
-			drop = append(drop, field)
-		}
-	}
-	if len(drop) == 0 {
-		return false, nil
-	}
-	if err := s.rdb.HDel(ctx, roomKey(id), drop...).Err(); err != nil {
-		return false, fmt.Errorf("stop screen shares: %w", err)
-	}
-	return true, nil
+	return s.mutateRoom(ctx, id, false, "spotlight", string(encoded))
 }
 
 // ScreenSecret returns the secret that makes the room's broadcast path
@@ -810,11 +788,12 @@ func importedOf(tracks []TrackInfo) []TrackInfo {
 	return out
 }
 
-// SwapSource repoints a live room at a new source, keeping its members, chat
-// and controller and clearing everything describing the previous media —
-// tracks, error, upload reservation, position, playlists and published set.
-// Returns the upload id reserved before the swap and the new generation.
-func (s *Store) SwapSource(ctx context.Context, id, kind, fileName, status string, now time.Time) (previousUpload string, generation int, err error) {
+// SwapSource repoints the room's media stage at a new source opened by
+// memberID, keeping its members, chat, controller, screens and live, and
+// clearing everything describing the previous media — tracks, error, upload
+// reservation, position, playlists and published set. Returns the upload id
+// reserved before the swap and the new generation.
+func (s *Store) SwapSource(ctx context.Context, id, memberID, fileName, status string, now time.Time) (previousUpload string, generation int, err error) {
 	result, err := s.rdb.Eval(ctx, `
 local status = redis.call('HGET', KEYS[1], 'status')
 if not status then return {0, '', 0} end
@@ -831,7 +810,7 @@ local generation = tonumber(redis.call('HGET', KEYS[1], 'media_generation') or '
 redis.call('HSET', KEYS[1],
   'status', ARGV[1],
   'file_name', ARGV[2],
-  'source_kind', ARGV[3],
+  'source_member_id', ARGV[3],
   'media_generation', generation,
   'media_version', 0,
   'subs_version', 0,
@@ -841,10 +820,8 @@ redis.call('HSET', KEYS[1],
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts', 'imported_subtitle_tracks',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
-  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token', 'live')
-for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
-  if string.sub(field, 1, 13) == 'screen_share:' then redis.call('HDEL', KEYS[1], field) end
-end
+  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token',
+  'source_origin', 'source_kind')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])
@@ -852,7 +829,7 @@ redis.call('DEL', KEYS[5])
 redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
 return {1, previous, generation}
 `, []string{roomKey(id), uploadKey(id), stateKey(id), playlistsKey(id), publishedKey(id)},
-		status, fileName, kind, strconv.FormatInt(now.UnixMilli(), 10)).Slice()
+		status, fileName, memberID, strconv.FormatInt(now.UnixMilli(), 10)).Slice()
 	if err != nil {
 		return "", 0, fmt.Errorf("swap room source: %w", err)
 	}
@@ -1112,11 +1089,4 @@ func (s *Store) Published(ctx context.Context, id string) (map[string]struct{}, 
 		published[name] = struct{}{}
 	}
 	return published, nil
-}
-
-// SwapSourceForTest points a room at a live with nothing else changed; tests
-// of the reporters use it instead of the HTTP route.
-func (s *Store) SwapSourceForTest(ctx context.Context, id string) error {
-	_, _, err := s.SwapSource(ctx, id, SourceLive, "live", "processing", time.Now())
-	return err
 }

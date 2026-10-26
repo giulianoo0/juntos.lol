@@ -80,9 +80,9 @@ func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.C
 
 const maxImportedSubtitles = 8
 
-// importSubtitleRequest is one subtitle file the host picked by hand, already
-// converted by the browser. The member id must be the room's controller: a
-// guest's import stays in its own browser.
+// importSubtitleRequest is one subtitle file picked by hand, already
+// converted by the browser. The member id must be the host or whoever opened
+// the media: anyone else's import stays in their own browser.
 type importSubtitleRequest struct {
 	MemberID        string  `json:"memberId" binding:"required"`
 	MediaGeneration *int    `json:"mediaGeneration" binding:"required"`
@@ -113,7 +113,7 @@ func importSubtitle(store *room.Store, cfg config.Config, publisher SubtitlePubl
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		if req.MemberID != storedRoom.ControllerID {
+		if req.MemberID != storedRoom.ControllerID && req.MemberID != storedRoom.SourceMemberID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "not_controller"})
 			return
 		}
