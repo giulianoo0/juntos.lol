@@ -101,12 +101,10 @@ func TestCardGoesUpThroughTheBotWhenTheAppIsOnTheServer(t *testing.T) {
 	require.Equal(t, http.MethodPost, calls[0].Method)
 	require.Equal(t, "/channels/chan-1/messages", calls[0].Path)
 	require.Equal(t, "Bot bot-token", calls[0].Auth)
-	embed := calls[0].Body["embeds"].([]any)[0].(map[string]any)
-	require.Contains(t, embed["title"], "Sexta")
-	require.Contains(t, embed["title"], "🔒")
-	buttons := calls[0].Body["components"].([]any)[0].(map[string]any)["components"].([]any)
-	require.Equal(t, "https://juntos.test/room/ROOM1234", buttons[0].(map[string]any)["url"])
-	require.Equal(t, "copy:ROOM1234", buttons[1].(map[string]any)["custom_id"])
+	require.InDelta(t, flagComponentsV2, calls[0].Body["flags"], 0)
+	require.NotContains(t, calls[0].Body, "embeds", "a new webhook message with components V2 refuses embeds")
+	require.Contains(t, mustJSON(t, calls[0].Body), "Sexta")
+	require.Contains(t, mustJSON(t, calls[0].Body), "🔒 Senha")
 
 	stored, err := links.Get(t.Context(), "ROOM1234")
 	require.NoError(t, err)
@@ -124,7 +122,9 @@ func TestCardGoesUpThroughTheBotWhenTheAppIsOnTheServer(t *testing.T) {
 	require.Equal(t, http.MethodPatch, calls[1].Method)
 	require.Equal(t, "/channels/chan-1/messages/msg-1", calls[1].Path)
 	require.Contains(t, mustJSON(t, calls[1].Body), "Ana")
-	require.Contains(t, mustJSON(t, calls[1].Body), "filme.mkv")
+	require.Contains(t, mustJSON(t, calls[1].Body), `filme\\.mkv`)
+	require.Nil(t, calls[1].Body["content"], "the edit clears an old card's content")
+	require.Equal(t, []any{}, calls[1].Body["embeds"], "the bot's edit clears an old card's embed")
 
 	// A second HostJoined (the host reloading) does not post a second card.
 	notifier.HostJoined("ROOM1234")
@@ -135,7 +135,7 @@ func TestCardGoesUpThroughTheBotWhenTheAppIsOnTheServer(t *testing.T) {
 	calls = waitCalls(t, discord, 3)
 	require.Equal(t, http.MethodPatch, calls[2].Method)
 	require.Contains(t, mustJSON(t, calls[2].Body), "encerrada")
-	require.Empty(t, calls[2].Body["components"], "a closed room has no buttons")
+	require.NotContains(t, mustJSON(t, calls[2].Body), "custom_id", "a closed room has no buttons")
 	_, err = links.Get(t.Context(), "ROOM1234")
 	require.ErrorIs(t, err, ErrNoLink)
 }
@@ -155,6 +155,8 @@ func TestCardUsesTheInteractionTokenWithoutABotAndFreezesAfterIt(t *testing.T) {
 	calls = waitCalls(t, discord, 2)
 	require.Equal(t, http.MethodPatch, calls[1].Method)
 	require.Equal(t, "/webhooks/app-1/tok/messages/msg-1", calls[1].Path)
+	require.Contains(t, calls[1].Body, "embeds")
+	require.Nil(t, calls[1].Body["embeds"], "the webhook edit clears an old card's embed with null")
 
 	now = now.Add(16 * time.Minute)
 	notifier.RoomChanged("ROOM1234")
@@ -170,6 +172,100 @@ func TestCardIgnoresRoomsFromElsewhere(t *testing.T) {
 	notifier.RoomClosed("OTHER")
 	time.Sleep(60 * time.Millisecond)
 	require.Empty(t, discord.snapshot())
+}
+
+func TestRoomCard(t *testing.T) {
+	const logo = "https://juntos.lol/icon-512.png"
+	tests := []struct {
+		name  string
+		link  Link
+		card  Card
+		types []float64
+		texts []string
+		thumb []string
+	}{
+		{
+			name:  "sala vazia mostra nome, porta aberta, logo e contagem",
+			card:  Card{Name: "Sexta", Door: DoorOpen, Members: []string{"Giuli"}},
+			types: []float64{componentSection, componentSeparator, componentText, componentRow},
+			texts: []string{"## Sexta", "🔓 Aberta", "👥 **1** · Giuli"},
+			thumb: []string{logo},
+		},
+		{
+			name:  "o que está tocando ganha a capa ao lado",
+			card:  Card{Door: DoorApproval, Members: []string{"Giuli", "Ana"}, Playing: "Lofi ao vivo", Image: "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg"},
+			types: []float64{componentSection, componentSeparator, componentSection, componentText, componentRow},
+			texts: []string{"## Sala", "✋ Aprovação", "▶️ **Lofi ao vivo**", "👥 **2** · Giuli, Ana"},
+			thumb: []string{logo, "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg"},
+		},
+		{
+			name:  "sem capa o que está tocando é só texto",
+			link:  Link{Name: "Do comando", Locked: true},
+			card:  Card{Playing: "filme.mkv"},
+			types: []float64{componentSection, componentSeparator, componentText, componentText, componentRow},
+			texts: []string{"## Do comando", "🔒 Senha", `▶️ **filme\.mkv**`, "👥 **0**"},
+			thumb: []string{logo},
+		},
+		{
+			name:  "nove pessoas listam oito e contam a última",
+			card:  Card{Name: "Cheia", Door: DoorOpen, Members: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
+			types: []float64{componentSection, componentSeparator, componentText, componentRow},
+			texts: []string{"## Cheia", "🔓 Aberta", "👥 **9** · a, b, c, d, e, f, g, h e mais 1"},
+			thumb: []string{logo},
+		},
+		{
+			name:  "apelido e nome com markdown aparecem como foram digitados",
+			card:  Card{Name: "**Sexta**\n# oi", Door: DoorOpen, Members: []string{"[x](https://evil.test)", "@everyone", "<@123>"}},
+			types: []float64{componentSection, componentSeparator, componentText, componentRow},
+			texts: []string{`## \*\*Sexta\*\* \# oi`, "🔓 Aberta", `👥 **3** · \[x\]\(https\:\/\/evil\.test\), \@everyone, \<\@123\>`},
+			thumb: []string{logo},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			notifier := &Notifier{Origin: "https://juntos.test"}
+			var message map[string]any
+			require.NoError(json.Unmarshal([]byte(mustJSON(t, notifier.roomCard("ROOM1234", &tt.link, tt.card))), &message))
+
+			require.InDelta(1<<15, message["flags"], 0)
+			require.Equal(map[string]any{"parse": []any{}}, message["allowed_mentions"])
+			require.NotContains(message, "content")
+			require.NotContains(message, "embeds")
+			top := message["components"].([]any)
+			require.Len(top, 1)
+			container := top[0].(map[string]any)
+			require.InDelta(componentContainer, container["type"], 0)
+			require.InDelta(0xFF7A45, container["accent_color"], 0)
+
+			var types []float64
+			var texts, thumbs []string
+			var buttons []any
+			for _, raw := range container["components"].([]any) {
+				part := raw.(map[string]any)
+				types = append(types, part["type"].(float64))
+				switch part["type"].(float64) {
+				case componentText:
+					texts = append(texts, part["content"].(string))
+				case componentSection:
+					for _, child := range part["components"].([]any) {
+						texts = append(texts, child.(map[string]any)["content"].(string))
+					}
+					accessory := part["accessory"].(map[string]any)
+					require.InDelta(componentThumbnail, accessory["type"], 0)
+					thumbs = append(thumbs, accessory["media"].(map[string]any)["url"].(string))
+				case componentRow:
+					buttons = part["components"].([]any)
+				}
+			}
+			require.Equal(tt.types, types)
+			require.Equal(tt.texts, texts)
+			require.Equal(tt.thumb, thumbs)
+			require.Len(buttons, 2)
+			require.Equal(map[string]any{"type": float64(componentButton), "style": float64(buttonLink), "label": "Entrar", "url": "https://juntos.test/room/ROOM1234"}, buttons[0])
+			require.Equal(map[string]any{"type": float64(componentButton), "style": float64(buttonSecondary), "label": "Copiar link", "custom_id": "copy:ROOM1234"}, buttons[1])
+		})
+	}
 }
 
 func mustJSON(t *testing.T, value any) string {
