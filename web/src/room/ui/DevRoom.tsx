@@ -183,6 +183,7 @@ export function DevRoom() {
       deny: (id) => setKnocks((list) => list.filter((item) => item.id !== id)),
       hostMute: (id) => update(id, { hostMuted: true, speaking: false }),
       hostCamOff: (id) => update(id, { hostCamOff: true }),
+      makeHost: () => undefined,
       kick: (id) => setPeople((list) => list.filter((person) => person.id !== id)),
       setAccess: (mode) => setJoinMode(mode),
       closeStage: (stage) => setStages((list) => list.filter((item) => item.id !== stage.id)),

@@ -1,4 +1,4 @@
-import { Ellipsis, MicOff, Pin, PinOff, Sparkles, UserX, VideoOff } from 'lucide-react'
+import { Crown, Ellipsis, MicOff, Pin, PinOff, Sparkles, UserX, VideoOff } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { Person } from '../model'
 import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
@@ -59,6 +59,7 @@ export function PersonMenu({ person, trigger }: {
                     onSelect={() => { vm.actions.hostCamOff(person.id); close() }}
                   />
                   <SpringRule />
+                  <SpringRow icon={<Crown size={16} />} label={strings.makeHost} onSelect={() => { vm.actions.makeHost(person.id); close() }} />
                   <SpringRow icon={<UserX size={16} />} label={strings.kick} tone="danger" onSelect={() => { vm.actions.kick(person.id); close() }} />
                 </>
               ) : null}

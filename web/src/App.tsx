@@ -9,7 +9,7 @@ const DevRoom = lazy(() => import('./room/ui/DevRoom').then((module) => ({ defau
 
 async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
   const { createEmptyRoom } = await import('./upload')
-  const room = await createEmptyRoom(localStorage.getItem('ss.nickname') ?? '', input.name || undefined)
+  const room = await createEmptyRoom(localStorage.getItem('ss.nickname') ?? '', input.name || undefined, input.password || undefined)
   try { localStorage.setItem('ss.nickname', room.nickname) } catch {}
   return { roomID: room.roomID }
 }

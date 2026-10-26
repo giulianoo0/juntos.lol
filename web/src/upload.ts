@@ -180,11 +180,11 @@ export function clearResumableSource(roomID: string): void {
 }
 
 // A room is born empty: what it plays is opened in it afterwards.
-async function createRoom(nickname: string, name?: string): Promise<CreateRoomResponse> {
+async function createRoom(nickname: string, name?: string, password?: string): Promise<CreateRoomResponse> {
   const response = await fetch('/api/rooms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(name ? { nickname, name } : { nickname }),
+    body: JSON.stringify({ nickname, ...(name ? { name } : {}), ...(password ? { joinMode: 'password', password } : {}) }),
   })
   if (!response.ok) throw new Error('create room failed')
   const created = await response.json() as CreateRoomResponse
@@ -193,9 +193,9 @@ async function createRoom(nickname: string, name?: string): Promise<CreateRoomRe
 }
 
 /** A room with nothing on yet: screens, a live or a media are opened from inside it. */
-export async function createEmptyRoom(nickname: string, name?: string): Promise<UploadResult> {
+export async function createEmptyRoom(nickname: string, name?: string, password?: string): Promise<UploadResult> {
   if (mocksEnabled) return mockCreateRoom(nickname)
-  const room = await createRoom(nickname, name)
+  const room = await createRoom(nickname, name, password)
   return { roomID: room.id, nickname: room.nickname }
 }
 

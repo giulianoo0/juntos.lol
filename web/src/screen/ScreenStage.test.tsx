@@ -4,7 +4,7 @@ import { ScreenStage } from './ScreenStage'
 import { useScreenShare } from './useScreenShare'
 import { ToastProvider } from '../ui/Toast'
 import { en } from '../i18n/en'
-import { fetchScreenRelay, loadScreenQuality, setScreenShareOpen, watchScreen } from '../screenshare'
+import { fetchScreenRelay, loadScreenQuality, watchScreen } from '../screenshare'
 
 vi.mock('../screenshare', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../screenshare')>()),
@@ -21,7 +21,6 @@ vi.mock('../screenshare', async (importOriginal) => ({
   requestScreenStream: vi.fn(),
   takeScreenStream: vi.fn().mockReturnValue(null),
   setScreenLive: vi.fn().mockResolvedValue(undefined),
-  setScreenShareOpen: vi.fn().mockResolvedValue(undefined),
 }))
 
 const t = Object.assign((key: string) => en[key] ?? key, {
@@ -83,12 +82,6 @@ it('says nobody is sharing when the room lists no screen', async () => {
   await waitFor(() => expect(fetchScreenRelay).toHaveBeenCalled())
   expect(screen.getByText(en['room.screenWaiting'])).toBeTruthy()
   expect(watchScreen).not.toHaveBeenCalled()
-})
-
-it('has no switch that opens sharing to everyone: a guest asks the host instead', () => {
-  renderStage()
-  expect(screen.queryByRole('button', { name: en['room.screenOpenOn'] })).toBeNull()
-  expect(setScreenShareOpen).not.toHaveBeenCalled()
 })
 
 it('remembers the picked quality', async () => {

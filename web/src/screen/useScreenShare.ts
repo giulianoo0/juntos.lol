@@ -11,7 +11,6 @@ import {
   screenPath,
   screenShareSupported,
   setScreenLive,
-  setScreenShareOpen,
   takeScreenStream,
   watchScreen,
   publishEncodedScreen,
@@ -115,7 +114,6 @@ export interface ScreenShareApi {
   setQuality(id: ScreenQualityId): void
   setMuted(muted: boolean): void
   setVolume(volume: number): void
-  setShareOpen(open: boolean): Promise<void>
   /** Binds a remote member's screen to a canvas, or unbinds it when passed null. */
   attach(memberId: string, canvas: HTMLCanvasElement | null): void
   /**
@@ -424,10 +422,8 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     if (next > 0 && mutedRef.current) setMuted(false)
   }, [pool, setMuted])
 
-  const setOpen = useCallback((open: boolean) => setScreenShareOpen(roomId, memberId, capability, open), [roomId, memberId, capability])
-
   // Everyone needs the relay to watch, and its answer also says whether this
-  // member may publish, so it is refetched when the host flips the switch.
+  // member may publish, so it is refetched when the host grants or takes back a stage.
   useEffect(() => {
     if (!memberId || !capability) return
     let disposed = false
@@ -614,7 +610,6 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     setQuality,
     setMuted,
     setVolume,
-    setShareOpen: setOpen,
     attach,
     canvasRef,
   }

@@ -11,7 +11,7 @@ const person = (id: string, name: string, extra: Partial<Person> = {}): Person =
 function model(overrides: Partial<RoomViewModel> = {}): RoomViewModel {
   const actions = Object.fromEntries([
     'setMic', 'setCam', 'share', 'react', 'sendChat', 'leave', 'copyLink', 'spotlight', 'answerRequest',
-    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'setAccess', 'closeStage',
+    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'makeHost', 'setAccess', 'closeStage',
   ].map((name) => [name, vi.fn()])) as unknown as RoomActions
   return {
     name: 'Sessão de sexta',

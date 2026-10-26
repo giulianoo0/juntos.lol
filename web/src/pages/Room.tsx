@@ -333,6 +333,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   useEffect(() => {
     if (!sync.errorSeq) return
     if (sync.lastError === 'not_controller') toast(t('room.notController'))
+    else if (sync.lastError === 'rate_limited') toast(t('room.rateLimited'))
   }, [sync.errorSeq, sync.lastError, t, toast])
   if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
     mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
@@ -823,6 +824,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       hostMute: call.hostMute,
       hostCamOff: call.hostCamOff,
       kick: (memberId) => { sync.send('kick', { targetId: memberId }) },
+      makeHost: (memberId) => { sync.send('transfer', { targetId: memberId }) },
       setAccess: (mode, password) => {
         void setRoomAccess(room.id, sync.memberId, sync.capability, mode, password)
           .then(() => sync.refreshRoom())

@@ -86,6 +86,7 @@ export interface RoomActions {
   hostMute: (memberId: string) => void
   hostCamOff: (memberId: string) => void
   kick: (memberId: string) => void
+  makeHost: (memberId: string) => void
   setAccess: (mode: JoinMode, password?: string) => void
   /** Host, or the stage's owner. */
   closeStage: (stage: Stage) => void

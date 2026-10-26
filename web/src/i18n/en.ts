@@ -372,6 +372,7 @@ export const en: Record<string, string> = {
   'request.dismiss': 'Dismiss request',
   'room.denied': 'The host did not let you in',
   'room.badPassword': 'Wrong password',
+  'room.rateLimited': 'Slow down, too many actions in a row',
   'room.tooManyAttempts': 'Too many attempts. Wait a bit',
   'stage.ask': 'Ask the host',
   'stage.kind.media': 'Media',

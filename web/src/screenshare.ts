@@ -206,16 +206,6 @@ export async function setScreenLive(roomId: string, memberId: string, capability
   }
 }
 
-/** The host's switch for whether anyone but them may share. */
-export async function setScreenShareOpen(roomId: string, memberId: string, capability: string, open: boolean): Promise<void> {
-  const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/screenshare/open`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, capability, open }),
-  })
-  if (!response.ok) throw new Error('screenshare open flag rejected')
-}
-
 /**
  * The concrete codec strings the publisher itself probes, in the order we want
  * them tried. Hardware H.264 is the one encoder that exists on every machine

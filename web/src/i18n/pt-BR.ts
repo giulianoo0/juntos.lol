@@ -372,6 +372,7 @@ export const ptBR: Record<string, string> = {
   'request.dismiss': 'Dispensar pedido',
   'room.denied': 'O host não deixou você entrar',
   'room.badPassword': 'Senha errada',
+  'room.rateLimited': 'Calma, muitas ações seguidas',
   'room.tooManyAttempts': 'Muitas tentativas. Espere um pouco',
   'stage.ask': 'Pedir ao anfitrião',
   'stage.kind.media': 'Mídia',
