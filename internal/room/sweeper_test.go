@@ -15,35 +15,6 @@ import (
 	"github.com/giulianoo0/ss/internal/objectstore"
 )
 
-func TestPurgeDataStripsARoomButKeepsItsRecord(t *testing.T) {
-	mr := miniredis.RunT(t)
-	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
-	dir := t.TempDir()
-	bucket := objectstore.NewFake()
-	now := time.Now()
-	require.NoError(t, s.Create(t.Context(), &Room{
-		ID: "bad", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
-	}))
-	require.NoError(t, s.ReserveUpload(t.Context(), "bad", "claim1", now))
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "rooms", "bad", "subs"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rooms", "bad", "subs", "sub_0_eng.vtt"), []byte("x"), 0o644))
-	for _, key := range []string{"rooms/bad/g0/hls/seg.m4s", "rooms/live/g0/hls/seg.m4s"} {
-		require.NoError(t, bucket.Put(t.Context(), key, strings.NewReader("x"), 1, "", ""))
-	}
-
-	require.NoError(t, PurgeData(t.Context(), s, dir, bucket, "bad"))
-
-	_, err := os.Stat(filepath.Join(dir, "rooms", "bad"))
-	require.True(t, os.IsNotExist(err))
-	require.Equal(t, []string{"rooms/live/g0/hls/seg.m4s"}, bucket.Keys())
-	got, err := s.Get(t.Context(), "bad")
-	require.NoError(t, err)
-	require.Equal(t, "uploading", got.Status)
-	claim, err := s.UploadID(t.Context(), "bad")
-	require.NoError(t, err)
-	require.Empty(t, claim)
-}
-
 func TestSweeperRemovesExpiredRoom(t *testing.T) {
 	mr := miniredis.RunT(t)
 	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)

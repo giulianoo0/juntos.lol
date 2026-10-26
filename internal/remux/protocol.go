@@ -108,12 +108,6 @@ type LiveReport struct {
 	State  LiveState `json:"state"`
 }
 
-// TakesLive reports whether a live may be put on this worker: it resolves
-// YouTube and has a live slot to spare.
-func (c *Capability) TakesLive() bool {
-	return c.TakesYoutube() && c.LiveSlots > c.ActiveLives
-}
-
 // TakesYoutube reports whether a YouTube run may be dispatched here.
 func (c *Capability) TakesYoutube() bool {
 	return c.Compatible() && c.Youtube != nil && c.Youtube.Version != ""

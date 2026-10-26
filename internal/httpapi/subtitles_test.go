@@ -166,15 +166,12 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 	require.Equal(t, validVTT, string(data))
 
 	require.False(t, got.ClientSubs)
-	has, err := store.HasClientSubs(t.Context(), "r2")
-	require.NoError(t, err)
-	require.False(t, has)
 
 	w = postSubtitles(t, e, "r2", `{"complete":true,"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}]}`)
 	require.Equal(t, http.StatusCreated, w.Code)
-	has, err = store.HasClientSubs(t.Context(), "r2")
+	got, err = store.Get(t.Context(), "r2")
 	require.NoError(t, err)
-	require.True(t, has)
+	require.True(t, got.ClientSubs)
 }
 
 type recordingSubtitlePublisher struct {

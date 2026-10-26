@@ -2,8 +2,6 @@ package room
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -67,29 +65,6 @@ func SweepOnce(ctx context.Context, store *Store, dataDir string, bucket MediaSt
 
 func sweepOnce(ctx context.Context, store *Store, dataDir string) {
 	SweepOnce(ctx, store, dataDir, nil)
-}
-
-// PurgeData removes everything a room accumulated — working directory and
-// published media — while leaving the record in place, so the error that
-// killed the room stays readable. Every step is attempted even when one fails.
-func PurgeData(ctx context.Context, store *Store, dataDir string, bucket MediaStore, id string) error {
-	var errs []error
-	claim, err := store.UploadID(ctx, id)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		errs = append(errs, fmt.Errorf("get client claim: %w", err))
-	}
-	if claim != "" {
-		if err := store.ReleaseUpload(ctx, id, claim); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if err := os.RemoveAll(filepath.Join(dataDir, "rooms", id)); err != nil {
-		errs = append(errs, fmt.Errorf("remove room dir: %w", err))
-	}
-	if err := removeRoomMedia(ctx, bucket, id); err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
 }
 
 func removeRoomMedia(ctx context.Context, bucket MediaStore, id string) error {
