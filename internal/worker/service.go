@@ -512,9 +512,23 @@ func (s *Service) release(ctx context.Context, job *JobRecord) {
 	_ = s.Registry.DeleteJob(ctx, job)
 }
 
-// CancelRoom releases every job a room holds: the source was swapped or the
-// room died.
+// CancelRoom releases every job a room holds: the room died.
 func (s *Service) CancelRoom(roomID string) {
+	s.cancelRoomJobs(roomID, func(*JobRecord) bool { return true })
+}
+
+// CancelRoomMedia releases the jobs behind the room's media stage: its
+// source was swapped or closed. The live plays on.
+func (s *Service) CancelRoomMedia(roomID string) {
+	s.cancelRoomJobs(roomID, func(job *JobRecord) bool { return job.Kind != JobKindLive })
+}
+
+// CancelRoomLive stops the room's live and nothing else.
+func (s *Service) CancelRoomLive(roomID string) {
+	s.cancelRoomJobs(roomID, func(job *JobRecord) bool { return job.Kind == JobKindLive })
+}
+
+func (s *Service) cancelRoomJobs(roomID string, match func(*JobRecord) bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	ids, err := s.Registry.JobsForRoom(ctx, roomID)
@@ -523,7 +537,7 @@ func (s *Service) CancelRoom(roomID string) {
 	}
 	for _, id := range ids {
 		job, err := s.Registry.LoadJob(ctx, id)
-		if err != nil || job == nil {
+		if err != nil || job == nil || !match(job) {
 			continue
 		}
 		s.release(ctx, job)
