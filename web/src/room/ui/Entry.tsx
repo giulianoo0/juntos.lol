@@ -23,7 +23,7 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
   const [nickname, setNickname] = useState(vm.nickname)
   const [password, setPassword] = useState('')
   const needsPassword = vm.joinMode === 'password'
-  const ready = nickname.trim() !== '' && (!needsPassword || password !== '') && !vm.busy
+  const ready = (!needsPassword || password !== '') && !vm.busy
   const present = vm.present.map((name, index) => ({ id: `${index}:${name}`, name }))
 
   const submit = (event: FormEvent) => {
