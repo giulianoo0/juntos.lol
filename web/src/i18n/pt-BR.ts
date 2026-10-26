@@ -125,6 +125,8 @@ export const ptBR: Record<string, string> = {
   'room.volume': 'Volume',
   'room.volumeBoost': 'Boost',
   'room.exitFullscreen': 'Sair da tela cheia',
+  'room.pip': 'Picture-in-picture',
+  'room.exitPip': 'Sair do picture-in-picture',
   'room.processing': 'Preparando seu vídeo',
   'room.processingHelp': 'A transmissão começa assim que o primeiro trecho for publicado.',
   'room.waitingInitial': 'Aguardando o início do envio...',

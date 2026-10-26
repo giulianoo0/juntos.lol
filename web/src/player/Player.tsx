@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import {
-  FastForward, Lock, Maximize, Minimize, Pause, Play, Rewind,
+  FastForward, Lock, Maximize, Minimize, Pause, PictureInPicture2, Play, Rewind,
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
   FileUp,
   ClipboardCopy,
@@ -35,6 +35,7 @@ import { bundledLoader, fetchBundle, prefetchInitSegments } from './bundle'
 import { prefetchingLoader } from './prefetch'
 import { isTouchDevice, recordMediaBitrate, TOUCH_BACK_BUFFER_SEC } from './playbackHealth'
 import { useStageFullscreen } from '../ui/useStageFullscreen'
+import { usePictureInPicture } from './pip'
 import { createSeekTracer, formatSeekTrace } from '../pipeline/seekTrace'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { lastUploadFailureDetail } from '../upload'
@@ -73,6 +74,8 @@ const REMOTE_ECHO_MS = 500
 // this: a position it calls covered that no region here holds is a room that
 // waits forever.
 const REGION_BEHIND_MS = 1_000
+// Boxes that change no layout on the page, around what a PiP window takes.
+const PIP_SLOT_STYLE = { display: 'contents' } as const
 
 export function regionHolds(region: MediaRegion, ms: number): boolean {
   const end = region.startMs + region.producedMs + (region.growing ? REGION_AHEAD_MS : 0)
@@ -933,6 +936,8 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   }, [endChase])
 
   const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(playerRef)
+  const pipBodyRef = useRef<HTMLDivElement>(null)
+  const pip = usePictureInPicture(pipBodyRef, videoRef)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1011,6 +1016,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
 
   const muteLabel = t(muted || volume === 0 ? 'room.unmute' : 'room.mute')
   const fullscreenLabel = t(fullscreen ? 'room.exitFullscreen' : 'room.fullscreen')
+  const pipLabel = t(pip.active ? 'room.exitPip' : 'room.pip')
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
   const settingGroups: SettingGroup[] = useMemo(() => {
@@ -1244,6 +1250,11 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           <span className="sr-only">{t('status.buffering')}</span>
         </div>
       ) : null}
+      {/* A PiP window takes the inner box, the video and its subtitle layers
+          together; the inner box is the outer one's only child, so React
+          never places a sibling against it while it is away. */}
+      <div style={PIP_SLOT_STYLE}>
+      <div ref={pipBodyRef} style={PIP_SLOT_STYLE}>
       <video
         ref={videoRef}
         className="video"
@@ -1326,6 +1337,8 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           onFailed={setAssFailed}
         />
       ) : null}
+      </div>
+      </div>
       {feedback ? <span key={feedback.id} className="player-feedback" aria-hidden="true">{feedback.node}</span> : null}
       {unplayable ? (
         <div className="player-unplayable" role="alert">
@@ -1487,6 +1500,15 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
               />
             </div>
           </div>
+          {pip.mode !== 'none' ? (
+            <button
+              className="control-button"
+              aria-label={pipLabel}
+              title={pipLabel}
+              aria-pressed={pip.active}
+              onClick={pip.toggle}
+            ><PictureInPicture2 size={16} /></button>
+          ) : null}
           <button
             className="control-button"
             aria-label={fullscreenLabel}

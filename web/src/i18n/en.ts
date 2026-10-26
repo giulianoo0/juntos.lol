@@ -125,6 +125,8 @@ export const en: Record<string, string> = {
   'room.volume': 'Volume',
   'room.volumeBoost': 'Boost',
   'room.exitFullscreen': 'Exit fullscreen',
+  'room.pip': 'Picture-in-picture',
+  'room.exitPip': 'Exit picture-in-picture',
   'room.processing': 'Preparing your video',
   'room.processingHelp': 'Playback starts as soon as the first segment is published.',
   'room.waitingInitial': 'Waiting for the initial upload...',
