@@ -286,10 +286,10 @@ describe('pedido de palco', () => {
 
     await pickShare('Torrent')
     expect(sent()).toContainEqual({ type: 'stageRequest', kind: 'media' })
-    expect(screen.queryByRole('heading', { name: 'Abrir um torrent' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Magnet link' })).not.toBeInTheDocument()
 
     receive({ type: 'stageGrant', kind: 'media', allow: true })
-    expect(await screen.findByRole('heading', { name: 'Abrir um torrent' })).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Magnet link' })).toBeInTheDocument()
   })
 
   it('mostra ao host o pedido do convidado e manda a resposta', async () => {
