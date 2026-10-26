@@ -122,6 +122,9 @@ var resumeGrace = 45 * time.Second
 type clientInbound struct {
 	client  *client
 	message Inbound
+	// rateLimited stands in for a dropped message: the room tells the
+	// sender, since only the room writes to its socket.
+	rateLimited bool
 }
 
 func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
@@ -785,6 +788,10 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 }
 
 func (r *roomConn) handleInbound(event clientInbound) {
+	if event.rateLimited {
+		r.send(event.client, Outbound{Type: "error", ErrCode: "rate_limited"})
+		return
+	}
 	message := event.message
 	switch message.Type {
 	case "heartbeat":
