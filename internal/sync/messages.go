@@ -30,6 +30,9 @@ type Inbound struct {
 	// held; the server hands it back while it is still being kept.
 	MemberID   string `json:"memberId,omitempty"`
 	Capability string `json:"capability,omitempty"`
+	// Mic and Cam on a media message; a field left out keeps its value.
+	Mic *bool `json:"mic,omitempty"`
+	Cam *bool `json:"cam,omitempty"`
 }
 
 // TitleRequest is a catalog title a viewer asks the controller to play. The
@@ -74,7 +77,10 @@ type Outbound struct {
 	Title         *TitleRequest       `json:"title,omitempty"`
 	DeadlineMs    int64               `json:"deadlineMs,omitempty"`
 	HostSubtitles *HostSubtitles      `json:"hostSubtitles,omitempty"`
-	closeAfter    bool
+	// Mic and Cam on a forceMedia: what the host just turned off for this member.
+	Mic        *bool `json:"mic,omitempty"`
+	Cam        *bool `json:"cam,omitempty"`
+	closeAfter bool
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.

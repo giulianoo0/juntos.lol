@@ -41,6 +41,12 @@ type Member struct {
 	ID       string    `json:"id"`
 	Nickname string    `json:"nickname"`
 	JoinedAt time.Time `json:"joinedAt"`
+	// What the member says their microphone and camera are doing, and whether
+	// the host turned either off for them.
+	Mic        bool `json:"mic,omitempty"`
+	Cam        bool `json:"cam,omitempty"`
+	HostMuted  bool `json:"hostMuted,omitempty"`
+	HostCamOff bool `json:"hostCamOff,omitempty"`
 }
 
 // ScreenShare is one member publishing their screen to the room right now.

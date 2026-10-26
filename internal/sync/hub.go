@@ -822,6 +822,8 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.touch()
 	case "stillHere":
 		r.touch()
+	case "media", "hostMute", "hostCamOff":
+		r.handleCall(event.client, message)
 	}
 }
 
