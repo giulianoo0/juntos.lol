@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { audioLocked } from '../ui/audioUnlock'
 import { relayPublishSupported } from './moq'
 import { fetchCallRelay, localLevel, openCallWatch, publishCall, type CallPublisher, type CallRelay, type CallWatchSession, type MemberWatch } from './media'
 import { hearable, viewable, type CallMember } from './plan'
@@ -58,6 +59,10 @@ export interface CallApi {
 const LEVEL_EVERY_MS = 100
 /** How often a broadcast that has not gone live is looked at again. */
 const WATCH_TICK_MS = 1_000
+/** How long a voice the room says is on may go without a single sample before it is reopened. */
+const AUDIO_STALL_MS = 5_000
+/** A call reconnects sooner than a screen: there is no 4K keyframe to wait for. */
+const CALL_RETRY = { retryMs: 4_000, loadingRetryMs: 6_000, gapMs: 1_500 }
 
 /**
  * Everything a member's camera and voice need in a room: turning them on and
@@ -119,10 +124,13 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
     if (!relay || !supported || !broadcasting) return
     let disposed = false
     let opened: CallPublisher | null = null
-    void publishCall(relay).then((next) => {
+    void publishCall(relay).then(async (next) => {
       if (disposed) { next.close(); return }
       opened = next
-      setPublisher(next)
+      // The room hears about my devices only once the relay has the
+      // broadcast: a viewer that subscribes earlier finds nothing there.
+      await next.ready
+      if (!disposed) setPublisher(next)
     }).catch(() => undefined)
     return () => {
       disposed = true
@@ -134,14 +142,17 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
   useEffect(() => { publisher?.setMic(local.micTrack ?? undefined) }, [publisher, local.micTrack])
   useEffect(() => { publisher?.setCam(local.camTrack ?? undefined) }, [publisher, local.camTrack])
 
+  const live = publisher !== null
   useEffect(() => {
     if (!memberId) return
-    sendRef.current({ type: 'media', mic: local.mic, cam: local.cam })
-  }, [memberId, local.mic, local.cam])
+    sendRef.current({ type: 'media', mic: live && local.mic, cam: live && local.cam })
+  }, [memberId, live, local.mic, local.cam])
 
   // Which broadcasts to hold, and what of each: voices from the room list,
   // cameras from the tiles bound right now.
   const voices = useMemo(() => new Set(hearable(members, memberId)), [members, memberId])
+  const voicesRef = useRef(voices)
+  voicesRef.current = voices
   const planRef = useRef({ voices, members })
   planRef.current = { voices, members }
   const shape = useCallback((target: string, watch: MemberWatch) => {
@@ -158,6 +169,7 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
       shape(target, watch)
       return Promise.resolve(watch)
     },
+    ...CALL_RETRY,
     onStatus: (target, next) => setStatus((all) => {
       if (next === undefined) {
         if (!(target in all)) return all
@@ -173,11 +185,27 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
     if (session) pool.refresh()
   }, [session, pool])
 
+  // A voice the room says is on but whose samples stopped coming is stuck,
+  // not quiet: the encoder sends silence too. It is opened again.
   useEffect(() => {
-    const timer = setInterval(() => pool.tick(), WATCH_TICK_MS)
-    return () => {
-      clearInterval(timer)
-    }
+    const heard = new Map<string, { at: number | undefined; since: number }>()
+    const timer = setInterval(() => {
+      pool.tick()
+      if (audioLocked()) return
+      const now = performance.now()
+      for (const target of [...heard.keys()]) if (!voicesRef.current.has(target)) heard.delete(target)
+      for (const target of voicesRef.current) {
+        const watch = pool.get(target)
+        if (!watch) { heard.delete(target); continue }
+        const at = watch.audioAt()
+        const last = heard.get(target)
+        if (!last || last.at !== at) { heard.set(target, { at, since: now }); continue }
+        if (now - last.since < AUDIO_STALL_MS) continue
+        heard.delete(target)
+        watch.reopenAudio()
+      }
+    }, WATCH_TICK_MS)
+    return () => clearInterval(timer)
   }, [pool])
 
   useEffect(() => () => pool.close(), [pool])
@@ -187,7 +215,13 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
     for (const target of canvasesRef.current.keys()) {
       if (target !== memberId && viewable(members, target)) wanted.add(target)
     }
-    for (const target of pool.keys()) if (!wanted.has(target)) pool.drop(target)
+    // A broadcast already held stays held while its member is in the room:
+    // subscribing again to one just let go is what the relay is slowest at.
+    const present = new Set(members.map((member) => member.id))
+    for (const target of pool.keys()) {
+      if (present.has(target) && target !== memberId) wanted.add(target)
+      else pool.drop(target)
+    }
     for (const target of wanted) pool.want(target)
     for (const target of wanted) {
       const watch = pool.get(target)

@@ -29,6 +29,8 @@ interface FakeMemberWatch {
   audio: boolean
   canvas: HTMLCanvasElement | null
   levelValue: number
+  audioAt: number | undefined
+  audioReopened: number
   closed: boolean
 }
 
@@ -50,7 +52,7 @@ beforeEach(() => {
   vi.mocked(media.localLevel).mockImplementation(() => ({ level: () => selfLevel, close: vi.fn() }))
   vi.mocked(media.openCallWatch).mockResolvedValue({
     watch: (memberId: string) => {
-      const watch: FakeMemberWatch = { memberId, audio: false, canvas: null, levelValue: 0, closed: false }
+      const watch: FakeMemberWatch = { memberId, audio: false, canvas: null, levelValue: 0, audioAt: undefined, audioReopened: 0, closed: false }
       watches.push(watch)
       return {
         status: { peek: () => 'live' as const, subscribe: () => () => undefined },
@@ -58,6 +60,8 @@ beforeEach(() => {
         setAudio: (enabled) => { watch.audio = enabled },
         setVolume: () => undefined,
         level: () => watch.levelValue,
+        audioAt: () => watch.audioAt,
+        reopenAudio: () => { watch.audioReopened += 1 },
         close: () => { watch.closed = true },
       }
     },
@@ -118,7 +122,7 @@ describe('useCall', () => {
     expect(result.current.forced).toEqual({ mic: false, cam: false })
   })
 
-  it('hears everyone whose microphone is on and lets go of whoever the host mutes', async () => {
+  it('hears everyone whose microphone is on and stops hearing whoever the host mutes', async () => {
     const members: CallMember[] = [{ id: 'm1' }, { id: 'm2', mic: true }, { id: 'm3' }]
     const { result, rerender } = renderHook((props: { members: CallMember[] }) => useCall(options(props)), { initialProps: { members } })
     await waitFor(() => expect(watches.find((watch) => watch.memberId === 'm2')?.audio).toBe(true))
@@ -126,8 +130,32 @@ describe('useCall', () => {
     expect(watches.some((watch) => watch.memberId === 'm1')).toBe(false)
 
     rerender({ members: [{ id: 'm1' }, { id: 'm2', mic: false, hostMuted: true }, { id: 'm3' }] })
-    await waitFor(() => expect(live(watches.find((watch) => watch.memberId === 'm2'))).toBe(false))
+    await waitFor(() => expect(watches[0].audio).toBe(false))
     expect(result.current.speaking).toEqual({})
+    // The broadcast stays held while they are in the room: subscribing again
+    // to one just left is what the relay is slowest to answer.
+    expect(live(watches[0])).toBe(true)
+
+    rerender({ members: [{ id: 'm1' }, { id: 'm3' }] })
+    await waitFor(() => expect(live(watches[0])).toBe(false))
+  })
+
+  it('reopens a voice that stopped arriving', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderHook(() => useCall(options({ members: [{ id: 'm1' }, { id: 'm2', mic: true }] })))
+      await waitFor(() => expect(watches.length).toBe(1))
+      watches[0].audioAt = 1_000
+      await act(async () => { vi.advanceTimersByTime(3_000) })
+      expect(watches[0].audioReopened).toBe(0)
+      await act(async () => { vi.advanceTimersByTime(4_000) })
+      // Only the voice starts over; the broadcast and its camera stay.
+      expect(watches[0].audioReopened).toBe(1)
+      expect(watches).toHaveLength(1)
+      expect(watches[0].closed).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('lights whoever is speaking, me included', async () => {
@@ -159,7 +187,7 @@ describe('CallVideo', () => {
     expect(watches[0].audio).toBe(false)
 
     view.rerender(<Harness members={[{ id: 'm1' }, { id: 'm2', cam: false, hostCamOff: true }]}><CallVideo memberId="m2" /></Harness>)
-    await waitFor(() => expect(live(watches.find((watch) => watch.memberId === 'm2'))).toBe(false))
+    await waitFor(() => expect(watches[0].canvas).toBeNull())
   })
 
   it('shows my own camera from the local preview, not the relay', async () => {

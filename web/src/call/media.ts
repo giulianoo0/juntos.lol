@@ -9,6 +9,7 @@
  * around 140 ms (p90 under 200 ms; see `dev/e2e-call-latency.mjs`).
  */
 import type * as Publish from '@moq/publish'
+import type * as Watch from '@moq/watch'
 import { relayConnection, watchConnection, whenPublished } from './moq'
 import { rms } from './speaking'
 import type { WatchStatus } from './subscriptions'
@@ -158,10 +159,18 @@ export interface MemberWatch {
   setVolume(volume: number): void
   /** RMS of the voice as it reaches the speakers right now, 0 when silent. */
   level(): number
+  /** Media time of the last voice sample played, to tell a stalled voice from a quiet one. */
+  audioAt(): number | undefined
+  /** Drops the voice's subscription and opens a fresh one after a short gap, keeping the rest. */
+  reopenAudio(): void
   close(): void
 }
 
-/** A shared way onto the relay for every member's broadcast: one QUIC connection, not one per person. */
+/**
+ * The way onto the relay for every member's broadcast. Each member gets a
+ * connection of their own: on a shared one, a subscription the relay turned
+ * away kept every later one to the same broadcast stuck waiting.
+ */
 export interface CallWatchSession {
   watch(memberId: string): MemberWatch
   /** Plays every voice on this output device, where the browser lets a page choose. */
@@ -169,16 +178,19 @@ export interface CallWatchSession {
   close(): void
 }
 
+/** How long a reopened voice waits for the relay to finish tearing the old subscription down. */
+const RESUBSCRIBE_GAP_MS = 1_500
+
 type SinkContext = AudioContext & { setSinkId?: (id: string) => Promise<void> }
 
 export async function openCallWatch(relay: CallRelay): Promise<CallWatchSession> {
   const Watch = await import('@moq/watch')
   const { Net, Signals } = Watch
-  const connection = watchConnection(Net, relay)
   const contexts = new Set<SinkContext>()
   let speaker: string | undefined
 
   const watch = (memberId: string): MemberWatch => {
+    const connection = watchConnection(Net, relay)
     const broadcast = new Watch.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(callPath(relay.base, memberId)) })
     const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
     const audioSource = new Watch.Audio.Source({ broadcast, supported: Watch.Audio.Decoder.supported })
@@ -195,56 +207,84 @@ export async function openCallWatch(relay: CallRelay): Promise<CallWatchSession>
     // Only a tile that is on screen downloads its camera.
     const renderer = new Watch.Video.Renderer(videoDecoder, { canvas, visible: '0px' })
     const audioWanted = new Signals.Signal(false)
-    const audioEnabled = new Signals.Signal(false)
     const volume = new Signals.Signal(1)
-    const audioDecoder = new Watch.Audio.Decoder(audioSource, sync, { enabled: audioEnabled })
-    const emitter = new Watch.Audio.Emitter(audioDecoder, { volume, muted: false, paused: false })
-    let analyser: AnalyserNode | null = null
     const samples = new Float32Array(512)
     const signals = new Signals.Effect()
     signals.run((effect) => {
       const rendering = effect.get(canvas) !== undefined && effect.get(renderer.out.visible)
       videoEnabled.set(rendering)
     })
-    signals.run((effect) => {
-      audioEnabled.set(effect.get(audioWanted) && effect.get(emitter.out.enabled))
-    })
-    signals.run((effect) => {
-      const context = effect.get(audioDecoder.out.context) as SinkContext | undefined
-      const root = effect.get(audioDecoder.out.root)
-      if (!context || !root) return
-      contexts.add(context)
-      if (speaker) void context.setSinkId?.(speaker).catch(() => undefined)
-      const node = context.createAnalyser()
-      node.fftSize = samples.length
-      root.connect(node)
-      analyser = node
-      effect.cleanup(() => {
-        contexts.delete(context)
-        try { root.disconnect(node) } catch { /* the graph is already gone */ }
-        if (analyser === node) analyser = null
+
+    // The voice holds its own subscription and AudioContext, so it can start
+    // over on its own while the broadcast and the camera keep going.
+    let audio: { decoder: Watch.Audio.Decoder; analyser: () => AnalyserNode | null } | null = null
+    const openAudio = () => {
+      const enabled = new Signals.Signal(false)
+      const decoder = new Watch.Audio.Decoder(audioSource, sync, { enabled })
+      const emitter = new Watch.Audio.Emitter(decoder, { volume, muted: false, paused: false })
+      let analyser: AnalyserNode | null = null
+      const wiring = new Signals.Effect()
+      wiring.run((effect) => {
+        enabled.set(effect.get(audioWanted) && effect.get(emitter.out.enabled))
       })
-    })
+      wiring.run((effect) => {
+        const context = effect.get(decoder.out.context) as SinkContext | undefined
+        const root = effect.get(decoder.out.root)
+        if (!context || !root) return
+        contexts.add(context)
+        if (speaker) void context.setSinkId?.(speaker).catch(() => undefined)
+        const node = context.createAnalyser()
+        node.fftSize = samples.length
+        root.connect(node)
+        analyser = node
+        effect.cleanup(() => {
+          contexts.delete(context)
+          try { root.disconnect(node) } catch { /* the graph is already gone */ }
+          if (analyser === node) analyser = null
+        })
+      })
+      audio = { decoder, analyser: () => analyser }
+      return () => {
+        audio = null
+        wiring.close()
+        emitter.close()
+        decoder.close()
+      }
+    }
+    let closeAudio = openAudio()
+    let reopening: ReturnType<typeof setTimeout> | null = null
     return {
       status: broadcast.out.status,
       setCanvas(next) { canvas.set(next ?? undefined) },
       setAudio(enabled) { audioWanted.set(enabled) },
       setVolume(next) { volume.set(next) },
+      audioAt() { return audio?.decoder.out.timestamp.peek() },
+      reopenAudio() {
+        if (reopening !== null) return
+        closeAudio()
+        closeAudio = () => undefined
+        reopening = setTimeout(() => {
+          reopening = null
+          closeAudio = openAudio()
+        }, RESUBSCRIBE_GAP_MS)
+      },
       level() {
+        const analyser = audio?.analyser()
         if (!analyser || !audioWanted.peek()) return 0
         analyser.getFloatTimeDomainData(samples)
         return rms(samples)
       },
       close() {
+        if (reopening !== null) clearTimeout(reopening)
         signals.close()
-        emitter.close()
-        audioDecoder.close()
+        closeAudio()
         renderer.close()
         videoDecoder.close()
         sync.close()
         audioSource.close()
         videoSource.close()
         broadcast.close()
+        connection.close()
       },
     }
   }
@@ -255,7 +295,7 @@ export async function openCallWatch(relay: CallRelay): Promise<CallWatchSession>
       speaker = deviceId
       for (const context of contexts) void context.setSinkId?.(deviceId ?? '').catch(() => undefined)
     },
-    close() { connection.close() },
+    close() { /* each member's watch closes its own connection */ },
   }
 }
 

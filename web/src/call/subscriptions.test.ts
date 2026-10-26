@@ -102,6 +102,34 @@ describe('SubscriptionPool', () => {
     expect(opened).toEqual(['m2'])
   })
 
+  it('waits out a gap between dropping a silent subscription and opening the next', async () => {
+    let now = 0
+    const opened: FakeWatch[] = []
+    const pool = new SubscriptionPool<FakeWatch>({
+      open: (key) => { const watch = new FakeWatch(key, 'offline'); opened.push(watch); return Promise.resolve(watch) },
+      now: () => now,
+      retryMs: 3_000,
+      gapMs: 1_500,
+    })
+    pool.want('m2')
+    await Promise.resolve(); await Promise.resolve()
+    now = 3_000
+    pool.tick()
+    expect(opened[0].closed).toBe(true)
+    expect(opened).toHaveLength(1)
+    now = 4_000
+    pool.tick()
+    expect(opened).toHaveLength(1)
+    now = 4_500
+    pool.tick()
+    expect(opened).toHaveLength(2)
+    // The retry clock starts again from the new open.
+    await Promise.resolve(); await Promise.resolve()
+    now = 7_000
+    pool.tick()
+    expect(opened[1].closed).toBe(false)
+  })
+
   it('closes everything on close', async () => {
     const h = harness()
     h.pool.want('m2')

@@ -29,6 +29,8 @@ interface Entry<W> {
   generation: number
   /** When the current subscription was opened; a silent one is retried on its own clock. */
   openedAt: number
+  /** Set while a reopen waits out the gap; the next tick past it opens. */
+  reopenAt?: number
 }
 
 export interface SubscriptionPoolOptions<W> {
@@ -37,6 +39,16 @@ export interface SubscriptionPoolOptions<W> {
   /** Every status change, and `undefined` once the key is dropped. */
   onStatus?(key: string, status: WatchStatus | undefined, watch: W | null): void
   now?(): number
+  /** How long a subscription the relay turned away gets before it is opened again. */
+  retryMs?: number
+  /** The same for one still waiting on its catalog. */
+  loadingRetryMs?: number
+  /**
+   * How long to wait between throwing a subscription away and opening the
+   * next. Several broadcasts on one connection need it: resubscribing while
+   * the relay is still tearing the old subscription down starves the new one.
+   */
+  gapMs?: number
 }
 
 export class SubscriptionPool<W extends PooledWatch> {
@@ -76,7 +88,7 @@ export class SubscriptionPool<W extends PooledWatch> {
   /** Opens every key still waiting for a subscription: the relay just became known. */
   refresh(): void {
     for (const [key, entry] of this.entries) {
-      if (entry.watch) continue
+      if (entry.watch || entry.reopenAt !== undefined) continue
       entry.generation += 1
       entry.openedAt = this.now()
       this.open(key, entry)
@@ -87,8 +99,16 @@ export class SubscriptionPool<W extends PooledWatch> {
   tick(): void {
     const now = this.now()
     for (const [key, entry] of this.entries) {
+      if (entry.reopenAt !== undefined) {
+        if (now < entry.reopenAt) continue
+        entry.reopenAt = undefined
+        entry.openedAt = now
+        this.open(key, entry)
+        continue
+      }
       if (entry.status === 'live') continue
-      if (now - entry.openedAt < (entry.status === 'loading' ? LOADING_RETRY_MS : RETRY_MS)) continue
+      const retry = entry.status === 'loading' ? this.options.loadingRetryMs ?? LOADING_RETRY_MS : this.options.retryMs ?? RETRY_MS
+      if (now - entry.openedAt < retry) continue
       this.reopen(key)
     }
   }
@@ -101,6 +121,10 @@ export class SubscriptionPool<W extends PooledWatch> {
     entry.status = 'offline'
     entry.generation += 1
     entry.openedAt = this.now()
+    if (this.options.gapMs) {
+      entry.reopenAt = entry.openedAt + this.options.gapMs
+      return
+    }
     this.open(key, entry)
   }
 

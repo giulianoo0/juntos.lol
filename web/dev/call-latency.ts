@@ -50,7 +50,7 @@ async function detect(ctx: AudioContext, node: AudioNode, extraMs: () => number)
   setInterval(() => { info.state = ctx.state; info.time = ctx.currentTime }, 500)
   onset.port.onmessage = (event) => {
     info.msgs = ((info.msgs as number) ?? 0) + 1
-    if (typeof event.data === 'object') { (info.peaks ??= [] as number[]) && (info.peaks as number[]).push(+event.data.peak.toFixed(3)); return }
+    if (typeof event.data === 'object') { ((info.peaks ??= []) as number[]).push(+event.data.peak.toFixed(3)); return }
     const contextTime = event.data as number
     const stamp = ctx.getOutputTimestamp()
     const perf = (stamp.performanceTime ?? performance.now()) + (contextTime - (stamp.contextTime ?? ctx.currentTime)) * 1000
