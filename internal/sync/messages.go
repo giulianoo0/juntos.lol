@@ -40,6 +40,11 @@ type Inbound struct {
 	Kind      string `json:"kind,omitempty"`
 	RequestID string `json:"requestId,omitempty"`
 	Allow     bool   `json:"allow,omitempty"`
+	// Mic and Cam on a media message; a field left out keeps its value.
+	Mic *bool `json:"mic,omitempty"`
+	Cam *bool `json:"cam,omitempty"`
+	// Ticket on a hello is the proof a password room's password was given.
+	Ticket string `json:"ticket,omitempty"`
 }
 
 // decodeHello reads the first message of a socket, which must be a hello
@@ -102,7 +107,12 @@ type Outbound struct {
 	Nickname      string              `json:"nickname,omitempty"`
 	Allow         *bool               `json:"allow,omitempty"`
 	Spotlight     *room.Spotlight     `json:"spotlight,omitempty"`
-	closeAfter    bool
+	// Mic and Cam on a forceMedia: what the host just turned off for this member.
+	Mic *bool `json:"mic,omitempty"`
+	Cam *bool `json:"cam,omitempty"`
+	// Set on an event from outside the loop that only the host may see.
+	toController bool
+	closeAfter   bool
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.

@@ -83,3 +83,33 @@ func TestLoadTrimsTheMediaOrigin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://media.example.test", cfg.MediaPublicURL)
 }
+
+func TestLoadCapsRoomCreationByDefault(t *testing.T) {
+	setMediaEnv(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 30, cfg.RoomsPerIPPerHour)
+}
+
+func TestLoadDiscordApp(t *testing.T) {
+	setMediaEnv(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.False(t, cfg.DiscordEnabled())
+	require.Equal(t, "https://discord.com/api/v10", cfg.DiscordAPIBase)
+
+	t.Setenv("DISCORD_APP_ID", "123")
+	t.Setenv("DISCORD_PUBLIC_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	t.Setenv("DISCORD_BOT_TOKEN", "bot")
+	t.Setenv("DISCORD_API_BASE", "http://discord.test/api/")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.True(t, cfg.DiscordEnabled())
+	require.Len(t, cfg.DiscordPublicKey, 32)
+	require.Equal(t, "bot", cfg.DiscordBotToken)
+	require.Equal(t, "http://discord.test/api", cfg.DiscordAPIBase)
+
+	t.Setenv("DISCORD_PUBLIC_KEY", "not-hex")
+	_, err = Load()
+	require.Error(t, err)
+}

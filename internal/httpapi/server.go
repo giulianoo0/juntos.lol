@@ -25,6 +25,7 @@ type serverOptions struct {
 	workerLink        gin.HandlerFunc
 	pluginSessions    *Sessions
 	pluginQuota       *Quota
+	discord           http.Handler
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
@@ -90,6 +91,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		screenAuthorizer = hub
 	}
 	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
+	RegisterCallRoutes(r.Group("/api"), store, cfg, screenAuthorizer)
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
 	var authorizer stageAuthorizer
 	if hub != nil {
@@ -101,6 +103,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterLiveRoutes(r.Group("/api"), store, cfg, authorizer, options.sourceHooks, options.torrentAccess.Service)
 	if hub != nil {
+		RegisterJoinRoutes(r.Group("/api"), store, cfg, hub, hub, hub.NotifyRoomUpdated)
 		r.GET("/ws/rooms/:id", hub.HandleWS)
 		r.GET("/api/live", func(c *gin.Context) {
 			_, members := hub.Live()
@@ -116,6 +119,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		r.GET("/ws/worker-link", options.workerLink)
 	}
 	RegisterRelayRoute(r, options.torrentAccess.Service)
+	registerDiscordRoute(r, options.discord)
 	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
 	registerFrontend(r, cfg.WebDir)
 	return r

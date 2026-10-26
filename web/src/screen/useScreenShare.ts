@@ -25,16 +25,10 @@ import {
 import { previewH264, startH264Feed, systemAudioTrack, type H264Feed, type SystemAudio } from '../jlocal/h264Feed'
 import { applySoundChoice } from '../jlocal/soundChoice'
 import { loadStageVolume, saveStageVolume } from '../ui/stageVolume'
+import { SubscriptionPool } from '../call/subscriptions'
 
-/** A subscription the relay turned away (no such broadcast yet) is tried again after this long. */
-const WATCH_RETRY_MS = 4_000
-/**
- * One still waiting for its catalog is left alone much longer: a fresh QUIC
- * handshake plus a 4K keyframe on a busy link can take more than a few
- * seconds, and tearing that down every four was what kept tiles at
- * "connecting" for minutes.
- */
-const LOADING_RETRY_MS = 15_000
+/** How often a subscription that has not gone live is looked at again. */
+const WATCH_TICK_MS = 1_000
 /** How often the encoder is asked what it is really sending. */
 const STATS_SAMPLE_MS = 1_000
 
@@ -131,17 +125,6 @@ export interface ScreenShareApi {
   canvasRef(memberId: string): (canvas: HTMLCanvasElement | null) => void
 }
 
-interface Attached {
-  canvas: HTMLCanvasElement
-  watcher: ScreenWatcher | null
-  unsubscribe?: () => void
-  /** Bumped on every resubscribe so a late promise from an older one is dropped. */
-  generation: number
-  closed: boolean
-  /** When the current subscription was opened; a silent one is retried on its own clock. */
-  openedAt: number
-}
-
 /**
  * The whole screen-sharing machine of a room: who is publishing, what I am
  * publishing, and one subscription per remote screen.
@@ -167,7 +150,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   /** My own tile's canvas, bound whenever the tile exists, whichever path is publishing. */
   const selfCanvasElRef = useRef<HTMLCanvasElement | null>(null)
   const relayRef = useRef<ScreenRelay | null>(null)
-  const attachedRef = useRef(new Map<string, Attached>())
+  const canvasesRef = useRef(new Map<string, HTMLCanvasElement>())
   const mutedRef = useRef(false)
   const volumeRef = useRef(loadStageVolume())
   const startedRef = useRef<Set<string> | null>(null)
@@ -191,6 +174,39 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   const [seenLive, setSeenLive] = useState<Record<string, boolean>>({})
 
   const supported = useMemo(() => screenShareSupported(), [])
+
+  // One subscription per bound tile, kept alive until it paints.
+  const [pool] = useState(() => new SubscriptionPool<ScreenWatcher>({
+    open: (target) => {
+      const current = relayRef.current
+      const canvas = canvasesRef.current.get(target)
+      if (!current || !canvas) return null
+      return watchScreen(current, screenPath(current.base, target), canvas, mutedRef.current, undefined, volumeRef.current)
+        .then((watcher) => {
+          const applyAudio = (audio: boolean | undefined) => setRemoteAudio((all) => (all[target] === audio ? all : { ...all, [target]: audio }))
+          applyAudio(watcher.hasAudio.peek())
+          const offAudio = watcher.hasAudio.subscribe(applyAudio)
+          return {
+            ...watcher,
+            close() {
+              offAudio()
+              setRemoteAudio((all) => {
+                if (!(target in all)) return all
+                const next = { ...all }
+                delete next[target]
+                return next
+              })
+              watcher.close()
+            },
+          }
+        })
+    },
+    onStatus: (target, status) => {
+      if (!status) return
+      setWatchStatus((all) => (all[target] === status ? all : { ...all, [target]: status }))
+      if (status === 'live') setSeenLive((all) => (all[target] ? all : { ...all, [target]: true }))
+    },
+  }))
   const mayPublish = isController || shareOpen
 
   const stop = useCallback(() => {
@@ -397,16 +413,16 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   const setMuted = useCallback((next: boolean) => {
     mutedRef.current = next
     setMutedState(next)
-    for (const entry of attachedRef.current.values()) entry.watcher?.muted.set(next)
-  }, [])
+    for (const target of pool.keys()) pool.get(target)?.muted.set(next)
+  }, [pool])
 
   const setVolume = useCallback((next: number) => {
     volumeRef.current = next
     setVolumeState(next)
     saveStageVolume(next)
-    for (const entry of attachedRef.current.values()) entry.watcher?.volume.set(next)
+    for (const target of pool.keys()) pool.get(target)?.volume.set(next)
     if (next > 0 && mutedRef.current) setMuted(false)
-  }, [setMuted])
+  }, [pool, setMuted])
 
   const setOpen = useCallback((open: boolean) => setScreenShareOpen(roomId, memberId, capability, open), [roomId, memberId, capability])
 
@@ -500,58 +516,18 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     return () => clearInterval(timer)
   }, [state])
 
-  const open = useCallback((entry: Attached, target: string) => {
-    const current = relayRef.current
-    if (!current) return
-    const generation = entry.generation
-    void watchScreen(current, screenPath(current.base, target), entry.canvas, mutedRef.current, undefined, volumeRef.current)
-      .then((watcher) => {
-        if (entry.closed || entry.generation !== generation) { watcher.close(); return }
-        entry.watcher = watcher
-        const apply = (status: ScreenWatchStatus) => {
-          setWatchStatus((all) => (all[target] === status ? all : { ...all, [target]: status }))
-          if (status === 'live') setSeenLive((all) => (all[target] ? all : { ...all, [target]: true }))
-        }
-        apply(watcher.status.peek())
-        const applyAudio = (audio: boolean | undefined) => setRemoteAudio((all) => (all[target] === audio ? all : { ...all, [target]: audio }))
-        applyAudio(watcher.hasAudio.peek())
-        const offStatus = watcher.status.subscribe(apply)
-        const offAudio = watcher.hasAudio.subscribe(applyAudio)
-        entry.unsubscribe = () => {
-          offStatus()
-          offAudio()
-          setRemoteAudio((all) => {
-            if (!(target in all)) return all
-            const next = { ...all }
-            delete next[target]
-            return next
-          })
-        }
-      })
-      .catch(() => undefined)
-  }, [])
-
-  const close = useCallback((entry: Attached) => {
-    entry.closed = true
-    entry.unsubscribe?.()
-    entry.watcher?.close()
-    entry.watcher = null
-    entry.unsubscribe = undefined
-  }, [])
-
   const attach = useCallback((target: string, canvas: HTMLCanvasElement | null) => {
-    const attached = attachedRef.current
-    const existing = attached.get(target)
+    const canvases = canvasesRef.current
+    const existing = canvases.get(target)
     if (!canvas) {
-      if (existing) { close(existing); attached.delete(target) }
+      if (existing) { canvases.delete(target); pool.drop(target) }
       return
     }
-    if (existing && existing.canvas === canvas) return
-    if (existing) { close(existing); attached.delete(target) }
-    const entry: Attached = { canvas, watcher: null, generation: 0, closed: false, openedAt: performance.now() }
-    attached.set(target, entry)
-    open(entry, target)
-  }, [open, close])
+    if (existing === canvas) return
+    if (existing) pool.drop(target)
+    canvases.set(target, canvas)
+    pool.want(target)
+  }, [pool])
 
   const canvasRef = useCallback((target: string) => {
     const cached = canvasRefsRef.current.get(target)
@@ -564,41 +540,18 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   // A tile can be bound before the relay answers; it gets its subscription the
   // moment it does, instead of waiting out a retry.
   useEffect(() => {
-    if (!relay) return
-    for (const [target, entry] of attachedRef.current) {
-      if (entry.watcher) continue
-      entry.generation += 1
-      entry.openedAt = performance.now()
-      open(entry, target)
-    }
-  }, [relay, open])
+    if (relay) pool.refresh()
+  }, [relay, pool])
 
-  // A broadcast that never spoke is subscribed to again — there is nothing else
-  // to wait for, since the relay announces nothing. Each tile keeps its own
-  // clock, so a status that flickers does not push the retry away forever.
-  const watchStatusRef = useRef(watchStatus)
-  watchStatusRef.current = watchStatus
   useEffect(() => {
-    const timer = setInterval(() => {
-      const now = performance.now()
-      for (const [target, entry] of attachedRef.current) {
-        const status = entry.watcher ? watchStatusRef.current[target] ?? 'offline' : 'offline'
-        if (status === 'live') continue
-        if (now - entry.openedAt < (status === 'loading' ? LOADING_RETRY_MS : WATCH_RETRY_MS)) continue
-        close(entry)
-        entry.closed = false
-        entry.generation += 1
-        entry.openedAt = now
-        open(entry, target)
-      }
-    }, WATCH_RETRY_MS / 4)
+    const timer = setInterval(() => pool.tick(), WATCH_TICK_MS)
     return () => clearInterval(timer)
-  }, [open, close])
+  }, [pool])
 
   useEffect(() => () => {
-    for (const entry of attachedRef.current.values()) close(entry)
-    attachedRef.current.clear()
-  }, [close])
+    pool.close()
+    canvasesRef.current.clear()
+  }, [pool])
 
   const sharing = state === 'sharing' || state === 'starting'
   const full = !sharing && screens.filter((screen) => screen.memberId !== memberId).length >= MAX_SCREENS

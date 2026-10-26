@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -53,6 +55,22 @@ type Config struct {
 	RemoteRemuxAPIBase string
 
 	PluginFetchProxy string
+
+	// RoomsPerIPPerHour caps room creation per client address; 0 turns it off.
+	RoomsPerIPPerHour int
+
+	// The Discord app behind /juntos new. Without an app id and public key
+	// the interactions endpoint is not mounted; without a bot token the room
+	// card can only be posted while the interaction's own token lasts.
+	DiscordAppID     string
+	DiscordPublicKey ed25519.PublicKey
+	DiscordBotToken  string
+	DiscordAPIBase   string
+}
+
+// DiscordEnabled reports whether the interactions endpoint can verify Discord's calls.
+func (c Config) DiscordEnabled() bool {
+	return c.DiscordAppID != "" && len(c.DiscordPublicKey) == ed25519.PublicKeySize
 }
 
 func Load() (Config, error) {
@@ -72,6 +90,8 @@ func Load() (Config, error) {
 		TorrentDispatchPerHour: 10,
 		TorrentConcurrentJobs:  2,
 		TorrentBytesPerDayGB:   60,
+		RoomsPerIPPerHour:      30,
+		DiscordAPIBase:         "https://discord.com/api/v10",
 	}
 
 	var err error
@@ -155,6 +175,21 @@ func Load() (Config, error) {
 	}
 	if cfg.RemoteRemuxAPIBase == "" {
 		cfg.RemoteRemuxAPIBase = cfg.PublicOrigin
+	}
+	if cfg.RoomsPerIPPerHour, err = envInt("ROOMS_PER_IP_PER_HOUR", cfg.RoomsPerIPPerHour); err != nil {
+		return Config{}, err
+	}
+	cfg.DiscordAppID = strings.TrimSpace(os.Getenv("DISCORD_APP_ID"))
+	cfg.DiscordBotToken = strings.TrimSpace(os.Getenv("DISCORD_BOT_TOKEN"))
+	if v := strings.TrimSuffix(strings.TrimSpace(os.Getenv("DISCORD_API_BASE")), "/"); v != "" {
+		cfg.DiscordAPIBase = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DISCORD_PUBLIC_KEY")); v != "" {
+		key, err := hex.DecodeString(v)
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			return Config{}, fmt.Errorf("config: DISCORD_PUBLIC_KEY must be the app's 32-byte hex public key")
+		}
+		cfg.DiscordPublicKey = key
 	}
 
 	return cfg, nil

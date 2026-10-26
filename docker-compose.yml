@@ -35,6 +35,10 @@ services:
       PLUGIN_FETCH_PROXY: ${PLUGIN_FETCH_PROXY:-}
       TORRENT_DISPATCH_PER_HOUR: ${TORRENT_DISPATCH_PER_HOUR:-}
       TORRENT_CONCURRENT_JOBS: ${TORRENT_CONCURRENT_JOBS:-}
+      ROOMS_PER_IP_PER_HOUR: ${ROOMS_PER_IP_PER_HOUR:-}
+      DISCORD_APP_ID: ${DISCORD_APP_ID:-}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
     volumes:
       - ss-data:/data
       # The documentation is built from its own repository and rsynced here,

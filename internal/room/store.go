@@ -210,6 +210,10 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r.ErrorMessage = fields["error_message"]
 	r.ControllerID = fields["controller_id"]
 	r.OwnerToken = fields["owner_token"]
+	r.JoinMode = fields["join_mode"]
+	if !ValidJoinMode(r.JoinMode) {
+		r.JoinMode = JoinOpen
+	}
 	if v := fields["audio_tracks"]; v != "" {
 		if err := json.Unmarshal([]byte(v), &r.AudioTracks); err != nil {
 			return nil, fmt.Errorf("unmarshal audio tracks: %w", err)

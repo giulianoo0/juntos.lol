@@ -23,6 +23,11 @@ export interface Member {
   id: string
   nickname: string
   joinedAt: string
+  /** Microphone and camera as the member set them, and what the host turned off. */
+  mic?: boolean
+  cam?: boolean
+  hostMuted?: boolean
+  hostCamOff?: boolean
 }
 
 export interface ChatMessage {

@@ -140,6 +140,7 @@ func main() {
 		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents,
 			Remux: remuxOrch, Authorizer: hub.AuthorizeMember}, workerHub.HandleLink),
 		httpapi.WithPluginFetch(sessions, quota),
+		httpapi.WithDiscord(httpapi.DiscordApp(cfg, store, rdb, hub)),
 	)
 
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
