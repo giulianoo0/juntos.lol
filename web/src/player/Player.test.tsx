@@ -126,7 +126,7 @@ describe('Player', () => {
     expect(screen.getByRole('button', { name: 'Portugues' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('splits the settings into Audio and Subtitles, subtitles first', async () => {
+  it('leaves the volume to the bar: with no audio tracks the menu is only subtitles', async () => {
     const withTracks: RoomInfo = {
       ...room,
       subtitleTracks: [
@@ -138,15 +138,10 @@ describe('Player', () => {
     render(<Player room={withTracks} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
 
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    const subtitles = await screen.findByRole('radio', { name: 'Subtitles' })
-    expect(subtitles).toHaveAttribute('aria-checked', 'true')
-    expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument()
+
+    expect(await screen.findByRole('button', { name: 'English' })).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: 'Audio' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('slider', { name: 'Volume' })).toHaveLength(1)
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Audio' }))
-
-    await waitFor(() => expect(screen.getAllByRole('slider', { name: 'Volume' })).toHaveLength(2))
-    expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
   })
 
   it('closes the settings when something outside them is pressed', async () => {

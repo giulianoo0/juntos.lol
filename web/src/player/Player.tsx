@@ -20,7 +20,6 @@ import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
 import { boostOf, canBoost, setBoost } from './audioBoost'
 import { MAX_LEVEL, snapLevel, VolumeSlider } from '../ui/VolumeSlider'
-import { PillSlider } from '../ui/PillSlider'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { plog } from './playerLog'
 import { Settings, type SettingGroup } from './Settings'
@@ -1022,7 +1021,6 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
   const settingGroups: SettingGroup[] = useMemo(() => {
-    const filmLevel = muted ? 0 : volume * boost
     const groups: SettingGroup[] = [{
       id: 'subtitles',
       tab: 'subtitles',
@@ -1078,24 +1076,6 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
         })),
       })
     }
-    // The film's volume under its tracks, as the Áudio tab reads.
-    groups.push({
-      id: 'volume',
-      tab: 'audio',
-      label: t('room.filmVolume'),
-      current: 0,
-      onPick: () => undefined,
-      options: [],
-      panel: (
-        <PillSlider
-          label={t('room.filmVolume')}
-          value={filmLevel}
-          max={videoRef.current !== null && canBoost(videoRef.current) ? MAX_LEVEL : 1}
-          valueText={`${Math.round(filmLevel * 100)}%`}
-          onChange={applyVolume}
-        />
-      ),
-    })
     if (levels.length > 1) {
       groups.push({
         id: 'quality',
@@ -1116,7 +1096,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       })
     }
     return groups
-  }, [muted, volume, boost, applyVolume, videoRef, subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
+  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
 
   const seekMax = Math.max(timelineEnd, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`

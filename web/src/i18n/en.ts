@@ -106,7 +106,6 @@ export const en: Record<string, string> = {
   'room.screenSendingSilent': 'No sound',
   'room.screenSendingSilentHint': 'Your screen is going out without sound. To send audio, share a browser tab with “Share tab audio” turned on.',
   'room.volume': 'Volume',
-  'room.filmVolume': 'Volume',
   'room.volumeBoost': 'Boost',
   'room.exitFullscreen': 'Exit fullscreen',
   'room.pip': 'Picture-in-picture',
