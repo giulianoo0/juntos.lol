@@ -45,6 +45,8 @@ type Inbound struct {
 	Cam *bool `json:"cam,omitempty"`
 	// Ticket on a hello is the proof a password room's password was given.
 	Ticket string `json:"ticket,omitempty"`
+	// Avatar on a hello is the one a guest picked; an account's own wins.
+	Avatar string `json:"avatar,omitempty"`
 }
 
 // decodeHello reads the first message of a socket, which must be a hello

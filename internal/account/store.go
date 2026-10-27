@@ -165,7 +165,7 @@ func (s *Store) Update(ctx context.Context, id int64, changes Changes) (Account,
 		fields = append(fields, "nickname", nickname)
 	}
 	if changes.Avatar != nil {
-		if *changes.Avatar != "" && (len(*changes.Avatar) > maxAvatarBytes || !avatarRe.MatchString(*changes.Avatar)) {
+		if *changes.Avatar != "" && !ValidAvatar(*changes.Avatar) {
 			return Account{}, ErrInvalid
 		}
 		fields = append(fields, "avatar", *changes.Avatar)
@@ -344,6 +344,12 @@ func (s *Store) History(ctx context.Context, id int64, limit int) ([]Watch, erro
 		}
 	}
 	return history, nil
+}
+
+// ValidAvatar is whether a short avatar spec like `fox.bowtie` is fit to
+// keep or show; the browser draws it, the server only checks its shape.
+func ValidAvatar(value string) bool {
+	return len(value) <= maxAvatarBytes && avatarRe.MatchString(value)
 }
 
 func validNickname(value string) bool {
