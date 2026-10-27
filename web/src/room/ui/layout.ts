@@ -26,8 +26,6 @@ export interface LayoutInput {
   pin: Target | null
   /** The viewer stepped out of the host's spotlight. */
   leftSpotlight: boolean
-  /** The viewer chose "Pessoas": everything as one grid, the pin aside. */
-  everyone?: boolean
   /** The side panel takes the right, so the people go under the stage. */
   panelOpen?: boolean
 }
@@ -46,12 +44,11 @@ function spotlightTarget(spotlight: Spotlight): Target {
 
 /** What goes where: the pin, then the spotlight, then the first stage, and
     a grid of people when nothing is on stage. */
-export function layoutOf({ people, stages, spotlight, pin, leftSpotlight, everyone = false, panelOpen = false }: LayoutInput): Layout {
+export function layoutOf({ people, stages, spotlight, pin, leftSpotlight, panelOpen = false }: LayoutInput): Layout {
   const all: Target[] = [
     ...stages.map(({ id }): Target => ({ kind: 'stage', id })),
     ...people.map(({ id }): Target => ({ kind: 'person', id })),
   ]
-  if (everyone) return { kind: 'grid', tiles: all }
   const exists = (target: Target) => target.kind === 'stage'
     ? stages.some((stage) => stage.id === target.id)
     : people.some((member) => member.id === target.id)

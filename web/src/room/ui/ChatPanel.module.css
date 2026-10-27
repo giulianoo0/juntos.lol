@@ -13,7 +13,11 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 var(--space-1);
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.list::-webkit-scrollbar {
+  display: none;
 }
 
 /* Bottom-anchored like Discord: a short chat sits on the composer. */
@@ -43,9 +47,10 @@
   margin-top: var(--space-4);
 }
 
+/* The popover's spring, out of the bubble's tail: no translate, so a new
+   line never pushes the list's scroll area while it lands. */
 @keyframes message-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.92); filter: blur(4px); }
-  to { opacity: 1; transform: none; filter: none; }
+  from { opacity: 0; scale: 0.4; filter: blur(var(--blur-md, 8px)); }
 }
 
 .gutter {

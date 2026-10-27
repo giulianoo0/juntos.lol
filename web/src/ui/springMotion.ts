@@ -28,3 +28,24 @@ export function tilePresence(reduced: boolean): {
     transition: { layout: SPRING_SETTLE },
   }
 }
+
+/** The stage in focus trading places: the new one settles out of a blur
+    while the old one lifts away over it. */
+export function focusPresence(reduced: boolean): {
+  initial: TargetAndTransition
+  animate: TargetAndTransition
+  exit: TargetAndTransition
+} {
+  if (reduced) {
+    return {
+      initial: { opacity: 0 },
+      animate: { opacity: 1, transition: { duration: 0.16 } },
+      exit: { opacity: 0, transition: { duration: 0.16 } },
+    }
+  }
+  return {
+    initial: { opacity: 0, scale: 0.94, filter: 'blur(12px)' },
+    animate: { opacity: 1, scale: 1, filter: 'blur(0px)', transition: SPRING_POP },
+    exit: { opacity: 0, scale: 1.03, filter: 'blur(12px)', transition: SPRING_SETTLE },
+  }
+}

@@ -1,16 +1,15 @@
 import { Lock, LockOpen, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { JoinMode } from '../model'
+import { HeroWordmark } from '../../pages/home/Wordmark'
 import { Field } from '../../ui/Field'
 import { Pill } from '../../ui/Pill'
-import { Segmented } from '../../ui/Segmented'
 import { SlotText } from '../../ui/SlotText'
 import { MorphSize } from '../../ui/MorphSize'
 import { SpringPopover, SpringRow } from '../../ui/SpringPopover'
 import { elapsedOf } from './chatGroups'
 import { useRoomUi } from './context'
 import { FaceStack } from './Face'
-import type { Layout } from './layout'
 import styles from './Header.module.css'
 
 function useNow(stepMs: number): number {
@@ -80,22 +79,13 @@ function AccessMenu() {
   )
 }
 
-export function Header({ layout, everyone, onFocus, onPeople, waiting }: {
-  layout: Layout
-  everyone: boolean
-  /** A stage picked in the header's switch; `null` for everyone. */
-  onFocus: (stageId: string | null) => void
+export function Header({ onPeople, waiting }: {
   onPeople: () => void
   /** Requests and knocks waiting for the host: the dot on the people pill. */
   waiting: number
 }) {
   const { vm, strings } = useRoomUi()
   const now = useNow(1000)
-  const focused = layout.kind === 'focus' && layout.focus.kind === 'stage' ? layout.focus.id : null
-  const options = [
-    ...vm.stages.map((stage) => ({ value: stage.id, label: stage.title })),
-    { value: '__people', label: strings.everyone },
-  ]
   return (
     <header className={styles.header}>
       <div className={styles.start}>
@@ -103,15 +93,9 @@ export function Header({ layout, everyone, onFocus, onPeople, waiting }: {
         <h1 className={styles.name}>{vm.name}</h1>
         <span className={styles.clock}>{elapsedOf(now - vm.startedAt)}</span>
       </div>
-      {vm.stages.length > 0 ? (
-        <Segmented
-          className={styles.switch}
-          label={strings.focusOn}
-          options={options}
-          value={everyone ? '__people' : focused}
-          onChange={(value) => onFocus(value === '__people' ? null : value)}
-        />
-      ) : null}
+      <span className={styles.brand}>
+        <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} />
+      </span>
       <div className={styles.end}>
         <AccessMenu />
         <button type="button" className={styles.people} aria-label={strings.peopleInRoom} title={strings.peopleInRoom} onClick={onPeople}>

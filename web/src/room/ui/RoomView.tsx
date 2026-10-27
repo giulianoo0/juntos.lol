@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import type { RoomViewModel, ShareSource } from '../model'
 import { Modal } from '../../ui/Modal'
 import { Pill } from '../../ui/Pill'
-import { tilePresence } from '../../ui/springMotion'
+import { focusPresence, tilePresence } from '../../ui/springMotion'
 import { useMediaQuery } from '../../ui/useMediaQuery'
 import { RoomUiContext, useRoomUi, type RoomUi } from './context'
 import { Dock } from './Dock'
@@ -57,22 +57,16 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
   const narrow = useMediaQuery(NARROW)
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.(NARROW).matches)
   const [tab, setTab] = useState<PanelTab>('chat')
-  const [pin, setPinState] = useState<Target | null>(null)
-  const [everyone, setEveryone] = useState(false)
+  const [pin, setPin] = useState<Target | null>(null)
   const [leftSpotlight, setLeftSpotlight] = useState(false)
   const [sharing, setSharing] = useState<ShareSource | null>(null)
 
   const lit = spotlightKey(vm)
   useEffect(() => { setLeftSpotlight(false) }, [lit])
 
-  const setPin = (target: Target | null) => {
-    setPinState(target)
-    setEveryone(false)
-  }
-
   const reduced = useReducedMotion() ?? false
   const presence = tilePresence(reduced)
-  const layout = layoutOf({ people: vm.people, stages: vm.stages, spotlight: vm.spotlight, pin, leftSpotlight, everyone, panelOpen: panelOpen && !narrow })
+  const layout = layoutOf({ people: vm.people, stages: vm.stages, spotlight: vm.spotlight, pin, leftSpotlight, panelOpen: panelOpen && !narrow })
   const spotlit = useMemo<Target | null>(() => {
     const spot = vm.spotlight
     if (!spot) return null
@@ -114,12 +108,6 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
     <RoomUiContext.Provider value={ui}>
       <div className={styles.room}>
         <Header
-          layout={layout}
-          everyone={everyone}
-          onFocus={(stageId) => {
-            if (stageId === null) { setEveryone(true); return }
-            setPin({ kind: 'stage', id: stageId })
-          }}
           onPeople={() => {
             setTab('people')
             setPanelOpen(true)
@@ -146,7 +134,11 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
               </div>
             ) : (
               <div className={styles.focusMain}>
-                <TileFor target={layout.focus} size="focus" />
+                <AnimatePresence mode="popLayout" initial={false}>
+                  <motion.div key={keyOf(layout.focus)} className={styles.focusTile} {...focusPresence(reduced)}>
+                    <TileFor target={layout.focus} size="focus" />
+                  </motion.div>
+                </AnimatePresence>
                 {layout.reason === 'spotlight' ? (
                   <Pill tone="glass" size="sm" className={styles.leaveSpotlight} onClick={() => setLeftSpotlight(true)}>
                     {strings.leaveSpotlight}
@@ -156,7 +148,10 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
             )}
           </main>
           {arrange ? (
-            <div className={styles.people} data-arrange={arrange} style={{ '--count': side.length } as CSSProperties}>
+            // A new arrangement (the panel opening or closing, another
+            // focus) is a new group born in place, not tiles flying across
+            // the stage.
+            <div key={`${arrange}|${layout.kind === 'focus' ? keyOf(layout.focus) : ''}`} className={styles.people} data-arrange={arrange} style={{ '--count': side.length } as CSSProperties}>
               <AnimatePresence mode="popLayout" initial={false}>
                 {side.map((target, index) => (
                   <motion.button
@@ -164,6 +159,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
                     type="button"
                     className={styles.thumb}
                     data-kind={target.kind}
+                    style={{ '--i': index } as CSSProperties}
                     data-wide={arrange === 'pairs' && index === side.length - 1 && aloneInRow(side, index) ? '' : undefined}
                     aria-label={`${strings.pin}: ${target.kind === 'stage' ? vm.stages.find((stage) => stage.id === target.id)?.title ?? '' : ui.nameOf(target.id)}`}
                     onClick={() => setPin(target)}

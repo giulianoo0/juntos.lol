@@ -111,6 +111,8 @@ export interface RoomSlots {
   renderVideo: (memberId: string) => ReactNode
   /** The player, the live or the screen, filling its box. */
   renderStage: (stage: Stage, size: 'focus' | 'thumb') => ReactNode
+  /** A small reading beside the stage's tags, shown on hover (the buffer). */
+  renderStageTag?: (stage: Stage) => ReactNode
   /** The picker a "Compartilhar" pick opens (torrent, YouTube, catálogo),
       in a dialog; `null` when the pick needs no picker (tela, arquivo). */
   renderShare?: (source: ShareSource, close: () => void) => ReactNode

@@ -884,6 +884,9 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     slots: {
       renderVideo: (memberId) => <CallVideo memberId={memberId} />,
       renderStage: (stage) => hosts.slot(stage.id),
+      renderStageTag: (stage) => stage.kind === 'media' && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
+        ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
+        : null,
       renderShare: (source, close) => {
         if (!mayOpen(source)) return null
         if (source === 'torrent') {
@@ -997,11 +1000,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           />
         </div>
       ) : null}
-      <div className="stage-extras">
-        {uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready'
-          ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
-          : null}
-      </div>
       {sidePanel === 'chapters' ? (
         <div className="stage-chapters">
           <ChaptersPanel

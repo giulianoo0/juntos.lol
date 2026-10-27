@@ -1,7 +1,6 @@
 import { ArrowUp } from 'lucide-react'
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type UIEvent } from 'react'
 import { hueOf } from '../../ui/hue'
-import { useSendFlight } from '../../ui/useSendFlight'
 import { clockOf, groupChat } from './chatGroups'
 import { Face } from './Face'
 import { useRoomUi } from './context'
@@ -16,7 +15,7 @@ const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pic
 /**
  * The chat as bubbles: others on the left under their creature, a run of
  * theirs stacked in one column; yours on the right in the brand colour,
- * rising out of the composer (the lawcore's flight). An empty chat shows
+ * each popping out of its own tail corner. An empty chat shows
  * the room's creatures waiting for someone to start.
  */
 export function ChatPanel() {
@@ -24,24 +23,12 @@ export function ChatPanel() {
   const avatarOf = (id: string) => vm.people.find((person) => person.id === id)?.avatar
   const [text, setText] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
-  const composerRef = useRef<HTMLFormElement>(null)
   const following = useRef(true)
   const lines = useMemo(() => groupChat(vm.chat), [vm.chat])
-  const lastOwnId = useMemo(() => {
-    for (let index = vm.chat.length - 1; index >= 0; index -= 1) {
-      const message = vm.chat[index]
-      if (message && message.authorId === vm.selfId && !message.system) return message.id
-    }
-    return null
-  }, [vm.chat, vm.selfId])
-
   useLayoutEffect(() => {
     const list = listRef.current
     if (list && following.current) list.scrollTop = list.scrollHeight
   }, [lines])
-
-  // Runs after the scroll above, so the flight measures the line in place.
-  const { launch } = useSendFlight(listRef, lastOwnId)
 
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const list = event.currentTarget
@@ -52,8 +39,6 @@ export function ChatPanel() {
     event.preventDefault()
     const value = text.trim()
     if (!value) return
-    const pill = composerRef.current?.getBoundingClientRect()
-    if (pill) launch({ right: pill.right, bottom: pill.bottom, width: pill.width })
     following.current = true
     vm.actions.sendChat(value)
     setText('')
@@ -98,14 +83,14 @@ export function ChatPanel() {
                       <time className={styles.time} dateTime={new Date(line.at).toISOString()}>{clockOf(line.at)}</time>
                     </span>
                   ) : null}
-                  <span className={styles.bubble} data-big={big || undefined} data-flight title={own ? clockOf(line.at) : undefined}>{line.text}</span>
+                  <span className={styles.bubble} data-big={big || undefined} title={own ? clockOf(line.at) : undefined}>{line.text}</span>
                 </div>
               </div>
             )
           })}
         </div>
       </div>
-      <form ref={composerRef} className={styles.composer} onSubmit={submit}>
+      <form className={styles.composer} onSubmit={submit}>
         <input
           className={styles.input}
           value={text}

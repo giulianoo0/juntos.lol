@@ -329,9 +329,7 @@ describe('palcos', () => {
     serve({ room: roomBody({ screens: [{ memberId: 'm2', nickname: 'Ana', since: '2026-01-01T00:00:00Z' }] }) })
     await joined('m1')
 
-    const stages = within(screen.getByRole('radiogroup', { name: 'Em foco' }))
-    expect(stages.getByRole('radio', { name: 'movie.mkv' })).toBeInTheDocument()
-    expect(stages.getByRole('radio', { name: 'Tela de Ana' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Fixar: Tela de Ana' })).toBeInTheDocument()
     expect(changeRoomSource).not.toHaveBeenCalled()
   })
 })

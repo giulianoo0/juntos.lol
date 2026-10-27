@@ -236,6 +236,28 @@
   white-space: nowrap;
 }
 
+.hoverTag {
+  padding-inline: var(--space-4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* On a big stage the tags show on hover, like the corner buttons. */
+.tile:not([data-size="thumb"]) .stageTags {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-hover);
+}
+
+.tile:hover .stageTags,
+.tile:focus-within .stageTags {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tile:not([data-size="thumb"]) .stageTags {
+    opacity: 1;
+  }
+}
+
 .corner .tag {
   padding-inline: var(--space-4);
 }
@@ -258,4 +280,16 @@
     transition: opacity var(--duration-fast) var(--ease-hover);
     scale: 1;
   }
+}
+
+/* The player's stage follows the player's own controls: shown while they
+   are, gone with them while it plays untouched. */
+.tile:has(:global(.player-wrap:not(.controls-hidden))) .stageTags,
+.tile:has(:global(.player-wrap:not(.controls-hidden))) .cornerButton {
+  opacity: 1;
+}
+
+.tile:has(:global(.player-wrap.controls-hidden)) .stageTags,
+.tile:has(:global(.player-wrap.controls-hidden)) .cornerButton {
+  opacity: 0;
 }

@@ -48,7 +48,7 @@ export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
   }, [videoRef])
   const arriving = swarm !== null && (swarm.downloadSpeed > 0 || swarm.progress < 1)
   return (
-    <span className="upload-chip pipeline-chip">
+    <span className="pipeline-chip">
       {remote || progress !== null ? (
         <span
           className="pipeline-metric"

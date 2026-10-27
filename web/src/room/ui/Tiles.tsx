@@ -1,5 +1,5 @@
 import { Crown, Focus, MicOff, Pin, PinOff, X } from 'lucide-react'
-import { useCallback, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
 import type { Person, Stage } from '../model'
 import { RoundButton } from '../../ui/Pill'
 import { Tip } from '../../ui/Tip'
@@ -125,6 +125,10 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
   )
 }
 
+function stageTag(reading: ReactNode) {
+  return reading ? <span className={`${styles.tag} ${styles.hoverTag}`}>{reading}</span> : null
+}
+
 /** A stage: the player, the live or a screen, with who opened it. */
 export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
   const { vm, strings, pin, setPin, spotlit, nameOf } = useRoomUi()
@@ -143,6 +147,7 @@ export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
         </span>}
         {size !== 'thumb' && pinned ? <span className={styles.tag}><Pin size={12} aria-hidden="true" />{strings.pinned}</span> : null}
         {size !== 'thumb' && lit ? <span className={styles.tag}><Focus size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
+        {size !== 'thumb' ? stageTag(vm.slots.renderStageTag?.(stage)) : null}
       </div>
       {size !== 'thumb' ? (
         <div className={styles.corner}>

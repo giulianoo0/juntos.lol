@@ -56,14 +56,6 @@ describe('layoutOf', () => {
     expect(layout.kind === 'focus' && layout.reason).toBe('pin')
   })
 
-  it('lays the stages and the people out as one grid when the viewer asks for everyone', () => {
-    const layout = layoutOf({ people, stages: [media], spotlight: { kind: 'media' }, pin: null, leftSpotlight: false, everyone: true })
-    expect(layout).toEqual({
-      kind: 'grid',
-      tiles: [{ kind: 'stage', id: 'media' }, ...people.map(({ id }) => ({ kind: 'person', id }))],
-    })
-  })
-
   it('forgets a pin or a spotlight on something that is gone', () => {
     const layout = layoutOf({ people, stages: [], spotlight: { kind: 'live' }, pin: { kind: 'stage', id: 'media' }, leftSpotlight: false })
     expect(layout.kind).toBe('grid')
