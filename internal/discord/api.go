@@ -39,6 +39,40 @@ func (a *API) EditFollowup(ctx context.Context, token, messageID string, message
 	return err
 }
 
+// ErrDMClosed is Discord refusing the bot a DM: the person shares no server
+// with the app, hasn't installed it, or turned DMs off.
+var ErrDMClosed = errors.New("discord dm closed")
+
+// codeCannotMessageUser is Discord's "Cannot send messages to this user".
+const codeCannotMessageUser = 50007
+
+// SendDM opens the bot's DM with a Discord user and posts the message there.
+func (a *API) SendDM(ctx context.Context, userID string, message any) error {
+	channelID, err := a.call(ctx, http.MethodPost, "/users/@me/channels", true, map[string]any{"recipient_id": userID})
+	if err == nil {
+		_, err = a.CreateChannelMessage(ctx, channelID, message)
+	}
+	var refused *APIError
+	if errors.As(err, &refused) && (refused.Code == codeCannotMessageUser || refused.StatusCode == http.StatusForbidden) {
+		return ErrDMClosed
+	}
+	return err
+}
+
+// APIError is Discord answering a call with an error status.
+type APIError struct {
+	Method     string
+	StatusCode int
+	Status     string
+	// Code is Discord's JSON error code, 0 when the body had none.
+	Code int
+	Body string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("discord %s: %s: %s", e.Method, e.Status, e.Body)
+}
+
 func (a *API) call(ctx context.Context, method, path string, asBot bool, message any) (string, error) {
 	body, err := json.Marshal(message)
 	if err != nil {
@@ -68,7 +102,13 @@ func (a *API) call(ctx context.Context, method, path string, asBot bool, message
 	defer response.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	if response.StatusCode >= 300 {
-		return "", fmt.Errorf("discord %s: %s: %s", method, response.Status, raw)
+		refused := &APIError{Method: method, StatusCode: response.StatusCode, Status: response.Status, Body: string(raw)}
+		var body struct {
+			Code int `json:"code"`
+		}
+		_ = json.Unmarshal(raw, &body)
+		refused.Code = body.Code
+		return "", refused
 	}
 	var created struct {
 		ID string `json:"id"`

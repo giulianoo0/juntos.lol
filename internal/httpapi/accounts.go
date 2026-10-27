@@ -38,6 +38,10 @@ const (
 	// profileReadsPerHour caps profile and history reads per client address,
 	// so the sequential numbers can't be walked in one go.
 	profileReadsPerHour = 600
+	// invitesPerHour caps the DMs one account sends through the bot, and
+	// invitesPerFriendPerHour the ones it sends to the same friend.
+	invitesPerHour          = 10
+	invitesPerFriendPerHour = 3
 )
 
 // PresenceSource says which room each account is in right now.
@@ -51,14 +55,20 @@ func WithAccounts(accounts *account.Store) ServerOption {
 }
 
 type accountRoutes struct {
-	cfg       config.Config
-	accounts  *account.Store
-	rooms     *room.Store
-	presence  PresenceSource
-	login     *discord.OAuth
+	cfg      config.Config
+	accounts *account.Store
+	rooms    *room.Store
+	presence PresenceSource
+	login    *discord.OAuth
+	// bot sends invites as DMs; nil without a bot token.
+	bot       *discord.API
+	roomCards discord.CardSource
 	callbacks *windowLimiter
 	asks      *windowLimiter
 	reads     *windowLimiter
+	invites   *windowLimiter
+	// invitesTo is keyed by inviter and friend.
+	invitesTo *windowLimiter
 }
 
 // RegisterAccountRoutes mounts the account API. Without a Discord secret the
@@ -69,6 +79,12 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 		callbacks: newWindowLimiter(loginCallbacksPerHour, time.Hour),
 		asks:      newWindowLimiter(friendRequestsPerHour, time.Hour),
 		reads:     newWindowLimiter(profileReadsPerHour, time.Hour),
+		invites:   newWindowLimiter(invitesPerHour, time.Hour),
+		invitesTo: newWindowLimiter(invitesPerFriendPerHour, time.Hour),
+		roomCards: NewDiscordRooms(rooms, cfg),
+	}
+	if cfg.DiscordBotToken != "" && cfg.PublicOrigin != "" {
+		routes.bot = &discord.API{Base: cfg.DiscordAPIBase, BotToken: cfg.DiscordBotToken, Client: &http.Client{Timeout: 10 * time.Second}}
 	}
 	if cfg.DiscordLoginEnabled() {
 		routes.login = &discord.OAuth{
@@ -84,6 +100,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	rg.PATCH("/me", routes.patchMe)
 	rg.GET("/friends", routes.friends)
 	rg.DELETE("/friends/:id", routes.removeFriend)
+	rg.POST("/friends/:id/invite", routes.inviteFriend)
 	rg.GET("/friends/requests", routes.friendRequests)
 	rg.POST("/friends/requests", routes.requestFriend)
 	rg.POST("/friends/requests/:id/accept", routes.acceptFriend)
@@ -507,6 +524,77 @@ func (a *accountRoutes) removeFriend(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// inviteFriend has the bot DM a friend a link to the room the viewer is in
+// right now, as the hub sees it.
+func (a *accountRoutes) inviteFriend(c *gin.Context) {
+	me, ok := a.viewer(c, true)
+	if !ok {
+		return
+	}
+	if a.bot == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "invites_disabled"})
+		return
+	}
+	friendID, ok := accountIDParam(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	friends, err := a.accounts.AreFriends(ctx, me.ID, friendID)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if !friends {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not_friends"})
+		return
+	}
+	friend, err := a.accounts.Get(ctx, friendID)
+	if errors.Is(err, account.ErrNotFound) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not_friends"})
+		return
+	}
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	var roomID string
+	if a.presence != nil {
+		roomID = a.presence.Presence([]int64{me.ID})[me.ID]
+	}
+	if roomID == "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "not_in_room"})
+		return
+	}
+	card, err := a.roomCards.Card(ctx, roomID)
+	if errors.Is(err, room.ErrNotFound) {
+		c.JSON(http.StatusConflict, gin.H{"error": "not_in_room"})
+		return
+	}
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	// The friend's own budget goes first, so a refusal there leaves the
+	// account's whole budget untouched.
+	if !a.invitesTo.allow(strconv.FormatInt(me.ID, 10)+":"+strconv.FormatInt(friendID, 10)) ||
+		!a.invites.allow(strconv.FormatInt(me.ID, 10)) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_invites"})
+		return
+	}
+	message := discord.InviteMessage(a.cfg.PublicOrigin, discord.Invite{From: me.Nickname, Number: me.ID, RoomID: roomID, Room: card})
+	err = a.bot.SendDM(ctx, friend.DiscordID, message)
+	switch {
+	case errors.Is(err, discord.ErrDMClosed):
+		c.JSON(http.StatusConflict, gin.H{"error": "dm_closed"})
+	case err != nil:
+		slog.WarnContext(ctx, "discord invite failed", "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "discord_failed"})
+	default:
+		c.Status(http.StatusNoContent)
+	}
 }
 
 func accountIDParam(c *gin.Context) (int64, bool) {
