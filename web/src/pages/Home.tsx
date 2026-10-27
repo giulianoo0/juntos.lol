@@ -11,6 +11,8 @@ import { DiscordGlyph } from '../ui/DiscordGlyph'
 import { Field } from '../ui/Field'
 import { IconPill } from '../ui/IconPill'
 import { Pill, PillLink } from '../ui/Pill'
+import { arrive } from '../ui/arrive'
+import { Skeleton } from '../ui/Shimmer'
 import { SpringPopover } from '../ui/SpringPopover'
 import { Couch } from './home/Couch'
 import { TurningTitle } from './home/TurningTitle'
@@ -102,12 +104,12 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
       <header className={styles.header}>
         <a className={styles.brand} href="/"><SmallWordmark className={styles.smallMark} /></a>
         {me ? (
-          <Link className={styles.me} to="/conta" aria-label={`${me.nickname} #${me.id}`}>
+          <Link className={`${styles.me} ${arrive}`} to="/conta" aria-label={`${me.nickname} #${me.id}`}>
             <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
             <span className={styles.meNumber}>#{me.id}</span>
           </Link>
-        ) : loading ? null : (
-          <a className={styles.discord} href={discordLoginUrl('/')}>
+        ) : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
+          <a className={`${styles.discord} ${arrive}`} href={discordLoginUrl('/')}>
             <DiscordGlyph size={18} />
             {t('landing.signIn')}
           </a>
