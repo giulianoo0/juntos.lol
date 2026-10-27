@@ -18,6 +18,8 @@
   --green-600: oklch(0.627 0.194 149);
   --amber-500: oklch(0.77 0.16 70);
   --amber-600: oklch(0.67 0.16 58);
+  --orange-500: oklch(0.72 0.18 41);
+  --orange-600: oklch(0.67 0.19 39);
 
   --black: oklch(0 0 0);
   --white: oklch(1 0 0);
@@ -66,6 +68,8 @@
 
   --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  /* Só nos títulos da landing e da conta. */
+  --font-display: "Bricolage Grotesque", var(--font-sans);
 
   --space-1: 0.25rem;
   --space-2: 0.375rem;
@@ -179,6 +183,11 @@
      temas, com tinta branca (4,9:1). */
   --primary-fill: var(--sky-500);
   --primary-fill-hover: var(--sky-600);
+  /* A marca do juntos (a seta do logo): o "Criar sala", o número da conta,
+     a sala de um amigo. O mesmo nos dois temas, com tinta escura. */
+  --brand: var(--orange-500);
+  --brand-hover: var(--orange-600);
+  --on-brand: oklch(0.2 0.04 40);
   --danger: var(--red-600);
   --on-danger: var(--white);
   --focus: var(--sky-500);
