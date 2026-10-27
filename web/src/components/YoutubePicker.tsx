@@ -3,6 +3,8 @@ import type { Translator } from '../i18n/useT'
 import { isYoutubeLink, openYoutube, youtubeCapacity, youtubeErrorKey, type YoutubeSession } from '../youtube'
 import { Field } from '../ui/Field'
 import { Pill } from '../ui/Pill'
+import { arrive } from '../ui/arrive'
+import { SummarySkeleton } from './PickerSkeleton'
 import styles from './Picker.module.css'
 import { installJlocalTools, jlocalToolsStatus, type JlocalToolsStatus } from '../jlocal/youtube'
 import { useJLocal } from '../jlocal/status'
@@ -138,12 +140,12 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
             placeholder="https://youtube.com/watch?v=…"
             onChange={(event) => { setUrl(event.target.value); if (error && capacity === 'available') setError('') }}
           />
-          <Pill type="submit" tone="primary" size="lg" disabled={loading || !valid} aria-busy={loading}>
-            {t(loading ? 'home.youtubeLoading' : 'home.youtubeLoad')}
+          <Pill type="submit" tone="primary" size="lg" disabled={!valid} loading={loading}>
+            {t('home.youtubeLoad')}
           </Pill>
         </form>
       ) : summary ? (
-        <div className={styles.summary}>
+        <div className={`${styles.summary} ${arrive}`}>
           {summary.thumbnail ? <img className={styles.thumb} src={summary.thumbnail} alt="" /> : null}
           <div className={styles.summaryText}>
             <span className={styles.summaryTitle}>{summary.title}</span>
@@ -158,6 +160,7 @@ export function YoutubePicker({ onPicked, onExit, initialUrl = '', t }: YoutubeP
           </div>
         </div>
       ) : null}
+      {loading ? <SummarySkeleton label={t('status.loading')} /> : null}
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {!resolved && tools && tools.status !== 'ready' && tools.status !== 'unsupported' ? (
         <div className={styles.foot}>

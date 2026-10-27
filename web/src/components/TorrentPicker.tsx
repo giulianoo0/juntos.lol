@@ -6,6 +6,8 @@ import { torrentErrorKey } from '../torrentErrors'
 import { Film, Magnet, Play } from 'lucide-react'
 import { Field } from '../ui/Field'
 import { Pill } from '../ui/Pill'
+import { arrive } from '../ui/arrive'
+import { RowsSkeleton } from './PickerSkeleton'
 import styles from './Picker.module.css'
 import { isYoutubeLink } from '../youtube'
 
@@ -165,8 +167,8 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
             placeholder="magnet:?xt=urn:btih:…"
             onChange={(event) => setMagnet(event.target.value)}
           />
-          <Pill type="submit" tone="primary" size="lg" disabled={loading || !magnet.trim()} aria-busy={loading}>
-            {t(loading ? 'home.torrentLoading' : youtubeLink ? 'home.openYoutube' : 'home.torrentLoad')}
+          <Pill type="submit" tone="primary" size="lg" disabled={!magnet.trim()} loading={loading}>
+            {t(youtubeLink ? 'home.openYoutube' : 'home.torrentLoad')}
           </Pill>
         </form>
       ) : (
@@ -179,7 +181,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
             onChange={(event) => setQuery(event.target.value)}
           />
           {matches.length > 0 ? (
-            <div className={styles.list}>
+            <div className={`${styles.list} ${arrive}`}>
               {matches.map((file) => (
                 <button
                   type="button"
@@ -197,6 +199,7 @@ export function TorrentPicker({ maxFileBytes, onPicked, onExit, onYoutubeLink, i
           ) : <p className={styles.empty}>{t('home.torrentNoMatch')}</p>}
         </>
       )}
+      {loading ? <RowsSkeleton label={t('status.loading')} /> : null}
       <WorkerProbes probes={probes} t={t} />
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {listing ? (

@@ -106,6 +106,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A row on its way, in the shape of the ones it holds the place of. */
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 3rem;
+  padding: var(--space-2) var(--space-4);
+}
+
 .empty {
   margin: 0;
   padding: var(--space-6) 0;

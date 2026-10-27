@@ -6,6 +6,8 @@ import { driveErrorKey } from '../driveErrors'
 import { ChevronRight, Film, Folder, Link2 } from 'lucide-react'
 import { Field } from '../ui/Field'
 import { Pill } from '../ui/Pill'
+import { arrive } from '../ui/arrive'
+import { RowsSkeleton } from './PickerSkeleton'
 import styles from './Picker.module.css'
 
 const VIDEO_EXTENSION = /\.(mkv|mp4|m4v|webm|avi|mov|ogv|ts|m2ts)$/i
@@ -98,6 +100,8 @@ interface SingleFile {
 export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
   const [link, setLink] = useState('')
   const [loading, setLoading] = useState(false)
+  // A folder on its way, rather than a pick being checked.
+  const [reading, setReading] = useState(false)
   const [error, setError] = useState('')
   const [trail, setTrail] = useState<FolderLevel[]>([])
   const [single, setSingle] = useState<SingleFile | null>(null)
@@ -156,6 +160,7 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
     setQuery('')
     setError('')
     setLoading(true)
+    setReading(true)
     try {
       if (parsed.kind === 'file') {
         const opened = await drive.openDriveSession({ kind: 'file', id: parsed.id }, { signal: controller.signal })
@@ -184,7 +189,7 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
       if (controller.signal.aborted) return
       fail(unknown)
     } finally {
-      if (abortRef.current === controller) setLoading(false)
+      if (abortRef.current === controller) { setLoading(false); setReading(false) }
     }
   }
 
@@ -197,6 +202,7 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
     abortRef.current = controller
     setError('')
     setLoading(true)
+    setReading(true)
     try {
       const entries = await drive.listDriveFolder(entry.id, { signal: controller.signal })
       if (controller.signal.aborted) return
@@ -206,7 +212,7 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
       if (controller.signal.aborted) return
       fail(unknown)
     } finally {
-      if (abortRef.current === controller) setLoading(false)
+      if (abortRef.current === controller) { setLoading(false); setReading(false) }
     }
   }
 
@@ -283,6 +289,7 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
   return (
     <div className={styles.flow}>
       {!listing ? (
+        <>
         <form className={styles.ask} onSubmit={(event) => { event.preventDefault(); void load() }}>
           <Field
             aria-label={t('drive.link')}
@@ -295,10 +302,12 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
             placeholder="https://drive.google.com/…"
             onChange={(event) => setLink(event.target.value)}
           />
-          <Pill type="submit" tone="primary" size="lg" disabled={loading || !link.trim()} aria-busy={loading}>
-            {t(loading ? 'drive.loading' : 'drive.load')}
+          <Pill type="submit" tone="primary" size="lg" disabled={!link.trim()} loading={loading}>
+            {t('drive.load')}
           </Pill>
         </form>
+        {reading ? <RowsSkeleton label={t('status.loading')} /> : null}
+        </>
       ) : (
         <>
           {current ? (
@@ -313,8 +322,8 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
           {current ? (
             <Field aria-label={t('drive.search')} autoFocus value={query} disabled={loading} placeholder={t('drive.search')} onChange={(event) => setQuery(event.target.value)} />
           ) : null}
-          {single ? (
-            <div className={styles.list} aria-busy={loading}>
+          {reading ? <RowsSkeleton label={t('status.loading')} /> : single ? (
+            <div className={`${styles.list} ${arrive}`} aria-busy={loading}>
               <button type="button" className={styles.row} disabled={loading} onClick={() => { void pickSingle() }}>
                 <span className={styles.rowIcon} aria-hidden="true"><Film size={15} /></span>
                 <span className={styles.rowName} title={single.file.name}>{single.file.name}</span>
@@ -322,7 +331,7 @@ export function DrivePicker({ maxFileBytes, onPicked, t }: DrivePickerProps) {
               </button>
             </div>
           ) : folders.length + videos.length > 0 ? (
-            <div className={styles.list} aria-busy={loading}>
+            <div key={current?.id} className={`${styles.list} ${arrive}`} aria-busy={loading}>
               {folders.map((entry) => (
                 <button type="button" key={entry.id} className={styles.row} disabled={loading} onClick={() => { void drill(entry) }}>
                   <span className={styles.rowIcon} aria-hidden="true"><Folder size={15} /></span>

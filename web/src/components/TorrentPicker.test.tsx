@@ -68,3 +68,14 @@ describe('TorrentPicker playlist', () => {
     expect(opened.select).toHaveBeenCalledWith('Serie/Ep 2.mkv')
   })
 })
+
+describe('TorrentPicker while the magnet is read', () => {
+  it('keeps the button words, marks it working and holds the place of the list', async () => {
+    vi.mocked(openTorrent).mockReturnValue(new Promise(() => {}))
+    render(<TorrentPicker maxFileBytes={1e12} t={t} onPicked={vi.fn()} initialMagnet="magnet:?xt=urn:btih:abc" autoLoad />)
+    const button = await screen.findByRole('button', { name: 'Buscar arquivos' })
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    expect(button).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true')
+  })
+})
