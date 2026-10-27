@@ -17,6 +17,7 @@ import { JlocalPicker } from '../screen/JlocalPicker'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
 import { useStageHosts } from '../room/stageHosts'
+import { AccountPage } from './Account'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
@@ -884,6 +885,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     slots: {
       renderVideo: (memberId) => <CallVideo memberId={memberId} />,
       renderStage: (stage) => hosts.slot(stage.id),
+      renderProfile: (accountId) => <AccountPage id={accountId} embedded />,
       renderStageTag: (stage) => stage.kind === 'media' && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
         ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
         : null,

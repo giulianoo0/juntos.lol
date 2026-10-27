@@ -7,7 +7,7 @@ import { Tip } from '../../ui/Tip'
 import { ChatPanel } from './ChatPanel'
 import { useRoomUi } from './context'
 import { Face } from './Face'
-import { PersonMenu } from './PersonMenu'
+import { PersonContextMenu, PersonMenu } from './PersonMenu'
 import { fill } from './strings'
 import styles from './SidePanel.module.css'
 
@@ -73,7 +73,7 @@ function PeopleList() {
         const muted = !person.mic || person.hostMuted
         const self = person.id === vm.selfId
         return (
-          <li key={person.id} className={styles.person}>
+          <PersonContextMenu key={person.id} person={person} render={<li className={styles.person} />}>
             <Face id={person.id} avatar={person.avatar} size={32} />
             <span className={styles.personName}>
               <span className={styles.nameText}>{person.name}</span>
@@ -94,7 +94,7 @@ function PeopleList() {
               <Tip label={strings.mic}><Mic size={15} className={styles.mark} aria-hidden="true" /></Tip>
             )}
             <PersonMenu person={person} />
-          </li>
+          </PersonContextMenu>
         )
       })}
     </ul>

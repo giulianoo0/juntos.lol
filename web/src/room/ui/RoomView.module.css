@@ -8,6 +8,96 @@
   color: var(--text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  --mini: 0.22;
+
+  position: relative;
+  z-index: 1;
+  transform-origin: 100% 100%;
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    translate var(--duration-spring-pop) var(--ease-spring-pop),
+    border-radius var(--duration-spring-pop) var(--ease-spring-pop),
+    box-shadow var(--duration-spring-pop) var(--ease-spring-pop);
+}
+
+/* Someone's profile: the call closes into the bottom right corner, still
+   live and playing, and the page shows behind it. */
+.room[data-away] {
+  scale: var(--mini);
+  translate: calc(-1 * var(--space-6)) calc(-1 * var(--space-6));
+  border-radius: calc(var(--radius-2xl) / var(--mini));
+  box-shadow: 0 0 0 calc(1px / var(--mini)) var(--line), 0 calc(24px / var(--mini)) calc(60px / var(--mini)) rgb(0 0 0 / 0.45);
+  transition-duration: var(--duration-spring-settle);
+  transition-timing-function: var(--ease-spring-settle);
+}
+
+.behind {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  background: var(--background);
+  opacity: 0;
+  filter: blur(var(--blur-md));
+  transition:
+    opacity var(--duration-spring-settle) var(--ease-spring-settle),
+    filter var(--duration-spring-settle) var(--ease-spring-settle);
+}
+
+.behind[data-away] {
+  opacity: 1;
+  filter: none;
+}
+
+@starting-style {
+  .behind[data-away] {
+    opacity: 0;
+    filter: blur(var(--blur-md));
+  }
+}
+
+/* The call in the corner: one click brings it back. */
+.back {
+  position: fixed;
+  z-index: 2;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  width: calc(100vw * 0.22);
+  height: calc(100dvh * 0.22);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-2xl);
+  background: none;
+  cursor: pointer;
+}
+
+.back:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .back:hover {
+    box-shadow: 0 0 0 2px var(--brand);
+  }
+}
+
+@media (max-width: 56rem) {
+  .room {
+    --mini: 0.36;
+  }
+
+  .back {
+    width: calc(100vw * 0.36);
+    height: calc(100dvh * 0.36);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room,
+  .behind {
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--ease-out);
+  }
 }
 
 /* One grid for the whole room: the stage (or the grid of people) on the

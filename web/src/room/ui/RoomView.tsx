@@ -60,6 +60,17 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
   const [pin, setPin] = useState<Target | null>(null)
   const [leftSpotlight, setLeftSpotlight] = useState(false)
   const [sharing, setSharing] = useState<ShareSource | null>(null)
+  // Whose profile is behind the call, and whether the call is in the
+  // corner over it; the profile stays until the call has grown back.
+  const [profile, setProfile] = useState<number | null>(null)
+  const [away, setAway] = useState(false)
+
+  useEffect(() => {
+    if (!away) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setAway(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [away])
 
   const lit = spotlightKey(vm)
   useEffect(() => { setLeftSpotlight(false) }, [lit])
@@ -84,6 +95,11 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
     setLeftSpotlight,
     spotlit,
     nameOf: (memberId) => vm.people.find((person) => person.id === memberId)?.name ?? '',
+    viewProfile: (accountId) => {
+      if (!vm.slots.renderProfile) return
+      setProfile(accountId)
+      setAway(true)
+    },
   }
 
   const share = (source: ShareSource) => {
@@ -106,7 +122,19 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
 
   return (
     <RoomUiContext.Provider value={ui}>
-      <div className={styles.room}>
+      {profile !== null ? (
+        <div className={styles.behind} data-away={away || undefined} {...(away ? {} : { inert: '' })}>
+          {vm.slots.renderProfile?.(profile)}
+        </div>
+      ) : null}
+      <div
+        className={styles.room}
+        data-away={away || undefined}
+        {...(away ? { inert: '' } : {})}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'scale' && !away) setProfile(null)
+        }}
+      >
         <Header
           onPeople={() => {
             setTab('people')
@@ -190,6 +218,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
           </aside>
         </div>
       </div>
+      {away ? <button type="button" className={styles.back} aria-label={strings.backToRoom} title={strings.backToRoom} onClick={() => setAway(false)} /> : null}
       <Modal
         open={sharePicker !== null}
         onOpenChange={(open) => { if (!open) closeShare() }}

@@ -7,6 +7,7 @@ import { useTheme, type Theme } from '../../ui/theme'
 import { REACTIONS, splitReactions } from '../reactions'
 import { EntryScreen, WaitingRoom } from './Entry'
 import { RoomView } from './RoomView'
+import { AccountPage } from '../../pages/Account'
 import styles from './DevRoom.module.css'
 
 /* /dev/sala: the room with a fake model, to see every state without a
@@ -208,6 +209,7 @@ export function DevRoom() {
         return <FakeCamera name={people[index]?.name ?? ''} hue={(index * 47 + 200) % 360} />
       },
       renderStage: (stage, size) => <FakeStage stage={stage} size={size} />,
+      renderProfile: (accountId) => <AccountPage id={accountId} embedded />,
       renderShare: (source, close) => (source === 'torrent' || source === 'youtube' || source === 'catalog' ? <SharePicker source={source} close={close} /> : null),
     },
     // `update` and the setters are stable enough for a dev page.

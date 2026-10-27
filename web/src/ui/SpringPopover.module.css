@@ -96,7 +96,8 @@
   color: var(--status-danger-ink);
 }
 
-.row:disabled {
+.row:disabled,
+.row[data-disabled] {
   color: var(--text-faint);
   cursor: not-allowed;
 }
@@ -107,7 +108,8 @@
   }
 }
 
-.row:focus-visible {
+.row:focus-visible,
+.row[data-highlighted] {
   outline: none;
   background: var(--hover);
 }

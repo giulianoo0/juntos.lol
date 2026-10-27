@@ -5,7 +5,7 @@ import { RoundButton } from '../../ui/Pill'
 import { Tip } from '../../ui/Tip'
 import { sameTarget, useRoomUi } from './context'
 import { Face } from './Face'
-import { PersonMenu } from './PersonMenu'
+import { PersonContextMenu, PersonMenu } from './PersonMenu'
 import { ReactionBursts, useReactionMood, useReactions } from './Reactions'
 import styles from './Tiles.module.css'
 
@@ -66,16 +66,19 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
   const { levelOf } = vm
   const level = useCallback(() => levelOf?.(person.id) ?? 0, [levelOf, person.id])
   return (
-    <div
-      ref={tileRef}
-      className={styles.tile}
-      data-size={size}
-      data-speaking={speaking || undefined}
-      data-camera={camera || undefined}
-      data-member={person.id}
-      data-reaction={reactions.last?.emoji}
-      onPointerMove={camera ? undefined : gaze.follow}
-      onPointerLeave={camera ? undefined : gaze.leave}
+    <PersonContextMenu
+      person={person}
+      render={<div
+        ref={tileRef}
+        className={styles.tile}
+        data-size={size}
+        data-speaking={speaking || undefined}
+        data-camera={camera || undefined}
+        data-member={person.id}
+        data-reaction={reactions.last?.emoji}
+        onPointerMove={camera ? undefined : gaze.follow}
+        onPointerLeave={camera ? undefined : gaze.leave}
+      />}
     >
       {camera ? <div className={styles.video}>{vm.slots.renderVideo(person.id)}</div> : (
         <span className={styles.face}>
@@ -121,7 +124,7 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
           ) : null}
         </div>
       ) : null}
-    </div>
+    </PersonContextMenu>
   )
 }
 

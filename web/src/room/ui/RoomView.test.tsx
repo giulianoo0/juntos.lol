@@ -46,6 +46,17 @@ describe('RoomView', () => {
     expect(vm.actions.answerRequest).toHaveBeenCalledWith('r1', true)
   })
 
+  it('opens someone\'s profile from a right click, the call waiting in the corner', async () => {
+    const base = model({ people: [person('giu', 'Giu', { host: true }), person('ana', 'Ana', { accountId: 7 })] })
+    const vm = model({ ...base, slots: { ...base.slots, renderProfile: (id) => <p>perfil #{id}</p> } })
+    render(<RoomView vm={vm} />)
+    fireEvent.contextMenu(document.querySelector('[data-member="ana"]')!)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Ver perfil' }))
+    expect(await screen.findByText('perfil #7')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Voltar para a sala' }))
+    expect(screen.queryByRole('button', { name: 'Voltar para a sala' })).toBeNull()
+  })
+
   it('shows a guest no requests to answer', () => {
     render(<RoomView vm={model({ isHost: false, selfId: 'ana' })} />)
     expect(screen.queryByRole('button', { name: 'Permitir' })).toBeNull()
