@@ -1,4 +1,5 @@
 import { forwardRef, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { DiaText } from './Shimmer'
 import { Tip } from './Tip'
 import styles from './Pill.module.css'
 
@@ -12,6 +13,8 @@ interface PillOwn {
   icon?: ReactNode
   /** Stretch to the row. */
   block?: boolean
+  /** Working: the label runs the DiaShimmer and the button holds still. */
+  loading?: boolean
 }
 
 function pillClass({ tone = 'soft', size = 'lg', block = false }: PillOwn, extra = ''): string {
@@ -20,18 +23,26 @@ function pillClass({ tone = 'soft', size = 'lg', block = false }: PillOwn, extra
 
 /** The rounded action: a pill with an optional icon before its words. */
 export const Pill = forwardRef<HTMLButtonElement, PillOwn & ButtonHTMLAttributes<HTMLButtonElement>>(function Pill(
-  { tone, size, icon, block, className = '', type = 'button', children, ...rest },
+  { tone, size, icon, block, loading = false, className = '', type = 'button', disabled, children, ...rest },
   ref,
 ) {
   return (
-    <button ref={ref} type={type} className={pillClass({ tone, size, block }, className)} {...rest}>
+    <button
+      ref={ref}
+      type={type}
+      aria-busy={loading || undefined}
+      data-loading={loading || undefined}
+      disabled={disabled || loading}
+      className={pillClass({ tone, size, block }, className)}
+      {...rest}
+    >
       {icon ? <span className={styles.icon} aria-hidden="true">{icon}</span> : null}
-      {children}
+      {loading ? <DiaText>{children}</DiaText> : children}
     </button>
   )
 })
 
-export function PillLink({ tone, size, icon, block, className = '', children, ...rest }: PillOwn & AnchorHTMLAttributes<HTMLAnchorElement>) {
+export function PillLink({ tone, size, icon, block, loading: _loading, className = '', children, ...rest }: PillOwn & AnchorHTMLAttributes<HTMLAnchorElement>) {
   return (
     <a className={pillClass({ tone, size, block }, className)} {...rest}>
       {icon ? <span className={styles.icon} aria-hidden="true">{icon}</span> : null}

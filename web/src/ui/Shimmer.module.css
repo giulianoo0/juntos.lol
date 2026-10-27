@@ -1,0 +1,45 @@
+/* The DiaShimmer of the logo, on words: the ink stays readable and the five
+   colours sweep over it left to right. */
+.dia {
+  --dia-ink: currentColor;
+
+  color: transparent;
+  background-image:
+    linear-gradient(100deg, transparent 30%, #c679c4 40%, #fa3d1d 45%, #ffb005 50%, #e1e1fe 55%, #0358f7 60%, transparent 70%),
+    linear-gradient(var(--dia-ink), var(--dia-ink));
+  background-size: 300% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-position: 150% 0, 0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: dia-sweep 2.2s linear infinite;
+}
+
+@keyframes dia-sweep {
+  to { background-position: -50% 0, 0 0; }
+}
+
+/* A placeholder block in the shape of what is coming. */
+.skeleton {
+  display: block;
+  border-radius: var(--radius-md, 12px);
+  background:
+    linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--text) 9%, transparent) 50%, transparent 70%) 150% 0 / 220% 100% no-repeat,
+    color-mix(in oklab, var(--text) 6%, transparent);
+  animation: skeleton-sweep 1.4s linear infinite;
+}
+
+.skeleton[data-round] {
+  border-radius: var(--radius-full);
+}
+
+@keyframes skeleton-sweep {
+  to { background-position: -50% 0, 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dia,
+  .skeleton {
+    animation-duration: 4s;
+  }
+}
