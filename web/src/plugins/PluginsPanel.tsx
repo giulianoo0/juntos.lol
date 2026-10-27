@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { Puzzle, Trash2, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { MorphPanel } from '../ui/MorphPanel'
+import { DiaText } from '../ui/Shimmer'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
 import { buildInstall, canonicalRepoUrl, fetchGitPlugin, readManifestFromSource } from './install'
@@ -169,8 +170,8 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
                     onChange={(event) => setRepoUrl(event.target.value)}
                   />
                 </label>
-                <button type="button" className="primary-button" disabled={busy || repoUrl.trim() === ''} onClick={() => void fromRepo()}>
-                  {t('plugins.fetch')}
+                <button type="button" className="primary-button" aria-busy={busy || undefined} disabled={busy || repoUrl.trim() === ''} onClick={() => void fromRepo()}>
+                  {busy ? <DiaText>{t('plugins.fetch')}</DiaText> : t('plugins.fetch')}
                 </button>
                 {error ? <p className="empty-copy">{error}</p> : null}
               </motion.div>

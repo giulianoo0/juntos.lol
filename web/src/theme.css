@@ -227,13 +227,6 @@ h1, h2, p { margin-top: 0; }
 .reduced-motion { transition: none; }
 .reduced-motion .chat-message { animation: none; }
 
-.status-pill { flex: 0 0 auto; font-size: 12px; font-weight: 500; color: var(--text-dim); white-space: nowrap; }
-.status-live { color: #4ade80; }
-.status-buffering { color: #fb923c; }
-.status-processing { color: #FF8A57; }
-.status-connecting { color: transparent; background-image: linear-gradient(100deg, rgba(255,255,255,0) 34%, #fff0bd 50%, rgba(255,255,255,0) 66%), linear-gradient(#c8991a, #c8991a); background-size: 260% 100%, 100% 100%; background-repeat: no-repeat, no-repeat; background-position: 180% 0, 0 0; -webkit-background-clip: text; background-clip: text; animation: shimmer-text 1.8s linear infinite; }
-@keyframes shimmer-text { to { background-position: -80% 0, 0 0; } }
-@media (prefers-reduced-motion: reduce) { .status-connecting { animation-duration: 4s !important; } }
 @keyframes chat-enter { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 @keyframes torrent-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) and (pointer: fine) { .home-header nav button:hover > span { transform: translateY(-1px); } }
@@ -489,7 +482,6 @@ button.timecode-chapter:hover { color: var(--text); }
 .stage-actions { margin-top: 20px; display: flex; justify-content: flex-end; }
 .stage-title { margin: 0 0 8px; font-size: 22px; font-weight: 700; letter-spacing: -.035em; }
 .stage-description { margin: 0 0 20px; color: var(--text-dim); font-size: 14px; }
-.stage-spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,.14); border-top-color: #FFD0B8; border-radius: 50%; animation: torrent-spin .8s linear infinite; }
 .source-hint { margin: 16px 0 0; color: var(--text-faint); font-size: 12px; text-align: center; opacity: 1; transition: opacity 160ms var(--ease), filter var(--t-morph) var(--ease); }
 .home-stage:not([data-step='drop']) .source-hint { opacity: 0; filter: blur(8px); }
 
@@ -504,11 +496,6 @@ button.timecode-chapter:hover { color: var(--text); }
 .torrent-switch .magnet-glyph { color: #FFB794; font-size: 15px; }
 .torrent-files button.is-current { background: rgba(255,122,69,.13); box-shadow: inset 0 0 0 1px rgba(255,122,69,.35); }
 .torrent-files button.is-current small { color: #FFB794; font-weight: 600; }
-.torrent-load { flex: 0 0 auto; width: auto; overflow: hidden; white-space: nowrap; transition: background-color var(--t-open) var(--ease), color var(--t-close) var(--ease), opacity var(--t-close) var(--ease), box-shadow var(--t-open) var(--ease); }
-.button-label { display: block; white-space: nowrap; }
-.torrent-load.is-loading { opacity: 1; cursor: progress; color: rgba(255,255,255,.9); background-color: rgba(255,122,69,.3); background-image: linear-gradient(100deg, transparent 24%, rgba(255,255,255,.34) 50%, transparent 76%); background-size: 220% 100%; background-repeat: no-repeat; box-shadow: inset 0 1px rgba(255,255,255,.12); animation: shimmer 1.4s linear infinite; }
-@keyframes shimmer { from { background-position: 210% 0; } to { background-position: -110% 0; } }
-@media (prefers-reduced-motion: reduce) { .torrent-load.is-loading { animation-duration: 3s !important; } }
 
 .torrent-search { flex: 0 0 auto; width: 100%; margin-bottom: 8px; padding: 10px 13px; border-radius: 12px; font-size: 13px; }
 .ui-dialog .torrent-files { max-height: min(46vh, 360px); }
@@ -913,7 +900,7 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 /* Actions: the primary spans the width; disabled stays legible instead of fading to brown. */
 .upload-morph .torrent-actions { margin-top: 16px; }
 .upload-morph .torrent-actions .primary-button, .upload-morph .join-room-form .primary-button, .nickname-dialog .dialog-actions .ui-button { display: inline-flex; align-items: center; justify-content: center; text-align: center; flex: 1 1 auto; width: 100%; padding: 12px 18px; border-radius: 999px; font-size: 14px; }
-.upload-morph .primary-button:disabled:not(.is-loading), .nickname-dialog .ui-button--primary:disabled { opacity: 1; color: rgba(255,255,255,.55); background: rgba(255,122,69,.16); box-shadow: none; }
+.upload-morph .primary-button:disabled, .nickname-dialog .ui-button--primary:disabled { opacity: 1; color: rgba(255,255,255,.55); background: rgba(255,122,69,.16); box-shadow: none; }
 .upload-morph .torrent-actions-list { margin-top: 14px; padding-top: 14px; }
 .upload-morph .torrent-actions-list .ui-button { width: auto; flex: 0 0 auto; padding: 8px 12px; border-radius: 999px; font-size: 13px; }
 .upload-morph .join-room-form { flex-direction: column; gap: 10px; margin-top: 18px; }
@@ -1048,8 +1035,7 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 [data-engine='gecko'] .ui-dialog.upload-dialog[data-state='closed'] { animation-name: modal-bloom-out-flat; }
 /* The shimmer paints a text clip every frame; a pulse rides the compositor. */
 @keyframes pulse-dim { 50% { opacity: .5; } }
-[data-engine='gecko'] .status-connecting, [data-engine='gecko'] .text-shimmer { background: none; -webkit-background-clip: border-box; background-clip: border-box; animation: pulse-dim 1.8s ease-in-out infinite; }
-[data-engine='gecko'] .status-connecting { color: #e0b64a; }
+[data-engine='gecko'] .text-shimmer { background: none; -webkit-background-clip: border-box; background-clip: border-box; animation: pulse-dim 1.8s ease-in-out infinite; }
 [data-engine='gecko'] .text-shimmer { color: var(--text-dim); }
 
 /* A YouTube live: one canvas, a bar with the badge and the jump to the edge. */

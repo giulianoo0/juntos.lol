@@ -52,6 +52,18 @@ describe('PluginsPanel', () => {
     expect(await listPlugins()).toHaveLength(0)
   })
 
+  it('while the repository is fetched, the button keeps its word and says it is working', async () => {
+    const { fetchGitPlugin } = await import('./install')
+    vi.mocked(fetchGitPlugin).mockReturnValueOnce(new Promise(() => {}))
+    show()
+    await userEvent.click(await screen.findByRole('button', { name: /adicionar/i }))
+    await userEvent.type(await screen.findByLabelText(/endereço do repositório/i), 'https://github.com/u/r')
+    await userEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    const fetching = screen.getByRole('button', { name: 'Buscar' })
+    expect(fetching).toHaveAttribute('aria-busy', 'true')
+    expect(fetching).toBeDisabled()
+  })
+
   it('stores the plugin only after the confirmation', async () => {
     show()
     await userEvent.click(await screen.findByRole('button', { name: /adicionar/i }))
