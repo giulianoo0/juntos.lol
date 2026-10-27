@@ -46,6 +46,19 @@ describe('RoomView', () => {
     expect(vm.actions.answerRequest).toHaveBeenCalledWith('r1', true)
   })
 
+  it('asks before leaving the room', async () => {
+    const vm = model()
+    render(<RoomView vm={vm} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sair' }))
+    expect(vm.actions.leave).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Cancelar' }))
+    expect(vm.actions.leave).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sair' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sair da sala' }))
+    expect(vm.actions.leave).toHaveBeenCalledTimes(1)
+  })
+
   it('opens someone\'s profile from a right click', async () => {
     const vm = model({ people: [person('giu', 'Giu', { host: true }), person('ana', 'Ana', { accountId: 7 })] })
     render(<RoomView vm={vm} />)

@@ -1,4 +1,4 @@
-import { Link, LogOut, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, Smile, Video, VideoOff } from 'lucide-react'
+import { Link, LogOut, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, Smile, Video, VideoOff, X } from 'lucide-react'
 import type { ShareSource } from '../model'
 import { REACTIONS, reactionSrc } from '../reactions'
 import { IconPill } from '../../ui/IconPill'
@@ -81,10 +81,26 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
         </div>
       </footer>
       <div className={styles.leaveCell}>
-        <Pill tone="danger" size="lg" className={styles.leave} aria-label={strings.leave} onClick={vm.actions.leave}>
-          <LogOut size={16} className={styles.leaveIcon} aria-hidden="true" />
-          <span className={styles.leaveText}>{strings.leave}</span>
-        </Pill>
+        <SpringPopover
+          triggerRender={<Pill tone="danger" size="lg" className={styles.leave} />}
+          trigger={(
+            <>
+              <LogOut size={16} className={styles.leaveIcon} aria-hidden="true" />
+              <span className={styles.leaveText}>{strings.leave}</span>
+            </>
+          )}
+          triggerLabel={strings.leave}
+          side="top"
+          align="end"
+          width="14rem"
+        >
+          {({ close }) => (
+            <div role="menu" aria-label={strings.leave}>
+              <SpringRow icon={<LogOut size={16} />} label={strings.leaveConfirm} tone="danger" onSelect={() => { close(); vm.actions.leave() }} />
+              <SpringRow icon={<X size={16} />} label={strings.cancel} onSelect={close} />
+            </div>
+          )}
+        </SpringPopover>
       </div>
     </>
   )
