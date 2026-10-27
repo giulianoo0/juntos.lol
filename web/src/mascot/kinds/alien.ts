@@ -18,4 +18,5 @@ export const alien: KindArt = {
     { d: ellipse(71, 68, 4, 2.6), fill: "#ff9ccf", opacity: 0.6 },
   ],
   hat: -4,
+  fit: { top: 23, chin: 88.75, temple: 17, side: 18.25, neck: 31.25, helmet: [50, 38.9] },
 };

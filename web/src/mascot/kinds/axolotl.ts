@@ -16,6 +16,7 @@ export const axolotl: KindArt = {
     { d: ellipse(29, 67, 4.4, 2.8), fill: "inner", opacity: 0.6 },
     { d: ellipse(71, 67, 4.4, 2.8), fill: "inner", opacity: 0.6 },
   ],
+  fit: { top: 32.5, chin: 87.25, temple: 19.25, side: 18, neck: 27.25, helmet: [50.5, 36.9] },
   colors: {
     dourado: { body: "#ffd27a", inner: "#ff9f5a", accent: "#ff8f3d" },
     noite: { body: "#4c4660", inner: "#8a7fb0", accent: "#ff6f9a", eye: "#f8f8fa" },

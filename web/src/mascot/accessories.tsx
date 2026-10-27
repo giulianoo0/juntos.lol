@@ -1,15 +1,13 @@
-import { BEANIE, HAIR, HATS, HEADPHONES, HELMET, ROUND_GLASSES, SUNGLASSES, headphonesLive } from "./accessory-geometry";
-import { BOWTIE, BRAND_GREEN, type KindArt } from "./kind";
+import { BEANIE, HAIR, HATS, HAT_BRIM, HEADPHONES, HELMET, ROUND_GLASSES, SUNGLASSES, bowtieFor, headphonesFor, headphonesLive, helmetFor, scarfFor } from "./accessory-geometry";
+import { BOWTIE, BRAND_GREEN, fitOf, type KindArt } from "./kind";
 import type { MascotAccessory, MascotExpression } from "./types";
 
 const GRAPHITE = "#2a2b33";
-/** Where the hats meet the head, the point they shrink toward. */
-const HAT_BRIM = 44;
 const GRAPHITE_LIGHT = "#3a3c46";
 
 function BowTie({ art }: { art: KindArt }) {
   return (
-    <g data-accessory="bowtie" data-part="accessory">
+    <g data-accessory="bowtie" data-part="accessory" transform={bowtieFor(art).transform}>
       <path d={BOWTIE.left} fill={art.bowtie} />
       <path d={BOWTIE.right} fill={art.bowtie} />
       <rect {...BOWTIE.knot} fill={art.knot} />
@@ -17,45 +15,66 @@ function BowTie({ art }: { art: KindArt }) {
   );
 }
 
-const CAT_EAR = { outer: "M22.6 42 L24.6 20.5 L38.6 33.6 Z", inner: "M26.2 35.6 L27.2 26.4 L33.6 32.4 Z" } as const;
+/** Standing on the band, its base centered on the origin. */
+const CAT_EAR = { outer: "M-8.4 0 L-5.2 -17.6 L8.4 0 Z", inner: "M-4.6 -2 L-3.6 -11 L3 -2 Z" } as const;
 
-function Headphones({ id, expression, dark }: { id: "headphones" | "cat-headphones"; expression: MascotExpression; dark: boolean }) {
+/** A point on the band's left half and the band's heading there, in degrees. */
+function onBand(x: number, foot: number, apex: number, t: number) {
+  const { bulge } = HEADPHONES;
+  const p = [
+    [x, foot],
+    [x, foot - bulge * (foot - apex)],
+    [50 - bulge * (50 - x), apex],
+    [50, apex],
+  ] as const;
+  const u = 1 - t;
+  const at = (i: 0 | 1) => u * u * u * p[0][i] + 3 * u * u * t * p[1][i] + 3 * u * t * t * p[2][i] + t * t * t * p[3][i];
+  const d = (i: 0 | 1) => 3 * u * u * (p[1][i] - p[0][i]) + 6 * u * t * (p[2][i] - p[1][i]) + 3 * t * t * (p[3][i] - p[2][i]);
+  return { x: at(0), y: at(1), deg: (Math.atan2(d(1), d(0)) * 180) / Math.PI };
+}
+
+function Headphones({ id, art, expression }: { id: "headphones" | "cat-headphones"; art: KindArt; expression: MascotExpression }) {
   const live = headphonesLive(expression);
   const cat = id === "cat-headphones";
-  const band = cat ? "#f6b3cf" : dark ? "#8a8d99" : GRAPHITE;
-  const shine = cat ? "#ffe3ef" : dark ? "#b4b7c2" : GRAPHITE_LIGHT;
+  const band = cat ? "#f6b3cf" : art.rim ? "#8a8d99" : GRAPHITE;
+  const shine = cat ? "#ffe3ef" : art.rim ? "#b4b7c2" : GRAPHITE_LIGHT;
   const light = cat ? "#ff4f97" : BRAND_GREEN;
   const opacity = live ? HEADPHONES.light.live : HEADPHONES.light.idle;
+  const phones = headphonesFor(art);
+  const ear = onBand(phones.x, phones.foot, phones.apex, 0.6);
   return (
     <g data-accessory={id} data-part="accessory" data-live={live || undefined}>
       {cat
         ? [false, true].map((mirror) => (
             <g key={String(mirror)} transform={mirror ? "translate(100 0) scale(-1 1)" : undefined}>
-              <path d={CAT_EAR.outer} fill={band} strokeLinejoin="round" stroke={band} strokeWidth={2} />
-              <path d={CAT_EAR.inner} fill="#ff7fb0" strokeLinejoin="round" stroke="#ff7fb0" strokeWidth={1} />
+              <g transform={`translate(${ear.x.toFixed(2)} ${(ear.y + 1).toFixed(2)}) rotate(${ear.deg.toFixed(1)})`}>
+                <path d={CAT_EAR.outer} fill={band} strokeLinejoin="round" stroke={band} strokeWidth={2} />
+                <path d={CAT_EAR.inner} fill="#ff7fb0" strokeLinejoin="round" stroke="#ff7fb0" strokeWidth={1} />
+              </g>
             </g>
           ))
         : null}
-      <path d="M19.5 60 C19.5 22.5 80.5 22.5 80.5 60" fill="none" stroke={band} strokeWidth={4.2} strokeLinecap="round" />
-      <path d="M22.4 47 C26 32 74 32 77.6 47" fill="none" stroke={shine} strokeWidth={1.2} strokeLinecap="round" opacity={0.8} />
-      {HEADPHONES.cups.map((cup) => (
-        <rect key={cup.x} {...cup} rx={4} fill={band} />
+      <path d={phones.band} fill="none" stroke={band} strokeWidth={4.2} strokeLinecap="round" />
+      <path d={phones.band} transform="translate(0 -0.7)" pathLength={100} strokeDasharray="0 22 56 100" fill="none" stroke={shine} strokeWidth={1.2} strokeLinecap="round" opacity={0.8} />
+      {phones.cups.map((cup, i) => (
+        <g key={i}>
+          <rect {...cup} fill={band} />
+          <rect data-light="" x={i ? cup.x + cup.width - 5.1 : cup.x + 2.5} y={cup.y + 4.5} width={2.6} height={12} rx={1.3} fill={light} opacity={opacity} />
+        </g>
       ))}
-      <rect data-light="" x={15} y={54.5} width={2.6} height={12} rx={1.3} fill={light} opacity={opacity} />
-      <rect data-light="" x={82.4} y={54.5} width={2.6} height={12} rx={1.3} fill={light} opacity={opacity} />
     </g>
   );
 }
 
 /**
  * Tinted lenses with a white glint: the eyes stay inside them (accessory-geometry.ts) and show through,
- * dimmed. On the dark kinds the frame turns silver so the shape reads at 32 px.
+ * dimmed. On the dark kinds the frame turns silver so the shape reads at 32 px. The arms reach the head's sides.
  */
-function Sunglasses({ dark }: { dark: boolean }) {
+function Sunglasses({ dark, temple }: { dark: boolean; temple: number }) {
   const frame = dark ? "#c4c7d1" : "#0b0b0f";
   return (
     <g data-accessory="sunglasses" data-part="accessory">
-      <path d="M20.5 52.5 L30 51.5 M70 51.5 L79.5 52.5" stroke={frame} strokeWidth={2.8} strokeLinecap="round" />
+      <path d={`M${temple} 52.5 L30 51.5 M70 51.5 L${100 - temple} 52.5`} stroke={frame} strokeWidth={2.8} strokeLinecap="round" />
       <path d="M48 52.8 Q50 50.2 52 52.8" fill="none" stroke={frame} strokeWidth={2.8} strokeLinecap="round" />
       <rect data-lens="left" {...SUNGLASSES.left} fill="#0b0b0f" fillOpacity={SUNGLASSES.tint} stroke={frame} strokeWidth={SUNGLASSES.stroke} />
       <rect data-lens="right" {...SUNGLASSES.right} fill="#0b0b0f" fillOpacity={SUNGLASSES.tint} stroke={frame} strokeWidth={SUNGLASSES.stroke} />
@@ -65,12 +84,12 @@ function Sunglasses({ dark }: { dark: boolean }) {
 }
 
 /** Clear round lenses: the eyes shrink into them and keep their color. */
-function RoundGlasses({ dark }: { dark: boolean }) {
+function RoundGlasses({ dark, temple }: { dark: boolean; temple: number }) {
   const frame = dark ? "#e6c27a" : "#b5812c";
   const { left, right, stroke } = ROUND_GLASSES;
   return (
     <g data-accessory="round-glasses" data-part="accessory">
-      <path d="M21 51.5 L30.2 52.6 M69.8 52.6 L79 51.5" stroke={frame} strokeWidth={2.2} strokeLinecap="round" />
+      <path d={`M${temple + 0.5} 51.5 L30.2 52.6 M69.8 52.6 L${99.5 - temple} 51.5`} stroke={frame} strokeWidth={2.2} strokeLinecap="round" />
       <path d="M48.6 52.4 Q50 50.6 51.4 52.4" fill="none" stroke={frame} strokeWidth={2} strokeLinecap="round" />
       <rect data-lens="left" {...left} fill="#ffffff" fillOpacity={0.12} stroke={frame} strokeWidth={stroke} />
       <rect data-lens="right" {...right} fill="#ffffff" fillOpacity={0.12} stroke={frame} strokeWidth={stroke} />
@@ -144,9 +163,9 @@ function Flower() {
   );
 }
 
-function Scarf() {
+function Scarf({ art }: { art: KindArt }) {
   return (
-    <g data-accessory="scarf" data-part="accessory">
+    <g data-accessory="scarf" data-part="accessory" transform={scarfFor(art).transform}>
       <path d="M24.5 78 Q50 90.5 75.5 78 L77.5 85 Q50 99 22.5 85 Z" fill="#b8324a" />
       <path d="M58 86 L63 99.5 L70.5 97.5 L66.5 84 Z" fill="#a12a40" />
       <path d="M30 82.8 L32 89.5 M42 86 L43 93.2 M54 86.3 L54.6 93.4" stroke="#e7a6b1" strokeWidth={1.2} strokeLinecap="round" opacity={0.7} />
@@ -155,25 +174,21 @@ function Scarf() {
   );
 }
 
-/** A point on a circle around the helmet's center; degrees, clockwise from 3 o'clock like SVG. */
-function polar(r: number, deg: number) {
-  const a = (deg * Math.PI) / 180;
-  return `${(HELMET.cx + r * Math.cos(a)).toFixed(2)} ${(HELMET.cy + r * Math.sin(a)).toFixed(2)}`;
-}
-
-/** An arc around the helmet's center from `from`° to `to`°, the short way. */
-function arc(r: number, from: number, to: number) {
-  return `M${polar(r, from)} A${r} ${r} 0 0 ${to > from ? 1 : 0} ${polar(r, to)}`;
-}
-
-/** The fishbowl is centered on the face, the ears fold inside it, and the neck ring hugs the bottom of the glass. */
-function SpaceHelmet({ expression }: { expression: MascotExpression }) {
+/** The fishbowl is centered on the creature, the ears fold inside it, and the neck ring hugs the bottom of the glass. */
+function SpaceHelmet({ art, expression }: { art: KindArt; expression: MascotExpression }) {
   const speaking = expression === "speaking";
-  const { cx, cy, r, stroke } = HELMET;
+  const { cx, cy, r } = helmetFor(art);
+  /** Degrees, clockwise from 3 o'clock like SVG. */
+  const polar = (radius: number, deg: number) => {
+    const a = (deg * Math.PI) / 180;
+    return `${(cx + radius * Math.cos(a)).toFixed(2)} ${(cy + radius * Math.sin(a)).toFixed(2)}`;
+  };
+  /** From `from`° to `to`°, the short way. */
+  const arc = (radius: number, from: number, to: number) => `M${polar(radius, from)} A${radius} ${radius} 0 0 ${to > from ? 1 : 0} ${polar(radius, to)}`;
   const ring = `${arc(r, 130, 50)} L${polar(r - 6, 50)} ${arc(r - 6, 50, 130).replace(/^M[^A]+/, "")} Z`;
   return (
     <g data-accessory="space-helmet" data-part="accessory">
-      <circle data-helmet="glass" cx={cx} cy={cy} r={r} fill="#cfe3ff" fillOpacity={0.07} stroke="#a3afc2" strokeOpacity={0.9} strokeWidth={stroke} />
+      <circle data-helmet="glass" cx={cx} cy={cy} r={r} fill="#cfe3ff" fillOpacity={0.07} stroke="#a3afc2" strokeOpacity={0.9} strokeWidth={HELMET.stroke} />
       <path data-glint="" d={arc(r - 7, 200, 245)} fill="none" stroke="#ffffff" strokeOpacity={speaking ? HELMET.glint.speaking : HELMET.glint.idle} strokeWidth={3.4} strokeLinecap="round" />
       <path d={arc(r - 11, 176, 190)} fill="none" stroke="#ffffff" strokeOpacity={0.3} strokeWidth={2.4} strokeLinecap="round" />
       <path d={ring} fill="#9aa3b5" />
@@ -188,11 +203,11 @@ function Piece({ id, art, expression }: { id: MascotAccessory; art: KindArt; exp
       return <BowTie art={art} />;
     case "headphones":
     case "cat-headphones":
-      return <Headphones id={id} expression={expression} dark={art.rim} />;
+      return <Headphones id={id} art={art} expression={expression} />;
     case "sunglasses":
-      return <Sunglasses dark={art.rim} />;
+      return <Sunglasses dark={art.rim} temple={fitOf(art).temple} />;
     case "round-glasses":
-      return <RoundGlasses dark={art.rim} />;
+      return <RoundGlasses dark={art.rim} temple={fitOf(art).temple} />;
     case "beanie":
       return <Beanie />;
     case "cap":
@@ -204,9 +219,9 @@ function Piece({ id, art, expression }: { id: MascotAccessory; art: KindArt; exp
     case "flower":
       return <Flower />;
     case "scarf":
-      return <Scarf />;
+      return <Scarf art={art} />;
     case "space-helmet":
-      return <SpaceHelmet expression={expression} />;
+      return <SpaceHelmet art={art} expression={expression} />;
     case "none":
       return null;
   }
@@ -214,7 +229,10 @@ function Piece({ id, art, expression }: { id: MascotAccessory; art: KindArt; exp
 
 export function Accessory({ id, art, expression }: { id: MascotAccessory; art: KindArt; expression: MascotExpression }) {
   const piece = <Piece id={id} art={art} expression={expression} />;
-  if (!art.hat || !(HATS.has(id) || HAIR.has(id))) return piece;
+  const hair = HAIR.has(id) ? fitOf(art).hair : undefined;
+  if (!(art.hat || art.hatScale || hair) || !(HATS.has(id) || HAIR.has(id))) return piece;
+  const dx = hair ? (id === "flower" ? -hair[0] : hair[0]) : 0;
+  const dy = (art.hat ?? 0) + (hair?.[1] ?? 0);
   const shrink = art.hatScale && HATS.has(id) ? ` translate(50 ${HAT_BRIM}) scale(${art.hatScale}) translate(-50 ${-HAT_BRIM})` : "";
-  return <g transform={`translate(0 ${art.hat})${shrink}`}>{piece}</g>;
+  return <g transform={`translate(${dx} ${dy})${shrink}`}>{piece}</g>;
 }

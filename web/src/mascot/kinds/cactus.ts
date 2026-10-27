@@ -22,4 +22,6 @@ export const cactus: KindArt = {
     { d: "M33 38 l-2 -1.4 M68 40 l2 -1.4 M33 74 l-2 -1.2 M67 72 l2 -1.2 M46 80 l-1.2 1.6 M55 84 l1.2 1.6", stroke: "#e9f6d4", width: 1.2 },
   ],
   hat: -4,
+  hatScale: 0.86,
+  fit: { top: 24, chin: 88.75, temple: 29, side: 29, neck: 29, helmet: [57, 36.5] },
 };

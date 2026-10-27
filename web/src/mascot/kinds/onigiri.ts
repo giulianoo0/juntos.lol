@@ -16,4 +16,6 @@ export const onigiri: KindArt = {
     { d: `${ellipse(44, 32, 0.9, 1.6, 30)} ${ellipse(57, 36, 0.9, 1.6, -20)}`, fill: "#d8ccb2" },
   ],
   hat: -6,
+  hatScale: 0.82,
+  fit: { top: 20, chin: 88.75, temple: 21.75, side: 18.5, neck: 15.5, helmet: [60.25, 40.5], hair: [1, 5] },
 };

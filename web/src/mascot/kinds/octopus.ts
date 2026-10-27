@@ -22,6 +22,7 @@ export const octopus: KindArt = {
     { d: `${circle(33.5, 82, 1.3)} ${circle(44.5, 83, 1.3)} ${circle(55.5, 83, 1.3)} ${circle(66.5, 82, 1.3)}`, fill: "inner" },
   ],
   hat: -2,
+  fit: { top: 25, chin: 85, temple: 19.5, side: 19, neck: 19, helmet: [64.25, 39.4] },
   colors: {
     roxo: { body: "#9a5ad8", inner: "#c99af0" },
   },

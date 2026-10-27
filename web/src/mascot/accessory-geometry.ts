@@ -1,5 +1,5 @@
 import { DEFAULT_EYES, FRONT_GAZE, projectEye, type EyeRender } from "./eyes";
-import type { KindArt } from "./kind";
+import { ROUND_FIT, fitOf, type KindArt } from "./kind";
 import type { MascotAccessory, MascotExpression } from "./types";
 
 /**
@@ -36,30 +36,76 @@ export const CAP = { bill: 45.5 } as const;
 
 export const CROWN = { base: 36 } as const;
 
+const n = (v: number) => +v.toFixed(2);
+
 export const HEADPHONES = {
-  cups: [
-    { x: 12.5, y: 50, width: 11, height: 21 },
-    { x: 76.5, y: 50, width: 11, height: 21 },
-  ],
-  /** The band's lower edge reaches y≈44 where it meets the cups. */
-  bandBottom: 44,
+  cup: { width: 11, height: 21, y: 50, inset: 1 },
+  /** How round the band is: 0.55 follows a circle. */
+  bulge: 0.56,
   /** Opacity of the light on each cup. */
   light: { live: 1, idle: 0.28 },
 } as const;
 
+export type Headphones = { cups: readonly [LensRect, LensRect]; band: string; foot: number; apex: number; x: number };
+
+/** The cups sit on the sides of the head and the band hugs its top, from cup to cup. */
+export function headphonesFor(art?: KindArt): Headphones {
+  const fit = art ? fitOf(art) : ROUND_FIT;
+  const { cup, bulge } = HEADPHONES;
+  const x = fit.side + cup.inset;
+  const foot = cup.y + 2;
+  const apex = fit.band ?? fit.top - 1.5;
+  const lift = n(foot - bulge * (foot - apex));
+  const reach = n(50 - bulge * (50 - x));
+  const rect = (cx: number): LensRect => ({ x: n(cx - cup.width / 2), y: cup.y, width: cup.width, height: cup.height, rx: 4 });
+  return {
+    cups: [rect(x), rect(100 - x)],
+    band: `M${n(x)} ${foot} C${n(x)} ${lift} ${reach} ${n(apex)} 50 ${n(apex)} S${n(100 - x)} ${lift} ${n(100 - x)} ${foot}`,
+    foot,
+    apex,
+    x,
+  };
+}
+
 /** The headphones light up while the mascot listens or speaks. */
 export const headphonesLive = (expression: MascotExpression): boolean => expression === "listening" || expression === "speaking";
 
-/** The scarf's top edge dips to y≈84 in the middle and rises to 78 at the sides. */
+/** The scarf's top edge dips to y≈84 in the middle and rises to 78 at the sides, on the round head. */
 export const SCARF = { top: 78 } as const;
 
-export const BOWTIE_TOP = 83;
+/** Wraps the head just over its chin, as wide as the head is there. */
+export function scarfFor(art?: KindArt) {
+  const fit = art ? fitOf(art) : ROUND_FIT;
+  const dy = fit.chin - ROUND_FIT.chin;
+  const sx = Math.min(1.3, Math.max(0.75, (54.5 - fit.neck) / (54.5 - ROUND_FIT.neck)));
+  return { top: SCARF.top + dy, transform: `translate(50 ${n(dy)}) scale(${n(sx)} 1) translate(-50 0)` };
+}
+
+/** The bow tie's top on the round head; the knot overlaps the chin. */
+export const BOWTIE_TOP = 80.5;
+
+export function bowtieFor(art?: KindArt) {
+  const dy = (art ? fitOf(art) : ROUND_FIT).chin - ROUND_FIT.chin;
+  return { top: BOWTIE_TOP + dy, transform: `translate(0 ${n(dy + BOWTIE_TOP - 83)})` };
+}
 
 /**
- * The fishbowl: centered on the face, big enough for the head and the ears,
- * which fold to `earTuck` of their length inside the glass.
+ * The fishbowl: centered on the creature (its ears folded to `earTuck`), a
+ * little bigger than it and inside the drawing; a creature too big for the
+ * largest bowl shrinks into it.
  */
-export const HELMET = { cx: 50, cy: 53, r: 46, stroke: 2.6, earTuck: 0.6, glint: { speaking: 0.6, idle: 0.42 } } as const;
+export const HELMET = { cx: 50, cy: 53, r: 46, max: 46.5, air: 4.5, stroke: 2.6, earTuck: 0.6, glint: { speaking: 0.6, idle: 0.42 } } as const;
+
+export function helmetFor(art?: KindArt) {
+  const [cy, r] = (art ? fitOf(art) : ROUND_FIT).helmet;
+  const radius = Math.min(HELMET.max, r + HELMET.air);
+  const scale = Math.min(1, (radius - HELMET.air) / r);
+  const center = Math.min(Math.max(cy, 6 + radius), 100 - radius);
+  return { cx: 50, cy: n(center), r: n(radius), transform: `translate(50 ${n(center)}) scale(${n(scale)}) translate(-50 ${n(-cy)})` };
+}
+
+/** Where the hats meet the head, the point they shrink toward. */
+export const HAT_BRIM = 44;
 
 /** Sit on the head's top, follow `KindArt.hat` and hide the top unless it is kept. */
 export const HATS: ReadonlySet<MascotAccessory> = new Set(["beanie", "cap", "crown"]);
@@ -104,18 +150,20 @@ const ROUND_SCALE = (roundLensBox.y1 - roundLensBox.y0) / (REST_EYE.left.height 
 const FACE = { x0: 18, x1: 82 } as const;
 
 const below = (y0: number): EyeFrame => ({ left: { x0: FACE.x0, y0, x1: FACE.x1, y1: 90 }, right: { x0: FACE.x0, y0, x1: FACE.x1, y1: 90 }, scale: 1, centered: false, clip: null });
-const cupsX = { x0: HEADPHONES.cups[0].x + HEADPHONES.cups[0].width + 1.5, x1: HEADPHONES.cups[1].x - 1.5 };
-const cups: EyeFrame = {
-  left: { ...cupsX, y0: HEADPHONES.bandBottom, y1: 90 },
-  right: { ...cupsX, y0: HEADPHONES.bandBottom, y1: 90 },
-  scale: 1,
-  centered: false,
-  clip: null,
-};
+function cupsFrame({ cups }: Headphones): EyeFrame {
+  const x = { x0: cups[0].x + cups[0].width + 1.5, x1: cups[1].x - 1.5 };
+  return { left: { ...x, y0: 20, y1: 90 }, right: { ...x, y0: 20, y1: 90 }, scale: 1, centered: false, clip: null };
+}
+const cups = cupsFrame(headphonesFor());
+
+function aboveFrame(top: number): EyeFrame {
+  const box = { x0: FACE.x0, y0: 20, x1: FACE.x1, y1: top - 1 };
+  return { left: box, right: box, scale: 1, centered: false, clip: null };
+}
 
 export const EYE_FRAMES: Record<MascotAccessory, EyeFrame | null> = {
   none: null,
-  bowtie: null,
+  bowtie: aboveFrame(BOWTIE_TOP),
   bow: null,
   flower: null,
   sunglasses: { left: inset(glassLeft, MARGIN), right: inset(glassRight, MARGIN), scale: LENS_SCALE, centered: true, clip: [glassLeft, glassRight] },
@@ -131,13 +179,7 @@ export const EYE_FRAMES: Record<MascotAccessory, EyeFrame | null> = {
   crown: below(CROWN.base + 0.6),
   headphones: cups,
   "cat-headphones": cups,
-  scarf: {
-    left: { x0: FACE.x0, y0: 20, x1: FACE.x1, y1: SCARF.top - 1 },
-    right: { x0: FACE.x0, y0: 20, x1: FACE.x1, y1: SCARF.top - 1 },
-    scale: 1,
-    centered: false,
-    clip: null,
-  },
+  scarf: aboveFrame(SCARF.top),
   "space-helmet": null,
 };
 
@@ -194,12 +236,27 @@ export function fitEye(eye: EyeRender, side: -1 | 1, frame: EyeFrame | null): Ey
   return { ...eye, x, y, width, height, rx: Math.max(0, Math.min(width, height) / 2), rotate };
 }
 
-/** Hats ride the head's top (`KindArt.hat`), and the brim the eyes stay under rides with them. */
+const frames = new WeakMap<KindArt, Map<MascotAccessory, EyeFrame | null>>();
+
+/**
+ * The frame on this head: the brim rides the hat (`KindArt.hat`), the cups sit
+ * on the head's sides and the scarf and the bow tie over its chin.
+ */
 export function eyeFrameFor(accessory: MascotAccessory, art?: KindArt): EyeFrame | null {
   const frame = EYE_FRAMES[accessory];
-  const lift = art?.hat ?? 0;
-  if (!frame || !lift || !HATS.has(accessory)) return frame;
-  return { ...frame, left: { ...frame.left, y0: frame.left.y0 + lift }, right: { ...frame.right, y0: frame.right.y0 + lift } };
+  if (!frame || !art) return frame;
+  let known = frames.get(art);
+  if (!known) frames.set(art, (known = new Map()));
+  if (known.has(accessory)) return known.get(accessory)!;
+  let fitted = frame;
+  if (HATS.has(accessory)) {
+    const y0 = HAT_BRIM + (frame.left.y0 - HAT_BRIM) * (art.hatScale ?? 1) + (art.hat ?? 0);
+    fitted = { ...frame, left: { ...frame.left, y0 }, right: { ...frame.right, y0 } };
+  } else if (accessory === "headphones" || accessory === "cat-headphones") fitted = cupsFrame(headphonesFor(art));
+  else if (accessory === "scarf") fitted = aboveFrame(scarfFor(art).top);
+  else if (accessory === "bowtie") fitted = aboveFrame(bowtieFor(art).top);
+  known.set(accessory, fitted);
+  return fitted;
 }
 
 /** Ears and the top fold into the helmet; every other accessory leaves them as they are. */

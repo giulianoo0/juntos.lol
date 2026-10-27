@@ -14,6 +14,8 @@ export const slime: KindArt = {
     { d: circle(68, 77, 2.4), fill: "inner", opacity: 0.28 },
     { d: circle(74, 68, 1.4), fill: "inner", opacity: 0.28 },
   ],
+  hatScale: 0.8,
+  fit: { top: 23.25, chin: 88.75, temple: 21.75, side: 17.5, neck: 17.25, helmet: [61.5, 38.1], hair: [5, 6] },
   colors: {
     verde: { body: "#7ed957", eye: "#173010" },
     rosa: { body: "#ff7ab6" },

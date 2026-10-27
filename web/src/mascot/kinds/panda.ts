@@ -18,4 +18,5 @@ export const panda: KindArt = {
   marks: [{ d: PATCHES, fill: "tip" }],
   eyeClip: PATCHES,
   front: [{ d: ellipse(50, 68.6, 3.6, 2.5), fill: "tip" }],
+  fit: { helmet: [53.25, 34.9] },
 };

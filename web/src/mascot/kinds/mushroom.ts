@@ -31,6 +31,7 @@ export const mushroom: KindArt = {
   ],
   hat: -29,
   hatScale: 0.68,
+  fit: { top: 34, chin: 88.75, temple: 25, side: 25, neck: 26, helmet: [55.25, 36.8], band: 3 },
   colors: {
     azul: { accent: "#4f7bff" },
   },

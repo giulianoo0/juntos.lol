@@ -1,7 +1,8 @@
 import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_EYES, EXPRESSION_EYES, KINDS, MASCOT_ACCESSORIES, MASCOT_KINDS, Mascot, projectEye, type MascotAccessory, type MascotExpression } from ".";
-import { BEANIE, BOWTIE_TOP, CAP, CROWN, EYE_FRAMES, HEADPHONES, ROUND_GLASSES, SCARF, SUNGLASSES, eyeBox, eyeFrameFor, fitEye, lensGlass, type Box, type LensRect } from "./accessory-geometry";
+import { BEANIE, BOWTIE_TOP, CAP, CROWN, EYE_FRAMES, HAT_BRIM, ROUND_GLASSES, SCARF, SUNGLASSES, bowtieFor, eyeBox, eyeFrameFor, fitEye, headphonesFor, helmetFor, lensGlass, scarfFor, type Box, type LensRect } from "./accessory-geometry";
+import { ROUND_FIT, fitOf } from "./kind";
 import { WONDER_SHAPE, type EyeRender } from "./eyes";
 import { createManualClock, setMascotClock, type ManualClock } from "./testing";
 
@@ -63,8 +64,7 @@ describe("eyes and accessories, every pose", () => {
               break;
             case "headphones":
             case "cat-headphones":
-              for (const cup of HEADPHONES.cups) expect(overlaps(box, rectBox(cup))).toBe(false);
-              expect(box.y0).toBeGreaterThanOrEqual(HEADPHONES.bandBottom - EPS);
+              for (const cup of headphonesFor().cups) expect(overlaps(box, rectBox(cup))).toBe(false);
               break;
             case "scarf":
               expect(box.y1).toBeLessThan(SCARF.top);
@@ -85,9 +85,36 @@ describe("eyes and accessories, every pose", () => {
     }
   });
 
-  it("raises the brim's frame with a hat that sits higher", () => {
-    expect(eyeFrameFor("beanie", KINDS.mushroom)!.left.y0).toBeCloseTo(EYE_FRAMES.beanie!.left.y0 + KINDS.mushroom.hat!, 6);
-    expect(eyeFrameFor("headphones", KINDS.mushroom)).toBe(EYE_FRAMES.headphones);
+  it("fits the frames to the head: the brim rides the hat, the cups the sides, the scarf and the bow tie the chin", () => {
+    const { hat, hatScale } = KINDS.mushroom;
+    expect(eyeFrameFor("beanie", KINDS.mushroom)!.left.y0).toBeCloseTo(HAT_BRIM + (EYE_FRAMES.beanie!.left.y0 - HAT_BRIM) * hatScale! + hat!, 6);
+    const [left, right] = headphonesFor(KINDS.cactus).cups;
+    expect(eyeFrameFor("headphones", KINDS.cactus)!.left.x0).toBeGreaterThan(left.x + left.width);
+    expect(eyeFrameFor("headphones", KINDS.cactus)!.right.x1).toBeLessThan(right.x);
+    expect(eyeFrameFor("scarf", KINDS.octopus)!.left.y1).toBeLessThan(scarfFor(KINDS.octopus).top);
+    expect(eyeFrameFor("bowtie", KINDS.strawberry)!.left.y1).toBeLessThan(bowtieFor(KINDS.strawberry).top);
+  });
+
+  it("sits the cups on the head's sides and the band over its top", () => {
+    for (const kind of MASCOT_KINDS) {
+      const fit = fitOf(KINDS[kind]);
+      const { cups, apex } = headphonesFor(KINDS[kind]);
+      expect(cups[0].x, kind).toBeLessThan(fit.side);
+      expect(cups[0].x + cups[0].width, kind).toBeGreaterThan(fit.side);
+      expect(cups[0].x + cups[1].x + cups[1].width).toBeCloseTo(100, 6);
+      expect(apex, kind).toBeLessThanOrEqual(fit.band ?? fit.top - 1);
+    }
+  });
+
+  it("ties the bow tie on the chin and centers the helmet on the creature, inside the drawing", () => {
+    for (const kind of MASCOT_KINDS) {
+      const fit = fitOf(KINDS[kind]);
+      expect(bowtieFor(KINDS[kind]).top - fit.chin, kind).toBeCloseTo(BOWTIE_TOP - ROUND_FIT.chin, 6);
+      const helmet = helmetFor(KINDS[kind]);
+      expect(helmet.cy - helmet.r, kind).toBeGreaterThanOrEqual(6 - EPS);
+      expect(helmet.cy + helmet.r, kind).toBeLessThanOrEqual(100 + EPS);
+      if (helmet.cy === fit.helmet[0]) expect(helmet.r, kind).toBeGreaterThan(fit.helmet[1]);
+    }
   });
 });
 

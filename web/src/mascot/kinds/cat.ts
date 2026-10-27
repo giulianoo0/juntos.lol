@@ -12,6 +12,7 @@ export const cat: KindArt = {
     inner: "M27.2 37.5 L27.8 22.2 L39.4 30.8 Z",
     pivot: [33, 38],
   },
+  fit: { helmet: [52, 35.9] },
   colors: {
     preto: { body: "#26262c", inner: "#4a4a55", rim: true },
     cinza: { body: "#8d909b", inner: "#f2b9b9" },

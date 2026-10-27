@@ -10,4 +10,5 @@ export const koala: KindArt = {
   rim: false,
   ear: { path: circle(22, 41, 14.5), inner: circle(23.5, 42.5, 8.5), pivot: [29, 47], sway: 0.5 },
   marks: [{ d: ellipse(50, 69, 6.4, 8.6), fill: "tip" }],
+  fit: { helmet: [52.25, 35.7] },
 };

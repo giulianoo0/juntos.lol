@@ -12,4 +12,5 @@ export const wolf: KindArt = {
     inner: "M29.2 36.5 L28 13.5 L40.2 29.2 Z",
     pivot: [34, 37],
   },
+  fit: { helmet: [48.75, 39.4] },
 };

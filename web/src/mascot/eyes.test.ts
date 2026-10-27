@@ -55,11 +55,11 @@ describe("eyes on a fake sphere", () => {
     expect(levelScale(Number.NaN)).toBe(1);
   });
 
-  it("waits 3–5 s between blinks and 1.2–2.5 s between glances", () => {
+  it("waits 3–5 s between blinks and 2.4–5 s between glances", () => {
     expect(nextBlinkDelay(() => 0)).toBe(3000);
     expect(nextBlinkDelay(() => 0.9999)).toBeLessThan(5000);
-    expect(nextGlanceDelay(() => 0)).toBe(1200);
-    expect(nextGlanceDelay(() => 0.9999)).toBeLessThan(2500);
+    expect(nextGlanceDelay(() => 0)).toBe(2400);
+    expect(nextGlanceDelay(() => 0.9999)).toBeLessThan(5000);
   });
 });
 

@@ -28,6 +28,28 @@ export type TopArt = {
 
 export type Palette = { body: string; inner: string; tip?: string; accent?: string; eye: string };
 
+/**
+ * Where the accessories meet the head, measured off its outline: the top and
+ * the chin on the middle line, the left edge at the glasses' height (temple),
+ * the ear cups' (side) and over the chin (neck), and the smallest circle
+ * around the whole creature with its ears folded, centered on the middle line.
+ */
+export type Fit = {
+  top: number;
+  chin: number;
+  temple: number;
+  side: number;
+  neck: number;
+  helmet: readonly [cy: number, r: number];
+  /** Where the headphones' band crosses the middle line, when not just over the top. */
+  band?: number;
+  /** Moves the bow and the flower from where they sit on the round head. */
+  hair?: readonly [dx: number, dy: number];
+};
+
+/** The round BODY. */
+export const ROUND_FIT: Fit = { top: 28, chin: 88, temple: 20.5, side: 20, neck: 29.5, helmet: [53, 35] };
+
 export type KindArt = Palette & {
   name: string;
   bowtie: string;
@@ -49,6 +71,8 @@ export type KindArt = Palette & {
   hat?: number;
   /** Shrinks the hats around their brim, for a head whose top is already a cap. */
   hatScale?: number;
+  /** ROUND_FIT, with what differs. */
+  fit?: Partial<Fit>;
   colors?: Record<string, Partial<Palette & { rim: boolean }>>;
 };
 
@@ -98,6 +122,8 @@ export function paint(art: KindArt, value: Paint | undefined): string | undefine
   if (value === undefined) return undefined;
   return SLOTS.has(value) ? (art[value as keyof Palette] ?? art.body) : value;
 }
+
+export const fitOf = (art: KindArt): Fit => (art.fit ? { ...ROUND_FIT, ...art.fit } : ROUND_FIT);
 
 export function withColor(art: KindArt, color?: string): KindArt {
   const variant = color ? art.colors?.[color] : undefined;

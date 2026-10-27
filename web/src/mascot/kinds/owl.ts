@@ -23,4 +23,5 @@ export const owl: KindArt = {
   ],
   eyeClip: DISCS,
   front: [{ d: "M46.6 65.4 Q50 64 53.4 65.4 L50.8 71.6 Q50 72.8 49.2 71.6 Z", fill: "accent" }],
+  fit: { helmet: [51.5, 36.4] },
 };

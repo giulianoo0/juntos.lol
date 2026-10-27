@@ -1,6 +1,6 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Mascot } from ".";
+import { DEFAULT_EYES, Mascot, lookAtGaze, projectEye } from ".";
 import { createManualClock, setMascotClock, type ManualClock } from "./testing";
 
 let clock: ManualClock;
@@ -28,6 +28,14 @@ afterEach(() => {
   cleanup();
   setMascotClock(null);
 });
+
+/** [x, y, degrees, scale x, scale y] of the head, all at rest without a transform. */
+function headPose(container: HTMLElement): number[] {
+  const transform = container.querySelector('[data-part="head"]')!.getAttribute("transform");
+  if (!transform) return [0, 0, 0, 1, 1];
+  const m = /translate\((\S+) (\S+)\) rotate\((\S+) [^)]+\) translate\([^)]+\) scale\((\S+) (\S+)\)/.exec(transform)!;
+  return m.slice(1).map(Number);
+}
 
 const eyeHeight = (container: HTMLElement) => Number(container.querySelector('[data-eye="left"]')!.getAttribute("height"));
 
@@ -94,6 +102,53 @@ describe("Mascot engine", () => {
     sampleHeights(container, 800);
     const eye = container.querySelector('[data-eye="left"]')!;
     expect(Number(eye.getAttribute("width"))).toBeGreaterThan(Number(eye.getAttribute("height")) * 2.5);
+  });
+
+  it("turns the head toward where it looks, the eyes taking only part of the look", () => {
+    const { container } = render(<Mascot kind="fox" expression="idle" lookAt={{ x: 1, y: 0 }} still />);
+    sampleHeights(container, 1200);
+    const [x, , deg] = headPose(container);
+    expect(x).toBeGreaterThan(2);
+    expect(deg).toBeGreaterThan(3);
+    const full = projectEye(DEFAULT_EYES, 1, lookAtGaze({ x: 1, y: 0 }), { w: 1, h: 1 });
+    const eye = container.querySelector('[data-eye="right"]')!;
+    expect(Number(eye.getAttribute("x")) + Number(eye.getAttribute("width")) / 2).toBeLessThan(full.x - 3);
+  });
+
+  it("glances with the head, which carries the accessory", () => {
+    const { container } = render(<Mascot kind="cat" expression="idle" accessory="crown" />);
+    const turns = new Set<string>();
+    for (let t = 0; t < 12000; t += 160) {
+      sampleHeights(container, 160);
+      turns.add(headPose(container)[0].toFixed(1));
+    }
+    expect(turns.size).toBeGreaterThan(3);
+    expect(container.querySelector('[data-part="head"] [data-accessory="crown"]')).not.toBeNull();
+  });
+
+  it("hops into a happy face and stretches with the voice", () => {
+    const { container, rerender } = render(<Mascot kind="bear" expression="idle" still />);
+    rerender(<Mascot kind="bear" expression="happy" still={false} />);
+    const ys: number[] = [];
+    for (let t = 0; t < 600; t += 16) {
+      sampleHeights(container, 16);
+      ys.push(headPose(container)[1]);
+    }
+    expect(Math.min(...ys)).toBeLessThan(-0.8);
+    rerender(<Mascot kind="bear" expression="speaking" level={() => 1} />);
+    sampleHeights(container, 800);
+    expect(headPose(container)[4]).toBeGreaterThan(1.03);
+  });
+
+  it("keeps the head where it is with reduced motion or while held", () => {
+    for (const reduced of [true, false]) {
+      mockReducedMotion(reduced);
+      const { container, unmount } = render(<Mascot kind="wolf" expression="idle" still={!reduced} />);
+      const before = container.querySelector('[data-part="head"]')!.getAttribute("transform");
+      sampleHeights(container, 6000);
+      expect(container.querySelector('[data-part="head"]')!.getAttribute("transform")).toBe(before);
+      unmount();
+    }
   });
 
   it("never moves the body", () => {
