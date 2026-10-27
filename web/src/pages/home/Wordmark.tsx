@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { memo, useId } from 'react'
 import { useMediaQuery } from '../../ui/useMediaQuery'
 
 /* The old juntos lettering, one stroke per letter; the play arrow is the "." */
@@ -44,15 +44,18 @@ export function SmallWordmark({ className }: { className?: string }) {
  * The big lettering with the Dia shimmer of the maintenance page: a band of
  * color sweeping left to right through the letters. Reduced motion: still.
  */
-export function HeroWordmark({ className, sweepClassName, morphed = false }: {
+export const HeroWordmark = memo(function HeroWordmark({ className, sweepClassName, morphed = false, sweep = true }: {
   className?: string
   /** Arrived through the logo's morph: skips its own entrance. */
   morphed?: boolean
-  /** On the colour band, to show it only on hover (the header's logo). */
+  /** On the colour band (the header's fade-in on hover). */
   sweepClassName?: string
+  /** Whether the band runs; a header's logo runs it only while hovered. */
+  sweep?: boolean
 }) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const band = sweep && !reduced
   return (
     <svg viewBox={VIEW} className={className} data-morphed={morphed || undefined} role="img" aria-label="juntos.lol">
       <defs>
@@ -69,16 +72,16 @@ export function HeroWordmark({ className, sweepClassName, morphed = false }: {
           <stop offset=".56" stopColor="#0358f7" />
           <stop offset=".62" stopColor="#000" stopOpacity="0" />
           <stop offset="1" stopColor="#000" stopOpacity="0" />
-          {reduced ? null : (
+          {band ? (
             <animateTransform attributeName="gradientTransform" type="translate" from="0 0" to="880 0" dur="2.6s" repeatCount="indefinite" />
-          )}
+          ) : null}
         </linearGradient>
       </defs>
       <g mask={`url(#${id}-mask)`}>
         <rect x="-8" y="-80" width="440" height="108" fill="currentColor" />
-        {reduced ? null : <rect className={sweepClassName} x="-8" y="-80" width="440" height="108" fill={`url(#${id}-dia)`} />}
+        {band ? <rect className={sweepClassName} x="-8" y="-80" width="440" height="108" fill={`url(#${id}-dia)`} /> : null}
       </g>
       <path d={ARROW} fill="var(--brand)" />
     </svg>
   )
-}
+})

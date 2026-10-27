@@ -5,6 +5,7 @@ import { MorphSize } from '../ui/MorphSize'
 import { Segmented } from '../ui/Segmented'
 import { useMorphingSize } from '../ui/useMorphingSize'
 import { useMorphingStep } from '../ui/useMorphingStep'
+import { Tip } from '../ui/Tip'
 import styles from './Settings.module.css'
 
 export interface SettingOption {
@@ -77,7 +78,7 @@ function Group({ group, headed }: { group: SettingGroup; headed: boolean }) {
  * Inside, Áudio and Legendas trade places through a short blur while the
  * panel follows the new height.
  */
-export const Settings = memo(function Settings({ groups, t }: { groups: SettingGroup[]; t: Translator }) {
+export const Settings = memo(function Settings({ groups, t, tipRoot }: { groups: SettingGroup[]; t: Translator; tipRoot: HTMLElement | null }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<SettingTab>('subtitles')
   const rootRef = useRef<HTMLDivElement>(null)
@@ -104,19 +105,19 @@ export const Settings = memo(function Settings({ groups, t }: { groups: SettingG
 
   const label = t('room.settings')
   return (
-    <div className="settings-control" ref={rootRef} data-tip={open ? undefined : label}>
+    <div className="settings-control" ref={rootRef}>
       <div className={`settings-morph ${shown ? 'is-open' : ''}`} ref={boxRef}>
         <div className="settings-pane morph-fade" data-morphing={morphing}>
           {!shown ? (
-            <button
+            <Tip label={label} container={tipRoot} render={<button
               className="settings-trigger"
               aria-label={label}
               aria-expanded={open}
               onClick={() => setOpen(true)}
               onPointerUp={(event) => event.currentTarget.blur()}
-            >
+            />}>
               <SettingsIcon size={16} />
-            </button>
+            </Tip>
           ) : (
             <div className={styles.panel}>
               {tabs.length > 1 ? (

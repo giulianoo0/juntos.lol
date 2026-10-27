@@ -1,4 +1,4 @@
-import { Popover } from '@base-ui-components/react/popover'
+import { Popover } from '@base-ui/react/popover'
 import { useState, type ReactElement, type ReactNode, type RefObject } from 'react'
 import styles from './SpringPopover.module.css'
 

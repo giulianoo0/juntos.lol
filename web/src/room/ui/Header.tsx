@@ -86,6 +86,7 @@ export function Header({ onPeople, waiting }: {
 }) {
   const { vm, strings } = useRoomUi()
   const now = useNow(1000)
+  const [shine, setShine] = useState(false)
   return (
     <header className={styles.header}>
       <div className={styles.start}>
@@ -93,8 +94,8 @@ export function Header({ onPeople, waiting }: {
         <h1 className={styles.name}>{vm.name}</h1>
         <span className={styles.clock}>{elapsedOf(now - vm.startedAt)}</span>
       </div>
-      <span className={styles.brand}>
-        <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} />
+      <span className={styles.brand} onPointerEnter={() => setShine(true)} onPointerLeave={() => setShine(false)}>
+        <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} sweep={shine} />
       </span>
       <div className={styles.end}>
         <AccessMenu />

@@ -1,4 +1,4 @@
-import { Popover } from '@base-ui-components/react/popover'
+import { Popover } from '@base-ui/react/popover'
 import { useRef, useState, type ReactNode } from 'react'
 import { springPopupClass, springPositionerClass } from './springPresence'
 

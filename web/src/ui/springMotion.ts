@@ -5,6 +5,13 @@ import type { TargetAndTransition, Transition } from 'motion/react'
 export const SPRING_POP: Transition = { type: 'spring', bounce: 0.25, duration: 0.6 }
 export const SPRING_SETTLE: Transition = { type: 'spring', bounce: 0, duration: 0.36 }
 
+/** With reduced motion, anything that comes or goes only fades. */
+const REDUCED_FADE = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.16 } },
+  exit: { opacity: 0, transition: { duration: 0.16 } },
+}
+
 /** A tile that comes in grows from its centre out of a blur and leaves the
     same way; with reduced motion it only fades. */
 export function tilePresence(reduced: boolean): {
@@ -13,14 +20,7 @@ export function tilePresence(reduced: boolean): {
   exit: TargetAndTransition
   transition: Transition
 } {
-  if (reduced) {
-    return {
-      initial: { opacity: 0 },
-      animate: { opacity: 1, transition: { duration: 0.16 } },
-      exit: { opacity: 0, transition: { duration: 0.16 } },
-      transition: { duration: 0 },
-    }
-  }
+  if (reduced) return { ...REDUCED_FADE, transition: { duration: 0 } }
   return {
     initial: { opacity: 0, scale: 0, filter: 'blur(8px)' },
     animate: { opacity: 1, scale: 1, filter: 'blur(0px)', transition: SPRING_POP },
@@ -29,23 +29,18 @@ export function tilePresence(reduced: boolean): {
   }
 }
 
-/** The stage in focus trading places: the new one settles out of a blur
-    while the old one lifts away over it. */
+/** The stage in focus trading places: the new one settles out of a light
+    blur while the old one lifts away over it. Only the arriving layer
+    blurs, and lightly: it holds live video. */
 export function focusPresence(reduced: boolean): {
   initial: TargetAndTransition
   animate: TargetAndTransition
   exit: TargetAndTransition
 } {
-  if (reduced) {
-    return {
-      initial: { opacity: 0 },
-      animate: { opacity: 1, transition: { duration: 0.16 } },
-      exit: { opacity: 0, transition: { duration: 0.16 } },
-    }
-  }
+  if (reduced) return REDUCED_FADE
   return {
-    initial: { opacity: 0, scale: 0.94, filter: 'blur(12px)' },
+    initial: { opacity: 0, scale: 0.94, filter: 'blur(4px)' },
     animate: { opacity: 1, scale: 1, filter: 'blur(0px)', transition: SPRING_POP },
-    exit: { opacity: 0, scale: 1.03, filter: 'blur(12px)', transition: SPRING_SETTLE },
+    exit: { opacity: 0, scale: 1.03, transition: SPRING_SETTLE },
   }
 }

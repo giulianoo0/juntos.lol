@@ -1,4 +1,4 @@
-import { useEffect, useState, type MutableRefObject } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 import { X } from 'lucide-react'
 import type { RoomChapter } from '../types'
 import type { Translator } from '../i18n/useT'
@@ -8,7 +8,7 @@ interface ChaptersPanelProps {
   open: boolean
   onClose: () => void
   onSeek?: (seconds: number) => void
-  videoRef: MutableRefObject<HTMLVideoElement | null>
+  videoRef: RefObject<HTMLVideoElement | null>
   t: Translator
 }
 

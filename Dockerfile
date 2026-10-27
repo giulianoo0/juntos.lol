@@ -1,4 +1,4 @@
-FROM node:24-bookworm AS web-build
+FROM node:26-bookworm AS web-build
 
 # The commit the image was built from, shown in the app's header. The build
 # context excludes .git, so it has to be handed in.
@@ -26,7 +26,7 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26-bookworm AS go-build
+FROM golang:1.27-bookworm AS go-build
 
 WORKDIR /src
 COPY go.mod go.sum ./

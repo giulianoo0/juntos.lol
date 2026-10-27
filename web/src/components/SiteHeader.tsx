@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AvatarFace } from '../account/AvatarFace'
 import { discordLoginUrl, profilePath, useMe } from '../account'
@@ -21,11 +22,21 @@ export function SiteHeader({ logo = true, you = true }: {
   const t = useT()
   const { me, loading } = useMe()
   const location = useLocation()
+  const [shine, setShine] = useState(false)
   return (
     <header className={styles.header}>
       {logo ? (
-        <MorphLink className={styles.brand} to="/" state={{ morph: true }} aria-label="juntos.lol">
-          <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} />
+        <MorphLink
+          className={styles.brand}
+          to="/"
+          state={{ morph: true }}
+          aria-label="juntos.lol"
+          onPointerEnter={() => setShine(true)}
+          onPointerLeave={() => setShine(false)}
+          onFocus={() => setShine(true)}
+          onBlur={() => setShine(false)}
+        >
+          <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} sweep={shine} />
         </MorphLink>
       ) : <span />}
       {me ? (

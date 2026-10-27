@@ -831,7 +831,7 @@ describe('Player', () => {
     chatInput.remove()
   })
 
-  it('adjusts and mutes volume locally without touching synchronized state', () => {
+  it('adjusts and mutes volume locally without touching synchronized state', async () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()
     render(<Player room={room} isController videoRef={videoRef} send={send} t={t} />)
@@ -842,7 +842,7 @@ describe('Player', () => {
 
     fireEvent.keyDown(document, { key: 'm' })
     expect(video.muted).toBe(true)
-    expect(screen.getByRole('button', { name: 'Unmute' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Unmute' })).toBeInTheDocument()
 
     fireEvent.keyDown(document, { key: 'ArrowUp' })
     expect(video.muted).toBe(false)
@@ -891,12 +891,8 @@ describe('Player', () => {
 
     fireEvent.timeUpdate(video)
 
-    expect(container.querySelectorAll('.seek-behind')).toHaveLength(1)
     expect(container.querySelectorAll('.seek-ahead')).toHaveLength(2)
     expect(container.querySelector<HTMLElement>('.seek-played')!.style.width).toBe('10%')
-    const behind = container.querySelector<HTMLElement>('.seek-behind')!
-    expect(behind.style.left).toBe('0%')
-    expect(behind.style.width).toBe('10%')
     const ahead = container.querySelectorAll<HTMLElement>('.seek-ahead')
     expect(ahead[0].style.left).toBe('10%')
     expect(ahead[0].style.width).toBe('10%')

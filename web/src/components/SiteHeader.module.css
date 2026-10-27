@@ -24,20 +24,15 @@
   view-transition-name: juntos-logo;
 }
 
-/* The colour band waits under the ink and shows on hover. */
+/* The colour band runs only while hovered or focused, fading in. */
 .sweep {
-  opacity: 0;
-  transition: opacity 240ms ease;
+  animation: sweep-in 240ms ease both;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .brand:hover .sweep {
-    opacity: 1;
+@keyframes sweep-in {
+  from {
+    opacity: 0;
   }
-}
-
-.brand:focus-visible .sweep {
-  opacity: 1;
 }
 
 .you {
