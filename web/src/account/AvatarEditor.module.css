@@ -89,6 +89,8 @@
   width: 1.5rem;
   height: 1.5rem;
   border-radius: var(--radius-full);
+  /* A dark coat still shows on the dark theme. */
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
 .accessories {

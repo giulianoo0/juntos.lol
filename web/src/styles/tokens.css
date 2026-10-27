@@ -136,6 +136,8 @@
     1.004, 1.003, 1.003, 1.002, 1
   );
   --duration-slide: 450ms;
+  /* Uma lista que chega entra em escada, um item depois do outro. */
+  --stagger-enter: 40ms;
 
   --press-scale: 0.97;
   --press-scale-card: 0.99;
