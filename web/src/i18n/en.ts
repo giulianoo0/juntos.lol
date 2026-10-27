@@ -202,7 +202,6 @@ export const en: Record<string, string> = {
   'catalog.search': 'Search movies and series',
   'catalog.searchPlaceholder': 'Search for a movie or series…',
   'catalog.clearSearch': 'Clear search',
-  'catalog.searching': 'Searching…',
   'catalog.noResults': 'Nothing found with that name.',
   'catalog.popularMovies': 'Popular movies',
   'catalog.popularSeries': 'Popular series',

@@ -202,7 +202,6 @@ export const ptBR: Record<string, string> = {
   'catalog.search': 'Buscar filmes e séries',
   'catalog.searchPlaceholder': 'Busque um filme ou série…',
   'catalog.clearSearch': 'Limpar busca',
-  'catalog.searching': 'Buscando…',
   'catalog.noResults': 'Nada encontrado com esse nome.',
   'catalog.popularMovies': 'Filmes populares',
   'catalog.popularSeries': 'Séries populares',

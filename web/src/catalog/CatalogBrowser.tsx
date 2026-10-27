@@ -208,7 +208,7 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
         </AnimatePresence>
       </motion.div>
 
-      {typing && results === null ? (
+      {typing && (results === null || (searching && results.length === 0)) ? (
         ['catalog.movies', 'catalog.series'].map((labelKey) => (
           <section key={labelKey} className="catalog-row" aria-hidden="true">
             <h2>{t(labelKey)}</h2>
@@ -243,7 +243,7 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
             )
           })
         ) : (
-          <p className="empty-copy catalog-empty">{searching ? t('catalog.searching') : t('catalog.noResults')}</p>
+          <p className="empty-copy catalog-empty">{t('catalog.noResults')}</p>
         )
       ) : (
         ROWS.map((row) => {
