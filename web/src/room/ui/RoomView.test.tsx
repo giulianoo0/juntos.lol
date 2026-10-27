@@ -206,11 +206,11 @@ describe('EntryScreen', () => {
     const vm = entry({ joinMode: 'open' })
     const { container } = render(<EntryScreen vm={vm} />)
     expect(container.querySelector('[data-hero] svg[data-kind]')).toHaveAttribute('data-kind', 'fox')
-    fireEvent.click(screen.getByRole('button', { name: 'Gato' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Gato' }))
     expect(vm.setAvatar).toHaveBeenCalledWith('cat.bowtie')
     expect(container.querySelector('[data-hero] svg[data-kind]')).toHaveAttribute('data-kind', 'cat')
     expect(container.querySelector('[data-hero] svg[data-kind]')).toHaveAttribute('data-expression', 'happy')
-    fireEvent.click(screen.getByRole('button', { name: 'Coroa' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Coroa' }))
     expect(vm.setAvatar).toHaveBeenLastCalledWith('cat.crown')
   })
 

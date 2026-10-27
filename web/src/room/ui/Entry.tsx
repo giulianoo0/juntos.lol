@@ -6,7 +6,7 @@ import { avatarOf } from '../avatar'
 import { Field } from '../../ui/Field'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
-import { AvatarPicker } from './AvatarPicker'
+import { AvatarEditor } from '../../account/AvatarEditor'
 import { Face, FaceStack } from './Face'
 import { presentLine, useRoomStrings } from './strings'
 import styles from './Entry.module.css'
@@ -133,7 +133,7 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           maxLength={64}
           autoFocus={!vm.nickname}
         />
-        <AvatarPicker value={avatar} onChange={choose} />
+        <AvatarEditor value={avatar} onChange={choose} preview={false} />
         {needsPassword ? (
           <Field
             label={<><Lock size={12} aria-hidden="true" />{strings.roomPassword}</>}

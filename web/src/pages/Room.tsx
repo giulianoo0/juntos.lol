@@ -172,6 +172,8 @@ export function RoomPage() {
           try { localStorage.setItem('ss.nickname', nickname) } catch {}
           // The face shown at the door is the one the room sees.
           if (!picked) savePickedAvatar(entryAvatar)
+          // An account without a face keeps the one it walked in with.
+          if (me && !me.avatar) void updateMe({ avatar: entryAvatar }).catch(() => undefined)
           const choice = { nickname, mic: local.mic, cam: local.cam }
           void local.setMic(false)
           void local.setCam(false)

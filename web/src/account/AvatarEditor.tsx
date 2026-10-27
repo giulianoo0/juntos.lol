@@ -62,7 +62,12 @@ const ACCESSORIES = MASCOT_ACCESSORIES.map((accessory) => accessory.id)
  * preview that smiles at every change. `value` is the avatar string of
  * `mascot/avatar.ts` ('' draws the default creature).
  */
-export function AvatarEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function AvatarEditor({ value, onChange, preview = true }: {
+  value: string
+  onChange: (value: string) => void
+  /** Off where a big face already shows the pick, as at the room's door. */
+  preview?: boolean
+}) {
   const t = useT()
   const spec = avatarSpec(value)
   const [joy, setJoy] = useState(false)
@@ -90,11 +95,13 @@ export function AvatarEditor({ value, onChange }: { value: string; onChange: (va
 
   return (
     <div className={styles.editor}>
-      <div className={styles.preview}>
-        <span key={value} className={styles.bounce}>
-          <Mascot kind={spec.kind} color={spec.color} accessory={spec.accessory} expression={joy ? 'happy' : 'idle'} size={168} />
-        </span>
-      </div>
+      {preview ? (
+        <div className={styles.preview}>
+          <span key={value} className={styles.bounce}>
+            <Mascot kind={spec.kind} color={spec.color} accessory={spec.accessory} expression={joy ? 'happy' : 'idle'} size={168} />
+          </span>
+        </div>
+      ) : null}
       <div className={styles.pickers}>
         <Choices
           label={t('avatar.kind')}
