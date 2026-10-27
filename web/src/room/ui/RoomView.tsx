@@ -160,7 +160,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
                     layoutDependency={arrangement}
                     {...presence}
                   >
-                    <TileFor target={target} size="thumb" avatar={THUMB_AVATAR[arrange]} />
+                    <TileFor target={target} size="thumb" avatar={narrow ? THUMB_AVATAR.strip : THUMB_AVATAR[arrange]} />
                   </motion.button>
                 ))}
               </AnimatePresence>
