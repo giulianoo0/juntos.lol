@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { fetchMeta, type MetaVideo } from './tmdb'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitlePick } from './MetaDetails'
@@ -42,7 +42,7 @@ interface PendingNext {
 // one exists with a playable stream, hands the caller a countdown card.
 export function useNextEpisode(
   now: NowPlaying | null,
-  videoRef: MutableRefObject<HTMLVideoElement | null>,
+  videoRef: RefObject<HTMLVideoElement | null>,
   enabled: boolean,
   onPlay: (pick: TitlePick) => void,
 ) {

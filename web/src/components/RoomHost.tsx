@@ -26,7 +26,7 @@ export function RoomHost() {
   const back = t('room.backToRoom')
   return (
     <>
-      <div className={styles.host} data-away={away || undefined} {...(away ? { inert: '' } : {})}>
+      <div className={styles.host} data-away={away || undefined} inert={away}>
         <RoomPage key={id} id={id} onInCall={setInCall} />
       </div>
       {away ? <button type="button" className={styles.back} aria-label={back} title={back} onClick={() => navigate(`/room/${id}`)} /> : null}

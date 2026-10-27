@@ -184,7 +184,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
             onShare={share}
           />
           {narrow && panelOpen ? <div className={styles.veil} onClick={() => setPanelOpen(false)} aria-hidden="true" /> : null}
-          <aside className={styles.side} aria-label={strings.panel} {...(panelOpen ? {} : { inert: '' })}>
+          <aside className={styles.side} aria-label={strings.panel} inert={!panelOpen}>
             <div className={styles.sideInner}>
               <SidePanel tab={tab} onTab={setTab} onClose={() => setPanelOpen(false)} />
             </div>

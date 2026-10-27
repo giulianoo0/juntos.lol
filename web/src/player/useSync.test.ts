@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
-import type { MutableRefObject } from 'react'
+import type { RefObject } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { savePickedAvatar } from '../room/avatar'
 import { useSync } from './useSync'
@@ -31,7 +31,7 @@ describe('useSync', () => {
     const video = document.createElement('video')
     Object.defineProperty(video, 'paused', { value: true, configurable: true })
     video.play = vi.fn().mockResolvedValue(undefined)
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -50,7 +50,7 @@ describe('useSync', () => {
     const video = document.createElement('video')
     Object.defineProperty(video, 'paused', { value: false, configurable: true })
     video.play = vi.fn().mockResolvedValue(undefined)
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -65,7 +65,7 @@ describe('useSync', () => {
   })
 
   it('sends the nickname only in the websocket hello frame, never in the URL', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { unmount } = renderHook(() => useSync('r1', 'private name', videoRef))
     const socket = FakeWebSocket.instances[0]
     expect(socket.url).toBe('ws://localhost/ws/rooms/r1')
@@ -76,7 +76,7 @@ describe('useSync', () => {
 
   it('says in the hello which avatar this browser picked', () => {
     savePickedAvatar('cat-preto.beanie')
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -86,7 +86,7 @@ describe('useSync', () => {
   })
 
   it('bumps roomVersion on every room update without treating uploads as ready', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
 
@@ -107,7 +107,7 @@ describe('useSync', () => {
   })
 
   it('hands a publish that says what moved to the page instead of bumping roomVersion', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     const media = { mediaGeneration: 0, mediaVersion: 3, mediaOffsetMs: 1000, mediaRegions: [{ n: 0, startMs: 0, producedMs: 4000, growing: true }] }
@@ -120,7 +120,7 @@ describe('useSync', () => {
   })
 
   it('leaves for good: the socket closes and no reconnect follows', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.receive({ type: 'stillThere', deadlineMs: Date.now() + 1000 }))
@@ -134,7 +134,7 @@ describe('useSync', () => {
   })
 
   it('bumps roomVersion on welcome so a reconnect refetches missed room updates', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
 
@@ -145,7 +145,7 @@ describe('useSync', () => {
   })
 
   it('does not announce the people already watching when a client arrives', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
 
@@ -165,7 +165,7 @@ describe('useSync', () => {
   })
 
   it('reports who joined and who left by diffing the roster', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     const ana = { id: 'm1', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' }
@@ -197,7 +197,7 @@ describe('useSync', () => {
       value: { length: 1, start: () => 0, end: () => 5 },
     })
     video.currentTime = 1
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
 
@@ -221,7 +221,7 @@ describe('useSync', () => {
   })
 
   it('tracks the room gating setting from welcome and gating broadcasts', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
 
@@ -234,7 +234,7 @@ describe('useSync', () => {
   })
 
   it('reports no change when the roster is rebroadcast unchanged', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     const members = [{ id: 'm1', nickname: 'Ana', joinedAt: '2026-01-01T00:00:00Z' }]
@@ -248,7 +248,7 @@ describe('useSync', () => {
   })
 
   it('collects relayed title requests as a rolling inbox', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
 
@@ -269,7 +269,7 @@ describe('useSync', () => {
   it('reconnects after the socket drops, and stops once the room is left', () => {
     vi.useFakeTimers()
     vi.spyOn(Date, 'now').mockReturnValue(100_000)
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     expect(FakeWebSocket.instances).toHaveLength(1)
 
@@ -287,7 +287,7 @@ describe('useSync', () => {
   })
 
   it('reports whether a command actually left the tab', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -299,7 +299,7 @@ describe('useSync', () => {
   })
 
   it('surfaces a refusal from the server instead of swallowing it', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.receive({ type: 'error', error: 'not_controller' }))
@@ -316,7 +316,7 @@ describe('useSync', () => {
     Object.defineProperty(video, 'paused', { value: true, configurable: true })
     Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 130 } })
     video.currentTime = 10
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -337,7 +337,7 @@ describe('useSync', () => {
     const video = document.createElement('video')
     Object.defineProperty(video, 'paused', { value: true, configurable: true })
     video.play = vi.fn().mockResolvedValue(undefined)
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -357,7 +357,7 @@ describe('useSync', () => {
     video.play = vi.fn()
       .mockRejectedValueOnce(refused)
       .mockResolvedValueOnce(undefined)
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -377,7 +377,7 @@ describe('useSync', () => {
     Object.defineProperty(video, 'paused', { value: true, configurable: true })
     const refused = new DOMException('gesture required', 'NotAllowedError')
     video.play = vi.fn().mockRejectedValue(refused)
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: video }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: video }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -400,7 +400,7 @@ describe('useSync host subtitles', () => {
   afterEach(() => vi.restoreAllMocks())
 
   it('keeps the host subtitle pick from welcome and from later broadcasts', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -426,7 +426,7 @@ describe('useSync stages', () => {
   const sent = (socket: FakeWebSocket) => socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as Record<string, unknown>)
 
   it('asks the host for a stage and keeps the answer', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -447,7 +447,7 @@ describe('useSync stages', () => {
   })
 
   it('gives the host an inbox it answers from, emptied of whoever left', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())
@@ -465,7 +465,7 @@ describe('useSync stages', () => {
   })
 
   it('closes stages and moves the spotlight through the socket, and follows the host spotlight', () => {
-    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
     const socket = FakeWebSocket.instances[0]
     act(() => socket.onopen?.())

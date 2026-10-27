@@ -1,6 +1,6 @@
 import { GATE_READY_BUFFER_MS } from './gate'
 import { playbackHealth } from './playbackHealth'
-import { useCallback, useEffect, useReducer, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } from 'react'
 import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, Spotlight, StageKind, TitleRequest } from '../types'
 import { initialStages, stagesReducer, type StagesState } from '../room/stages'
 import { loadPickedAvatar } from '../room/avatar'
@@ -127,11 +127,11 @@ const initialState: PlayState = { playing: false, positionMs: 0, rate: 1, server
 export function useSync(
   roomId: string,
   nickname: string,
-  videoRef: MutableRefObject<HTMLVideoElement | null>,
-  mediaOffsetMsRef?: MutableRefObject<number>,
-  coldWaitRef?: MutableRefObject<boolean>,
-  remoteSteerAtRef?: MutableRefObject<number>,
-  coldForRef?: MutableRefObject<((ms: number) => boolean) | null>,
+  videoRef: RefObject<HTMLVideoElement | null>,
+  mediaOffsetMsRef?: RefObject<number>,
+  coldWaitRef?: RefObject<boolean>,
+  remoteSteerAtRef?: RefObject<number>,
+  coldForRef?: RefObject<((ms: number) => boolean) | null>,
 ): SyncResult {
   const socketRef = useRef<WebSocket | null>(null)
   const offsetRef = useRef(0)
