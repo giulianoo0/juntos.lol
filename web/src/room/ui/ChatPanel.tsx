@@ -1,9 +1,9 @@
 import { ArrowUp } from 'lucide-react'
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type UIEvent } from 'react'
-import { Avatar } from '../../ui/Avatar'
 import { hueOf } from '../../ui/hue'
 import { useSendFlight } from '../../ui/useSendFlight'
 import { clockOf, groupChat } from './chatGroups'
+import { Face } from './Face'
 import { useRoomUi } from './context'
 import styles from './ChatPanel.module.css'
 
@@ -18,6 +18,7 @@ const FOLLOW_SLACK_PX = 48
  */
 export function ChatPanel() {
   const { vm, strings } = useRoomUi()
+  const avatarOf = (id: string) => vm.people.find((person) => person.id === id)?.avatar
   const [text, setText] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLFormElement>(null)
@@ -63,7 +64,7 @@ export function ChatPanel() {
             <p key={line.id} className={styles.system} data-message-id={line.id}>{line.author} {line.text}</p>
           ) : (
             <div key={line.id} className={styles.message} data-head={line.head || undefined} data-message-id={line.id}>
-              <span className={styles.gutter}>{line.head ? <Avatar id={line.authorId} name={line.author} size={32} /> : null}</span>
+              <span className={styles.gutter}>{line.head ? <Face id={line.authorId} avatar={avatarOf(line.authorId)} size={32} /> : null}</span>
               <div className={styles.body} data-flight>
                 {line.head ? (
                   <span className={styles.meta}>

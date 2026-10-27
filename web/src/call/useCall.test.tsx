@@ -172,6 +172,19 @@ describe('useCall', () => {
       vi.useRealTimers()
     }
   })
+
+  it('reads how loud each voice is for the faces, mine included, and 0 for one not heard', async () => {
+    const { result } = renderHook(() => useCall(options({ members: [{ id: 'm1' }, { id: 'm2', mic: true }] })))
+    await act(async () => { result.current.setMic(true) })
+    await waitFor(() => expect(watches.length).toBe(1))
+    watches[0].levelValue = 0.1
+    selfLevel = 0.04
+    expect(result.current.levelOf('m2')).toBeCloseTo(0.5)
+    expect(result.current.levelOf('m1')).toBeCloseTo(0.2)
+    watches[0].levelValue = 0.9
+    expect(result.current.levelOf('m2')).toBe(1)
+    expect(result.current.levelOf('m3')).toBe(0)
+  })
 })
 
 describe('CallVideo', () => {

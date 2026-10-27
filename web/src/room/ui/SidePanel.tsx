@@ -1,12 +1,12 @@
 import { Crown, Mic, MicOff, VideoOff, X } from 'lucide-react'
 import type { Knock, StageRequest } from '../model'
-import { Avatar } from '../../ui/Avatar'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
 import { SlotText } from '../../ui/SlotText'
 import { Tip } from '../../ui/Tip'
 import { ChatPanel } from './ChatPanel'
 import { useRoomUi } from './context'
+import { Face } from './Face'
 import { PersonMenu } from './PersonMenu'
 import { fill } from './strings'
 import styles from './SidePanel.module.css'
@@ -14,9 +14,9 @@ import styles from './SidePanel.module.css'
 export type PanelTab = 'chat' | 'people'
 
 /** A guest asking for a stage, or someone at the door: the host answers. */
-function Ask({ id, name, line, onAnswer, allowLabel }: {
+function Ask({ id, avatar, line, onAnswer, allowLabel }: {
   id: string
-  name: string
+  avatar?: string
   line: string
   allowLabel: string
   onAnswer: (allow: boolean) => void
@@ -25,7 +25,7 @@ function Ask({ id, name, line, onAnswer, allowLabel }: {
   return (
     <div className={styles.ask} role="group" aria-label={line}>
       <div className={styles.askHead}>
-        <Avatar id={id} name={name} size={28} />
+        <Face id={id} avatar={avatar} size={28} />
         <span className={styles.askLine}>{line}</span>
       </div>
       <div className={styles.askActions}>
@@ -46,7 +46,6 @@ function Asks({ requests, knocks }: { requests: StageRequest[]; knocks: Knock[] 
         <Ask
           key={knock.id}
           id={knock.id}
-          name={knock.name}
           line={fill(strings.knocking, { name: knock.name })}
           allowLabel={strings.admit}
           onAnswer={(allow) => (allow ? vm.actions.admit(knock.id) : vm.actions.deny(knock.id))}
@@ -56,7 +55,7 @@ function Asks({ requests, knocks }: { requests: StageRequest[]; knocks: Knock[] 
         <Ask
           key={request.id}
           id={request.memberId}
-          name={request.name}
+          avatar={vm.people.find((person) => person.id === request.memberId)?.avatar}
           line={fill(wants[request.kind], { name: request.name })}
           allowLabel={strings.allow}
           onAnswer={(allow) => vm.actions.answerRequest(request.id, allow)}
@@ -75,9 +74,10 @@ function PeopleList() {
         const self = person.id === vm.selfId
         return (
           <li key={person.id} className={styles.person}>
-            <Avatar id={person.id} name={person.name} size={32} />
+            <Face id={person.id} avatar={person.avatar} size={32} />
             <span className={styles.personName}>
               <span className={styles.nameText}>{person.name}</span>
+              {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
               {self ? <span className={styles.you}>{strings.you}</span> : null}
               {person.host ? <Tip label={strings.host}><Crown size={13} className={styles.mark} aria-hidden="true" /></Tip> : null}
             </span>

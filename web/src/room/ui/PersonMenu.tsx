@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import type { Person } from '../model'
 import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
 import { sameTarget, useRoomUi } from './context'
+import { Face } from './Face'
 import { fill } from './strings'
 import styles from './PersonMenu.module.css'
 
@@ -31,6 +32,11 @@ export function PersonMenu({ person, trigger }: {
     >
       {({ close }) => (
         <div role="menu" aria-label={person.name}>
+          <div className={styles.head} aria-hidden="true">
+            <Face id={person.id} avatar={person.avatar} size={30} />
+            <span className={styles.headName}>{person.name}</span>
+            {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
+          </div>
           <SpringRow
             icon={pinned ? <PinOff size={16} /> : <Pin size={16} />}
             label={pinned ? strings.unpin : strings.pin}

@@ -14,6 +14,12 @@ import styles from './DevRoom.module.css'
    ?n=6&stages=media,screen&host=1&asks=1&spot=screen&view=room&theme=dark */
 
 const NAMES = ['Giu', 'Ana', 'Bruno', 'Caio', 'Duda', 'Enzo', 'Fê', 'Gabi', 'Hugo', 'Isa', 'João', 'Lia']
+// Some picked a mascot, some signed in; the rest get the default one.
+const AVATARS = ['fox.bowtie', 'frog.crown', 'cat-preto.beanie', undefined, 'robot.headphones', 'panda.cap', 'mushroom', 'alien.crown', 'bee.beanie', undefined, 'owl.round-glasses', 'ghost.scarf']
+const ACCOUNTS = [128, undefined, 7, undefined, undefined, 342]
+
+// A voice that rises and falls, for the speaking faces.
+const fakeLevel = () => 0.45 + 0.45 * Math.sin(performance.now() / 120) * Math.sin(performance.now() / 410)
 
 function fakePeople(count: number): Person[] {
   return NAMES.slice(0, count).map((name, index) => ({
@@ -22,9 +28,11 @@ function fakePeople(count: number): Person[] {
     host: index === 0,
     mic: index % 3 !== 2,
     cam: index % 4 === 1 || index % 4 === 3,
-    speaking: index === 1,
+    speaking: index === 1 || index === 4,
     hostMuted: false,
     hostCamOff: false,
+    avatar: AVATARS[index],
+    accountId: ACCOUNTS[index],
   }))
 }
 
@@ -150,6 +158,7 @@ export function DevRoom() {
     knocks,
     ...splitReactions(chat),
     sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
+    levelOf: fakeLevel,
     actions: {
       setMic: (on) => update(selfId, { mic: on, hostMuted: false }),
       setCam: (on) => update(selfId, { cam: on, hostCamOff: false }),
@@ -206,6 +215,7 @@ export function DevRoom() {
   }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, chat])
 
   const others = people.filter((person) => person.id !== selfId)
+  const [entryAvatar, setEntryAvatar] = useState(params.get('avatar') ?? 'fox.bowtie')
   const entry: EntryViewModel = {
     name: 'Sessão de sexta',
     joinMode: view === 'entry-open' ? 'open' : 'password',
@@ -214,8 +224,11 @@ export function DevRoom() {
     nickname: params.get('nick') ?? 'Fê',
     mic: people.find((person) => person.id === selfId)?.mic ?? true,
     cam: people.find((person) => person.id === selfId)?.cam ?? false,
-    micLabel: 'MacBook Pro (microfone)',
-    micLevel: 0.6,
+    level: fakeLevel,
+    avatar: entryAvatar,
+    setAvatar: setEntryAvatar,
+    account: params.get('login') === '1' ? { id: 128 } : null,
+    loginUrl: '/api/auth/discord?next=%2Fdev%2Fsala',
     busy: false,
     error: params.get('error') === '1' ? 'Senha errada' : undefined,
     setMic: (on) => update(selfId, { mic: on }),
