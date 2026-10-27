@@ -1,4 +1,4 @@
-import { Check, Clock, Film, Lock, LogOut, Monitor, Pencil, Plus, Radio, X } from 'lucide-react'
+import { Check, Clock, Film, Lock, LogOut, Monitor, Pencil, Plus, Radio, Send, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -9,6 +9,8 @@ import {
   fetchFriends,
   fetchHistory,
   fetchProfile,
+  inviteFriend,
+  InviteError,
   logout,
   requestFriend,
   updateMe,
@@ -32,6 +34,7 @@ import { IconPill } from '../ui/IconPill'
 import { Modal } from '../ui/Modal'
 import { Pill } from '../ui/Pill'
 import { Segmented } from '../ui/Segmented'
+import { Skeleton } from '../ui/Shimmer'
 import { SpringPopover } from '../ui/SpringPopover'
 import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
@@ -42,6 +45,12 @@ const errorText: Record<string, string> = {
   user_not_found: 'account.userNotFound',
   invalid_friend: 'account.invalidFriend',
   too_many_requests: 'account.tooMany',
+}
+
+const inviteErrorText: Record<string, string> = {
+  not_in_room: 'account.inviteNotInRoom',
+  invites_disabled: 'account.inviteDisabled',
+  too_many_invites: 'account.inviteTooMany',
 }
 
 /** "hoje", "ontem", the weekday within a week, then the day and month. */
@@ -71,7 +80,7 @@ export function AccountPage() {
   if (wanted !== null && (!Number.isInteger(wanted) || wanted < 1)) {
     body = <Empty icon={<X size={28} />} title={t('account.notFound')} />
   } else if (loading) {
-    body = null
+    body = <AccountSkeleton panels />
   } else if (me && (wanted === null || wanted === me.id)) {
     body = <OwnAccount me={me} />
   } else if (wanted !== null) {
@@ -144,7 +153,7 @@ function OwnAccount({ me }: { me: Me }) {
         ) : (
           <>
             <FriendsPanel friends={friends} requests={requests} reload={load} />
-            <HistoryPanel history={history} visibility={me.visibility} own />
+            <HistoryPanel history={history} loading={history === null} visibility={me.visibility} own />
           </>
         )}
       </div>
@@ -172,7 +181,7 @@ function OtherAccount({ id }: { id: number }) {
   useEffect(() => { void load() }, [load])
 
   if (failed) return <Empty title={t('account.loadFailed')} action={<Pill tone="soft" size="md" onClick={() => { void load() }}>{t('account.retry')}</Pill>} />
-  if (profile === undefined) return null
+  if (profile === undefined) return <AccountSkeleton />
   if (profile === null) return <Empty icon={<X size={28} />} title={t('account.notFound')} />
   return (
     <div className={styles.layout}>
@@ -352,9 +361,24 @@ function FriendsPanel({ friends, requests, reload }: { friends: Friend[] | null;
     await reload()
   }
 
-  const invite = async () => {
-    try { await navigator.clipboard.writeText(`${window.location.origin}/`) } catch {}
-    toast(t('account.inviteCopied'))
+  const [inviting, setInviting] = useState<number | null>(null)
+
+  const invite = async (friend: Friend) => {
+    setInviting(friend.id)
+    try {
+      await inviteFriend(friend.id)
+      toast(t('account.inviteSent'))
+    } catch (failure) {
+      const { message, roomId } = failure instanceof InviteError ? failure : new InviteError('failed')
+      if (message === 'dm_closed' && roomId) {
+        try { await navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`) } catch {}
+        toast(t('account.inviteDmClosed').replace('{name}', friend.nickname))
+      } else {
+        toast(t(inviteErrorText[message] ?? 'account.inviteFailed'))
+      }
+    } finally {
+      setInviting(null)
+    }
   }
 
   // Who is in a room first, then everyone else.
@@ -362,7 +386,7 @@ function FriendsPanel({ friends, requests, reload }: { friends: Friend[] | null;
   const pending = requests.incoming.length + requests.outgoing.length
 
   return (
-    <section className={styles.panel} aria-labelledby="friends-title">
+    <section className={styles.panel} aria-labelledby="friends-title" aria-busy={friends === null || undefined}>
       <div className={styles.panelHead}>
         <h2 id="friends-title" className={styles.panelTitle}>{t('account.friends')}</h2>
         <SpringPopover
@@ -413,22 +437,36 @@ function FriendsPanel({ friends, requests, reload }: { friends: Friend[] | null;
         </ul>
       ) : null}
 
-      {friends === null ? null : sorted.length === 0 && !pending ? (
+      {friends === null ? (
+        <ul className={styles.people}>
+          {[0, 1, 2, 3].map((index) => <PersonSkeleton key={index} index={index} />)}
+        </ul>
+      ) : sorted.length === 0 && !pending ? (
         <Empty title={t('account.friendsEmpty')} />
       ) : (
         <ul className={styles.people}>
           {sorted.map((friend, index) => (
             <Person key={friend.id} person={friend} index={pending + index} dim={!friend.presence.inRoom}>
-              {friend.presence.roomId ? (
-                <Tip
-                  label={t('account.joinRoom')}
-                  render={<Link className={styles.roomCode} to={`/room/${friend.presence.roomId}`}>{friend.presence.roomId}</Link>}
-                />
-              ) : friend.presence.inRoom ? (
-                <Tip label={t('account.closedRoom')}><Lock size={15} className={styles.quiet} aria-hidden="true" /></Tip>
-              ) : (
-                <IconPill size="sm" label={t('account.invite').replace('{name}', friend.nickname)} icon={<Plus size={15} />} onClick={() => { void invite() }} />
-              )}
+              <div className={styles.personActions}>
+                {friend.presence.roomId ? (
+                  <Tip
+                    label={t('account.joinRoom')}
+                    render={<Link className={styles.roomCode} to={`/room/${friend.presence.roomId}`}>{friend.presence.roomId}</Link>}
+                  />
+                ) : friend.presence.inRoom ? (
+                  <Tip label={t('account.closedRoom')}><Lock size={15} className={styles.quiet} aria-hidden="true" /></Tip>
+                ) : null}
+                {friend.presence.withMe ? null : (
+                  <IconPill
+                    size="sm"
+                    label={t('account.invite').replace('{name}', friend.nickname)}
+                    icon={friend.presence.inRoom ? <Send size={14} /> : <Plus size={15} />}
+                    loading={inviting === friend.id}
+                    disabled={inviting !== null}
+                    onClick={() => { void invite(friend) }}
+                  />
+                )}
+              </div>
             </Person>
           ))}
         </ul>
@@ -442,7 +480,12 @@ const KIND_ICON: Record<string, ReactNode> = {
   live: <Radio size={22} />,
 }
 
-function HistoryPanel({ history, visibility, own = false }: { history: HistoryEntry[] | null; visibility?: Visibility; own?: boolean }) {
+function HistoryPanel({ history, loading = false, visibility, own = false }: {
+  history: HistoryEntry[] | null
+  loading?: boolean
+  visibility?: Visibility
+  own?: boolean
+}) {
   const t = useT()
   const [shown, setShown] = useState<Visibility>(visibility ?? 'friends')
 
@@ -453,7 +496,7 @@ function HistoryPanel({ history, visibility, own = false }: { history: HistoryEn
   }
 
   return (
-    <section className={styles.panel} aria-labelledby="history-title">
+    <section className={styles.panel} aria-labelledby="history-title" aria-busy={loading || undefined}>
       <div className={styles.panelHead}>
         <h2 id="history-title" className={styles.panelTitle}>{t('account.history')}</h2>
         {own ? (
@@ -469,7 +512,11 @@ function HistoryPanel({ history, visibility, own = false }: { history: HistoryEn
           />
         ) : null}
       </div>
-      {history === null ? (
+      {loading ? (
+        <ul className={styles.history}>
+          {[0, 1, 2, 3].map((index) => <EntrySkeleton key={index} index={index} />)}
+        </ul>
+      ) : history === null ? (
         own ? null : <Empty icon={<Lock size={24} />} title={t('account.historyHidden')} />
       ) : history.length === 0 ? (
         <Empty title={t('account.historyEmpty')} />
@@ -496,6 +543,59 @@ function HistoryPanel({ history, visibility, own = false }: { history: HistoryEn
         </ul>
       )}
     </section>
+  )
+}
+
+/** The page's shape before the account arrives: the card, and the panels when they will follow. */
+function AccountSkeleton({ panels = false }: { panels?: boolean }) {
+  return (
+    <div className={styles.layout} aria-busy="true">
+      <aside className={styles.card}>
+        <Skeleton round className={styles.bigFace} style={{ aspectRatio: '1' }} />
+        <div className={styles.names}>
+          <Skeleton width="6rem" height="3.5rem" />
+          <Skeleton width="9rem" height="1.75rem" />
+        </div>
+        <div className={styles.stats}>
+          {[0, 1, 2].map((index) => <Skeleton key={index} height="5.25rem" className={styles.statSkeleton} />)}
+        </div>
+      </aside>
+      {panels ? (
+        <div className={styles.column}>
+          <section className={styles.panel}>
+            <Skeleton width="7rem" height="1.75rem" />
+            <ul className={styles.people}>
+              {[0, 1, 2, 3].map((index) => <PersonSkeleton key={index} index={index} />)}
+            </ul>
+          </section>
+          <section className={styles.panel}>
+            <Skeleton width="7rem" height="1.75rem" />
+            <ul className={styles.history}>
+              {[0, 1, 2, 3].map((index) => <EntrySkeleton key={index} index={index} />)}
+            </ul>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function PersonSkeleton({ index }: { index: number }) {
+  return (
+    <li className={styles.person} style={stagger(index)} aria-hidden="true">
+      <Skeleton round width={44} height={44} />
+      <Skeleton width="55%" height="1rem" />
+    </li>
+  )
+}
+
+function EntrySkeleton({ index }: { index: number }) {
+  return (
+    <li className={styles.entry} style={stagger(index)} aria-hidden="true">
+      <Skeleton className={styles.coverSkeleton} />
+      <Skeleton width="80%" height="0.875rem" />
+      <Skeleton width="40%" height="0.75rem" />
+    </li>
   )
 }
 

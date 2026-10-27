@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { discordLoginUrl, fetchHistory, fetchMe, logout, useMe } from './account'
+import { discordLoginUrl, fetchHistory, fetchMe, inviteFriend, InviteError, logout, useMe } from './account'
 
 const respond = (status: number, body?: unknown) => Promise.resolve(new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
 
@@ -22,6 +22,18 @@ describe('account', () => {
   it('histórico fechado é null, não erro', async () => {
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(respond(403, { error: 'history_hidden' })))
     expect(await fetchHistory(7)).toBeNull()
+  })
+
+  it('convite manda o POST e devolve a sala quando a DM está fechada', async () => {
+    const fetchMock = vi.fn().mockReturnValueOnce(respond(204)).mockReturnValueOnce(respond(409, { error: 'dm_closed', roomId: 'OPEN1234' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await inviteFriend(7)
+    const refused = await inviteFriend(7).catch((error: unknown) => error)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/friends/7/invite', { method: 'POST' })
+    expect(refused).toBeInstanceOf(InviteError)
+    expect(refused).toMatchObject({ message: 'dm_closed', roomId: 'OPEN1234' })
   })
 
   it('useMe traz a conta e esquece dela no logout', async () => {

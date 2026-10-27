@@ -453,6 +453,15 @@
 .cover[data-hue="7"] { --cover-from: var(--hue-7-bg); --cover-to: var(--hue-7); --cover-ink: var(--hue-7-ink); }
 .cover[data-hue="8"] { --cover-from: var(--hue-8-bg); --cover-to: var(--hue-8); --cover-ink: var(--hue-8-ink); }
 
+.coverSkeleton {
+  aspect-ratio: 3 / 2;
+  border-radius: var(--radius-2xl);
+}
+
+.statSkeleton {
+  border-radius: var(--radius-3xl);
+}
+
 .entryTitle {
   display: -webkit-box;
   overflow: hidden;
