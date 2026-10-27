@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject, type ReactNode } from 'react'
 import {
   FastForward, Lock, Maximize, Minimize, Pause, PictureInPicture2, Play, Rewind,
   SkipBack, SkipForward, Volume1, Volume2, VolumeX,
@@ -49,7 +49,7 @@ interface PlayerProps {
   /** This viewer's seat, which a host import is authorized by. */
   memberId?: string
   hostSubtitles?: HostSubtitles | null
-  videoRef: MutableRefObject<HTMLVideoElement | null>
+  videoRef: RefObject<HTMLVideoElement | null>
   send: (type: string, payload?: Record<string, unknown>) => void
   t: Translator
   syncState?: PlayState
@@ -57,11 +57,11 @@ interface PlayerProps {
   swarm?: TorrentStats | null
   overlay?: ReactNode
   onChapters?: () => void
-  mediaOffsetMsRef?: MutableRefObject<number>
-  seekRef?: MutableRefObject<((seconds: number) => void) | null>
-  coldWaitRef?: MutableRefObject<boolean>
-  coldForRef?: MutableRefObject<((ms: number) => boolean) | null>
-  remoteSteerAtRef?: MutableRefObject<number>
+  mediaOffsetMsRef?: RefObject<number>
+  seekRef?: RefObject<((seconds: number) => void) | null>
+  coldWaitRef?: RefObject<boolean>
+  coldForRef?: RefObject<((ms: number) => boolean) | null>
+  remoteSteerAtRef?: RefObject<number>
   autoplayBlocked?: boolean
   gatedStart?: boolean
   onBuffering?: (stalled: boolean) => void

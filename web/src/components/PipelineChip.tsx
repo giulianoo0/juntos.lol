@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import NumberFlow from '@number-flow/react'
 import { numbersAnimate } from '../engine'
 import { ArrowDown, ArrowUp } from 'lucide-react'
@@ -14,7 +14,7 @@ export function PipelineChip({ swarm, progress, remote, videoRef, t }: {
   swarm: TorrentStats | null
   progress: RoomUploadProgress | null
   remote?: boolean
-  videoRef: MutableRefObject<HTMLVideoElement | null>
+  videoRef: RefObject<HTMLVideoElement | null>
   t: Translator
 }) {
   const [bufferSec, setBufferSec] = useState(0)

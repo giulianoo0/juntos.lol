@@ -831,7 +831,7 @@ describe('Player', () => {
     chatInput.remove()
   })
 
-  it('adjusts and mutes volume locally without touching synchronized state', () => {
+  it('adjusts and mutes volume locally without touching synchronized state', async () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()
     render(<Player room={room} isController videoRef={videoRef} send={send} t={t} />)
@@ -842,7 +842,7 @@ describe('Player', () => {
 
     fireEvent.keyDown(document, { key: 'm' })
     expect(video.muted).toBe(true)
-    expect(screen.getByRole('button', { name: 'Unmute' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Unmute' })).toBeInTheDocument()
 
     fireEvent.keyDown(document, { key: 'ArrowUp' })
     expect(video.muted).toBe(false)

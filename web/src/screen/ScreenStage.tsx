@@ -287,7 +287,7 @@ export function ScreenStage({ share, only, memberId, viewers, t }: {
 /** Forwarded so `popLayout` can lift a leaving tile out of the grid's flow. */
 const Tile = forwardRef<HTMLDivElement, {
   tile: ScreenTile
-  previewRef?: React.RefObject<HTMLVideoElement>
+  previewRef?: React.RefObject<HTMLVideoElement | null>
   canvasRef?: (canvas: HTMLCanvasElement | null) => void
   zoom: 'none' | 'zoomable' | 'focused' | 'aside'
   transition: object

@@ -1,4 +1,4 @@
-import { Tooltip } from '@base-ui-components/react/tooltip'
+import { Tooltip } from '@base-ui/react/tooltip'
 import type { ReactElement, ReactNode } from 'react'
 import styles from './Tip.module.css'
 
