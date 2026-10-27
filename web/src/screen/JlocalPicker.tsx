@@ -7,6 +7,7 @@ import { askJLocalScreenPermission } from '../jlocal/askScreenPermission'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
 import { useSoundChoice } from '../jlocal/soundChoice'
 import { Button } from '../ui/Button'
+import { Loading, Skeleton } from '../ui/Shimmer'
 import { SoundMenu } from './SoundMenu'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { MORPH_EASE } from '../ui/morphTokens'
@@ -194,7 +195,18 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
             exit={{ opacity: 0, filter: 'blur(3px)', y: -4 }}
             transition={swap}
           >
-            {current === null ? <p className="jpick-note">{t('jlocal.loading')}</p>
+            {current === null ? (
+                <Loading label={t('status.loading')} className="jpick-grid">
+                  {[0, 1].map((index) => (
+                    <span key={index} className="jpick-card">
+                      <Skeleton height="auto" style={{ aspectRatio: '16 / 9' }} />
+                      <span className="jpick-meta">
+                        <Skeleton width="60%" height="0.75rem" />
+                      </span>
+                    </span>
+                  ))}
+                </Loading>
+              )
               : current === 'failed' || current.length === 0 ? <p className="jpick-note">{t('jlocal.empty')}</p>
               : (
                 <div className="jpick-grid" role="radiogroup">
@@ -228,8 +240,8 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
         <div className="jpick-permission" role="alert">
           <ShieldAlert size={15} aria-hidden="true" />
           <span>{t('jlocal.permission')}</span>
-          <Button variant="ghost" disabled={asking} onClick={() => { void askPermission() }}>
-            {t(asking ? 'jlocal.permissionAsking' : 'jlocal.permissionAsk')}
+          <Button variant="ghost" loading={asking} onClick={() => { void askPermission() }}>
+            {t('jlocal.permissionAsk')}
           </Button>
         </div>
       ) : null}
@@ -256,7 +268,7 @@ export function JlocalPicker({ onPick, onExit, busy = false, error = null, mode 
         </MorphingMenu>
         {audioCapture ? <SoundMenu t={t} /> : null}
         <span className="spacer" />
-        <Button variant="primary" disabled={!canShare} onClick={share}>
+        <Button variant="primary" disabled={!canShare} loading={busy} onClick={share}>
           {mode === 'switch' ? <Replace size={15} aria-hidden="true" /> : <MonitorUp size={15} aria-hidden="true" />}
           {t(mode === 'switch' ? 'jlocal.switch' : 'jlocal.share')}
         </Button>
