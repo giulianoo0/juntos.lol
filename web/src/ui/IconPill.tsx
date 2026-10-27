@@ -1,4 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { DiaGlyph } from './Shimmer'
 import { Tip } from './Tip'
 import styles from './IconPill.module.css'
 
@@ -11,6 +12,8 @@ export interface IconPillProps extends Omit<ButtonHTMLAttributes<HTMLButtonEleme
   /** Open or turned on (the panel, the password): the solid face. */
   active?: boolean
   size?: 'sm' | 'lg'
+  /** Working: the icon runs the DiaShimmer's colours and the button holds still. */
+  loading?: boolean
   /** Over a video: the dark glass. */
   tone?: 'soft' | 'scrim'
 }
@@ -20,7 +23,7 @@ export interface IconPillProps extends Omit<ButtonHTMLAttributes<HTMLButtonEleme
  * The hover only tints the face: nothing grows or moves its neighbours.
  */
 export const IconPill = forwardRef<HTMLButtonElement, IconPillProps>(function IconPill(
-  { icon, label, state, active = false, size = 'lg', tone = 'soft', className = '', type = 'button', ...rest },
+  { icon, label, state, active = false, size = 'lg', tone = 'soft', loading = false, className = '', type = 'button', disabled, ...rest },
   ref,
 ) {
   return (
@@ -35,10 +38,12 @@ export const IconPill = forwardRef<HTMLButtonElement, IconPillProps>(function Ic
           data-active={active || undefined}
           data-size={size}
           data-tone={tone}
+          aria-busy={loading || undefined}
+          disabled={disabled || loading}
           className={`${styles.pill} ${className}`.trim()}
           {...rest}
         >
-          <span className={styles.icon} aria-hidden="true">{icon}</span>
+          <span className={styles.icon} aria-hidden="true">{loading ? <DiaGlyph>{icon}</DiaGlyph> : icon}</span>
         </button>
       )}
     />

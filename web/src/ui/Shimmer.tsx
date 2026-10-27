@@ -6,6 +6,11 @@ export function DiaText({ children, className = '' }: { children: ReactNode; cla
   return <span className={`${styles.dia} ${className}`.trim()}>{children}</span>
 }
 
+/** An icon that is still working: its stroke walks the DiaShimmer's colours. */
+export function DiaGlyph({ children }: { children: ReactNode }) {
+  return <span className={styles.diaGlyph}>{children}</span>
+}
+
 /** A shimmering block holding the place of content that is on its way. */
 export function Skeleton({ width, height = '1em', round = false, className = '', style }: {
   width?: CSSProperties['width']
