@@ -6,6 +6,7 @@ import { Mascot } from '../mascot'
 import { reactionSrc } from '../room/reactions'
 import { DiscordGlyph } from '../ui/DiscordGlyph'
 import { Modal } from '../ui/Modal'
+import { MorphSize } from '../ui/MorphSize'
 import { Pill, PillLink } from '../ui/Pill'
 import styles from './Onboarding.module.css'
 
@@ -49,6 +50,8 @@ export function Onboarding() {
   const location = useLocation()
   const [open, setOpen] = useState(() => !seen())
   const [step, setStep] = useState(0)
+  // The step on its way out, blurring away over the one coming in.
+  const [leaving, setLeaving] = useState<number | null>(null)
 
   if (location.pathname.startsWith('/dev')) return null
 
@@ -116,6 +119,16 @@ export function Onboarding() {
 
   const last = step === steps.length - 1
   const current = steps[step]!
+  const go = (next: number) => {
+    setLeaving(step)
+    setStep(next)
+  }
+  const view = (index: number) => (
+    <>
+      <div className={styles.hero} aria-hidden="true">{steps[index]!.hero}</div>
+      <p className={styles.text}>{steps[index]!.text}</p>
+    </>
+  )
   const close = () => {
     markSeen()
     setOpen(false)
@@ -124,16 +137,20 @@ export function Onboarding() {
   return (
     <Modal open={open} onOpenChange={(next) => { if (!next) close() }} title={current.title} closeLabel={t('onboarding.skip')}>
       <div className={styles.body}>
-        <div key={step} className={styles.step}>
-          <div className={styles.hero} aria-hidden="true">{current.hero}</div>
-          <p className={styles.text}>{current.text}</p>
+        <div className={styles.stage}>
+          {leaving !== null && leaving !== step ? (
+            <div key={`out-${leaving}`} className={styles.leaving} aria-hidden="true" onAnimationEnd={() => setLeaving(null)}>{view(leaving)}</div>
+          ) : null}
+          <MorphSize step={String(step)} axis="height">
+            <div className={styles.step}>{view(step)}</div>
+          </MorphSize>
         </div>
         <div className={styles.dots} aria-hidden="true">
           {steps.map((_, index) => <span key={index} className={styles.dot} data-on={index === step || undefined} />)}
         </div>
         <div className={styles.actions}>
           {step > 0 ? (
-            <Pill tone="soft" size="lg" onClick={() => setStep(step - 1)}>{t('onboarding.back')}</Pill>
+            <Pill tone="soft" size="lg" onClick={() => go(step - 1)}>{t('onboarding.back')}</Pill>
           ) : (
             <Pill tone="soft" size="lg" onClick={close}>{t('onboarding.skip')}</Pill>
           )}
@@ -142,7 +159,7 @@ export function Onboarding() {
               {t('onboarding.signIn')}
             </PillLink>
           ) : null}
-          <Pill tone="brand" size="lg" onClick={last ? close : () => setStep(step + 1)}>
+          <Pill tone="brand" size="lg" onClick={last ? close : () => go(step + 1)}>
             {last ? t('onboarding.done') : t('onboarding.next')}
           </Pill>
         </div>

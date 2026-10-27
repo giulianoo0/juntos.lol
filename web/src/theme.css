@@ -1128,3 +1128,23 @@ html.has-pseudo-fullscreen, html.has-pseudo-fullscreen body { overflow: hidden; 
 @keyframes stage-gate-in { from { opacity: 0; filter: blur(8px); } }
 @keyframes stage-gate-out { to { opacity: 0; filter: blur(8px); } }
 @media (prefers-reduced-motion: reduce) { .stage-gate, .stage-gate[data-leaving] { animation: none; } }
+
+/* The logo morphing between the landing's lettering and the header's, on the
+   spring; the rest of the page only crossfades. */
+::view-transition-group(juntos-logo) {
+  animation-duration: var(--duration-spring-pop);
+  animation-timing-function: var(--ease-spring-pop);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 240ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

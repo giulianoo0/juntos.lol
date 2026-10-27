@@ -78,6 +78,19 @@ func TestDocsPathDoesNotFallBackToTheApp(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, "a wrong docs address must not open the app shell")
 }
 
+func TestEveryBuildFolderIsServedAsFiles(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "emoji"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "emoji", "1f602.png"), []byte("png"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>app</h1>"), 0o644))
+	server := newServerWithWebDir(t, dir)
+
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/emoji/1f602.png", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "png", rec.Body.String(), "an emoji must not come back as the app shell")
+}
+
 func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets", "plugin-worker"), 0o755))

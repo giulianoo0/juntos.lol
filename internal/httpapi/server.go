@@ -157,11 +157,15 @@ func registerFrontend(r *gin.Engine, webDir string) {
 	if webDir == "" {
 		return
 	}
-	r.Static("/assets", filepath.Join(webDir, "assets"))
-	r.Static("/docs", filepath.Join(webDir, "docs"))
+	// Every folder of the build (assets, docs, emoji…) is served as files,
+	// so a missing one answers 404 instead of opening the app shell.
 	entries, _ := os.ReadDir(webDir)
 	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == "index.html" {
+		if entry.IsDir() {
+			r.Static("/"+entry.Name(), filepath.Join(webDir, entry.Name()))
+			continue
+		}
+		if entry.Name() == "index.html" {
 			continue
 		}
 		r.StaticFile("/"+entry.Name(), filepath.Join(webDir, entry.Name()))

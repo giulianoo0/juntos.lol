@@ -1,8 +1,7 @@
 import { Lock, Plus } from 'lucide-react'
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { discordLoginUrl, useMe } from '../account'
-import { AvatarFace } from '../account/AvatarFace'
 import { useT } from '../i18n/useT'
 import { Mascot } from '../mascot'
 import { reactionSrc } from '../room/reactions'
@@ -11,11 +10,10 @@ import { DiscordGlyph } from '../ui/DiscordGlyph'
 import { Field } from '../ui/Field'
 import { IconPill } from '../ui/IconPill'
 import { Pill, PillLink } from '../ui/Pill'
-import { arrive } from '../ui/arrive'
-import { Skeleton } from '../ui/Shimmer'
 import { SpringPopover } from '../ui/SpringPopover'
 import { Couch } from './home/Couch'
 import { TurningTitle } from './home/TurningTitle'
+import { SiteHeader } from '../components/SiteHeader'
 import { HeroWordmark, SmallWordmark } from './home/Wordmark'
 import styles from './Home.module.css'
 
@@ -46,6 +44,7 @@ const SOURCES = [
 export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => Promise<{ roomID: string }> }) {
   const t = useT()
   const navigate = useNavigate()
+  const location = useLocation()
   const { me, loading } = useMe()
   const [name, setName] = useState('')
   const [withPassword, setWithPassword] = useState(false)
@@ -101,24 +100,11 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <a className={styles.brand} href="/"><SmallWordmark className={styles.smallMark} /></a>
-        {me ? (
-          <Link className={`${styles.me} ${arrive}`} to="/conta" aria-label={`${me.nickname} #${me.id}`}>
-            <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
-            <span className={styles.meNumber}>#{me.id}</span>
-          </Link>
-        ) : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
-          <a className={`${styles.discord} ${arrive}`} href={discordLoginUrl('/')}>
-            <DiscordGlyph size={18} />
-            {t('landing.signIn')}
-          </a>
-        )}
-      </header>
+      <SiteHeader logo={false} />
 
       <main className={styles.main}>
         <section className={styles.hero}>
-          <HeroWordmark className={styles.heroMark} />
+          <HeroWordmark className={styles.heroMark} morphed={Boolean((location.state as { morph?: boolean } | null)?.morph)} />
           <TurningTitle
             className={styles.title}
             before={t('landing.titleBefore')}

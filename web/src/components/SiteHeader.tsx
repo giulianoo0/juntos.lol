@@ -1,0 +1,43 @@
+import { useLocation } from 'react-router-dom'
+import { AvatarFace } from '../account/AvatarFace'
+import { discordLoginUrl, useMe } from '../account'
+import { useT } from '../i18n/useT'
+import { HeroWordmark } from '../pages/home/Wordmark'
+import { arrive } from '../ui/arrive'
+import { DiscordGlyph } from '../ui/DiscordGlyph'
+import { MorphLink } from '../ui/MorphLink'
+import { Skeleton } from '../ui/Shimmer'
+import styles from './SiteHeader.module.css'
+
+/** The same top on every page outside a room: the logo home, which lights
+    up with the DiaShimmer on hover, and you (or the way in) on the right. */
+export function SiteHeader({ logo = true, you = true }: {
+  /** Off on the landing, where the big lettering is the logo and morphs into this one. */
+  logo?: boolean
+  /** Off where the page itself is you (your own account) or asks you in. */
+  you?: boolean
+}) {
+  const t = useT()
+  const { me, loading } = useMe()
+  const location = useLocation()
+  return (
+    <header className={styles.header}>
+      {logo ? (
+        <MorphLink className={styles.brand} to="/" state={{ morph: true }} aria-label="juntos.lol">
+          <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} />
+        </MorphLink>
+      ) : <span />}
+      {!you ? null : me ? (
+        <MorphLink className={`${styles.me} ${arrive}`} to="/conta" aria-label={`${me.nickname} #${me.id}`}>
+          <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
+          <span className={styles.number}>#{me.id}</span>
+        </MorphLink>
+      ) : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
+        <a className={`${styles.discord} ${arrive}`} href={discordLoginUrl(location.pathname)}>
+          <DiscordGlyph size={18} />
+          {t('landing.signIn')}
+        </a>
+      )}
+    </header>
+  )
+}

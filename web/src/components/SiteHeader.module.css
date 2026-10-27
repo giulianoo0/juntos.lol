@@ -1,0 +1,103 @@
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 82rem;
+  min-height: 4.5rem;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-8);
+  box-sizing: border-box;
+}
+
+.brand {
+  display: inline-flex;
+  color: var(--text);
+  border-radius: var(--radius-md);
+}
+
+.mark {
+  display: block;
+  width: 6.5rem;
+  height: auto;
+  view-transition-name: juntos-logo;
+}
+
+/* The colour band waits under the ink and shows on hover. */
+.sweep {
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .brand:hover .sweep {
+    opacity: 1;
+  }
+}
+
+.brand:focus-visible .sweep {
+  opacity: 1;
+}
+
+.discord,
+.me {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--round-button);
+  border-radius: var(--radius-full);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: var(--transition-button);
+}
+
+.discord {
+  padding: 0 var(--space-6) 0 var(--space-5);
+  background: var(--discord);
+  color: var(--white);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
+.me {
+  padding: 0 var(--space-5) 0 var(--space-2);
+  background: var(--button-secondary-bg);
+  color: var(--text);
+}
+
+.number {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--brand);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .discord:hover {
+    background: var(--discord-hover);
+  }
+
+  .me:hover {
+    background: var(--button-secondary-hover);
+  }
+}
+
+.discord:active,
+.me:active {
+  transform: scale(var(--press-scale));
+}
+
+.brand:focus-visible,
+.me:focus-visible,
+.discord:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+
+@media (max-width: 40rem) {
+  .header {
+    padding: var(--space-4);
+  }
+}

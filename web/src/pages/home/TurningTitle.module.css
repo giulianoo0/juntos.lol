@@ -7,16 +7,39 @@
   white-space: nowrap;
 }
 
-/* Both words share one cell: the one leaving and the one arriving cross. */
+/* The words cross over each other inside a box that eases to the width of
+   the one arriving. */
 .slot {
-  display: inline-grid;
+  position: relative;
+  display: inline-block;
+  vertical-align: bottom;
   color: var(--brand);
+  text-align: left;
+  white-space: nowrap;
+  transition: width var(--duration-spring-settle) var(--ease-spring-settle);
+}
+
+/* Holds the line's height without taking width. */
+.strut {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
 }
 
 .word,
 .enter,
 .leave {
-  grid-area: 1 / 1;
+  position: absolute;
+  left: 0;
+  top: 0;
 }
 
 .enter {
@@ -45,6 +68,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .slot {
+    transition: none;
+  }
+
   .enter {
     animation: none;
   }

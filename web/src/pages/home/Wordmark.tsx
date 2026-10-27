@@ -44,11 +44,17 @@ export function SmallWordmark({ className }: { className?: string }) {
  * The big lettering with the Dia shimmer of the maintenance page: a band of
  * color sweeping left to right through the letters. Reduced motion: still.
  */
-export function HeroWordmark({ className }: { className?: string }) {
+export function HeroWordmark({ className, sweepClassName, morphed = false }: {
+  className?: string
+  /** Arrived through the logo's morph: skips its own entrance. */
+  morphed?: boolean
+  /** On the colour band, to show it only on hover (the header's logo). */
+  sweepClassName?: string
+}) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)')
   return (
-    <svg viewBox={VIEW} className={className} role="img" aria-label="juntos.lol">
+    <svg viewBox={VIEW} className={className} data-morphed={morphed || undefined} role="img" aria-label="juntos.lol">
       <defs>
         <mask id={`${id}-mask`} maskUnits="userSpaceOnUse" x="-8" y="-80" width="440" height="108">
           <Letters ink="#fff" />
@@ -70,7 +76,7 @@ export function HeroWordmark({ className }: { className?: string }) {
       </defs>
       <g mask={`url(#${id}-mask)`}>
         <rect x="-8" y="-80" width="440" height="108" fill="currentColor" />
-        {reduced ? null : <rect x="-8" y="-80" width="440" height="108" fill={`url(#${id}-dia)`} />}
+        {reduced ? null : <rect className={sweepClassName} x="-8" y="-80" width="440" height="108" fill={`url(#${id}-dia)`} />}
       </g>
       <path d={ARROW} fill="var(--brand)" />
     </svg>

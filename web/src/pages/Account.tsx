@@ -38,7 +38,7 @@ import { Skeleton } from '../ui/Shimmer'
 import { SpringPopover } from '../ui/SpringPopover'
 import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
-import { SmallWordmark } from './home/Wordmark'
+import { SiteHeader } from '../components/SiteHeader'
 import styles from './Account.module.css'
 
 const errorText: Record<string, string> = {
@@ -99,15 +99,7 @@ export function AccountPage() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <Link className={styles.brand} to="/"><SmallWordmark className={styles.mark} /></Link>
-        {me && wanted !== null && wanted !== me.id ? (
-          <Link className={styles.me} to="/conta" aria-label={`${me.nickname} #${me.id}`}>
-            <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
-            <span className={styles.meNumber}>#{me.id}</span>
-          </Link>
-        ) : null}
-      </header>
+      <SiteHeader you={Boolean(me && wanted !== null && wanted !== me.id)} />
       <main className={styles.main}>{body}</main>
     </div>
   )

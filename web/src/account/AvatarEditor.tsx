@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
 import { useT } from '../i18n/useT'
 import { KINDS, MASCOT_ACCESSORIES, MASCOT_KINDS, Mascot, serializeAvatar, type AvatarSpec } from '../mascot'
 import { avatarSpec } from './avatarSpec'
@@ -93,54 +93,71 @@ export function AvatarEditor({ value, onChange, preview = true }: {
   const colors = [DEFAULT_COLOR, ...Object.keys(KINDS[spec.kind].colors ?? {})]
   const swatch = (color: string) => (color === DEFAULT_COLOR ? KINDS[spec.kind].body : KINDS[spec.kind].colors?.[color]?.body ?? KINDS[spec.kind].body)
 
-  return (
-    <div className={styles.editor}>
-      {preview ? (
-        <div className={styles.preview}>
-          <span key={value} className={styles.bounce}>
-            <Mascot kind={spec.kind} color={spec.color} accessory={spec.accessory} expression={joy ? 'happy' : 'idle'} size={168} />
+  const kinds = (
+    <Choices
+      label={t('avatar.kind')}
+      options={MASCOT_KINDS}
+      value={spec.kind}
+      onPick={(kind) => change({ kind })}
+      className={styles.kinds}
+      render={(kind) => ({
+        name: t(`mascot.kind.${kind}`),
+        className: styles.kind,
+        // Each creature tried on with what you are wearing now.
+        body: <Mascot kind={kind} expression="idle" accessory={spec.accessory} size={40} still />,
+      })}
+    />
+  )
+  const colorChoices = colors.length > 1 ? (
+    <Choices
+      label={t('avatar.color')}
+      options={colors}
+      value={spec.color ?? DEFAULT_COLOR}
+      onPick={(color) => change({ color: color === DEFAULT_COLOR ? undefined : color })}
+      className={styles.colors}
+      render={(color) => ({
+        name: color === DEFAULT_COLOR ? t('avatar.defaultColor') : t(`mascot.color.${color}`),
+        className: styles.swatch,
+        body: (
+          <span className={styles.swatchFace} style={{ '--swatch': swatch(color) } as CSSProperties}>
+            <Mascot kind={spec.kind} color={color === DEFAULT_COLOR ? undefined : color} accessory="none" expression="idle" size={30} still />
           </span>
+        ),
+      })}
+    />
+  ) : null
+  const accessoryChoices = (
+    <Choices
+      label={t('avatar.accessory')}
+      options={ACCESSORIES}
+      value={spec.accessory}
+      onPick={(accessory) => change({ accessory })}
+      className={styles.accessories}
+      render={(accessory) => ({
+        name: t(`mascot.accessory.${accessory}`),
+        className: styles.accessory,
+        body: <Mascot kind={spec.kind} color={spec.color} accessory={accessory} expression="idle" size={38} still />,
+      })}
+    />
+  )
+
+  return (
+    <div className={styles.editor} data-preview={preview || undefined}>
+      {preview ? (
+        <div className={styles.side}>
+          <div className={styles.preview}>
+            <span key={value} className={styles.bounce}>
+              <Mascot kind={spec.kind} color={spec.color} accessory={spec.accessory} expression={joy ? 'happy' : 'idle'} size={150} />
+            </span>
+          </div>
+          {colorChoices}
+          {accessoryChoices}
         </div>
       ) : null}
       <div className={styles.pickers}>
-        <Choices
-          label={t('avatar.kind')}
-          options={MASCOT_KINDS}
-          value={spec.kind}
-          onPick={(kind) => change({ kind })}
-          className={styles.kinds}
-          render={(kind) => ({
-            name: t(`mascot.kind.${kind}`),
-            className: styles.kind,
-            body: <Mascot kind={kind} expression="idle" accessory="none" size={40} still />,
-          })}
-        />
-        {colors.length > 1 ? (
-          <Choices
-            label={t('avatar.color')}
-            options={colors}
-            value={spec.color ?? DEFAULT_COLOR}
-            onPick={(color) => change({ color: color === DEFAULT_COLOR ? undefined : color })}
-            className={styles.colors}
-            render={(color) => ({
-              name: color === DEFAULT_COLOR ? t('avatar.defaultColor') : t(`mascot.color.${color}`),
-              className: styles.swatch,
-              body: <span className={styles.dot} style={{ background: swatch(color) }} />,
-            })}
-          />
-        ) : null}
-        <Choices
-          label={t('avatar.accessory')}
-          options={ACCESSORIES}
-          value={spec.accessory}
-          onPick={(accessory) => change({ accessory })}
-          className={styles.accessories}
-          render={(accessory) => ({
-            name: t(`mascot.accessory.${accessory}`),
-            className: styles.accessory,
-            body: t(`mascot.accessory.${accessory}`),
-          })}
-        />
+        {kinds}
+        {preview ? null : colorChoices}
+        {preview ? null : accessoryChoices}
       </div>
     </div>
   )

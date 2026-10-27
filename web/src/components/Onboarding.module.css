@@ -3,10 +3,27 @@
   gap: var(--space-5);
 }
 
+.stage {
+  position: relative;
+}
+
 .step {
   display: grid;
   gap: var(--space-4);
-  animation: step-in var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+/* The step going away: on top of the new one, fading out through a blur. */
+.leaving {
+  position: absolute;
+  inset: 0 0 auto;
+  display: grid;
+  gap: var(--space-4);
+  pointer-events: none;
+  animation: step-out var(--duration-spring-settle, 360ms) var(--ease-spring-settle) both;
+}
+
+@keyframes step-out {
+  to { opacity: 0; transform: scale(0.98); filter: blur(8px); }
 }
 
 @keyframes step-in {
@@ -132,7 +149,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .step,
+  .leaving,
   .bob,
   .pop,
   .wave,
