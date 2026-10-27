@@ -1,0 +1,41 @@
+diff --git a/node_modules/@moq/publish/encoder-CtdNwRff.js b/node_modules/@moq/publish/encoder-CtdNwRff.js
+index 9097026..e14332d 100644
+--- a/node_modules/@moq/publish/encoder-CtdNwRff.js
++++ b/node_modules/@moq/publish/encoder-CtdNwRff.js
+@@ -71,7 +71,7 @@ var m = new Blob(["var __defProp = Object.defineProperty;\nvar __export = (targe
+ 		let e = "duration" in this.#n ? this.#i * this.#n.duration : n.Micro.fromSecond(this.#a / this.#e);
+ 		return this.#r + e;
+ 	}
+-}, _ = .001, v = .2, y = 32e3, b = n.Milli(20), x = 64e3, S = 1024, C = "mp4a.40.2", w = class {
++}, AUDIO_GROUP_US = 1e5, _ = .001, v = .2, y = 32e3, b = n.Milli(20), x = 64e3, S = 1024, C = "mp4a.40.2", w = class {
+ 	name;
+ 	in;
+ 	muted;
+@@ -204,13 +204,16 @@ var m = new Blob(["var __defProp = Object.defineProperty;\nvar __export = (targe
+ 			await l.Libav.polyfill(), r.run((r) => {
+ 				let i = r.get(this.#n);
+ 				if (!i) return;
+-				let a = r.get(this.in.source), o = A(i, a ? p(a).kind : "auto", this.#p(r)), s = E(i), l = new AudioEncoder({
++				let a = r.get(this.in.source), o = A(i, a ? p(a).kind : "auto", this.#p(r)), s = E(i), G = void 0, l = new AudioEncoder({
+ 					output: (t, r) => {
+ 						if (t.type !== "key") throw Error("only key frames are supported");
+ 						this.#g(i, r?.decoderConfig?.description), this.#i.stats.update((e) => ({
+ 							frames: e.frames + 1,
+ 							bytes: e.bytes + t.byteLength
+-						})), e.writeFrame({
++						})), (!G || t.timestamp - G.start >= AUDIO_GROUP_US) && (G?.group.close(), G = {
++							group: e.appendGroup(),
++							start: t.timestamp
++						}), G.group.writeFrame({
+ 							payload: c.Legacy.encodeFrame(t, t.timestamp),
+ 							timestamp: n.Timestamp.fromMicros(t.timestamp)
+ 						});
+@@ -219,7 +222,7 @@ var m = new Blob(["var __defProp = Object.defineProperty;\nvar __export = (targe
+ 						console.error("encoder error", t), e.close(t);
+ 					}
+ 				});
+-				r.cleanup(() => l.close()), console.debug("encoding audio", o), l.configure(o), r.event(t.port, "message", (e) => {
++				r.cleanup(() => l.close()), r.cleanup(() => G?.group.close()), console.debug("encoding audio", o), l.configure(o), r.event(t.port, "message", (e) => {
+ 					let n = e.data, r = n.channels.length;
+ 					if (r) {
+ 						if (r !== i.numberOfChannels) {

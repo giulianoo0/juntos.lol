@@ -1,0 +1,50 @@
+diff --git a/node_modules/@moq/net/ietf/publisher.js b/node_modules/@moq/net/ietf/publisher.js
+index c5d30e8..4b85a17 100644
+--- a/node_modules/@moq/net/ietf/publisher.js
++++ b/node_modules/@moq/net/ietf/publisher.js
+@@ -9,6 +9,7 @@ import { FetchHeader } from "./fetch.js";
+ import * as Filter from "./filter.js";
+ import { FetchFrame, Frame, Group as GroupMessage } from "./object.js";
+ import { fromWire } from "./priority.js";
++import { sendOrder } from "../lite/priority.js";
+ import * as Properties from "./properties.js";
+ import { PublishDone } from "./publish.js";
+ import { PublishNamespace, PublishNamespaceDone, PublishNamespaceOk } from "./publish_namespace.js";
+@@ -200,6 +201,7 @@ export class Publisher {
+                     }
+                     void this.#runGroup({
+                         requestId: msg.requestId,
++                        order: sendOrder({ priority: Math.max(priority, kindPriority(msg.trackName)) }),
+                         group,
+                         timescale,
+                         stamped: msg.propertiesWanted,
+@@ -270,7 +272,7 @@ export class Publisher {
+      * Runs a group and sends its frames using ObjectStream (Subgroup delivery mode).
+      */
+     async #runGroup(options) {
+-        const { requestId, group, timescale, stamped, slice, unsubscribed } = options;
++        const { requestId, order, group, timescale, stamped, slice, unsubscribed } = options;
+         try {
+             // One stream per group is faster than a peer at its limit can retire them, so this
+             // is the one path that doesn't wait for a slot: the transport would serve the opens
+@@ -280,6 +282,7 @@ export class Publisher {
+                 cancel: unsubscribed,
+                 version: this.#session.version,
+                 waitUntilAvailable: false,
++                sendOrder: order,
+             });
+             if (!stream) {
+                 group.close(new Error("no stream slot"));
+@@ -944,4 +947,12 @@ function fillRange(fill, subscription, largest) {
+         until: end.object === undefined ? undefined : end.object + 1n,
+     };
+ }
++// A relay may forward one priority for every track, so the send order also ranks by kind (the
++// hang catalog's own scale): a congested uplink then delivers sound ahead of picture instead of
++// letting a game's video bury the audio until it arrives too late to play.
++function kindPriority(name) {
++    if (name.startsWith("catalog")) return 100;
++    if (name.startsWith("audio")) return 80;
++    return 60;
++}
+ //# sourceMappingURL=publisher.js.map
