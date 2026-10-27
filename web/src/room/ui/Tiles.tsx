@@ -11,14 +11,14 @@ type TileSize = 'grid' | 'focus' | 'thumb'
 
 /** Someone in the call: their camera, or their face on their hue; the ring
     while they speak; the name tag with the muted mark. */
-export function PersonTile({ person, size }: { person: Person; size: TileSize }) {
+export function PersonTile({ person, size, avatar: avatarSize }: { person: Person; size: TileSize; avatar?: number }) {
   const { vm, strings, pin, setPin, spotlit } = useRoomUi()
   const target = { kind: 'person' as const, id: person.id }
   const pinned = sameTarget(pin, target)
   const lit = sameTarget(spotlit, target)
   const camera = person.cam && !person.hostCamOff
   const muted = !person.mic || person.hostMuted
-  const avatar = size === 'thumb' ? 40 : size === 'focus' ? 120 : 88
+  const avatar = avatarSize ?? (size === 'thumb' ? 40 : size === 'focus' ? 120 : 88)
   return (
     <div className={styles.tile} data-size={size} data-speaking={person.speaking && !muted || undefined} data-camera={camera || undefined}>
       {camera ? <div className={styles.video}>{vm.slots.renderVideo(person.id)}</div> : <Avatar id={person.id} name={person.name} size={avatar} />}

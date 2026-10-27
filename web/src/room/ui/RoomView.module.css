@@ -10,36 +10,51 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* One grid for the whole room: the stage (or the grid of people) on the
+   left, the right column (the panel, or the people beside the stage), the
+   strip under the stage, and the dock with Sair under the right column.
+   The tracks slide on the spring's settle, so nothing ever bounces. */
 .body {
+  --right-width: 0px;
+  --strip: 0px;
+
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 0px;
+  grid-template-columns: minmax(0, 1fr) var(--right-width);
+  grid-template-rows: minmax(0, 1fr) var(--strip) auto;
+  grid-template-areas:
+    "main right"
+    "strip right"
+    "dock leave";
   flex: 1;
   min-height: 0;
   padding: 0 var(--space-4);
-  /* The side panel pushes the grid aside on the spring's settle: it gets
-     going softly and never overshoots, so the tiles never bounce. */
-  transition: grid-template-columns var(--duration-spring-settle) var(--ease-spring-settle);
+  transition:
+    grid-template-columns var(--duration-spring-settle) var(--ease-spring-settle),
+    grid-template-rows var(--duration-spring-settle) var(--ease-spring-settle);
 }
 
-.body[data-panel] {
-  grid-template-columns: minmax(0, 1fr) var(--side-width);
+.body[data-right="column"] {
+  --right-width: calc(var(--stage-column) + var(--space-3));
+}
+
+.body[data-right="pairs"] {
+  --right-width: calc(var(--stage-column-pairs) + var(--space-3));
+}
+
+.body[data-right="panel"] {
+  --right-width: var(--side-width);
+}
+
+.body[data-strip] {
+  --strip: calc(var(--strip-height) + var(--space-3));
 }
 
 .main {
-  flex: 1;
+  grid-area: main;
   min-width: 0;
   min-height: 0;
   display: grid;
-}
-
-/* The stages and the dock under them: the panel beside reaches the floor
-   and pushes both aside, Sair included. */
-.mainColumn {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
 }
 
 .grid {
@@ -47,6 +62,12 @@
   grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
   grid-auto-rows: minmax(0, 1fr);
   gap: var(--space-3);
+  min-height: 0;
+}
+
+.cell {
+  display: grid;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -71,13 +92,6 @@
   width: min(100%, 64rem);
 }
 
-.focus {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--stage-column);
-  gap: var(--space-3);
-  min-height: 0;
-}
-
 .focusMain {
   position: relative;
   display: grid;
@@ -93,20 +107,44 @@
   translate: -50% 0;
 }
 
-.column {
+/* The people beside the stage: one column whose tiles split its height,
+   pairs that fill it, or a strip under the stage that scrolls sideways. */
+.people {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: min-content;
-  align-content: start;
   gap: var(--space-3);
+  min-width: 0;
   min-height: 0;
-  overflow-y: auto;
   scrollbar-width: none;
+}
+
+.people[data-arrange="column"],
+.people[data-arrange="pairs"] {
+  grid-area: right;
+  grid-auto-rows: minmax(0, 1fr);
+  padding-left: var(--space-3);
+}
+
+.people[data-arrange="column"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.people[data-arrange="pairs"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.people[data-arrange="strip"] {
+  grid-area: strip;
+  grid-auto-flow: column;
+  grid-auto-columns: calc(var(--strip-height) * 16 / 10);
+  padding-top: var(--space-3);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 
 .thumb {
   display: grid;
-  aspect-ratio: 4 / 3;
+  min-width: 0;
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: var(--radius-2xl);
@@ -114,17 +152,11 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: var(--transition-button);
 }
 
-/* A stage takes the column's width. */
-.thumb[data-kind="stage"] {
+/* In pairs, a stage takes the column's width. */
+.people[data-arrange="pairs"] .thumb[data-kind="stage"] {
   grid-column: 1 / -1;
-  aspect-ratio: 16 / 10;
-}
-
-.thumb:active {
-  transform: scale(var(--press-scale-card));
 }
 
 .thumb:focus-visible {
@@ -132,46 +164,86 @@
   outline-offset: 2px;
 }
 
+/* The panel slides in from the right out of a blur on the pop, and
+   leaves on the settle; shut, it keeps no place in the tab order. */
 .side {
+  grid-area: right;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
+  opacity: 0;
+  translate: var(--space-6) 0;
+  filter: blur(var(--blur-sm));
+  visibility: hidden;
+  transition:
+    opacity var(--duration-spring-settle) var(--ease-spring-settle),
+    translate var(--duration-spring-settle) var(--ease-spring-settle),
+    filter var(--duration-spring-settle) var(--ease-spring-settle),
+    visibility 0s linear var(--duration-spring-settle);
+}
+
+.body[data-panel] .side {
+  opacity: 1;
+  translate: 0 0;
+  filter: none;
+  visibility: visible;
+  transition:
+    opacity var(--duration-spring-settle) var(--ease-out),
+    translate var(--duration-spring-pop) var(--ease-spring-pop),
+    filter var(--duration-spring-settle) var(--ease-out),
+    visibility 0s;
 }
 
 .sideInner {
   width: var(--side-width);
   height: 100%;
-  padding: 0 0 var(--space-4) var(--space-3);
+  padding-left: var(--space-3);
 }
 
 .veil {
   display: none;
 }
 
-/* A phone: the stage on top, the people in a row under it; the panel is a
-   sheet from below over a veil. */
+/* A phone: the stage on top, the people in a grid under it; the panel is
+   a sheet from below over a veil. */
 @media (max-width: 56rem) {
   .body,
   .body[data-panel] {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "main main"
+      "strip strip"
+      "dock leave";
     padding: 0 var(--space-3);
   }
 
-  .focus {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+  .body[data-mode="grid"] {
+    grid-template-rows: minmax(0, 1fr) 0 auto;
   }
 
-  .focusMain {
+  .body[data-mode="focus"] .main {
     aspect-ratio: 16 / 9;
   }
 
-  .column {
+  .people,
+  .people[data-arrange] {
+    grid-area: strip;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-flow: row;
+    grid-auto-rows: min-content;
+    align-content: start;
+    padding: var(--space-3) 0 0;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
-  .thumb[data-kind="stage"] {
-    grid-column: auto;
+  .thumb {
     aspect-ratio: 4 / 3;
+  }
+
+  .people .thumb[data-kind="stage"] {
+    grid-column: auto;
   }
 
   .veil {
@@ -183,7 +255,8 @@
     animation: veil-in var(--duration-spring-settle) var(--ease-out) both;
   }
 
-  .side {
+  .side,
+  .body[data-panel] .side {
     position: fixed;
     z-index: var(--layer-float);
     left: 0;
@@ -194,6 +267,9 @@
     border-radius: var(--radius-3xl) var(--radius-3xl) 0 0;
     background: var(--frame-side);
     box-shadow: var(--shadow-float);
+    opacity: 1;
+    filter: none;
+    visibility: visible;
     translate: 0 100%;
     transition: translate var(--duration-slow) var(--ease-drawer);
   }
@@ -216,7 +292,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .body,
-  .side {
+  .side,
+  .body[data-panel] .side {
     transition: none;
   }
 }

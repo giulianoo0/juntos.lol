@@ -96,6 +96,18 @@ describe('RoomView', () => {
   })
 })
 
+describe('RoomView beside a stage', () => {
+  const media = { id: 'media', kind: 'media' as const, title: 'Duna', ownerId: 'giu' }
+
+  it('stands the people in the column while the panel is shut, and under the stage when it opens', () => {
+    const { container } = render(<RoomView vm={model({ requests: [], stages: [media] })} />)
+    const people = () => container.querySelector('[data-arrange]')?.getAttribute('data-arrange')
+    expect(people()).toBe('strip')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    expect(people()).toBe('column')
+  })
+})
+
 describe('EntryScreen', () => {
   const entry = (overrides: Partial<EntryViewModel> = {}): EntryViewModel => ({
     name: 'Sessão de sexta',
