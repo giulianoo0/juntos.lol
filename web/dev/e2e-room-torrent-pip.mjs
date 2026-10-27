@@ -41,12 +41,13 @@ const playing = (page) => page.waitForFunction(() => {
 
 const host = await person('host')
 await host.goto(base)
+await host.getByRole('button', { name: 'Criar sala' }).click()
 await host.getByRole('textbox', { name: 'Nome da sala' }).fill('E2E torrent')
 if (password) {
   await host.getByRole('button', { name: /senha/i }).first().click()
   await host.getByPlaceholder('Senha').fill(password)
 }
-await host.getByRole('button', { name: 'Criar sala' }).click()
+await host.getByRole('button', { name: /sem conta|Criar$/ }).click()
 await host.waitForURL(/\/room\//, { timeout: 30_000 })
 const roomUrl = host.url().split('#')[0]
 console.log('sala', roomUrl)
@@ -56,9 +57,9 @@ await host.getByRole('button', { name: 'Compartilhar' }).click()
 await host.getByRole('menuitem', { name: 'Torrent' }).click()
 await host.getByPlaceholder('magnet:?xt=urn:btih:…').fill(magnet)
 await host.getByRole('button', { name: 'Buscar arquivos' }).click()
-const file = host.locator('.torrent-files button').first()
+const file = host.getByRole('button', { name: /\.(mkv|mp4)/ }).first()
 await file.waitFor({ timeout: 180_000 })
-console.log('arquivo', await file.locator('span').innerText())
+console.log('arquivo', await file.innerText())
 await file.click()
 
 await host.locator('video.video').waitFor({ timeout: 300_000 })
@@ -82,8 +83,8 @@ console.log('convidado tocando; host x convidado (s):', drift.map((value) => val
 await guest.screenshot({ path: `${shots}/torrent-guest.png` })
 
 await host.getByRole('button', { name: /Configurações/i }).click({ force: true })
-await host.getByRole('button', { name: /^Legendas/ }).click()
-const rows = host.getByTestId('setting-subtitles').locator('button:not(.settings-action)')
+await host.getByRole('radio', { name: 'Legendas' }).click()
+const rows = host.getByTestId('setting-subtitles').locator('button[aria-pressed]')
 const labels = await rows.allInnerTexts()
 console.log('legendas', labels.length, labels.slice(0, 4).join(' | ').replace(/\n/g, ' '))
 const track = labels.findIndex((label) => !/Desligad|Off/i.test(label))
