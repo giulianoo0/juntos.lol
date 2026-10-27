@@ -1,0 +1,60 @@
+/* The pill is the track; the fill is a background sized to the value, so
+   it follows the thumb with no element of its own. Drawn for the player's
+   dark menu. */
+.slider {
+  --slider-track: color-mix(in oklab, var(--black) 45%, transparent);
+  --slider-fill: color-mix(in oklab, var(--white) 16%, transparent);
+  --slider-thumb: var(--white);
+
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 2.125rem;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background:
+    linear-gradient(var(--slider-fill), var(--slider-fill)) 0 0 / calc(var(--space-3) + (100% - 2 * var(--space-3)) * var(--ratio) + 0.125rem) 100% no-repeat,
+    var(--slider-track);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 100%;
+  background: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0.25rem;
+  height: 1rem;
+  margin-top: 0.5625rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--slider-thumb);
+}
+
+.slider::-moz-range-track {
+  height: 100%;
+  background: none;
+}
+
+.slider::-moz-range-thumb {
+  width: 0.25rem;
+  height: 1rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--slider-thumb);
+}
+
+.slider:focus {
+  outline: none;
+}
+
+.slider:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
