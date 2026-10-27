@@ -104,14 +104,13 @@ export const Settings = memo(function Settings({ groups, t }: { groups: SettingG
 
   const label = t('room.settings')
   return (
-    <div className="settings-control" ref={rootRef}>
+    <div className="settings-control" ref={rootRef} data-tip={open ? undefined : label}>
       <div className={`settings-morph ${shown ? 'is-open' : ''}`} ref={boxRef}>
         <div className="settings-pane morph-fade" data-morphing={morphing}>
           {!shown ? (
             <button
               className="settings-trigger"
               aria-label={label}
-              title={label}
               aria-expanded={open}
               onClick={() => setOpen(true)}
               onPointerUp={(event) => event.currentTarget.blur()}

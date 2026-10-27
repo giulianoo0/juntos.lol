@@ -1431,7 +1431,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           <button
             className="control-button is-play"
             aria-label={playLabel}
-            title={`${playLabel} (Space)`}
+            data-tip={playLabel}
             disabled={controlsBlocked}
             onClick={togglePlay}
             onPointerUp={(event) => event.currentTarget.blur()}
@@ -1439,7 +1439,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           <button
             className="control-button skip-button"
             aria-label={t('room.skip90')}
-            title={t('room.skip90')}
+            data-tip={t('room.skip90')}
             disabled={controlsBlocked}
             onClick={() => showFeedback(seekBy(SKIP_SECONDS) ? seekFeedback(SKIP_SECONDS) : <Lock size={24} />)}
             onPointerUp={(event) => event.currentTarget.blur()}
@@ -1491,7 +1491,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             <button
               className="control-button"
               aria-label={muteLabel}
-              title={`${muteLabel} (M)`}
+              data-tip={muteLabel}
               onClick={toggleMute}
               onPointerUp={(event) => event.currentTarget.blur()}
             >{volumeIcon(muted ? 0 : volume, 16)}</button>
@@ -1508,7 +1508,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             <button
               className="control-button"
               aria-label={pipLabel}
-              title={pipLabel}
+              data-tip={pipLabel}
               aria-pressed={pip.active}
               onClick={pip.toggle}
             ><PictureInPicture2 size={16} /></button>
@@ -1516,7 +1516,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           <button
             className="control-button"
             aria-label={fullscreenLabel}
-            title={`${fullscreenLabel} (F)`}
+            data-tip={fullscreenLabel}
             onClick={toggleFullscreen}
           >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
         </div>

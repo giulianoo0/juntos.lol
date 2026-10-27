@@ -166,7 +166,6 @@
   font-weight: 800;
   letter-spacing: -0.02em;
   cursor: pointer;
-  box-shadow: 0 18px 40px -16px color-mix(in oklab, var(--brand) 70%, transparent);
   transition: var(--transition-button);
 }
 
