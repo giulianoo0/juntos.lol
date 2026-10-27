@@ -11,6 +11,8 @@ export type EarArt = {
   fill?: Paint;
   pivot: readonly [number, number];
   sway?: number;
+  /** Antennae: they go under a hat instead of poking through it. */
+  antenna?: boolean;
 };
 
 /** One piece on top of the head (antenna, leaf, flame, cap); `front` draws it over the body, `keep` leaves it under a hat. */
@@ -45,6 +47,8 @@ export type KindArt = Palette & {
   eyeClip?: string;
   /** Moves the hats up or down to sit on the head's top. */
   hat?: number;
+  /** Shrinks the hats around their brim, for a head whose top is already a cap. */
+  hatScale?: number;
   colors?: Record<string, Partial<Palette & { rim: boolean }>>;
 };
 
