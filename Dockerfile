@@ -1,4 +1,4 @@
-FROM node:24-bookworm AS web-build
+FROM node:26-bookworm AS web-build
 
 # The commit the image was built from, shown in the app's header. The build
 # context excludes .git, so it has to be handed in.
