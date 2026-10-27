@@ -74,10 +74,14 @@ func newAccountRig(t *testing.T, presence fixedPresence) accountRig {
 	return accountRig{router: router, accounts: accounts, rooms: rooms}
 }
 
-// signIn opens an account and a session for it, the way the callback would.
+// signIn opens an account and a session for it, the way the callback would,
+// showing its history to friends so the visibility rules have someone to show.
 func (rig accountRig) signIn(t *testing.T, discordID, name string) (account.Account, *http.Cookie) {
 	t.Helper()
-	created, err := rig.accounts.SignInDiscord(t.Context(), discordID, name)
+	created, err := rig.accounts.SignInDiscord(t.Context(), account.DiscordUser{ID: discordID, GlobalName: name})
+	require.NoError(t, err)
+	friends := account.VisibilityFriends
+	created, err = rig.accounts.Update(t.Context(), created.ID, account.Changes{Visibility: &friends})
 	require.NoError(t, err)
 	token, err := rig.accounts.StartSession(t.Context(), created.ID)
 	require.NoError(t, err)
@@ -272,7 +276,7 @@ func TestHistoryFollowsVisibility(t *testing.T) {
 		visibility string
 		viewer     viewer
 		visible    bool
-		// Bia keeps the default friends-only visibility, so she shows among
+		// Bia keeps the friends-only visibility, so she shows among
 		// who was there only to whoever may see her own history.
 		seesBia bool
 	}{

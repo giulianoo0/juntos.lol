@@ -193,7 +193,7 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "discord_failed"})
 		return
 	}
-	signed, err := a.accounts.SignInDiscord(ctx, user.ID, user.DisplayName())
+	signed, err := a.accounts.SignInDiscord(ctx, account.DiscordUser{ID: user.ID, Username: user.Username, GlobalName: user.GlobalName})
 	if err != nil {
 		slog.ErrorContext(ctx, "sign in account", "error", err)
 		c.Status(http.StatusInternalServerError)

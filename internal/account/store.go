@@ -30,6 +30,8 @@ const (
 	// historyKept is how many watches an account keeps, newest first.
 	historyKept = 200
 	sessionTTL  = 30 * 24 * time.Hour
+	// InviteTTL is how long a call into a room waits to be answered.
+	InviteTTL = time.Hour
 	sessionLen  = 32
 )
 
@@ -41,16 +43,21 @@ var (
 	avatarRe = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)?$`)
 )
 
-// Account is one person. DiscordID never leaves the server.
+// Account is one person. DiscordID never leaves the server; the Discord
+// names are shown only as DiscordVisibility allows.
 type Account struct {
-	ID             int64     `json:"id"`
-	DiscordID      string    `json:"-"`
-	Nickname       string    `json:"nickname"`
-	Avatar         string    `json:"avatar"`
-	Visibility     string    `json:"visibility"`
-	CreatedAt      time.Time `json:"createdAt"`
-	Sessions       int64     `json:"-"`
-	WatchedSeconds int64     `json:"-"`
+	ID                int64  `json:"id"`
+	DiscordID         string `json:"-"`
+	DiscordUsername   string `json:"-"`
+	DiscordGlobalName string `json:"-"`
+	// DiscordVisibility is public or private; private when never chosen.
+	DiscordVisibility string    `json:"-"`
+	Nickname          string    `json:"nickname"`
+	Avatar            string    `json:"avatar"`
+	Visibility        string    `json:"visibility"`
+	CreatedAt         time.Time `json:"createdAt"`
+	Sessions          int64     `json:"-"`
+	WatchedSeconds    int64     `json:"-"`
 }
 
 // Changes is a PATCH of an account; nil fields stay as they are. An empty
@@ -59,6 +66,22 @@ type Changes struct {
 	Nickname   *string `json:"nickname"`
 	Avatar     *string `json:"avatar"`
 	Visibility *string `json:"visibility"`
+	// DiscordVisibility is public or private.
+	DiscordVisibility *string `json:"discordVisibility"`
+}
+
+// DiscordUser is who Discord says signed in.
+type DiscordUser struct {
+	ID         string
+	Username   string
+	GlobalName string
+}
+
+func (u DiscordUser) displayName() string {
+	if strings.TrimSpace(u.GlobalName) != "" {
+		return u.GlobalName
+	}
+	return u.Username
 }
 
 // Watch is one stretch of a member in a room in front of one media.
@@ -92,16 +115,22 @@ func incomingKey(id int64) string        { return accountKey(id) + ":requests:in
 func outgoingKey(id int64) string        { return accountKey(id) + ":requests:out" }
 func historyKey(id int64) string         { return accountKey(id) + ":history" }
 func sessionKey(token string) string     { return "account:session:" + token }
+func invitesKey(id int64) string         { return accountKey(id) + ":invites" }
 
 const seqKey = "account:seq"
 
 // SignInDiscord finds the account behind a Discord user, or opens the next
-// numbered one named after them. Coming back never spends a number.
-func (s *Store) SignInDiscord(ctx context.Context, discordID, displayName string) (Account, error) {
-	if discordID == "" {
+// numbered one named after them. Coming back never spends a number, and
+// refreshes the Discord names kept with the account.
+func (s *Store) SignInDiscord(ctx context.Context, user DiscordUser) (Account, error) {
+	if user.ID == "" {
 		return Account{}, ErrInvalid
 	}
-	if id, err := s.rdb.Get(ctx, discordKey(discordID)).Int64(); err == nil {
+	names := []any{"discordUsername", cleanDiscordName(user.Username), "discordGlobalName", cleanDiscordName(user.GlobalName)}
+	if id, err := s.rdb.Get(ctx, discordKey(user.ID)).Int64(); err == nil {
+		if err := s.rdb.HSet(ctx, accountKey(id), names...).Err(); err != nil {
+			return Account{}, err
+		}
 		return s.Get(ctx, id)
 	} else if !errors.Is(err, redis.Nil) {
 		return Account{}, err
@@ -110,32 +139,47 @@ func (s *Store) SignInDiscord(ctx context.Context, discordID, displayName string
 	if err != nil {
 		return Account{}, err
 	}
-	nickname := cleanNickname(displayName)
+	nickname := cleanNickname(user.displayName())
 	if nickname == "" {
 		nickname = "#" + strconv.FormatInt(id, 10)
 	}
-	created := Account{ID: id, DiscordID: discordID, Nickname: nickname, Visibility: VisibilityFriends,
-		CreatedAt: time.Now().UTC().Truncate(time.Second)}
-	if err := s.rdb.HSet(ctx, accountKey(id),
-		"discordId", discordID, "nickname", nickname, "avatar", "",
-		"visibility", created.Visibility, "createdAt", created.CreatedAt.Format(time.RFC3339),
-		"sessions", 0, "watchedSeconds", 0).Err(); err != nil {
+	created := Account{ID: id, DiscordID: user.ID, Nickname: nickname, Visibility: VisibilityPrivate,
+		DiscordUsername: cleanDiscordName(user.Username), DiscordGlobalName: cleanDiscordName(user.GlobalName),
+		DiscordVisibility: VisibilityPrivate, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	fields := append([]any{
+		"discordId", user.ID, "nickname", nickname, "avatar", "",
+		"visibility", created.Visibility, "discordVisibility", created.DiscordVisibility,
+		"createdAt", created.CreatedAt.Format(time.RFC3339), "sessions", 0, "watchedSeconds", 0,
+	}, names...)
+	if err := s.rdb.HSet(ctx, accountKey(id), fields...).Err(); err != nil {
 		return Account{}, err
 	}
-	won, err := s.rdb.SetNX(ctx, discordKey(discordID), id, 0).Result()
+	won, err := s.rdb.SetNX(ctx, discordKey(user.ID), id, 0).Result()
 	if err != nil {
 		return Account{}, err
 	}
 	if !won {
 		// Another sign-in of the same person got there first: theirs stands.
 		s.rdb.Del(ctx, accountKey(id))
-		existing, err := s.rdb.Get(ctx, discordKey(discordID)).Int64()
+		existing, err := s.rdb.Get(ctx, discordKey(user.ID)).Int64()
 		if err != nil {
 			return Account{}, err
 		}
 		return s.Get(ctx, existing)
 	}
 	return created, nil
+}
+
+// ByDiscord is the account a Discord user signed in as, or ErrNotFound.
+func (s *Store) ByDiscord(ctx context.Context, discordID string) (Account, error) {
+	id, err := s.rdb.Get(ctx, discordKey(discordID)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return Account{}, ErrNotFound
+	}
+	if err != nil {
+		return Account{}, err
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *Store) Get(ctx context.Context, id int64) (Account, error) {
@@ -149,9 +193,15 @@ func (s *Store) Get(ctx context.Context, id int64) (Account, error) {
 	created, _ := time.Parse(time.RFC3339, fields["createdAt"])
 	sessions, _ := strconv.ParseInt(fields["sessions"], 10, 64)
 	watched, _ := strconv.ParseInt(fields["watchedSeconds"], 10, 64)
+	discordShown := fields["discordVisibility"]
+	if discordShown != VisibilityPublic {
+		discordShown = VisibilityPrivate
+	}
 	return Account{
 		ID: id, DiscordID: fields["discordId"], Nickname: fields["nickname"], Avatar: fields["avatar"],
-		Visibility: fields["visibility"], CreatedAt: created, Sessions: sessions, WatchedSeconds: watched,
+		DiscordUsername: fields["discordUsername"], DiscordGlobalName: fields["discordGlobalName"],
+		DiscordVisibility: discordShown, Visibility: fields["visibility"], CreatedAt: created,
+		Sessions: sessions, WatchedSeconds: watched,
 	}, nil
 }
 
@@ -177,6 +227,14 @@ func (s *Store) Update(ctx context.Context, id int64, changes Changes) (Account,
 			return Account{}, ErrInvalid
 		}
 		fields = append(fields, "visibility", *changes.Visibility)
+	}
+	if changes.DiscordVisibility != nil {
+		switch *changes.DiscordVisibility {
+		case VisibilityPublic, VisibilityPrivate:
+		default:
+			return Account{}, ErrInvalid
+		}
+		fields = append(fields, "discordVisibility", *changes.DiscordVisibility)
 	}
 	if exists, err := s.rdb.Exists(ctx, accountKey(id)).Result(); err != nil {
 		return Account{}, err
@@ -224,27 +282,36 @@ func (s *Store) EndSession(ctx context.Context, token string) error {
 // RequestFriend asks `to` to be friends with `from`. When `to` had already
 // asked `from`, the two are friends at once.
 func (s *Store) RequestFriend(ctx context.Context, from, to int64) (FriendState, error) {
+	state, _, err := s.AskFriend(ctx, from, to)
+	return state, err
+}
+
+// AskFriend is RequestFriend that also says whether the ask is new, rather
+// than one already waiting on `to`.
+func (s *Store) AskFriend(ctx context.Context, from, to int64) (state FriendState, fresh bool, err error) {
 	if from == to {
-		return "", ErrInvalid
+		return "", false, ErrInvalid
 	}
 	if _, err := s.Get(ctx, to); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if already, err := s.rdb.SIsMember(ctx, friendsKey(from), to).Result(); err != nil {
-		return "", err
+		return "", false, err
 	} else if already {
-		return FriendAccepted, nil
+		return FriendAccepted, false, nil
 	}
 	if asked, err := s.rdb.SIsMember(ctx, incomingKey(from), to).Result(); err != nil {
-		return "", err
+		return "", false, err
 	} else if asked {
-		return FriendAccepted, s.AcceptFriend(ctx, from, to)
+		return FriendAccepted, false, s.AcceptFriend(ctx, from, to)
 	}
 	pipe := s.rdb.TxPipeline()
 	pipe.SAdd(ctx, outgoingKey(from), to)
-	pipe.SAdd(ctx, incomingKey(to), from)
-	_, err := pipe.Exec(ctx)
-	return FriendRequested, err
+	added := pipe.SAdd(ctx, incomingKey(to), from)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return "", false, err
+	}
+	return FriendRequested, added.Val() == 1, nil
 }
 
 // AcceptFriend is `id` saying yes to the request `from` sent.
@@ -264,6 +331,19 @@ func (s *Store) AcceptFriend(ctx context.Context, id, from int64) error {
 	pipe.SAdd(ctx, friendsKey(from), id)
 	_, err = pipe.Exec(ctx)
 	return err
+}
+
+// DeclineFriend is `id` saying no to the request `from` sent; a friendship
+// already made stays.
+func (s *Store) DeclineFriend(ctx context.Context, id, from int64) error {
+	removed, err := s.rdb.SRem(ctx, incomingKey(id), from).Result()
+	if err != nil {
+		return err
+	}
+	if removed == 0 {
+		return ErrNoRequest
+	}
+	return s.rdb.SRem(ctx, outgoingKey(from), id).Err()
 }
 
 // RemoveFriend ends a friendship, and also withdraws or declines a pending
@@ -364,6 +444,20 @@ func validNickname(value string) bool {
 	return true
 }
 
+// cleanDiscordName keeps a Discord name printable and short.
+func cleanDiscordName(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(value))
+	if runes := []rune(value); len(runes) > maxNicknameRunes {
+		value = string(runes[:maxNicknameRunes])
+	}
+	return value
+}
+
 // cleanNickname fits a Discord name into a nickname, or gives "".
 func cleanNickname(value string) string {
 	value = strings.Map(func(r rune) rune {
@@ -379,4 +473,48 @@ func cleanNickname(value string) string {
 		return ""
 	}
 	return value
+}
+
+// RoomInvite is a friend calling the account into a room; one per friend,
+// the newest standing.
+type RoomInvite struct {
+	From   int64     `json:"from"`
+	RoomID string    `json:"roomId"`
+	At     time.Time `json:"at"`
+}
+
+func (s *Store) AddInvite(ctx context.Context, to int64, invite RoomInvite) error {
+	raw, err := json.Marshal(invite)
+	if err != nil {
+		return err
+	}
+	pipe := s.rdb.TxPipeline()
+	pipe.HSet(ctx, invitesKey(to), strconv.FormatInt(invite.From, 10), raw)
+	pipe.Expire(ctx, invitesKey(to), InviteTTL)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// Invites are the calls still waiting on `to`, newest first; the stale ones
+// are dropped on the way.
+func (s *Store) Invites(ctx context.Context, to int64, now time.Time) ([]RoomInvite, error) {
+	raws, err := s.rdb.HGetAll(ctx, invitesKey(to)).Result()
+	if err != nil {
+		return nil, err
+	}
+	invites := make([]RoomInvite, 0, len(raws))
+	for field, raw := range raws {
+		var invite RoomInvite
+		if json.Unmarshal([]byte(raw), &invite) != nil || now.Sub(invite.At) > InviteTTL {
+			s.rdb.HDel(ctx, invitesKey(to), field)
+			continue
+		}
+		invites = append(invites, invite)
+	}
+	slices.SortFunc(invites, func(a, b RoomInvite) int { return b.At.Compare(a.At) })
+	return invites, nil
+}
+
+func (s *Store) DropInvite(ctx context.Context, to, from int64) error {
+	return s.rdb.HDel(ctx, invitesKey(to), strconv.FormatInt(from, 10)).Err()
 }
