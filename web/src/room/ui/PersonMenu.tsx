@@ -1,4 +1,4 @@
-import { ContextMenu } from '@base-ui-components/react/context-menu'
+import { ContextMenu } from '@base-ui/react/context-menu'
 import { Crown, Ellipsis, Focus, MicOff, Pin, PinOff, UserRound, UserX, VideoOff } from 'lucide-react'
 import type { ReactElement, ReactNode } from 'react'
 import type { Person } from '../model'
