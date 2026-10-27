@@ -66,6 +66,22 @@ type Config struct {
 	DiscordPublicKey ed25519.PublicKey
 	DiscordBotToken  string
 	DiscordAPIBase   string
+
+	// Sign-in with Discord. The client id falls back to the app's; without a
+	// secret and a public origin to come back to, the login routes are off.
+	DiscordClientID     string
+	DiscordClientSecret string
+}
+
+// DiscordLoginEnabled reports whether accounts can be signed into through Discord.
+func (c Config) DiscordLoginEnabled() bool {
+	return c.DiscordClientID != "" && c.DiscordClientSecret != "" && c.PublicOrigin != ""
+}
+
+// DiscordRedirectURI is where Discord sends the browser back after sign-in;
+// it must be registered as is in the app's OAuth2 settings.
+func (c Config) DiscordRedirectURI() string {
+	return c.PublicOrigin + "/api/auth/discord/callback"
 }
 
 // DiscordEnabled reports whether the interactions endpoint can verify Discord's calls.
@@ -181,6 +197,11 @@ func Load() (Config, error) {
 	}
 	cfg.DiscordAppID = strings.TrimSpace(os.Getenv("DISCORD_APP_ID"))
 	cfg.DiscordBotToken = strings.TrimSpace(os.Getenv("DISCORD_BOT_TOKEN"))
+	cfg.DiscordClientID = strings.TrimSpace(os.Getenv("DISCORD_CLIENT_ID"))
+	if cfg.DiscordClientID == "" {
+		cfg.DiscordClientID = cfg.DiscordAppID
+	}
+	cfg.DiscordClientSecret = strings.TrimSpace(os.Getenv("DISCORD_CLIENT_SECRET"))
 	if v := strings.TrimSuffix(strings.TrimSpace(os.Getenv("DISCORD_API_BASE")), "/"); v != "" {
 		cfg.DiscordAPIBase = v
 	}
