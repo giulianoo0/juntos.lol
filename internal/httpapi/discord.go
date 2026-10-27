@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	gonanoid "github.com/matoous/go-nanoid/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/discord"
 	"github.com/giulianoo0/ss/internal/room"
@@ -29,7 +31,7 @@ const discordCardDebounce = 10 * time.Second
 // DiscordApp wires the Discord app when it is configured: the hub starts
 // telling the card about the rooms, and the returned handler serves the
 // interactions. Without the app's id and key it returns nil.
-func DiscordApp(cfg config.Config, store *room.Store, rdb *redis.Client, hub *syncapi.Hub) http.Handler {
+func DiscordApp(cfg config.Config, store *room.Store, rdb *redis.Client, hub *syncapi.Hub, accounts *account.Store) http.Handler {
 	if !cfg.DiscordEnabled() {
 		return nil
 	}
@@ -42,7 +44,58 @@ func DiscordApp(cfg config.Config, store *room.Store, rdb *redis.Client, hub *sy
 		Origin:   cfg.PublicOrigin,
 		Debounce: discordCardDebounce,
 	})
-	return &discord.Handler{PublicKey: cfg.DiscordPublicKey, Rooms: rooms, Links: links, Origin: cfg.PublicOrigin}
+	handler := &discord.Handler{PublicKey: cfg.DiscordPublicKey, Rooms: rooms, Links: links, Origin: cfg.PublicOrigin}
+	if accounts != nil {
+		handler.Friends = DiscordFriends(accounts)
+	}
+	return handler
+}
+
+// DiscordFriends answers friend requests from the buttons of their DM.
+func DiscordFriends(accounts *account.Store) discord.FriendAnswerer {
+	return discordFriends{accounts: accounts}
+}
+
+type discordFriends struct{ accounts *account.Store }
+
+// AnswerFriend takes the click only from the account the request was sent
+// to, found by the Discord user who clicked; the ids in the button only say
+// which request.
+func (d discordFriends) AnswerFriend(ctx context.Context, discordUserID string, to, from int64, accept bool) (discord.FriendAnswer, error) {
+	me, err := d.accounts.ByDiscord(ctx, discordUserID)
+	if errors.Is(err, account.ErrNotFound) || (err == nil && me.ID != to) {
+		return discord.FriendAnswer{}, discord.ErrNotYours
+	}
+	if err != nil {
+		return discord.FriendAnswer{}, err
+	}
+	answer := discord.FriendAnswer{Number: from}
+	asker, err := d.accounts.Get(ctx, from)
+	switch {
+	case errors.Is(err, account.ErrNotFound):
+		answer.From, answer.Outcome = "#"+strconv.FormatInt(from, 10), discord.FriendGone
+		return answer, nil
+	case err != nil:
+		return discord.FriendAnswer{}, err
+	}
+	answer.From = asker.Nickname
+	if accept {
+		err, answer.Outcome = d.accounts.AcceptFriend(ctx, me.ID, from), discord.FriendAccepted
+	} else {
+		err, answer.Outcome = d.accounts.DeclineFriend(ctx, me.ID, from), discord.FriendDeclined
+	}
+	if errors.Is(err, account.ErrNoRequest) {
+		friends, err := d.accounts.AreFriends(ctx, me.ID, from)
+		if err != nil {
+			return discord.FriendAnswer{}, err
+		}
+		answer.Outcome = discord.FriendGone
+		if friends {
+			answer.Outcome = discord.FriendAlready
+		}
+		return answer, nil
+	}
+	return answer, err
 }
 
 // NewDiscordRooms is the room service the Discord app opens rooms through and

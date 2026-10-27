@@ -31,8 +31,8 @@ const (
 	historyKept = 200
 	sessionTTL  = 30 * 24 * time.Hour
 	// InviteTTL is how long a call into a room waits to be answered.
-	InviteTTL = time.Hour
-	sessionLen  = 32
+	InviteTTL  = time.Hour
+	sessionLen = 32
 )
 
 var (

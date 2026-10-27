@@ -63,6 +63,8 @@ type Handler struct {
 	PublicKey ed25519.PublicKey
 	Rooms     RoomCreator
 	Links     *LinkStore
+	// Friends answers the buttons of a friend request's DM; nil leaves them dead.
+	Friends FriendAnswerer
 	// Origin is the site's public origin, for the links the app hands out.
 	Origin string
 	Now    func() time.Time
@@ -131,7 +133,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case interactionCommand:
 		h.command(w, r.Context(), call)
 	case interactionComponent:
-		h.component(w, call)
+		h.component(w, r.Context(), call)
 	default:
 		http.Error(w, "unsupported interaction", http.StatusBadRequest)
 	}
@@ -190,9 +192,14 @@ func (h *Handler) command(w http.ResponseWriter, ctx context.Context, call inter
 	})
 }
 
-// component answers the card's "Copiar link": Discord buttons cannot write
-// to the clipboard, so the link comes back as text only the clicker sees.
-func (h *Handler) component(w http.ResponseWriter, call interaction) {
+// component answers the buttons: a friend request's Aceitar and Recusar, and
+// the card's "Copiar link". Discord buttons cannot write to the clipboard,
+// so the link comes back as text only the clicker sees.
+func (h *Handler) component(w http.ResponseWriter, ctx context.Context, call interaction) {
+	if accept, from, to, ok := parseFriendCustomID(call.Data.CustomID); ok {
+		h.friendButton(w, ctx, call, accept, from, to)
+		return
+	}
 	roomID, ok := strings.CutPrefix(call.Data.CustomID, "copy:")
 	if !ok || roomID == "" {
 		http.Error(w, "unsupported component", http.StatusBadRequest)
@@ -208,13 +215,17 @@ func (h *Handler) now() time.Time {
 	return time.Now()
 }
 
-func displayName(call interaction) string {
-	var who *user
+// clicker is who ran the command or pressed the button: the member in a
+// server, the user in a DM.
+func clicker(call interaction) *user {
 	if call.Member != nil {
-		who = &call.Member.User
-	} else {
-		who = call.User
+		return &call.Member.User
 	}
+	return call.User
+}
+
+func displayName(call interaction) string {
+	who := clicker(call)
 	if who == nil {
 		return ""
 	}

@@ -42,6 +42,9 @@ const (
 	// invitesPerFriendPerHour the ones it sends to the same friend.
 	invitesPerHour          = 10
 	invitesPerFriendPerHour = 3
+	// askDMsPerPairPerHour caps the friend request DMs between two accounts,
+	// so asking, withdrawing and asking again doesn't ring on and on.
+	askDMsPerPairPerHour = 2
 )
 
 // PresenceSource says which room each account is in right now.
@@ -69,6 +72,8 @@ type accountRoutes struct {
 	invites   *windowLimiter
 	// invitesTo is keyed by inviter and friend.
 	invitesTo *windowLimiter
+	// askDMs is keyed by asker and asked.
+	askDMs *windowLimiter
 }
 
 // RegisterAccountRoutes mounts the account API. Without a Discord secret the
@@ -81,6 +86,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 		reads:     newWindowLimiter(profileReadsPerHour, time.Hour),
 		invites:   newWindowLimiter(invitesPerHour, time.Hour),
 		invitesTo: newWindowLimiter(invitesPerFriendPerHour, time.Hour),
+		askDMs:    newWindowLimiter(askDMsPerPairPerHour, time.Hour),
 		roomCards: NewDiscordRooms(rooms, cfg),
 	}
 	if cfg.DiscordBotToken != "" && cfg.PublicOrigin != "" {
@@ -105,6 +111,8 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	rg.POST("/friends/requests", routes.requestFriend)
 	rg.POST("/friends/requests/:id/accept", routes.acceptFriend)
 	rg.DELETE("/friends/requests/:id", routes.removeFriend)
+	rg.GET("/notifications", routes.notifications)
+	rg.DELETE("/invites/:id", routes.dismissInvite)
 	rg.GET("/users/:id", routes.profile)
 	rg.GET("/users/:id/history", routes.history)
 }
@@ -277,6 +285,18 @@ type accountStats struct {
 	Friends  int64   `json:"friends"`
 }
 
+type discordNames struct {
+	Username   string `json:"username"`
+	GlobalName string `json:"globalName,omitempty"`
+}
+
+func discordNamesOf(a account.Account) *discordNames {
+	if a.DiscordUsername == "" {
+		return nil
+	}
+	return &discordNames{Username: a.DiscordUsername, GlobalName: a.DiscordGlobalName}
+}
+
 func cardOf(a account.Account) accountCard {
 	return accountCard{ID: a.ID, Nickname: a.Nickname, Avatar: a.Avatar}
 }
@@ -298,6 +318,7 @@ func (a *accountRoutes) writeMe(c *gin.Context, me account.Account) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id": me.ID, "nickname": me.Nickname, "avatar": me.Avatar, "visibility": me.Visibility,
+		"discord": discordNamesOf(me), "discordVisibility": me.DiscordVisibility,
 		"createdAt": me.CreatedAt, "stats": stats,
 	})
 }
@@ -480,7 +501,7 @@ func (a *accountRoutes) requestFriend(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	state, err := a.accounts.RequestFriend(c.Request.Context(), me.ID, request.ID)
+	state, fresh, err := a.accounts.AskFriend(c.Request.Context(), me.ID, request.ID)
 	switch {
 	case errors.Is(err, account.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
@@ -489,8 +510,32 @@ func (a *accountRoutes) requestFriend(c *gin.Context) {
 	case err != nil:
 		c.Status(http.StatusInternalServerError)
 	default:
+		if fresh {
+			a.dmFriendRequest(me, request.ID)
+		}
 		c.JSON(http.StatusOK, gin.H{"state": state})
 	}
+}
+
+// dmFriendRequest has the bot tell the asked account on Discord, with the
+// buttons to answer there. The ask stands whether the DM lands or not, so
+// it goes out on its own.
+func (a *accountRoutes) dmFriendRequest(from account.Account, to int64) {
+	if a.bot == nil || !a.askDMs.allow(strconv.FormatInt(from.ID, 10)+":"+strconv.FormatInt(to, 10)) {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		target, err := a.accounts.Get(ctx, to)
+		if err != nil || target.DiscordID == "" {
+			return
+		}
+		message := discord.FriendRequestMessage(a.cfg.PublicOrigin, discord.FriendRequest{From: from.Nickname, Number: from.ID, To: to})
+		if err := a.bot.SendDM(ctx, target.DiscordID, message); err != nil && !errors.Is(err, discord.ErrDMClosed) {
+			slog.WarnContext(ctx, "discord friend request dm failed", "error", err)
+		}
+	}()
 }
 
 func (a *accountRoutes) acceptFriend(c *gin.Context) {
@@ -588,6 +633,11 @@ func (a *accountRoutes) inviteFriend(c *gin.Context) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_invites"})
 		return
 	}
+	// The site shows the invite too, whatever happens to the DM.
+	if err := a.accounts.AddInvite(ctx, friend.ID, account.RoomInvite{From: me.ID, RoomID: roomID, At: time.Now().UTC()}); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	message := discord.InviteMessage(a.cfg.PublicOrigin, discord.Invite{From: me.Nickname, Number: me.ID, RoomID: roomID, Room: card})
 	err = a.bot.SendDM(ctx, friend.DiscordID, message)
 	switch {
@@ -600,6 +650,90 @@ func (a *accountRoutes) inviteFriend(c *gin.Context) {
 	default:
 		c.Status(http.StatusNoContent)
 	}
+}
+
+type pendingInvite struct {
+	From     accountCard `json:"from"`
+	RoomID   string      `json:"roomId"`
+	RoomName string      `json:"roomName,omitempty"`
+	At       time.Time   `json:"at"`
+}
+
+// notifications is what waits on the viewer, in one read for the badge:
+// friend requests to answer and calls into rooms still open, minus the room
+// the viewer is already in.
+func (a *accountRoutes) notifications(c *gin.Context) {
+	me, ok := a.viewer(c, true)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	incomingIDs, _, err := a.accounts.FriendRequests(ctx, me.ID)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	seen := map[int64]*account.Account{}
+	askers, err := a.lookup(ctx, incomingIDs, seen)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	requests := make([]accountCard, 0, len(askers))
+	for _, each := range askers {
+		requests = append(requests, cardOf(each))
+	}
+	stored, err := a.accounts.Invites(ctx, me.ID, time.Now())
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	var myRoom string
+	if a.presence != nil && len(stored) > 0 {
+		myRoom = a.presence.Presence([]int64{me.ID})[me.ID]
+	}
+	invites := make([]pendingInvite, 0, len(stored))
+	for _, invite := range stored {
+		if invite.RoomID == myRoom {
+			continue
+		}
+		storedRoom, err := a.rooms.Get(ctx, invite.RoomID)
+		if errors.Is(err, room.ErrNotFound) {
+			_ = a.accounts.DropInvite(ctx, me.ID, invite.From)
+			continue
+		}
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		from, err := a.lookup(ctx, []int64{invite.From}, seen)
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if len(from) == 0 {
+			continue
+		}
+		invites = append(invites, pendingInvite{From: cardOf(from[0]), RoomID: invite.RoomID, RoomName: storedRoom.Name, At: invite.At})
+	}
+	c.JSON(http.StatusOK, gin.H{"friendRequests": requests, "invites": invites})
+}
+
+// dismissInvite clears the call from friend :id, joined or not.
+func (a *accountRoutes) dismissInvite(c *gin.Context) {
+	me, ok := a.viewer(c, true)
+	if !ok {
+		return
+	}
+	from, ok := accountIDParam(c)
+	if !ok {
+		return
+	}
+	if err := a.accounts.DropInvite(c.Request.Context(), me.ID, from); err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func accountIDParam(c *gin.Context) (int64, bool) {
@@ -669,20 +803,25 @@ func (a *accountRoutes) subject(c *gin.Context) (owner, viewer account.Account, 
 }
 
 func (a *accountRoutes) profile(c *gin.Context) {
-	owner, _, _, visible, ok := a.subject(c)
+	owner, viewer, signed, visible, ok := a.subject(c)
 	if !ok {
 		return
 	}
-	if !visible {
-		c.JSON(http.StatusOK, cardOf(owner))
-		return
+	body := gin.H{"id": owner.ID, "nickname": owner.Nickname, "avatar": owner.Avatar}
+	// The Discord name is its own setting: public for anyone who sees the
+	// profile, private for its owner alone.
+	if names := discordNamesOf(owner); names != nil && (owner.DiscordVisibility == account.VisibilityPublic || (signed && viewer.ID == owner.ID)) {
+		body["discord"] = names
 	}
-	stats, err := a.stats(c.Request.Context(), owner)
-	if err != nil {
-		c.Status(http.StatusInternalServerError)
-		return
+	if visible {
+		stats, err := a.stats(c.Request.Context(), owner)
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		body["stats"] = stats
 	}
-	c.JSON(http.StatusOK, gin.H{"id": owner.ID, "nickname": owner.Nickname, "avatar": owner.Avatar, "stats": stats})
+	c.JSON(http.StatusOK, body)
 }
 
 type historyEntry struct {
