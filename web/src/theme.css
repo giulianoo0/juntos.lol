@@ -1056,7 +1056,9 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 /* No fixed aspect ratio: the stage fills the media column's row like the video player does and the canvas letterboxes inside, so a short viewport keeps the bar reachable. */
 .live-stage { position: relative; background: #000; overflow: hidden; }
 .live-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
-.live-waiting { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 15px; background: rgba(0, 0, 0, 0.45); }
+.live-waiting { position: absolute; inset: 0; display: grid; padding: 12px; background: rgba(0, 0, 0, 0.45); }
+/* A skeleton over a stage: light ink whatever the theme, the stage is dark. */
+.stage-skeleton { --text: #fff; }
 .live-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.7)); color: #fff; }
 .live-bar-spacer { flex: 1; }
 .live-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }

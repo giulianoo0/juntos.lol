@@ -497,6 +497,8 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                 <motion.div
                   key={`skeleton:${target.season ?? 0}:${target.episode ?? 0}`}
                   className="stream-list"
+                  role="status"
+                  aria-busy="true"
                   aria-label={t('details.loadingSources')}
                   initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(6px)' }}
                   animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
