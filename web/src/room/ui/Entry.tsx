@@ -15,7 +15,7 @@ import styles from './Entry.module.css'
 
 /** How long the mascot beams at a new look. */
 const CHEER_MS = 1_200
-const HERO_SIZE = 240
+const HERO_SIZE = 200
 
 type Look = { x: number; y: number }
 
@@ -117,6 +117,9 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           <IconPill size="sm" label={vm.mic ? strings.mic : strings.micOff} icon={vm.mic ? <Mic size={16} /> : <MicOff size={16} />} state={vm.mic ? undefined : 'off'} aria-pressed={vm.mic} onClick={() => vm.setMic(!vm.mic)} />
           <IconPill size="sm" label={vm.cam ? strings.cam : strings.camOff} icon={vm.cam ? <Video size={16} /> : <VideoOff size={16} />} state={vm.cam ? undefined : 'off'} aria-pressed={vm.cam} onClick={() => vm.setCam(!vm.cam)} />
         </div>
+        <div className={styles.looks}>
+          <AvatarEditor value={avatar} onChange={choose} only="looks" />
+        </div>
       </div>
 
       <form className={styles.form} onSubmit={submit}>
@@ -135,7 +138,7 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           maxLength={64}
           autoFocus={!vm.nickname}
         />
-        <AvatarEditor value={avatar} onChange={choose} preview={false} />
+        <AvatarEditor value={avatar} onChange={choose} only="kinds" />
         {needsPassword ? (
           <Field
             label={<><Lock size={12} aria-hidden="true" />{strings.roomPassword}</>}

@@ -62,11 +62,14 @@ const ACCESSORIES = MASCOT_ACCESSORIES.map((accessory) => accessory.id)
  * preview that smiles at every change. `value` is the avatar string of
  * `mascot/avatar.ts` ('' draws the default creature).
  */
-export function AvatarEditor({ value, onChange, preview = true }: {
+export function AvatarEditor({ value, onChange, preview = true, only }: {
   value: string
   onChange: (value: string) => void
   /** Off where a big face already shows the pick, as at the room's door. */
   preview?: boolean
+  /** One half only, for a page that lays the halves out itself: the
+      creatures, or the colours and what it wears. */
+  only?: 'kinds' | 'looks'
 }) {
   const t = useT()
   const spec = avatarSpec(value)
@@ -140,6 +143,9 @@ export function AvatarEditor({ value, onChange, preview = true }: {
       })}
     />
   )
+
+  if (only === 'kinds') return kinds
+  if (only === 'looks') return <div className={styles.looks}>{colorChoices}{accessoryChoices}</div>
 
   return (
     <div className={styles.editor} data-preview={preview || undefined}>

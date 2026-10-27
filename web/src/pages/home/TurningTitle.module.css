@@ -12,18 +12,17 @@
 .slot {
   position: relative;
   display: inline-block;
-  vertical-align: bottom;
   color: var(--brand);
   text-align: left;
   white-space: nowrap;
   transition: width var(--duration-spring-settle) var(--ease-spring-settle);
 }
 
-/* Holds the line's height without taking width. */
+/* Holds the line's height and baseline without taking width (no overflow
+   clipping: that would move the baseline to the box's bottom). */
 .strut {
   display: inline-block;
   width: 0;
-  overflow: hidden;
   visibility: hidden;
 }
 

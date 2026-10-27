@@ -3,9 +3,10 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: var(--space-16);
+  gap: var(--space-10, 2.5rem);
   min-height: 100dvh;
-  padding: var(--space-12) var(--space-8);
+  padding: var(--space-8);
+  box-sizing: border-box;
   background: var(--frame-ground);
   color: var(--text);
   font-family: var(--font-sans);
@@ -19,11 +20,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-8);
+  gap: var(--space-6);
   width: 100%;
-  max-width: 34rem;
-  min-height: 26rem;
-  padding: var(--space-12) var(--space-8);
+  max-width: 30rem;
+  padding: var(--space-8);
+  box-sizing: border-box;
   border-radius: var(--radius-3xl);
   background: radial-gradient(120% 90% at 50% 100%, color-mix(in oklab, var(--primary) 12%, var(--tile)) 0%, var(--tile) 62%);
 }
@@ -97,12 +98,28 @@
   gap: var(--space-3);
 }
 
+/* Colours and what it wears, under the creature they dress. */
+.looks {
+  width: 100%;
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line);
+}
+
+.looks [role="radiogroup"]:last-child {
+  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr));
+}
+
 .form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
+  gap: var(--space-5);
   width: 100%;
-  max-width: 23rem;
+  max-width: 24rem;
+}
+
+/* Six creatures a row: the whole crowd fits beside the stage. */
+.form [role="radiogroup"] {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .title {
