@@ -44,6 +44,7 @@
 
 .switch {
   grid-column: 2;
+  animation: pop-in var(--duration-spring-pop) var(--ease-spring-pop) both;
   max-width: 40vw;
   overflow-x: auto;
   scrollbar-width: none;
@@ -109,6 +110,7 @@
 }
 
 .dot {
+  animation: pop-in var(--duration-spring-pop) var(--ease-spring-pop) both;
   width: var(--space-2);
   height: var(--space-2);
   border-radius: var(--radius-full);
@@ -158,5 +160,22 @@
 
   .accessText {
     display: none;
+  }
+}
+
+/* What appears in the header (the stage switch, the waiting dot) grows
+   out of a blur on the pop. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0;
+    filter: blur(var(--blur-sm));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .dot {
+    animation: none;
   }
 }

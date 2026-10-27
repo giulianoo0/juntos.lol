@@ -100,6 +100,7 @@
 }
 
 .leaveSpotlight {
+  animation: pop-in var(--duration-spring-pop) var(--ease-spring-pop) both;
   position: absolute;
   z-index: 3;
   top: var(--space-4);
@@ -284,6 +285,14 @@
   }
 }
 
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0;
+    filter: blur(var(--blur-sm));
+  }
+}
+
 @keyframes veil-in {
   from {
     opacity: 0;
@@ -291,6 +300,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .leaveSpotlight {
+    animation: none;
+  }
+
   .body,
   .side,
   .body[data-panel] .side {

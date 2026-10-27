@@ -3,6 +3,7 @@ import type { Knock, StageRequest } from '../model'
 import { Avatar } from '../../ui/Avatar'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
+import { SlotText } from '../../ui/SlotText'
 import { Tip } from '../../ui/Tip'
 import { ChatPanel } from './ChatPanel'
 import { useRoomUi } from './context'
@@ -111,7 +112,7 @@ export function SidePanel({ tab, onTab, onClose }: { tab: PanelTab; onTab: (tab:
           label={strings.panel}
           options={[
             { value: 'chat', label: strings.chat },
-            { value: 'people', label: strings.people, badge: vm.people.length },
+            { value: 'people', label: strings.people, badge: <SlotText k={String(vm.people.length)}>{vm.people.length}</SlotText> },
           ]}
           value={tab}
           onChange={onTab}

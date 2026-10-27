@@ -5,6 +5,7 @@ import { AvatarStack } from '../../ui/Avatar'
 import { Field } from '../../ui/Field'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
+import { SlotText } from '../../ui/SlotText'
 import { MorphSize } from '../../ui/MorphSize'
 import { SpringPopover, SpringRow } from '../../ui/SpringPopover'
 import { elapsedOf } from './chatGroups'
@@ -115,7 +116,7 @@ export function Header({ layout, everyone, onFocus, onPeople, waiting }: {
         <AccessMenu />
         <button type="button" className={styles.people} aria-label={strings.peopleInRoom} title={strings.peopleInRoom} onClick={onPeople}>
           <AvatarStack people={vm.people} size={24} />
-          <span className={styles.count}>{vm.people.length}</span>
+          <span className={styles.count}><SlotText k={String(vm.people.length)}>{vm.people.length}</SlotText></span>
           {waiting > 0 ? <span className={styles.dot} aria-hidden="true" /> : null}
         </button>
       </div>

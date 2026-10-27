@@ -189,6 +189,7 @@
 }
 
 .tag {
+  animation: pop-in var(--duration-spring-pop) var(--ease-spring-pop) both;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -207,4 +208,19 @@
 
 .corner .tag {
   padding-inline: var(--space-4);
+}
+
+/* A tag (Fixado, Em destaque) grows out of a blur where it lands. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    scale: 0;
+    filter: blur(var(--blur-sm));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag {
+    animation: none;
+  }
 }
