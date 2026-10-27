@@ -1,9 +1,5 @@
-import { MASCOT_KINDS, Mascot, parseAvatar, type AvatarSpec, type MascotExpression } from '../mascot'
-
-/** What an avatar string draws; '' (or one the mascot no longer knows) is a creature picked by `seed`. */
-export function avatarSpec(avatar: string, seed = 0): AvatarSpec {
-  return parseAvatar(avatar) ?? { kind: MASCOT_KINDS[Math.abs(seed) % MASCOT_KINDS.length]!, accessory: 'none' }
-}
+import { Mascot, type MascotExpression } from '../mascot'
+import { avatarSpec } from './avatarSpec'
 
 /** An account's face: its avatar string drawn as the mascot. */
 export function AvatarFace({ avatar, seed = 0, size = 44, expression = 'idle', still = false, lookAt = null, className }: {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useT } from '../i18n/useT'
 import { KINDS, MASCOT_ACCESSORIES, MASCOT_KINDS, Mascot, serializeAvatar, type AvatarSpec } from '../mascot'
-import { avatarSpec } from './AvatarFace'
+import { avatarSpec } from './avatarSpec'
 import styles from './AvatarEditor.module.css'
 
 /** How long the preview smiles after a change. */

@@ -2,7 +2,7 @@ import { forwardRef, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type 
 import { Tip } from './Tip'
 import styles from './Pill.module.css'
 
-export type PillTone = 'primary' | 'soft' | 'danger' | 'glass'
+export type PillTone = 'primary' | 'brand' | 'soft' | 'danger' | 'glass'
 export type PillSize = 'sm' | 'md' | 'lg'
 
 interface PillOwn {

@@ -392,6 +392,7 @@ export const ptBR: Record<string, string> = {
   "landing.create": "Criar sala",
   "landing.roomName": "Nome da sala",
   "landing.password": "Senha",
+  "landing.go": "Criar",
   "landing.continue": "Continuar sem conta",
   "landing.code": "Tenho um código",
   "landing.codeLabel": "Código da sala",

@@ -392,6 +392,7 @@ export const en: Record<string, string> = {
   "landing.create": "Create room",
   "landing.roomName": "Room name",
   "landing.password": "Password",
+  "landing.go": "Create",
   "landing.continue": "Continue without an account",
   "landing.code": "I have a code",
   "landing.codeLabel": "Room code",

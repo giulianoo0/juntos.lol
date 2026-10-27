@@ -1,0 +1,152 @@
+.couch {
+  position: relative;
+  width: 100%;
+  max-width: 65rem;
+  height: 14.5rem;
+}
+
+/* The couch: a wide cushion the crew sits in, cut by the section below. */
+.cushion {
+  position: absolute;
+  inset: auto 0 0;
+  height: 5rem;
+  border-radius: 2.5rem 2.5rem 0 0;
+  background: var(--frame-side);
+  box-shadow: inset 0 1px 0 var(--line);
+}
+
+.crew {
+  position: absolute;
+  inset: auto 0 2.5rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  padding: 0 var(--space-8);
+}
+
+.seat {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.seat:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Each sways on its own beat, a little out of step with its neighbour. */
+.sway {
+  display: block;
+  animation: sway 3.2s var(--ease-in-out) var(--delay, 0s) infinite;
+}
+
+@keyframes sway {
+  50% {
+    translate: 0 -6px;
+    rotate: 2deg;
+  }
+}
+
+.face {
+  display: block;
+  width: var(--seat);
+  height: var(--seat);
+}
+
+.burst {
+  position: absolute;
+  top: -1.25rem;
+  left: 50%;
+  z-index: 1;
+  margin-left: -17px;
+  pointer-events: none;
+  animation: rise 1.6s var(--ease-out) both;
+}
+
+@keyframes rise {
+  0% {
+    opacity: 0;
+    translate: 0 10px;
+    scale: 0.6;
+  }
+
+  15% {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1.1;
+  }
+
+  80% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    translate: 0 -90px;
+    scale: 0.9;
+    rotate: -8deg;
+  }
+}
+
+@media (max-width: 48rem) {
+  .couch {
+    height: 11rem;
+  }
+
+  .cushion {
+    height: 4rem;
+    border-radius: 2rem 2rem 0 0;
+  }
+
+  .crew {
+    bottom: 2rem;
+    padding: 0 var(--space-3);
+  }
+
+  .face {
+    width: calc(var(--seat) * 0.72);
+    height: calc(var(--seat) * 0.72);
+  }
+
+  .seat:nth-child(n + 7) {
+    display: none;
+  }
+}
+
+@media (max-width: 30rem) {
+  .face {
+    width: calc(var(--seat) * 0.6);
+    height: calc(var(--seat) * 0.6);
+  }
+
+  .seat:nth-child(n + 6) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sway {
+    animation: none;
+  }
+
+  .burst {
+    animation: fade 1.6s var(--ease-out) both;
+  }
+
+  @keyframes fade {
+    0%,
+    100% {
+      opacity: 0;
+    }
+
+    15%,
+    80% {
+      opacity: 1;
+    }
+  }
+}
