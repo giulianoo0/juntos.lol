@@ -1,13 +1,12 @@
 import { Link, LogOut, MessageSquare, Mic, MicOff, MonitorUp, Smile, Video, VideoOff } from 'lucide-react'
 import type { ShareSource } from '../model'
+import { REACTIONS, reactionSrc } from '../reactions'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
 import { SpringPopover, SpringRow } from '../../ui/SpringPopover'
 import { useRoomUi } from './context'
 import { sourceIcon, sourceLabel } from './sources'
 import styles from './Dock.module.css'
-
-const REACTIONS = ['👏', '😂', '😮', '❤️', '🔥', '🍿']
 
 /** The dock: the room's link, then mic, camera, Compartilhar, reactions
     and the chat in the middle; and Sair, apart, under the room's right
@@ -60,7 +59,7 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
               <div className={styles.reactions} role="menu" aria-label={strings.reactions}>
                 {REACTIONS.map((emoji) => (
                   <button key={emoji} type="button" role="menuitem" className={styles.reaction} onClick={() => { vm.actions.react(emoji); close() }}>
-                    {emoji}
+                    <img className={styles.reactionImage} src={reactionSrc(emoji) ?? ''} alt={emoji} draggable={false} />
                   </button>
                 ))}
               </div>

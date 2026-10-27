@@ -26,6 +26,7 @@ function model(overrides: Partial<RoomViewModel> = {}): RoomViewModel {
     requests: [{ id: 'r1', memberId: 'ana', name: 'Ana', kind: 'screen' }],
     knocks: [],
     chat: [],
+    reactions: [],
     sources: ['screen', 'file', 'torrent'],
     actions,
     slots: {
@@ -93,6 +94,31 @@ describe('RoomView', () => {
     expect(screen.getByRole('button', { name: 'Fixar: Giu' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Desafixar' }))
     expect(screen.queryByRole('button', { name: 'Desafixar' })).toBeNull()
+  })
+})
+
+describe('RoomView reactions', () => {
+  it('reacts with the Apple picture picked in the dock', async () => {
+    const vm = model()
+    render(<RoomView vm={vm} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Reações' }))
+    const laugh = await screen.findByRole('menuitem', { name: '😂' })
+    expect(laugh.querySelector('img')).toHaveAttribute('src', '/emoji/1f602.png')
+    fireEvent.click(laugh)
+    expect(vm.actions.react).toHaveBeenCalledWith('😂')
+  })
+
+  it('floats a fresh reaction over the tile of who sent it, and not an old one', () => {
+    const vm = model({ requests: [], reactions: [{ id: 'old', memberId: 'ana', emoji: '🔥', at: Date.now() - 60_000 }] })
+    const { container, rerender } = render(<RoomView vm={vm} />)
+    expect(container.querySelector('[data-reaction-burst]')).toBeNull()
+
+    rerender(<RoomView vm={{ ...vm, reactions: [...vm.reactions, { id: 'new', memberId: 'ana', emoji: '😂', at: Date.now() }] }} />)
+
+    const bursts = [...container.querySelectorAll('[data-reaction-burst]')]
+    expect(bursts.map((burst) => burst.getAttribute('src'))).toEqual(['/emoji/1f602.png'])
+    expect(bursts[0]?.closest('[data-member]')?.getAttribute('data-member')).toBe('ana')
+    expect(container.querySelector('[data-member="ana"]')).toHaveAttribute('data-reaction', '😂')
   })
 })
 

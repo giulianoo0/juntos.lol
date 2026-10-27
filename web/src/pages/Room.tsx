@@ -76,6 +76,7 @@ import {
   sourceOriginFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
+import { isReaction, splitReactions } from '../room/reactions'
 import type { TorrentStats } from '../torrent'
 
 const PREPARING_POLL_MS = 3_000
@@ -421,7 +422,9 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
-  useMessageChime(sync.messages, sync.connected, nickname)
+  // A reaction floats over a tile; it does not ring like a message.
+  const chimeMessages = useMemo(() => sync.messages.filter((message) => !isReaction(message.text)), [sync.messages])
+  useMessageChime(chimeMessages, sync.connected, nickname)
   // The torrent the room is playing now, when this browser is the one that
   // opened it: the picker lists it again as a playlist instead of asking.
   const playlist = useMemo(() => {
@@ -784,14 +787,16 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     'file', 'torrent', 'youtube', 'drive', 'catalog',
   ]
   const memberIdByName = new Map(sync.members.map((member) => [member.nickname, member.id]))
-  const chat: ViewChatMessage[] = chatEntries.map((entry, index) => ({
+  const { chat, reactions: serverReactions } = splitReactions(chatEntries.map((entry, index): ViewChatMessage => ({
     id: `${entry.at}:${index}`,
     authorId: entry.system ? '' : memberIdByName.get(entry.author) ?? entry.author,
     author: entry.author,
     text: entry.text,
     at: Date.parse(entry.at),
     system: entry.system,
-  }))
+  })))
+  // The server stamps them; the tiles compare against this browser's clock.
+  const reactions = serverReactions.map((reaction) => ({ ...reaction, at: reaction.at - sync.serverOffsetMs }))
   const mayOpen = (source: ShareSource) => source === 'screen' ? mayShareScreen : source === 'youtube' ? (mayOpenMedia || mayOpenLive) : mayOpenMedia
 
   const vm: RoomViewModel = {
@@ -807,6 +812,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     requests: sync.isController ? sync.stages.requests.map((request) => ({ id: request.requestId, memberId: request.memberId, name: request.nickname, kind: request.kind })) : [],
     knocks: sync.isController ? sync.knocks.map((knock) => ({ id: knock.requestId, name: knock.nickname })) : [],
     chat,
+    reactions,
     sources,
     actions: {
       setMic: call.setMic,

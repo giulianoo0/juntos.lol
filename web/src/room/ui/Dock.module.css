@@ -69,9 +69,15 @@
   border: 0;
   border-radius: var(--radius-full);
   background: none;
-  font-size: 1.375rem;
   cursor: pointer;
   transition: var(--transition-button);
+}
+
+.reactionImage {
+  display: block;
+  width: 1.75rem;
+  height: 1.75rem;
+  user-select: none;
 }
 
 .reaction:active {

@@ -66,6 +66,15 @@ export interface ChatMessage {
   system?: boolean
 }
 
+/** Someone's reaction: it floats over their tile, never in the chat. */
+export interface Reaction {
+  id: string
+  memberId: string
+  emoji: string
+  /** Epoch ms, on this browser's clock. */
+  at: number
+}
+
 /** What the "Compartilhar" menu opens. */
 export type ShareSource = 'screen' | 'file' | 'torrent' | 'youtube' | 'drive' | 'catalog'
 
@@ -118,6 +127,8 @@ export interface RoomViewModel {
   requests: StageRequest[]
   knocks: Knock[]
   chat: ChatMessage[]
+  /** Reactions, newest last; only the fresh ones float. */
+  reactions: Reaction[]
   /** Sources the share menu offers here (the screen needs a desktop browser). */
   sources: ShareSource[]
   actions: RoomActions
