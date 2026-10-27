@@ -272,14 +272,17 @@ func TestHistoryFollowsVisibility(t *testing.T) {
 		visibility string
 		viewer     viewer
 		visible    bool
+		// Bia keeps the default friends-only visibility, so she shows among
+		// who was there only to whoever may see her own history.
+		seesBia bool
 	}{
-		{account.VisibilityPublic, anonymous, true},
-		{account.VisibilityPublic, stranger, true},
-		{account.VisibilityFriends, friend, true},
-		{account.VisibilityFriends, stranger, false},
-		{account.VisibilityFriends, anonymous, false},
-		{account.VisibilityPrivate, friend, false},
-		{account.VisibilityPrivate, self, true},
+		{account.VisibilityPublic, anonymous, true, false},
+		{account.VisibilityPublic, stranger, true, false},
+		{account.VisibilityFriends, friend, true, true},
+		{account.VisibilityFriends, stranger, false, false},
+		{account.VisibilityFriends, anonymous, false, false},
+		{account.VisibilityPrivate, friend, false, false},
+		{account.VisibilityPrivate, self, true, true},
 	}
 	for _, tt := range tests {
 		name := tt.visibility + "/" + map[viewer]string{self: "a própria conta", friend: "amigo", stranger: "estranho", anonymous: "anônimo"}[tt.viewer]
@@ -302,6 +305,11 @@ func TestHistoryFollowsVisibility(t *testing.T) {
 			history := rig.do(http.MethodGet, "/api/users/1/history", "", cookies...)
 			profile := rig.do(http.MethodGet, "/api/users/1", "", cookies...)
 
+			if !tt.visible && tt.visibility == account.VisibilityPrivate {
+				require.Equal(t, http.StatusNotFound, profile.Code, "conta privada não existe para quem não a vê")
+				require.Equal(t, http.StatusNotFound, history.Code)
+				return
+			}
 			require.Equal(t, http.StatusOK, profile.Code)
 			if !tt.visible {
 				require.Equal(t, http.StatusForbidden, history.Code)
@@ -311,7 +319,11 @@ func TestHistoryFollowsVisibility(t *testing.T) {
 			}
 			require.Equal(t, http.StatusOK, history.Code)
 			require.Contains(t, history.Body.String(), `"Filme"`)
-			require.Contains(t, history.Body.String(), `"nickname":"Bia"`)
+			if tt.seesBia {
+				require.Contains(t, history.Body.String(), `"nickname":"Bia"`)
+			} else {
+				require.NotContains(t, history.Body.String(), `"Bia"`, "companhia que não se mostra fica de fora")
+			}
 			require.JSONEq(t, `{"sessions":1,"hours":2,"friends":1}`, jsonField(t, profile, "stats"))
 		})
 	}

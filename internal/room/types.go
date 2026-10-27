@@ -1,6 +1,9 @@
 package room
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // TrackInfo describes one audio or subtitle track of the uploaded file.
 // Digest names the bytes behind a subtitle track, so a viewer keying its
@@ -50,6 +53,19 @@ type Member struct {
 	// The account a signed-in member is, by its public number, and its avatar.
 	AccountID int64  `json:"accountId,omitempty"`
 	Avatar    string `json:"avatar,omitempty"`
+	// Unlisted: a private account. The room still knows the number for the
+	// history, but it never goes out, so a nickname can't be tied to a profile.
+	Unlisted bool `json:"-"`
+}
+
+// MarshalJSON leaves an unlisted member's account number out.
+func (m Member) MarshalJSON() ([]byte, error) {
+	type plain Member
+	out := plain(m)
+	if m.Unlisted {
+		out.AccountID = 0
+	}
+	return json.Marshal(out)
 }
 
 // ScreenShare is one member publishing their screen to the room right now.

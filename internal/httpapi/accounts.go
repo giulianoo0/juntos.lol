@@ -35,6 +35,9 @@ const (
 	// friendRequestsPerHour the asks one account may send.
 	loginCallbacksPerHour = 30
 	friendRequestsPerHour = 30
+	// profileReadsPerHour caps profile and history reads per client address,
+	// so the sequential numbers can't be walked in one go.
+	profileReadsPerHour = 600
 )
 
 // PresenceSource says which room each account is in right now.
@@ -55,6 +58,7 @@ type accountRoutes struct {
 	login     *discord.OAuth
 	callbacks *windowLimiter
 	asks      *windowLimiter
+	reads     *windowLimiter
 }
 
 // RegisterAccountRoutes mounts the account API. Without a Discord secret the
@@ -64,6 +68,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 		cfg: cfg, accounts: accounts, rooms: rooms, presence: presence,
 		callbacks: newWindowLimiter(loginCallbacksPerHour, time.Hour),
 		asks:      newWindowLimiter(friendRequestsPerHour, time.Hour),
+		reads:     newWindowLimiter(profileReadsPerHour, time.Hour),
 	}
 	if cfg.DiscordLoginEnabled() {
 		routes.login = &discord.OAuth{
@@ -73,6 +78,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	}
 	rg.GET("/auth/discord", routes.startLogin)
 	rg.GET("/auth/discord/callback", routes.finishLogin)
+	rg.Use(routes.sameOrigin)
 	rg.POST("/auth/logout", routes.logout)
 	rg.GET("/me", routes.me)
 	rg.PATCH("/me", routes.patchMe)
@@ -106,7 +112,7 @@ func (h hubAccounts) Identify(r *http.Request) (syncapi.Identity, bool) {
 	if err != nil {
 		return syncapi.Identity{}, false
 	}
-	return syncapi.Identity{AccountID: signed.ID, Avatar: signed.Avatar}, true
+	return syncapi.Identity{AccountID: signed.ID, Avatar: signed.Avatar, Unlisted: signed.Visibility == account.VisibilityPrivate}, true
 }
 
 func (h hubAccounts) RecordWatch(ctx context.Context, accountID int64, watch account.Watch) error {
@@ -310,20 +316,53 @@ func (a *accountRoutes) patchMe(c *gin.Context) {
 	a.writeMe(c, updated)
 }
 
+// lookup fetches each account once, skipping the ones gone. seen carries
+// what earlier calls already fetched.
+func (a *accountRoutes) lookup(ctx context.Context, ids []int64, seen map[int64]*account.Account) ([]account.Account, error) {
+	found := make([]account.Account, 0, len(ids))
+	for _, id := range ids {
+		cached, known := seen[id]
+		if !known {
+			got, err := a.accounts.Get(ctx, id)
+			if err != nil && !errors.Is(err, account.ErrNotFound) {
+				return nil, err
+			}
+			if err == nil {
+				cached = &got
+			}
+			seen[id] = cached
+		}
+		if cached != nil {
+			found = append(found, *cached)
+		}
+	}
+	return found, nil
+}
+
 // cards looks up how each account shows up, skipping the ones gone.
 func (a *accountRoutes) cards(ctx context.Context, ids []int64) ([]accountCard, error) {
-	cards := make([]accountCard, 0, len(ids))
-	for _, id := range ids {
-		found, err := a.accounts.Get(ctx, id)
-		if errors.Is(err, account.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		cards = append(cards, cardOf(found))
+	found, err := a.lookup(ctx, ids, map[int64]*account.Account{})
+	if err != nil {
+		return nil, err
+	}
+	cards := make([]accountCard, 0, len(found))
+	for _, each := range found {
+		cards = append(cards, cardOf(each))
 	}
 	return cards, nil
+}
+
+// sameOrigin turns away a change sent from a page that isn't the site: the
+// SameSite cookie already stops other sites, this also stops a sibling host.
+func (a *accountRoutes) sameOrigin(c *gin.Context) {
+	switch c.Request.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return
+	}
+	origin := c.GetHeader("Origin")
+	if origin != "" && a.cfg.PublicOrigin != "" && origin != a.cfg.PublicOrigin {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "bad_origin"})
+	}
 }
 
 type friendPresence struct {
@@ -348,7 +387,7 @@ func (a *accountRoutes) friends(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	cards, err := a.cards(ctx, ids)
+	found, err := a.lookup(ctx, ids, map[int64]*account.Account{})
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
 		return
@@ -358,10 +397,11 @@ func (a *accountRoutes) friends(c *gin.Context) {
 		present = a.presence.Presence(ids)
 	}
 	openRooms := map[string]bool{}
-	friends := make([]friendCard, 0, len(cards))
-	for _, card := range cards {
-		friend := friendCard{accountCard: card}
-		if roomID, here := present[card.ID]; here {
+	friends := make([]friendCard, 0, len(found))
+	for _, each := range found {
+		friend := friendCard{accountCard: cardOf(each)}
+		// A private account shows no presence, not even to friends.
+		if roomID, here := present[each.ID]; here && each.Visibility != account.VisibilityPrivate {
 			friend.Presence.InRoom = true
 			open, known := openRooms[roomID]
 			if !known {
@@ -499,35 +539,44 @@ func (a *accountRoutes) visibleTo(ctx context.Context, owner account.Account, vi
 
 // subject is the account named in the path, with whether the viewer may see
 // past its card. A response is already written when ok is false.
-func (a *accountRoutes) subject(c *gin.Context) (owner account.Account, visible, self, ok bool) {
+func (a *accountRoutes) subject(c *gin.Context) (owner, viewer account.Account, signed, visible, ok bool) {
+	if !a.reads.allow(requestIP(c.Request, a.cfg.BehindCloudflare)) {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_requests"})
+		return account.Account{}, account.Account{}, false, false, false
+	}
 	id, ok := accountIDParam(c)
 	if !ok {
-		return account.Account{}, false, false, false
+		return account.Account{}, account.Account{}, false, false, false
 	}
 	ctx := c.Request.Context()
 	owner, err := a.accounts.Get(ctx, id)
 	if errors.Is(err, account.ErrNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
-		return account.Account{}, false, false, false
+		return account.Account{}, account.Account{}, false, false, false
 	}
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
-		return account.Account{}, false, false, false
+		return account.Account{}, account.Account{}, false, false, false
 	}
-	viewer, signed := a.viewer(c, false)
+	viewer, signed = a.viewer(c, false)
 	if c.IsAborted() {
-		return account.Account{}, false, false, false
+		return account.Account{}, account.Account{}, false, false, false
 	}
 	visible, err = a.visibleTo(ctx, owner, viewer, signed)
 	if err != nil {
 		c.Status(http.StatusInternalServerError)
-		return account.Account{}, false, false, false
+		return account.Account{}, account.Account{}, false, false, false
 	}
-	return owner, visible, signed && viewer.ID == owner.ID, true
+	// A private account is not there for whoever may not see it.
+	if !visible && owner.Visibility == account.VisibilityPrivate {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
+		return account.Account{}, account.Account{}, false, false, false
+	}
+	return owner, viewer, signed, visible, true
 }
 
 func (a *accountRoutes) profile(c *gin.Context) {
-	owner, visible, _, ok := a.subject(c)
+	owner, _, _, visible, ok := a.subject(c)
 	if !ok {
 		return
 	}
@@ -554,10 +603,11 @@ type historyEntry struct {
 }
 
 func (a *accountRoutes) history(c *gin.Context) {
-	owner, visible, self, ok := a.subject(c)
+	owner, viewer, signed, visible, ok := a.subject(c)
 	if !ok {
 		return
 	}
+	self := signed && viewer.ID == owner.ID
 	if !visible {
 		c.JSON(http.StatusForbidden, gin.H{"error": "history_hidden"})
 		return
@@ -568,12 +618,31 @@ func (a *accountRoutes) history(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	seen := map[int64]*account.Account{}
+	shown := map[int64]bool{}
 	entries := make([]historyEntry, 0, len(watches))
 	for _, watch := range watches {
-		with, err := a.cards(ctx, watch.With)
+		companions, err := a.lookup(ctx, watch.With, seen)
 		if err != nil {
 			c.Status(http.StatusInternalServerError)
 			return
+		}
+		// Who was there is each companion's own to show: someone whose
+		// history the viewer may not see is left out of this one too.
+		with := make([]accountCard, 0, len(companions))
+		for _, companion := range companions {
+			visible, known := shown[companion.ID]
+			if !known {
+				visible, err = a.visibleTo(ctx, companion, viewer, signed)
+				if err != nil {
+					c.Status(http.StatusInternalServerError)
+					return
+				}
+				shown[companion.ID] = visible
+			}
+			if visible {
+				with = append(with, cardOf(companion))
+			}
 		}
 		entry := historyEntry{Title: watch.Title, Kind: watch.Kind, StartedAt: watch.StartedAt,
 			DurationSec: watch.DurationSec, With: with}

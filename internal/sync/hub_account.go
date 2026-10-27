@@ -15,6 +15,8 @@ import (
 type Identity struct {
 	AccountID int64
 	Avatar    string
+	// Unlisted: a private account, whose number the room never shows.
+	Unlisted bool
 }
 
 // Accounts tells the hub who is behind a socket and keeps what signed-in
@@ -212,5 +214,6 @@ func (r *roomConn) closeWatch(ctx context.Context, member *client, now time.Time
 func withIdentity(member room.Member, identity Identity) room.Member {
 	member.AccountID = identity.AccountID
 	member.Avatar = identity.Avatar
+	member.Unlisted = identity.Unlisted
 	return member
 }

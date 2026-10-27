@@ -37,3 +37,4 @@ docker-compose.override.yml
 ss-worker/ss-remux/Cargo.lock
 web/dev/*.png
 /ss-worker/ss-remux/target/
+dump.rdb
