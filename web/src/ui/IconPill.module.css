@@ -1,41 +1,43 @@
-/* The expanding pill (lawcore `expanding-pill.module.css`). The button keeps
-   its round size in the row; the face (what shows) grows over it toward
-   the inline start, and takes no pointer, so the next button is reached
-   where it always sits. */
+/* The round icon button. The hover only tints the face; the press gives
+   the short `--press-scale`; nothing grows. */
 .pill {
   --pill-size: var(--round-button);
   --pill-bg: var(--button-secondary-solid);
   --pill-bg-hover: var(--button-secondary-solid-hover);
   --pill-ink: var(--text);
 
-  position: relative;
+  display: inline-grid;
+  place-items: center;
   flex: none;
   width: var(--pill-size);
   height: var(--pill-size);
   padding: 0;
   border: 0;
-  background: none;
+  border-radius: var(--radius-full);
+  background: linear-gradient(var(--pill-tint, transparent), var(--pill-tint, transparent)), var(--pill-bg);
   color: var(--pill-ink);
   font: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
   cursor: pointer;
+  transition: var(--transition-button);
 }
 
 .pill[data-size="sm"] {
   --pill-size: 2rem;
-  font-size: var(--text-xs);
 }
 
 .pill[data-tone="scrim"] {
   --pill-bg: var(--scrim);
   --pill-bg-hover: var(--scrim-strong);
   --pill-ink: var(--on-scrim);
+
+  -webkit-backdrop-filter: var(--scrim-filter);
+  backdrop-filter: var(--scrim-filter);
 }
 
 /* Off: the danger tint laid over a solid face, never see-through, so
    nothing behind the pill (a video, a neighbour) shows in it. */
-.pill[data-state="off"] {
+.pill[data-state="off"],
+.pill[data-tone="scrim"][data-state="off"] {
   --pill-bg: var(--button-secondary-solid);
   --pill-bg-hover: var(--button-secondary-solid-hover);
   --pill-tint: var(--status-danger-soft);
@@ -50,56 +52,22 @@
   --pill-ink: var(--background);
 }
 
-.pill:is(:hover, :focus-visible, [data-popup-open]) {
-  z-index: 1;
-}
-
 .pill:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-.face {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-end: 0;
-  display: inline-flex;
-  align-items: center;
-  width: max-content;
-  min-width: var(--pill-size);
-  padding-inline: calc((var(--pill-size) - 1.125rem) / 2);
-  border-radius: var(--radius-full);
-  background: linear-gradient(var(--pill-tint, transparent), var(--pill-tint, transparent)), var(--pill-bg);
-  color: var(--pill-ink);
-  white-space: nowrap;
-  pointer-events: none;
-  transition: var(--transition-button);
-}
-
-.pill[data-tone="scrim"][data-state="off"] {
-  --pill-bg: var(--button-secondary-solid);
-}
-
-.pill[data-tone="scrim"] .face {
-  -webkit-backdrop-filter: var(--scrim-filter);
-  backdrop-filter: var(--scrim-filter);
-}
-
 @media (hover: hover) and (pointer: fine) {
-  .pill:not(:disabled):hover .face {
+  .pill:not(:disabled):hover {
     background: linear-gradient(var(--pill-tint, transparent), var(--pill-tint, transparent)), var(--pill-bg-hover);
   }
 }
 
-.pill:not(:disabled):active .face {
+.pill:not(:disabled):active {
   transform: scale(var(--press-scale));
 }
 
 .pill:focus-visible {
-  outline: none;
-}
-
-.pill:focus-visible .face {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -107,65 +75,6 @@
 .icon {
   display: grid;
   place-items: center;
-  flex: none;
   width: 1.125rem;
   height: 1.125rem;
-}
-
-/* In flow, the button is as wide as its face, so the row makes room. */
-.pill[data-flow] {
-  width: auto;
-  min-width: var(--pill-size);
-}
-
-.pill[data-flow] .face {
-  position: relative;
-  inset: auto;
-  height: 100%;
-}
-
-/* The name grows 0fr → 1fr to its exact width on the critically damped
-   spring, fading in over it; leaving, it fades out fast first. */
-.label {
-  display: inline-grid;
-  grid-template-columns: 0fr;
-  margin-inline-start: 0;
-  opacity: 0;
-  transition:
-    grid-template-columns var(--duration-resize) var(--ease-resist),
-    margin-inline-start var(--duration-resize) var(--ease-resist),
-    opacity var(--duration-press) var(--ease-out);
-}
-
-.labelText {
-  min-width: 0;
-  overflow: hidden;
-}
-
-.pill:not(:disabled):is(:hover, :focus-visible) .label {
-  grid-template-columns: 1fr;
-  margin-inline-start: var(--space-3);
-  opacity: 1;
-  transition:
-    grid-template-columns var(--duration-resize) var(--ease-resist),
-    margin-inline-start var(--duration-resize) var(--ease-resist),
-    opacity var(--duration-resize) var(--ease-out);
-}
-
-/* Reached by the keyboard, the name is there at once. */
-.pill:focus-visible:not(:hover) .label {
-  transition: none;
-}
-
-/* A phone has no hover: the round button alone. */
-@media (hover: none) {
-  .pill .label {
-    display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pill.pill .label {
-    transition: none;
-  }
 }

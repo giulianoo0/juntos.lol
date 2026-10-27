@@ -44,8 +44,8 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           </div>
         ) : null}
         <div className={styles.toggles}>
-          <IconPill flow tone="scrim" label={vm.mic ? strings.mic : strings.micOff} icon={vm.mic ? <Mic size={18} /> : <MicOff size={18} />} state={vm.mic ? undefined : 'off'} aria-pressed={vm.mic} onClick={() => vm.setMic(!vm.mic)} />
-          <IconPill flow tone="scrim" label={vm.cam ? strings.cam : strings.camOff} icon={vm.cam ? <Video size={18} /> : <VideoOff size={18} />} state={vm.cam ? undefined : 'off'} aria-pressed={vm.cam} onClick={() => vm.setCam(!vm.cam)} />
+          <IconPill tone="scrim" label={vm.mic ? strings.mic : strings.micOff} icon={vm.mic ? <Mic size={18} /> : <MicOff size={18} />} state={vm.mic ? undefined : 'off'} aria-pressed={vm.mic} onClick={() => vm.setMic(!vm.mic)} />
+          <IconPill tone="scrim" label={vm.cam ? strings.cam : strings.camOff} icon={vm.cam ? <Video size={18} /> : <VideoOff size={18} />} state={vm.cam ? undefined : 'off'} aria-pressed={vm.cam} onClick={() => vm.setCam(!vm.cam)} />
         </div>
       </div>
 
