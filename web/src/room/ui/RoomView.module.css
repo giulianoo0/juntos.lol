@@ -155,8 +155,10 @@
   cursor: pointer;
 }
 
-/* In pairs, a stage takes the column's width. */
-.people[data-arrange="pairs"] .thumb[data-kind="stage"] {
+/* In pairs, a stage takes the column's width, and so does the last
+   person when they would sit alone in their row. */
+.people[data-arrange="pairs"] .thumb[data-kind="stage"],
+.people[data-arrange="pairs"] .thumb[data-wide] {
   grid-column: 1 / -1;
 }
 

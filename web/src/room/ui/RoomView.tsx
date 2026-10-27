@@ -18,6 +18,16 @@ import styles from './RoomView.module.css'
 const NARROW = '(max-width: 56rem)'
 
 // The face grows with the tile it sits in.
+/** In pairs, whether the item at `index` opens a row of its own: a stage
+    takes a whole row, people share one two by two. */
+function aloneInRow(side: readonly { kind: string }[], index: number): boolean {
+  let column = 0
+  for (let at = 0; at < index; at += 1) {
+    column = side[at]!.kind === 'stage' ? 0 : (column + 1) % 2
+  }
+  return column === 0
+}
+
 const THUMB_AVATAR: Record<Arrangement, number> = { column: 88, pairs: 64, strip: 40 }
 
 const keyOf =(target: Target) => `${target.kind}:${target.id}`
@@ -148,12 +158,13 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
           {arrange ? (
             <div className={styles.people} data-arrange={arrange} style={{ '--count': side.length } as CSSProperties}>
               <AnimatePresence mode="popLayout" initial={false}>
-                {side.map((target) => (
+                {side.map((target, index) => (
                   <motion.button
                     key={keyOf(target)}
                     type="button"
                     className={styles.thumb}
                     data-kind={target.kind}
+                    data-wide={arrange === 'pairs' && index === side.length - 1 && aloneInRow(side, index) ? '' : undefined}
                     aria-label={`${strings.pin}: ${target.kind === 'stage' ? vm.stages.find((stage) => stage.id === target.id)?.title ?? '' : ui.nameOf(target.id)}`}
                     onClick={() => setPin(target)}
                     layout
