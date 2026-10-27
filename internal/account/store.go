@@ -247,13 +247,23 @@ func (s *Store) SessionAccount(ctx context.Context, token string) (int64, error)
 		return 0, nil
 	}
 	var id int64
-	err := s.pool.QueryRow(ctx, `UPDATE account_sessions SET expires_at = $2
-		WHERE token_hash = $1 AND expires_at > now() RETURNING account_id`,
-		hashToken(token), time.Now().Add(sessionTTL)).Scan(&id)
+	var expiresAt time.Time
+	hash := hashToken(token)
+	err := s.pool.QueryRow(ctx, `SELECT account_id, expires_at FROM account_sessions
+		WHERE token_hash = $1 AND expires_at > now()`, hash).Scan(&id, &expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	// Sliding expiry, written at most once a day rather than on every request.
+	if renewed := time.Now().Add(sessionTTL); renewed.Sub(expiresAt) > 24*time.Hour {
+		if _, err := s.pool.Exec(ctx, "UPDATE account_sessions SET expires_at = $2 WHERE token_hash = $1", hash, renewed); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
 }
 
 func (s *Store) EndSession(ctx context.Context, token string) error {
