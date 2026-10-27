@@ -34,14 +34,15 @@
   backdrop-filter: var(--scrim-filter);
 }
 
-/* Off: the danger tint laid over a solid face, never see-through, so
-   nothing behind the pill (a video, a neighbour) shows in it. */
+/* Off: a plain solid red face with a white icon, never see-through. */
 .pill[data-state="off"],
 .pill[data-tone="scrim"][data-state="off"] {
-  --pill-bg: var(--button-secondary-solid);
-  --pill-bg-hover: var(--button-secondary-solid-hover);
-  --pill-tint: var(--status-danger-soft);
-  --pill-ink: var(--status-danger-ink);
+  --pill-bg: var(--status-danger);
+  --pill-bg-hover: color-mix(in oklab, var(--status-danger) 88%, black);
+  --pill-ink: #fff;
+
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .pill[data-active],
