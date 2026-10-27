@@ -31,7 +31,9 @@ type client struct {
 	telemetry        syncTelemetry
 	lastTitleRequest time.Time
 	// Set by the room before a kick is written; a kicked seat is not held.
-	kicked bool
+	kicked   bool
+	identity Identity
+	watch    *watchSpan
 }
 
 func (c *client) readPump() {

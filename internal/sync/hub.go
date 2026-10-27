@@ -60,11 +60,14 @@ type Hub struct {
 	capabilities map[string]map[string]string
 	grants       map[string]map[stageGrantKey]time.Time
 	join         joinBook
-	closed       bool
-	ctx          context.Context
-	cancel       context.CancelFunc
-	closeOnce    stdsync.Once
-	wg           stdsync.WaitGroup
+	accounts     Accounts
+	// presence counts, per signed-in account, its seats in each room.
+	presence  map[int64]map[string]int
+	closed    bool
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce stdsync.Once
+	wg        stdsync.WaitGroup
 }
 
 type roomConn struct {
@@ -150,6 +153,7 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 		rooms:         make(map[string]*roomConn),
 		capabilities:  make(map[string]map[string]string),
 		grants:        make(map[string]map[stageGrantKey]time.Time),
+		presence:      make(map[int64]map[string]int),
 		ctx:           ctx,
 		cancel:        cancel,
 		upgrader: websocket.Upgrader{
@@ -242,6 +246,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	nickname := hello.Nickname
+	identity := h.identify(c.Request)
 
 	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {
@@ -259,6 +264,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		room:      roomConnection,
 		send:      make(chan Outbound, 64),
 		telemetry: syncTelemetry{device: deviceClass(c.Request.UserAgent())},
+		identity:  identity,
 	}
 	result := make(chan string, 1)
 	request := joinRequest{
@@ -307,7 +313,7 @@ func (h *Hub) ResetPlayback(roomID string) {
 		return
 	}
 	select {
-	case connection.updates <- Outbound{Type: "state", State: &state}:
+	case connection.updates <- Outbound{Type: "state", State: &state, mediaChanged: true}:
 	case <-ctx.Done():
 	}
 }
@@ -400,6 +406,11 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 		delete(h.rooms, roomID)
 		delete(h.capabilities, roomID)
 		delete(h.grants, roomID)
+		for accountID, rooms := range h.presence {
+			if delete(rooms, roomID); len(rooms) == 0 {
+				delete(h.presence, accountID)
+			}
+		}
 	}
 	h.mu.Unlock()
 }
@@ -470,6 +481,11 @@ func (r *roomConn) run() {
 				r.playing = event.State.Playing
 				r.dropGate()
 			}
+			if event.mediaChanged {
+				ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+				r.mediaChanged(ctx)
+				cancel()
+			}
 			r.deliver(event)
 			if r.dropped.Swap(false) {
 				r.broadcast(Outbound{Type: "roomUpdated"})
@@ -504,7 +520,8 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		return
 	}
 	request.client.capability = base64.RawURLEncoding.EncodeToString(capabilityBytes)
-	request.client.member = room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now()}
+	request.client.member = withIdentity(room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now()},
+		request.client.identity)
 	request.client.telemetry.joinedAt = time.Now()
 
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
@@ -553,6 +570,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	}
 	r.hub.capabilities[r.id][memberID] = request.client.capability
 	r.hub.mu.Unlock()
+	r.arrived(ctx, request.client)
 	r.touch()
 	members := r.members()
 	gating := r.gating
@@ -702,6 +720,8 @@ func (r *roomConn) resume(request joinRequest) bool {
 	next.report = previous.report
 	next.telemetry = previous.telemetry
 	next.lastTitleRequest = previous.lastTitleRequest
+	next.identity = previous.identity
+	next.watch = previous.watch
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
 	renamed := false
@@ -764,6 +784,7 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 	if err := r.hub.store.RemoveMember(ctx, r.id, disconnected.id); err != nil {
 		slog.ErrorContext(ctx, "remove websocket member failed", "room_id", r.id, "member_id", disconnected.id, "error", err)
 	}
+	r.left(ctx, disconnected)
 	// Nothing else ends a screen share when a tab dies mid-broadcast, and a
 	// share left in the list is a path every viewer keeps retrying forever.
 	stopped, err := r.hub.store.StopScreenShare(ctx, r.id, disconnected.id)
