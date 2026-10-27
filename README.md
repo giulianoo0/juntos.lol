@@ -31,6 +31,7 @@ flowchart LR
     B -->|"PUT segmentos HLS (presigned)"| O["Bucket R2"]
     B <-->|"estado, chat e relógio"| W["WebSocket Hub"]
     A --> R["Redis"]
+    A --> G["Postgres"]
     A -->|"legendas WebVTT"| O
     B <-->|"bytes por Range, HTTPS direto"| T["ss-worker (VPS)"]
     T <-->|"DHT + trackers + peers"| P["Swarm BitTorrent"]
@@ -122,7 +123,8 @@ docker compose up --build
 Acesse [http://localhost:8099](http://localhost:8099). O Compose inicia:
 
 - `app`: frontend compilado, API Go e WebSocket;
-- `redis`: salas, participantes e estado sincronizado.
+- `redis`: salas, participantes e estado sincronizado;
+- `postgres`: contas, amigos, histórico, sessões de login e workers matriculados.
 
 Para encerrar:
 
@@ -130,20 +132,23 @@ Para encerrar:
 docker compose down
 ```
 
-O volume `ss-data` guarda só as legendas antes de subirem ao bucket; vídeo e segmentos nunca passam pelo servidor.
+O Compose lê `POSTGRES_PASSWORD` do `.env`; gere uma com `openssl rand -hex 24`. O volume `ss-pg` guarda o Postgres. O volume `ss-data` guarda só as legendas antes de subirem ao bucket; vídeo e segmentos nunca passam pelo servidor.
 
 ## Desenvolvimento local
 
 ### Backend
 
-O backend requer Go 1.26 e Redis. Não há ffmpeg.
+O backend requer Go 1.26, Redis e Postgres. Não há ffmpeg. O schema é aplicado no boot.
+
+Os testes das contas e dos workers rodam contra um Postgres de verdade, apontado por `TEST_DATABASE_URL`; sem ela, são pulados. Cada teste cria e apaga o próprio banco.
 
 ```bash
-go test ./...
+docker run -d --rm -p 55432:5432 -e POSTGRES_PASSWORD=t postgres:18-alpine
+TEST_DATABASE_URL='postgres://postgres:t@localhost:55432/postgres?sslmode=disable' go test ./...
 go run ./cmd/server
 ```
 
-Por padrão, o servidor escuta em `:8080`, usa `redis://localhost:6379`, grava em `/data` e procura o frontend compilado em `web/dist`.
+Por padrão, o servidor escuta em `:8080`, usa `redis://localhost:6379` e `postgres://localhost:5432/juntos`, grava em `/data` e procura o frontend compilado em `web/dist`.
 
 ### Frontend
 
@@ -172,6 +177,7 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `DATA_DIR` | `/data` | Diretório de trabalho das legendas. |
 | `WEB_DIR` | `web/dist` | Diretório dos arquivos estáticos compilados. |
 | `REDIS_URL` | `redis://localhost:6379` | Conexão Redis. |
+| `DATABASE_URL` | `postgres://localhost:5432/juntos?sslmode=disable` | Postgres das contas e dos workers. No Compose, montada a partir de `POSTGRES_PASSWORD`. |
 | `MAX_UPLOAD_MB` | `51200` | Orçamento de bytes que um remux pode publicar, em MiB. |
 | `ROOM_TTL_HOURS` | `5` | Vida útil da sala e da mídia. |
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
@@ -236,6 +242,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 ## Persistência e segurança
 
 - Salas e estado ficam no Redis com expiração.
+- Contas, amigos, histórico (os 200 mais recentes por conta), sessões de login e a matrícula dos workers ficam no Postgres. A sessão é guardada só como sha256 do cookie. `scripts/pg-backup.sh` faz o `pg_dump` diário com 7 dias de retenção.
 - A mídia de cada sala fica no bucket em `rooms/<id>/g<geração>/` e é removida pelo sweeper após o TTL.
 - O ID da sala funciona como link de acesso; não há contas ou ACL por usuário.
 - Nomes de arquivo, apelidos, IDs, caminhos de mídia, legendas e ranges são validados e limitados.
@@ -254,7 +261,10 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 
 ```text
 cmd/server/          entrada do servidor Go
+cmd/migrate-redis/   importação única das contas e workers do Redis para o Postgres
 internal/config/     configuração por ambiente
+internal/account/    contas, amigos, histórico e sessões no Postgres
+internal/db/         conexão e migrações SQL do Postgres
 internal/httpapi/    rotas HTTP, mídia, legendas e relay de tela
 internal/media/      o lado servidor do pipeline do cliente: validação e render de playlists, publicação de legendas
 internal/objectstore/ bucket R2
