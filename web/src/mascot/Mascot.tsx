@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { Accessory } from "./accessories";
-import { earTuckFor, eyeFrameFor, fitEye, showsEars, showsTop, type EyeFrame } from "./accessory-geometry";
+import { earTuckFor, eyeFrameFor, fitEye, helmetFor, showsEars, showsTop, type EyeFrame } from "./accessory-geometry";
 import { getMascotClock } from "./clock";
 import { EAR_POSES, earPoseFor, earTransform, type EarPose } from "./ears";
 import {
@@ -10,6 +10,7 @@ import {
   DOUBLE_BLINK_GAP_MS,
   EXPRESSION_EYES,
   FRONT_GAZE,
+  LEVEL_GAIN,
   WONDER_MS,
   WONDER_SHAPE,
   blinkFactor,
@@ -23,7 +24,8 @@ import {
   type Gaze,
   type EyeShape,
 } from "./eyes";
-import { BODY, EYE_WHITE, paint, withColor, type KindArt, type Part } from "./kind";
+import { BLINK_SQUASH, BREATH, HEAD_SPRING, HOP, REST_HEAD, TALK_STRETCH, eyeGaze, headTransform } from "./head";
+import { BODY, EYE_WHITE, fitOf, paint, withColor, type KindArt, type Part } from "./kind";
 import { KINDS } from "./kinds";
 import { settled, snap, spring, stepSpring, type Spring } from "./spring";
 import type { MascotAccessory, MascotExpression, MascotKind, MascotProps } from "./types";
@@ -146,13 +148,25 @@ function eyesFor(gaze: Gaze, shape: EyeShape, frame: EyeFrame | null, blink = 1)
   };
 }
 
-/** `still` holds the idle blinks and glances, for a face resting among others; letting go blinks at once. */
+const chinOf = (kind: MascotKind) => fitOf(KINDS[kind]).chin;
+
+/** The breath runs on the browser's own clock: nothing to step while the face rests. */
+function breathe(g: SVGGElement, random: () => number): Animation | null {
+  if (typeof g.animate !== "function") return null;
+  const breath = g.animate(BREATH.keyframes as unknown as Keyframe[], { duration: BREATH.half, iterations: Infinity, direction: "alternate", easing: "ease-in-out" });
+  breath.currentTime = random() * BREATH.half * 2;
+  return breath;
+}
+
+/** `still` holds the idle blinks, glances and breath, for a face resting among others; letting go blinks at once. */
 export function Mascot({ kind, expression, color, level, size = 96, lookAt = null, className, title, accessory = "bowtie", still = false }: MascotProps) {
   const rawId = useId();
   const clipId = `mascot-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const svgRef = useRef<SVGSVGElement>(null);
   const eyeLRef = useRef<SVGRectElement>(null);
   const eyeRRef = useRef<SVGRectElement>(null);
+  const headRef = useRef<SVGGElement>(null);
+  const breathRef = useRef<SVGGElement>(null);
   const props = useRef({ expression, lookAt, level, accessory, still });
   props.current = { expression, lookAt, level, accessory, still };
   const wakeRef = useRef<(() => void) | null>(null);
@@ -172,15 +186,23 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
     let visible = true;
     const random = Math.random;
     const start = poseFor(props.current.expression, props.current.lookAt);
+    const startEyes = eyeGaze(start.gaze);
     const s = {
-      yaw: spring(start.gaze.yaw),
-      pitch: spring(start.gaze.pitch),
+      yaw: spring(startEyes.yaw),
+      pitch: spring(startEyes.pitch),
       w: spring(start.shape.w),
       h: spring(start.shape.h),
       level: spring(1),
       angle: spring(start.ear.angle),
       lift: spring(start.ear.lift),
     } satisfies Record<string, Spring>;
+    const head = {
+      turn: spring(start.gaze.yaw),
+      nod: spring(start.gaze.pitch),
+      hop: spring(0),
+    } satisfies Record<string, Spring>;
+    let mood = props.current.expression;
+    let breath: Animation | null = null;
     let last = clock.now();
     let blinkAt = last + nextBlinkDelay(random);
     let blinkStart = -Infinity;
@@ -205,6 +227,8 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
       framePending = false;
       cancelFrame();
       cancelTimer();
+      breath?.cancel();
+      breath = null;
     };
 
     const wake = () => {
@@ -257,22 +281,47 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
       const streaming = idleMotion && spec.followsLevel && Boolean(getLevel);
       const levelTarget = streaming && getLevel ? levelScale(getLevel()) : 1;
 
-      s.yaw.target = gaze.yaw;
-      s.pitch.target = gaze.pitch;
+      const eyesGaze = eyeGaze(gaze);
+      s.yaw.target = eyesGaze.yaw;
+      s.pitch.target = eyesGaze.pitch;
       s.w.target = shape.w;
       s.h.target = shape.h;
       s.level.target = levelTarget;
       s.angle.target = ear.angle;
       s.lift.target = ear.lift;
+      head.turn.target = gaze.yaw;
+      head.nod.target = gaze.pitch;
+      if (expr !== mood && expr === "happy" && idleMotion) head.hop.velocity += HOP;
+      mood = expr;
       for (const value of Object.values(s)) {
         if (reduced) snap(value);
         else stepSpring(value, dt);
       }
+      for (const value of Object.values(head)) {
+        if (reduced) snap(value);
+        else stepSpring(value, dt, HEAD_SPRING);
+      }
 
       const blink = idleMotion ? blinkFactor(time - blinkStart) : 1;
+      const talk = (s.level.value - 1) / LEVEL_GAIN;
+      const stretch = talk * TALK_STRETCH - ((1 - blink) / 0.9) * BLINK_SQUASH;
+      const kindNow = svg!.dataset.kind as MascotKind;
+      if (headRef.current) {
+        const pose = { turn: head.turn.value, nod: head.nod.value, lift: head.hop.value, stretch };
+        const transform = headTransform(pose, chinOf(kindNow));
+        if (transform) write(headRef.current, "transform", transform);
+        else headRef.current.removeAttribute("transform");
+      }
+      const breathing = idleMotion && visible;
+      if (breathing && !breath && breathRef.current) breath = breathe(breathRef.current, random);
+      else if (!breathing && breath) {
+        breath.cancel();
+        breath = null;
+      }
+
       const current: Gaze = { yaw: s.yaw.value, pitch: s.pitch.value };
       const currentShape: EyeShape = { w: s.w.value, h: s.h.value * s.level.value };
-      const eyes = eyesFor(current, currentShape, eyeFrameFor(worn, KINDS[svg!.dataset.kind as MascotKind]), blink);
+      const eyes = eyesFor(current, currentShape, eyeFrameFor(worn, KINDS[kindNow]), blink);
       applyEye(eyeLRef.current, eyes.left);
       applyEye(eyeRRef.current, eyes.right);
       const earPose = { angle: s.angle.value, lift: s.lift.value };
@@ -283,7 +332,7 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
         write(g, "transform", earTransform({ angle: earPose.angle * sway, lift: earPose.lift * sway }, pivot, tuck));
       });
 
-      const busy = Object.values(s).some((value) => !settled(value)) || time - blinkStart < BLINK_MS;
+      const busy = [...Object.values(s), ...Object.values(head)].some((value) => !settled(value)) || time - blinkStart < BLINK_MS;
       if (busy || streaming) {
         requestFrame();
         return;
@@ -350,6 +399,8 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
       lookAt={lookAt}
       svgRef={svgRef}
       eyeRefs={[eyeLRef, eyeRRef]}
+      headRef={headRef}
+      breathRef={breathRef}
     />
   );
 }
@@ -363,14 +414,18 @@ type FigureProps = Pick<MascotProps, "kind" | "color" | "expression" | "classNam
   xmlns?: string;
   svgRef?: Ref<SVGSVGElement>;
   eyeRefs?: readonly [Ref<SVGRectElement>, Ref<SVGRectElement>];
+  headRef?: Ref<SVGGElement>;
+  breathRef?: Ref<SVGGElement>;
 };
 
 /** The drawing at one pose: the React Mascot animates it in place, renderMascotSvg serves it as markup. */
-export function MascotFigure({ kind, color, expression, accessory, pose, clipId, size, className, title, lookAt = null, xmlns, svgRef, eyeRefs }: FigureProps) {
+export function MascotFigure({ kind, color, expression, accessory, pose, clipId, size, className, title, lookAt = null, xmlns, svgRef, eyeRefs, headRef, breathRef }: FigureProps) {
   const art = withColor(KINDS[kind], color);
   const frame = eyeFrameFor(accessory, art);
   const tuck = earTuckFor(accessory);
-  const eyes = eyesFor(pose.gaze, pose.shape, frame);
+  const eyes = eyesFor(eyeGaze(pose.gaze), pose.shape, frame);
+  const chin = fitOf(art).chin;
+  const helmet = accessory === "space-helmet" ? helmetFor(art).transform : undefined;
   const top = showsTop(art, accessory) ? art.top! : null;
   const head = art.shape ? <path d={art.shape} /> : <circle cx={BODY.cx} cy={BODY.cy} r={BODY.r - 0.5} />;
   const eyeClip = frame?.clip ? frame.clip.map((glass, i) => <rect key={i} {...glass} />) : art.eyeClip ? <path d={art.eyeClip} /> : head;
@@ -406,36 +461,42 @@ export function MascotFigure({ kind, color, expression, accessory, pose, clipId,
         <clipPath id={`${clipId}-eyes`}>{eyeClip}</clipPath>
         <clipPath id={`${clipId}-head`}>{head}</clipPath>
       </defs>
-      {art.rim ? (
-        <g data-part="rim">
-          {art.back?.map((part, i) => (part.fill ? <RimLine key={i} d={part.d} /> : null))}
-          {ears("rim")}
-          {top ? <Top art={art} pose={pose.ear} layer="rim" tuck={tuck} /> : null}
-          {art.shape ? <RimLine d={art.shape} /> : <circle cx={BODY.cx} cy={BODY.cy} r={BODY.r} fill="none" stroke={RIM} strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+      <g ref={headRef} data-part="head" transform={headTransform({ ...REST_HEAD, turn: pose.gaze.yaw, nod: pose.gaze.pitch }, chin)}>
+        <g ref={breathRef} data-part="breath" style={{ transformBox: "view-box", transformOrigin: `50px ${chin}px` }}>
+          <g transform={helmet}>
+            {art.rim ? (
+              <g data-part="rim">
+                {art.back?.map((part, i) => (part.fill ? <RimLine key={i} d={part.d} /> : null))}
+                {ears("rim")}
+                {top ? <Top art={art} pose={pose.ear} layer="rim" tuck={tuck} /> : null}
+                {art.shape ? <RimLine d={art.shape} /> : <circle cx={BODY.cx} cy={BODY.cy} r={BODY.r} fill="none" stroke={RIM} strokeWidth={2} vectorEffect="non-scaling-stroke" />}
+              </g>
+            ) : null}
+            <g data-part="back" transform={tuck < 1 ? SHRINK : undefined}>
+              <Parts art={art} parts={art.back} />
+            </g>
+            <g data-part="ears">{ears("fill")}</g>
+            {top && !top.front ? <Top art={art} pose={pose.ear} layer="fill" tuck={tuck} /> : null}
+            {art.shape ? <path data-part="body" d={art.shape} fill={art.body} /> : <circle data-part="body" cx={BODY.cx} cy={BODY.cy} r={BODY.r} fill={art.body} />}
+            {art.marks ? (
+              <g data-part="marks" clipPath={`url(#${clipId}-head)`}>
+                <Parts art={art} parts={art.marks} />
+              </g>
+            ) : null}
+            <g data-part="eyes" clipPath={`url(#${clipId}-eyes)`} fill={accessory === "sunglasses" ? EYE_WHITE : art.eye}>
+              <rect ref={eyeRefs?.[0]} data-eye="left" data-part="eye-left" {...eyeAttrs(eyes.left)} />
+              <rect ref={eyeRefs?.[1]} data-eye="right" data-part="eye-right" {...eyeAttrs(eyes.right)} />
+            </g>
+            {art.front ? (
+              <g data-part="front" transform={tuck < 1 ? SHRINK : undefined}>
+                <Parts art={art} parts={art.front} />
+              </g>
+            ) : null}
+            {top?.front ? <Top art={art} pose={pose.ear} layer="fill" tuck={tuck} /> : null}
+          </g>
+          <Accessory id={accessory} art={art} expression={expression} />
         </g>
-      ) : null}
-      <g data-part="back" transform={tuck < 1 ? SHRINK : undefined}>
-        <Parts art={art} parts={art.back} />
       </g>
-      <g data-part="ears">{ears("fill")}</g>
-      {top && !top.front ? <Top art={art} pose={pose.ear} layer="fill" tuck={tuck} /> : null}
-      {art.shape ? <path data-part="body" d={art.shape} fill={art.body} /> : <circle data-part="body" cx={BODY.cx} cy={BODY.cy} r={BODY.r} fill={art.body} />}
-      {art.marks ? (
-        <g data-part="marks" clipPath={`url(#${clipId}-head)`}>
-          <Parts art={art} parts={art.marks} />
-        </g>
-      ) : null}
-      <g data-part="eyes" clipPath={`url(#${clipId}-eyes)`} fill={accessory === "sunglasses" ? EYE_WHITE : art.eye}>
-        <rect ref={eyeRefs?.[0]} data-eye="left" data-part="eye-left" {...eyeAttrs(eyes.left)} />
-        <rect ref={eyeRefs?.[1]} data-eye="right" data-part="eye-right" {...eyeAttrs(eyes.right)} />
-      </g>
-      {art.front ? (
-        <g data-part="front" transform={tuck < 1 ? SHRINK : undefined}>
-          <Parts art={art} parts={art.front} />
-        </g>
-      ) : null}
-      {top?.front ? <Top art={art} pose={pose.ear} layer="fill" tuck={tuck} /> : null}
-      <Accessory id={accessory} art={art} expression={expression} />
     </svg>
   );
 }

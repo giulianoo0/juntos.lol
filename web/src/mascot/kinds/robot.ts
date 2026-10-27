@@ -20,6 +20,7 @@ export const robot: KindArt = {
     { d: "M40 79.5 H60", stroke: "tip", width: 2.6 },
   ],
   eyeClip: SCREEN,
+  fit: { top: 29, temple: 18, side: 18, neck: 18.25, helmet: [58.25, 39.8] },
   colors: {
     dourado: { body: "#e2b85c", tip: "#b48a35" },
     rosa: { body: "#f4a7c4", tip: "#d0789c", accent: "#5b7cff" },

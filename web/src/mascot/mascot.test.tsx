@@ -97,9 +97,9 @@ describe("Mascot", () => {
   });
 
   it("shrinks a hat onto the mushroom's cap instead of sinking it in", () => {
-    const hat = (kind: "mushroom" | "cactus") =>
+    const hat = (kind: "mushroom" | "alien") =>
       renderToStaticMarkup(<Mascot kind={kind} expression="idle" accessory="cap" />).match(/<g transform="([^"]+)"><g data-accessory="cap"/)?.[1] ?? "";
     expect(hat("mushroom")).toMatch(/scale\(0\.\d+\)/);
-    expect(hat("cactus")).not.toContain("scale");
+    expect(hat("alien")).not.toContain("scale");
   });
 });

@@ -78,7 +78,7 @@ export const DOUBLE_BLINK_CHANCE = 0.25;
 export const DOUBLE_BLINK_GAP_MS = 190;
 
 export function nextGlanceDelay(random: () => number): number {
-  return 1200 + random() * 1300;
+  return 2400 + random() * 2600;
 }
 
 export type Glance = { gaze: Gaze; wonder: boolean };
@@ -86,7 +86,7 @@ export type Glance = { gaze: Gaze; wonder: boolean };
 export function nextGlance(random: () => number): Glance {
   const wonder = random() < 0.12;
   if (wonder) return { gaze: { yaw: (random() - 0.5) * 0.2, pitch: 0.32 }, wonder: true };
-  return { gaze: { yaw: (random() - 0.5) * 1.1, pitch: -0.12 + random() * 0.4 }, wonder: false };
+  return { gaze: { yaw: (random() - 0.5) * 0.9, pitch: -0.1 + random() * 0.32 }, wonder: false };
 }
 
 export const WONDER_SHAPE: EyeShape = { w: 1.25, h: 1.22 };

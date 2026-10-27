@@ -31,6 +31,7 @@ export const strawberry: KindArt = {
     front: true,
   },
   marks: SEEDS.map(([x, y, deg]) => ({ d: ellipse(x, y, 1.2, 2, deg), fill: "inner" })),
+  fit: { top: 34.5, chin: 90.75, temple: 18, side: 19, neck: 34, helmet: [56, 34.5] },
   colors: {
     branco: { body: "#fbe9ec", inner: "#ff6f86", eye: "#3a1a22" },
   },

@@ -12,6 +12,7 @@ export const cloud: KindArt = {
     { d: ellipse(29, 69, 4.2, 2.7), fill: "inner", opacity: 0.6 },
     { d: ellipse(71, 69, 4.2, 2.7), fill: "inner", opacity: 0.6 },
   ],
+  fit: { top: 27.5, chin: 84.75, temple: 17.25, side: 18.25, neck: 13, helmet: [66.25, 39.8], hair: [1, 5] },
   colors: {
     chuva: { body: "#9aa6bd", eye: "#1b2233" },
   },

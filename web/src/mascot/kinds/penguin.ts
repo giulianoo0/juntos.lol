@@ -21,4 +21,5 @@ export const penguin: KindArt = {
   ],
   eyeClip: MASK,
   front: [{ d: "M45.4 63.2 Q50 61.4 54.6 63.2 L50.9 68.8 Q50 70 49.1 68.8 Z", fill: "accent" }],
+  fit: { helmet: [67, 39.5] },
 };

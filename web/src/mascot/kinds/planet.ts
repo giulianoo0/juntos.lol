@@ -16,6 +16,7 @@ export const planet: KindArt = {
     { d: "M16 82 Q50 76 84 82", stroke: "inner", width: 4.6 },
   ],
   front: [{ d: RING.front, stroke: "accent", width: 4.4 }],
+  fit: { helmet: [62, 34.3] },
   colors: {
     verde: { body: "#2fb59a", inner: "#4ccbb0", accent: "#ffd36b" },
     terra: { body: "#e58e4f", inner: "#f0a86c", accent: "#bfe2ff" },

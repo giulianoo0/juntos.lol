@@ -12,6 +12,7 @@ export const bunny: KindArt = {
     inner: "M35 33 C32 23 33.4 8 37.6 7 C41.8 8 42.6 23 40.2 33 Z",
     pivot: [37.5, 38],
   },
+  fit: { helmet: [50.25, 37.8] },
   colors: {
     branco: { body: "#f3f0f6", inner: "#f7c3d6", eye: EYE_DARK, rim: true },
   },

@@ -14,6 +14,7 @@ export const frog: KindArt = {
     { d: ellipse(27, 68, 4.6, 3), fill: "#ff8fa3", opacity: 0.6 },
     { d: ellipse(73, 68, 4.6, 3), fill: "#ff8fa3", opacity: 0.6 },
   ],
+  fit: { top: 36, temple: 18.5, side: 16, neck: 25.25, helmet: [61.75, 34.1] },
   colors: {
     azul: { body: "#3f8cff", inner: "#bcd6ff", eye: "#0e1b33" },
   },

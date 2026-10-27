@@ -13,4 +13,5 @@ export const ghost: KindArt = {
     { d: ellipse(70, 66, 4.2, 2.7), fill: "inner", opacity: 0.6 },
   ],
   hat: -2,
+  fit: { top: 26, chin: 87.25, temple: 21.25, side: 21, neck: 21, helmet: [63.5, 38], hair: [1, 1] },
 };

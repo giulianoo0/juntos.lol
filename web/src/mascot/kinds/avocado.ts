@@ -20,4 +20,6 @@ export const avocado: KindArt = {
   ],
   eyeClip: FLESH,
   hat: -4,
+  hatScale: 0.76,
+  fit: { top: 20, chin: 89.75, temple: 24.25, side: 21, neck: 21.75, helmet: [57.5, 37.7], hair: [3, 4] },
 };
