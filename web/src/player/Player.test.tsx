@@ -141,11 +141,11 @@ describe('Player', () => {
     const subtitles = await screen.findByRole('radio', { name: 'Subtitles' })
     expect(subtitles).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument()
-    expect(screen.queryByRole('slider', { name: 'Movie' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('slider', { name: 'Volume' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: 'Audio' }))
 
-    expect(await screen.findByRole('slider', { name: 'Movie' })).toBeInTheDocument()
+    expect(await screen.findByRole('slider', { name: 'Volume' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
   })
 

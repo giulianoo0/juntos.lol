@@ -106,7 +106,7 @@ export const ptBR: Record<string, string> = {
   'room.screenSendingSilent': 'Sem som',
   'room.screenSendingSilentHint': 'Sua tela está indo sem som. Para mandar o áudio, compartilhe uma aba do navegador com “Compartilhar áudio da aba” ligado.',
   'room.volume': 'Volume',
-  'room.filmVolume': 'Filme',
+  'room.filmVolume': 'Volume',
   'room.volumeBoost': 'Boost',
   'room.exitFullscreen': 'Sair da tela cheia',
   'room.pip': 'Picture-in-picture',
