@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import type { MascotExpression } from '../../mascot'
+import { reactionMood } from '../avatar'
 import type { Reaction } from '../model'
 import { freshReactions, reactionSrc } from '../reactions'
 import { useRoomUi } from './context'
@@ -81,4 +83,20 @@ export function ReactionBursts({ bursts, finish, small }: { bursts: Reaction[]; 
       })}
     </div>
   )
+}
+
+/** How long a face keeps answering its own reaction. */
+const MOOD_MS = 1_500
+
+/** The face's answer to its person's last reaction: cheering or wondering for a moment, then nothing. */
+export function useReactionMood(last: LastReaction | null): MascotExpression | null {
+  const [mood, setMood] = useState<MascotExpression | null>(null)
+  useEffect(() => {
+    const next = last ? reactionMood(last.emoji) : null
+    setMood(next)
+    if (!next) return
+    const timer = window.setTimeout(() => setMood(null), MOOD_MS)
+    return () => window.clearTimeout(timer)
+  }, [last])
+  return mood
 }

@@ -1,51 +1,119 @@
 import { Lock, Mic, MicOff, Video, VideoOff } from 'lucide-react'
-import { useState, type CSSProperties, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
 import type { EntryViewModel, WaitingViewModel } from '../model'
-import { Avatar, AvatarStack } from '../../ui/Avatar'
+import { Mascot, parseAvatar, type MascotExpression } from '../../mascot'
+import { avatarOf } from '../avatar'
 import { Field } from '../../ui/Field'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
+import { AvatarPicker } from './AvatarPicker'
+import { Face, FaceStack } from './Face'
 import { presentLine, useRoomStrings } from './strings'
 import styles from './Entry.module.css'
 
-function Silhouette() {
-  return (
-    <svg className={styles.silhouette} viewBox="0 0 200 150" aria-hidden="true">
-      <circle cx="100" cy="62" r="34" fill="currentColor" />
-      <path d="M30 150c4-38 34-58 70-58s66 20 70 58z" fill="currentColor" />
-    </svg>
-  )
+/** How long the mascot beams at a new look. */
+const CHEER_MS = 1_200
+const HERO_SIZE = 240
+
+type Look = { x: number; y: number }
+
+const clamp = (value: number) => Math.max(-1, Math.min(1, value))
+
+/** The mascot follows the cursor anywhere on the page, within reason. */
+function usePointerGaze(hero: RefObject<HTMLDivElement | null>): Look | null {
+  const [look, setLook] = useState<Look | null>(null)
+  useEffect(() => {
+    let frame = 0
+    const move = (event: PointerEvent) => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const box = hero.current?.getBoundingClientRect()
+        if (!box) return
+        const reach = Math.max(box.width, 320)
+        setLook({ x: clamp((event.clientX - (box.left + box.width / 2)) / reach), y: clamp((event.clientY - (box.top + box.height / 2)) / reach) })
+      })
+    }
+    const away = () => setLook(null)
+    window.addEventListener('pointermove', move)
+    document.documentElement.addEventListener('pointerleave', away)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('pointermove', move)
+      document.documentElement.removeEventListener('pointerleave', away)
+    }
+  }, [hero])
+  return look
 }
 
-/** Before the room: your camera, your name and, when asked, the password. */
+/** A small hop with the spring for a new look; nothing when motion is reduced. */
+function hop(element: HTMLElement | null) {
+  if (!element?.animate || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  const easing = getComputedStyle(element).getPropertyValue('--ease-spring-pop').trim() || 'ease-out'
+  element.animate([{ scale: '0.88' }, { scale: '1' }], { duration: 600, easing })
+}
+
+/** Before the room: your mascot (your camera beside it, when on), your
+    name, how you look and, when asked, the password. */
 export function EntryScreen({ vm }: { vm: EntryViewModel }) {
   const strings = useRoomStrings()
   const [nickname, setNickname] = useState(vm.nickname)
   const [password, setPassword] = useState('')
+  const [avatar, setAvatar] = useState(vm.avatar)
+  const [cheer, setCheer] = useState(0)
+  const heroRef = useRef<HTMLDivElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
+  const lookAt = usePointerGaze(heroRef)
   const needsPassword = vm.joinMode === 'password'
   const ready = (!needsPassword || password !== '') && !vm.busy
-  const present = vm.present.map((name, index) => ({ id: `${index}:${name}`, name }))
+  const present = vm.present.map((name, index) => ({ id: `${index}:${name}` }))
+  const spec = parseAvatar(avatar) ?? avatarOf(undefined, nickname)
+
+  // The account's avatar arrives after the page does, and takes over.
+  useEffect(() => { setAvatar(vm.avatar) }, [vm.avatar])
+
+  useEffect(() => {
+    if (!cheer) return
+    const timer = window.setTimeout(() => setCheer(0), CHEER_MS)
+    return () => window.clearTimeout(timer)
+  }, [cheer])
+
+  const choose = (next: string) => {
+    setAvatar(next)
+    setCheer((count) => count + 1)
+    vm.setAvatar(next)
+    hop(popRef.current)
+  }
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (ready) vm.join({ nickname: nickname.trim(), password })
   }
 
+  const expression: MascotExpression = cheer ? 'happy' : vm.mic && vm.level ? 'speaking' : 'idle'
+
   return (
     <div className={styles.page}>
-      <div className={styles.preview}>
-        {vm.cam ? <div className={styles.video}>{vm.renderPreview()}</div> : <Silhouette />}
-        {vm.mic && vm.micLabel ? (
-          <div className={styles.micTag}>
-            <span className={styles.meter} style={{ '--level': vm.micLevel ?? 0 } as CSSProperties} aria-hidden="true">
-              <span /><span /><span />
-            </span>
-            {vm.micLabel}
+      <div className={styles.stage}>
+        <div className={styles.hero} ref={heroRef} data-hero>
+          <div ref={popRef} className={styles.pop}>
+            <div className={styles.bob}>
+              <Mascot
+                kind={spec.kind}
+                color={spec.color}
+                accessory={spec.accessory}
+                expression={expression}
+                level={vm.mic ? vm.level : undefined}
+                lookAt={lookAt}
+                size={HERO_SIZE}
+                className={styles.mascot}
+              />
+            </div>
           </div>
-        ) : null}
+          {vm.cam ? <div className={styles.camera}>{vm.renderPreview()}</div> : null}
+        </div>
         <div className={styles.toggles}>
-          <IconPill tone="scrim" label={vm.mic ? strings.mic : strings.micOff} icon={vm.mic ? <Mic size={18} /> : <MicOff size={18} />} state={vm.mic ? undefined : 'off'} aria-pressed={vm.mic} onClick={() => vm.setMic(!vm.mic)} />
-          <IconPill tone="scrim" label={vm.cam ? strings.cam : strings.camOff} icon={vm.cam ? <Video size={18} /> : <VideoOff size={18} />} state={vm.cam ? undefined : 'off'} aria-pressed={vm.cam} onClick={() => vm.setCam(!vm.cam)} />
+          <IconPill size="sm" label={vm.mic ? strings.mic : strings.micOff} icon={vm.mic ? <Mic size={16} /> : <MicOff size={16} />} state={vm.mic ? undefined : 'off'} aria-pressed={vm.mic} onClick={() => vm.setMic(!vm.mic)} />
+          <IconPill size="sm" label={vm.cam ? strings.cam : strings.camOff} icon={vm.cam ? <Video size={16} /> : <VideoOff size={16} />} state={vm.cam ? undefined : 'off'} aria-pressed={vm.cam} onClick={() => vm.setCam(!vm.cam)} />
         </div>
       </div>
 
@@ -53,18 +121,19 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
         <div className={styles.title}>
           <h1 className={styles.name}>{vm.name}</h1>
           <div className={styles.present}>
-            {present.length > 0 ? <AvatarStack people={present} size={22} /> : null}
+            {present.length > 0 ? <FaceStack people={present} size={22} /> : null}
             <span>{presentLine(strings, vm.present, vm.presentCount)}</span>
           </div>
         </div>
         <Field
-          label={strings.yourName}
+          label={<>{strings.yourName}{vm.account ? <span className={styles.number}>#{vm.account.id}</span> : null}</>}
           value={nickname}
           onChange={(event) => setNickname(event.target.value)}
           autoComplete="nickname"
           maxLength={64}
           autoFocus={!vm.nickname}
         />
+        <AvatarPicker value={avatar} onChange={choose} />
         {needsPassword ? (
           <Field
             label={<><Lock size={12} aria-hidden="true" />{strings.roomPassword}</>}
@@ -77,7 +146,10 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           />
         ) : null}
         {!needsPassword && vm.error ? <p className={styles.error} role="alert">{vm.error}</p> : null}
-        <Pill type="submit" tone="primary" size="lg" block disabled={!ready}>{strings.join}</Pill>
+        <div className={styles.actions}>
+          <Pill type="submit" tone="primary" size="lg" block disabled={!ready}>{strings.join}</Pill>
+          {vm.account ? null : <a className={styles.discord} href={vm.loginUrl}>{strings.withDiscord}</a>}
+        </div>
       </form>
     </div>
   )
@@ -90,7 +162,7 @@ export function WaitingRoom({ vm }: { vm: WaitingViewModel }) {
     <div className={styles.page}>
       <div className={styles.waiting} role="status" aria-live="polite">
         <span className={styles.knock}>
-          <Avatar id={vm.nickname} name={vm.nickname} size={72} />
+          <Face id={vm.nickname} avatar={vm.avatar} size={88} still={false} />
         </span>
         <div className={styles.title}>
           <h1 className={styles.name}>{vm.name}</h1>

@@ -85,4 +85,21 @@ describe("Mascot", () => {
     expect(top()).toMatch(/rotate\(-2[78]\.\d+ 50 30\)/);
     expect(ear()).toBe(before.ear);
   });
+
+  it("tucks the alien's and the bee's antennae under a hat and keeps them otherwise", () => {
+    for (const kind of ["alien", "bee"] as const) {
+      for (const hat of ["beanie", "cap", "crown"] as const) {
+        expect(renderToStaticMarkup(<Mascot kind={kind} expression="idle" accessory={hat} />), `${kind}.${hat}`).not.toContain('data-part="ear-');
+      }
+      expect(renderToStaticMarkup(<Mascot kind={kind} expression="idle" accessory="flower" />)).toContain('data-part="ear-left"');
+    }
+    expect(renderToStaticMarkup(<Mascot kind="cat" expression="idle" accessory="crown" />)).toContain('data-part="ear-left"');
+  });
+
+  it("shrinks a hat onto the mushroom's cap instead of sinking it in", () => {
+    const hat = (kind: "mushroom" | "cactus") =>
+      renderToStaticMarkup(<Mascot kind={kind} expression="idle" accessory="cap" />).match(/<g transform="([^"]+)"><g data-accessory="cap"/)?.[1] ?? "";
+    expect(hat("mushroom")).toMatch(/scale\(0\.\d+\)/);
+    expect(hat("cactus")).not.toContain("scale");
+  });
 });

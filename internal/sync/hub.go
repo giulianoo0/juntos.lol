@@ -246,7 +246,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	nickname := hello.Nickname
-	identity := h.identify(c.Request)
+	identity := pickedAvatar(h.identify(c.Request), hello.Avatar)
 
 	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {

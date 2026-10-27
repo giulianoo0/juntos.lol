@@ -27,3 +27,9 @@ export function rms(samples: Float32Array): number {
   for (const sample of samples) sum += sample * sample
   return samples.length ? Math.sqrt(sum / samples.length) : 0
 }
+
+/** A voice's RMS as a 0..1 level for a face to move with: speech sits
+    around 0.05–0.2 RMS, so it is lifted to fill the range. */
+export function voiceLevel(rms: number): number {
+  return Math.max(0, Math.min(1, rms * 5))
+}

@@ -3,6 +3,7 @@ import { playbackHealth } from './playbackHealth'
 import { useCallback, useEffect, useReducer, useRef, useState, type MutableRefObject } from 'react'
 import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, Spotlight, StageKind, TitleRequest } from '../types'
 import { initialStages, stagesReducer, type StagesState } from '../room/stages'
+import { loadPickedAvatar } from '../room/avatar'
 import { joinTicketFor } from '../join'
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
@@ -308,6 +309,7 @@ export function useSync(
         setConnected(true)
         const clientTimeMs = Date.now()
         const seat = seatRef.current?.roomId === roomId ? seatRef.current : null
+        const picked = loadPickedAvatar()
         socket.send(JSON.stringify({
           type: 'hello',
           nickname,
@@ -315,6 +317,7 @@ export function useSync(
           ownerToken: ownerTokenFor(roomId),
           ...(joinTicketFor(roomId) ? { ticket: joinTicketFor(roomId) } : {}),
           ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
+          ...(picked ? { avatar: picked } : {}),
         }))
       }
       socket.onclose = () => {

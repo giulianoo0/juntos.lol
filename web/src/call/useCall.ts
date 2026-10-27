@@ -3,7 +3,7 @@ import { audioLocked } from '../ui/audioUnlock'
 import { relayPublishSupported } from './moq'
 import { fetchCallRelay, localLevel, openCallWatch, publishCall, type CallPublisher, type CallRelay, type CallWatchSession, type MemberWatch } from './media'
 import { hearable, viewable, type CallMember } from './plan'
-import { SpeakingDetector } from './speaking'
+import { SpeakingDetector, voiceLevel } from './speaking'
 import { SubscriptionPool, type WatchStatus } from './subscriptions'
 import { useLocalMedia, type DeviceKind, type LocalMediaError } from './useLocalMedia'
 import type { DeviceLists, DevicePrefs } from './devices'
@@ -40,6 +40,8 @@ export interface CallApi {
   previewStream: MediaStream | null
   /** Who is talking right now, me included; absent means silent. */
   speaking: Record<string, boolean>
+  /** 0..1, how loud a voice is right now (mine included); 0 for one not heard. */
+  levelOf(memberId: string): number
   /** What the host turned off for me and I have not turned back on. */
   forced: { mic: boolean; cam: boolean }
   error: LocalMediaError | null
@@ -275,6 +277,11 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
     return () => clearInterval(timer)
   }, [voices, pool, memberId])
 
+  const levelOf = useCallback((target: string) => {
+    const level = target === memberId ? selfMeterRef.current?.level() : pool.get(target)?.level()
+    return voiceLevel(level ?? 0)
+  }, [pool, memberId])
+
   const { setMic: setLocalMic, setCam: setLocalCam } = local
   const setMic = useCallback((on: boolean) => {
     if (on) setForced((current) => (current.mic ? { ...current, mic: false } : current))
@@ -311,6 +318,7 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
     setDevice: local.setDevice,
     previewStream: local.previewStream,
     speaking,
+    levelOf,
     forced,
     error: local.error,
     receive,

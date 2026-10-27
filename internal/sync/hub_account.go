@@ -210,6 +210,15 @@ func (r *roomConn) closeWatch(ctx context.Context, member *client, now time.Time
 	}
 }
 
+// pickedAvatar fills the seat's avatar with the one the hello brought when
+// the account has none of its own and the pick is fit to show.
+func pickedAvatar(identity Identity, picked string) Identity {
+	if identity.Avatar == "" && account.ValidAvatar(picked) {
+		identity.Avatar = picked
+	}
+	return identity
+}
+
 // withIdentity stamps the account on a member about to take a seat.
 func withIdentity(member room.Member, identity Identity) room.Member {
 	member.AccountID = identity.AccountID

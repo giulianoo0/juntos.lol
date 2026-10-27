@@ -29,7 +29,8 @@ export const mushroom: KindArt = {
     { d: ellipse(32, 66, 4, 2.6), fill: "inner", opacity: 0.7 },
     { d: ellipse(68, 66, 4, 2.6), fill: "inner", opacity: 0.7 },
   ],
-  hat: -18,
+  hat: -29,
+  hatScale: 0.68,
   colors: {
     azul: { accent: "#4f7bff" },
   },

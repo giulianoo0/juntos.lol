@@ -149,3 +149,46 @@ func TestHubClosesEveryonesWatchWhenTheMediaChanges(t *testing.T) {
 	require.Eventually(t, func() bool { return len(accounts.of(1)) == 2 }, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, "outro.mkv", accounts.of(1)[1].Title)
 }
+
+func helloWithAvatar(t *testing.T, conn *websocket.Conn, nickname, avatar string) Outbound {
+	t.Helper()
+	require.NoError(t, conn.WriteJSON(Inbound{Type: "hello", Nickname: nickname, ClientTimeMs: 1, Avatar: avatar}))
+	welcome := readHubEvent(t, conn)
+	require.Equal(t, "welcome", welcome.Type)
+	return welcome
+}
+
+func TestHubSeatsTheAvatarAGuestPicked(t *testing.T) {
+	tests := []struct {
+		name   string
+		avatar string
+		want   string
+	}{
+		{name: "bicho com cor e acessório", avatar: "cat-preto.beanie", want: "cat-preto.beanie"},
+		{name: "bicho sem acessório", avatar: "owl", want: "owl"},
+		{name: "nenhum escolhido", avatar: "", want: ""},
+		{name: "maiúscula fica de fora", avatar: "Fox", want: ""},
+		{name: "url fica de fora", avatar: "https://x.test/a.png", want: ""},
+		{name: "três partes ficam de fora", avatar: "fox.bow.tie", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, server := newAccountHub(t)
+			guest := dialAs(t, server, 0)
+
+			welcome := helloWithAvatar(t, guest, "visita", tt.avatar)
+
+			require.Len(t, welcome.Members, 1)
+			require.Equal(t, tt.want, welcome.Members[0].Avatar)
+		})
+	}
+}
+
+func TestHubKeepsTheAccountsAvatarOverTheOneInTheHello(t *testing.T) {
+	_, _, server := newAccountHub(t)
+	signed := dialAs(t, server, 7)
+
+	welcome := helloWithAvatar(t, signed, "ana", "owl.crown")
+
+	require.Equal(t, "fox.bowtie", welcome.Members[0].Avatar)
+}

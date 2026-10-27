@@ -3,6 +3,8 @@ import { BOWTIE, BRAND_GREEN, type KindArt } from "./kind";
 import type { MascotAccessory, MascotExpression } from "./types";
 
 const GRAPHITE = "#2a2b33";
+/** Where the hats meet the head, the point they shrink toward. */
+const HAT_BRIM = 44;
 const GRAPHITE_LIGHT = "#3a3c46";
 
 function BowTie({ art }: { art: KindArt }) {
@@ -212,5 +214,7 @@ function Piece({ id, art, expression }: { id: MascotAccessory; art: KindArt; exp
 
 export function Accessory({ id, art, expression }: { id: MascotAccessory; art: KindArt; expression: MascotExpression }) {
   const piece = <Piece id={id} art={art} expression={expression} />;
-  return art.hat && (HATS.has(id) || HAIR.has(id)) ? <g transform={`translate(0 ${art.hat})`}>{piece}</g> : piece;
+  if (!art.hat || !(HATS.has(id) || HAIR.has(id))) return piece;
+  const shrink = art.hatScale && HATS.has(id) ? ` translate(50 ${HAT_BRIM}) scale(${art.hatScale}) translate(-50 ${-HAT_BRIM})` : "";
+  return <g transform={`translate(0 ${art.hat})${shrink}`}>{piece}</g>;
 }

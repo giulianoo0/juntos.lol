@@ -23,6 +23,11 @@ import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
 import { claimOwnerFromHash, fetchRoomPreview, requestJoinTicket, setRoomAccess, type JoinMode, type RoomPreview } from '../join'
 import { useLocalMedia } from '../call/useLocalMedia'
+import { localLevel } from '../call/media'
+import { voiceLevel } from '../call/speaking'
+import { discordLoginUrl, updateMe, useMe } from '../account'
+import { serializeAvatar } from '../mascot'
+import { avatarOf, loadPickedAvatar, savePickedAvatar } from '../room/avatar'
 import { useCall, type CallMessage } from '../call/useCall'
 import { CallProvider, CallVideo } from '../call/CallVideo'
 import { Button } from '../ui/Button'
@@ -95,6 +100,20 @@ export function RoomPage() {
   const [busy, setBusy] = useState(false)
   const owner = useMemo(() => claimOwnerFromHash(id) || ownerTokenFor(id) !== '', [id])
   const local = useLocalMedia()
+  const { me } = useMe()
+  const [picked, setPicked] = useState(loadPickedAvatar)
+  // The microphone's level at the door, for the mascot to talk with.
+  const meterRef = useRef<{ level(): number; close(): void } | null>(null)
+  useEffect(() => {
+    if (!local.micTrack) return
+    const meter = localLevel(local.micTrack)
+    meterRef.current = meter
+    return () => {
+      meter.close()
+      if (meterRef.current === meter) meterRef.current = null
+    }
+  }, [local.micTrack])
+  const micLevel = useCallback(() => voiceLevel(meterRef.current?.level() ?? 0), [])
 
   useEffect(() => {
     if (window.location.search) window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`)
@@ -122,15 +141,25 @@ export function RoomPage() {
 
   const joinMode: JoinMode = owner ? 'open' : preview.joinMode
   if (!entered) {
+    const storedNickname = (() => { try { return localStorage.getItem('ss.nickname') || '' } catch { return '' } })()
+    const entryAvatar = me?.avatar || picked || serializeAvatar(avatarOf(undefined, storedNickname || id))
     const vm: EntryViewModel = {
       name: preview.name || room?.fileName || '',
       joinMode,
       present: preview.nicknames,
       presentCount: preview.memberCount,
-      nickname: localStorage.getItem('ss.nickname') || '',
+      nickname: storedNickname,
       mic: local.mic,
       cam: local.cam,
-      micLabel: local.devices.mics.find((device) => device.deviceId === local.selected.mic)?.label || local.micTrack?.label,
+      level: micLevel,
+      avatar: entryAvatar,
+      setAvatar: (next) => {
+        savePickedAvatar(next)
+        setPicked(next)
+        if (me) void updateMe({ avatar: next }).catch(() => undefined)
+      },
+      account: me ? { id: me.id } : null,
+      loginUrl: discordLoginUrl(`/room/${id}`),
       busy,
       error: entryError,
       setMic: (on) => { void local.setMic(on) },
@@ -141,6 +170,8 @@ export function RoomPage() {
         const nickname = typed || guestName()
         const go = () => {
           try { localStorage.setItem('ss.nickname', nickname) } catch {}
+          // The face shown at the door is the one the room sees.
+          if (!picked) savePickedAvatar(entryAvatar)
           const choice = { nickname, mic: local.mic, cam: local.cam }
           void local.setMic(false)
           void local.setCam(false)
@@ -773,6 +804,8 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     speaking: Boolean(call.speaking[member.id]),
     hostMuted: Boolean(member.hostMuted),
     hostCamOff: Boolean(member.hostCamOff),
+    accountId: member.accountId || undefined,
+    avatar: member.avatar || undefined,
   }))
   const roomStages = stagesOf(stageRoom)
   const viewStages: ViewStage[] = roomStages.map((stage) => ({
@@ -814,6 +847,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     chat,
     reactions,
     sources,
+    levelOf: call.levelOf,
     actions: {
       setMic: call.setMic,
       setCam: call.setCam,
@@ -998,7 +1032,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   }
   if (sync.door === 'denied') return <RoomGate step="denied" />
   if (sync.door === 'lobby') {
-    return <WaitingRoom vm={{ name: vm.name, nickname, cancel: () => { leaveIdle(); window.location.assign('/') } }} />
+    return <WaitingRoom vm={{ name: vm.name, nickname, avatar: loadPickedAvatar() ?? undefined, cancel: () => { leaveIdle(); window.location.assign('/') } }} />
   }
 
   return (

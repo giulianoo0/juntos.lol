@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import type { MutableRefObject } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { savePickedAvatar } from '../room/avatar'
 import { useSync } from './useSync'
 
 class FakeWebSocket {
@@ -71,6 +72,17 @@ describe('useSync', () => {
     act(() => socket.onopen?.())
     expect(socket.send).toHaveBeenCalledWith(expect.stringContaining('"nickname":"private name"'))
     unmount()
+  })
+
+  it('says in the hello which avatar this browser picked', () => {
+    savePickedAvatar('cat-preto.beanie')
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    expect(JSON.parse(socket.send.mock.calls[0][0] as string)).toMatchObject({ type: 'hello', avatar: 'cat-preto.beanie' })
+    unmount()
+    localStorage.clear()
   })
 
   it('bumps roomVersion on every room update without treating uploads as ready', () => {

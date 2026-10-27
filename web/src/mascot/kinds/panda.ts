@@ -1,6 +1,6 @@
 import { EYE_WHITE, GREEN_TIE, ellipse, type KindArt } from "../kind";
 
-const PATCHES = `${ellipse(39, 55, 9.6, 13, 22)} ${ellipse(61, 55, 9.6, 13, -22)}`;
+const PATCHES = `${ellipse(37.5, 57, 8.4, 12.4, 42)} ${ellipse(62.5, 57, 8.4, 12.4, -42)}`;
 
 export const panda: KindArt = {
   name: "Panda",

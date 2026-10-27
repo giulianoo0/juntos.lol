@@ -1,7 +1,6 @@
 import { Lock, LockOpen, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { JoinMode } from '../model'
-import { AvatarStack } from '../../ui/Avatar'
 import { Field } from '../../ui/Field'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
@@ -10,6 +9,7 @@ import { MorphSize } from '../../ui/MorphSize'
 import { SpringPopover, SpringRow } from '../../ui/SpringPopover'
 import { elapsedOf } from './chatGroups'
 import { useRoomUi } from './context'
+import { FaceStack } from './Face'
 import type { Layout } from './layout'
 import styles from './Header.module.css'
 
@@ -115,7 +115,7 @@ export function Header({ layout, everyone, onFocus, onPeople, waiting }: {
       <div className={styles.end}>
         <AccessMenu />
         <button type="button" className={styles.people} aria-label={strings.peopleInRoom} title={strings.peopleInRoom} onClick={onPeople}>
-          <AvatarStack people={vm.people} size={24} />
+          <FaceStack people={vm.people} size={24} />
           <span className={styles.count}><SlotText k={String(vm.people.length)}>{vm.people.length}</SlotText></span>
           {waiting > 0 ? <span className={styles.dot} aria-hidden="true" /> : null}
         </button>

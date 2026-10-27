@@ -205,4 +205,6 @@ export function eyeFrameFor(accessory: MascotAccessory, art?: KindArt): EyeFrame
 /** Ears and the top fold into the helmet; every other accessory leaves them as they are. */
 export const earTuckFor = (accessory: MascotAccessory): number => (accessory === "space-helmet" ? HELMET.earTuck : 1);
 
+export const showsEars = (art: KindArt, accessory: MascotAccessory): boolean => Boolean(art.ear && !(art.ear.antenna && HATS.has(accessory)));
+
 export const showsTop = (art: KindArt, accessory: MascotAccessory): boolean => Boolean(art.top && (art.top.keep || !HATS.has(accessory)));

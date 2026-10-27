@@ -22,6 +22,10 @@ export interface Person {
   /** The host silenced them or turned their camera off. */
   hostMuted: boolean
   hostCamOff: boolean
+  /** The account's public number, for who signed in. */
+  accountId?: number
+  /** Their mascot (`fox.bowtie`); absent draws a default one from the id. */
+  avatar?: string
 }
 
 export type StageKind = 'media' | 'live' | 'screen'
@@ -131,11 +135,13 @@ export interface RoomViewModel {
   reactions: Reaction[]
   /** Sources the share menu offers here (the screen needs a desktop browser). */
   sources: ShareSource[]
+  /** 0..1, how loud someone's voice is now; read on the mascot's frame. */
+  levelOf?: (memberId: string) => number
   actions: RoomActions
   slots: RoomSlots
 }
 
-/** The entrance: before the room, with the camera preview and the password. */
+/** The entrance: before the room, your mascot, your name and, when asked, the password. */
 export interface EntryViewModel {
   name: string
   joinMode: JoinMode
@@ -145,17 +151,23 @@ export interface EntryViewModel {
   nickname: string
   mic: boolean
   cam: boolean
-  /** The microphone's name, while it is on. */
-  micLabel?: string
-  /** 0..1, the preview's level meter. */
-  micLevel?: number
+  /** 0..1, your microphone's level now, while it is on. */
+  level?: () => number
+  /** Your mascot (`fox.bowtie`); an account's own, or the one this browser picked. */
+  avatar: string
+  /** Keeps a new pick: in this browser, and on the account when signed in. */
+  setAvatar: (avatar: string) => void
+  /** Who is signed in; null for a guest. */
+  account: { id: number } | null
+  /** Where "Entrar com Discord" goes, coming back to this room. */
+  loginUrl: string
   busy: boolean
   /** A wrong password, a closed door: said under the field. */
   error?: string
   setMic: (on: boolean) => void
   setCam: (on: boolean) => void
   join: (input: { nickname: string; password: string }) => void
-  /** Your camera, mirrored; called only while it is on. */
+  /** Your camera, mirrored, beside the mascot; called only while it is on. */
   renderPreview: () => ReactNode
 }
 
@@ -163,5 +175,7 @@ export interface EntryViewModel {
 export interface WaitingViewModel {
   name: string
   nickname: string
+  /** Your mascot, knocking. */
+  avatar?: string
   cancel: () => void
 }

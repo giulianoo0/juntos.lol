@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { Accessory } from "./accessories";
-import { earTuckFor, eyeFrameFor, fitEye, showsTop, type EyeFrame } from "./accessory-geometry";
+import { earTuckFor, eyeFrameFor, fitEye, showsEars, showsTop, type EyeFrame } from "./accessory-geometry";
 import { getMascotClock } from "./clock";
 import { EAR_POSES, earPoseFor, earTransform, type EarPose } from "./ears";
 import {
@@ -375,7 +375,7 @@ export function MascotFigure({ kind, color, expression, accessory, pose, clipId,
   const head = art.shape ? <path d={art.shape} /> : <circle cx={BODY.cx} cy={BODY.cy} r={BODY.r - 0.5} />;
   const eyeClip = frame?.clip ? frame.clip.map((glass, i) => <rect key={i} {...glass} />) : art.eyeClip ? <path d={art.eyeClip} /> : head;
   const ears = (layer: "rim" | "fill") =>
-    art.ear ? (
+    showsEars(art, accessory) ? (
       <>
         <Ear art={art} pose={pose.ear} layer={layer} tuck={tuck} side="left" />
         <g transform={MIRROR}>
