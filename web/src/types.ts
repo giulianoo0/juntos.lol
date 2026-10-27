@@ -28,6 +28,9 @@ export interface Member {
   cam?: boolean
   hostMuted?: boolean
   hostCamOff?: boolean
+  /** The account a signed-in member is, by its number, and its avatar. */
+  accountId?: number
+  avatar?: string
 }
 
 export interface ChatMessage {
