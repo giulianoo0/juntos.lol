@@ -112,7 +112,6 @@
   --duration-fast: 160ms;
   --duration-base: 220ms;
   --duration-slow: 320ms;
-  --duration-flight: 440ms;
 
   /* O spring popover (o "Relatório" do Skrivo): sai do gatilho com um
      quique leve (bounce 0.25, 600 ms amostrados) e volta sem nenhum

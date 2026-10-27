@@ -54,15 +54,14 @@
   height: auto;
 }
 
-/* The colour band waits under the ink and shows on hover, as in the site's header. */
+/* The colour band runs only while hovered, fading in, as in the site's header. */
 .sweep {
-  opacity: 0;
-  transition: opacity 240ms ease;
+  animation: sweep-in 240ms ease both;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .brand:hover .sweep {
-    opacity: 1;
+@keyframes sweep-in {
+  from {
+    opacity: 0;
   }
 }
 
@@ -151,9 +150,7 @@
 
   .header {
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
     height: auto;
-    row-gap: var(--space-3);
     padding: var(--space-4) var(--space-5);
   }
 

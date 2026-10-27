@@ -891,12 +891,8 @@ describe('Player', () => {
 
     fireEvent.timeUpdate(video)
 
-    expect(container.querySelectorAll('.seek-behind')).toHaveLength(1)
     expect(container.querySelectorAll('.seek-ahead')).toHaveLength(2)
     expect(container.querySelector<HTMLElement>('.seek-played')!.style.width).toBe('10%')
-    const behind = container.querySelector<HTMLElement>('.seek-behind')!
-    expect(behind.style.left).toBe('0%')
-    expect(behind.style.width).toBe('10%')
     const ahead = container.querySelectorAll<HTMLElement>('.seek-ahead')
     expect(ahead[0].style.left).toBe('10%')
     expect(ahead[0].style.width).toBe('10%')

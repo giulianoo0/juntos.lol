@@ -1,11 +1,11 @@
 import { Crown, Focus, MicOff, Pin, PinOff, X } from 'lucide-react'
-import { useCallback, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import type { Person, Stage } from '../model'
 import { RoundButton } from '../../ui/Pill'
 import { Tip } from '../../ui/Tip'
 import { sameTarget, useRoomUi } from './context'
 import { Face } from './Face'
-import { PersonContextMenu, PersonMenu } from './PersonMenu'
+import { PersonMenu } from './PersonMenu'
 import { ReactionBursts, useReactionMood, useReactions } from './Reactions'
 import styles from './Tiles.module.css'
 
@@ -66,19 +66,16 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
   const { levelOf } = vm
   const level = useCallback(() => levelOf?.(person.id) ?? 0, [levelOf, person.id])
   return (
-    <PersonContextMenu
-      person={person}
-      render={<div
-        ref={tileRef}
-        className={styles.tile}
-        data-size={size}
-        data-speaking={speaking || undefined}
-        data-camera={camera || undefined}
-        data-member={person.id}
-        data-reaction={reactions.last?.emoji}
-        onPointerMove={camera ? undefined : gaze.follow}
-        onPointerLeave={camera ? undefined : gaze.leave}
-      />}
+    <div
+      ref={tileRef}
+      className={styles.tile}
+      data-size={size}
+      data-speaking={speaking || undefined}
+      data-camera={camera || undefined}
+      data-member={person.id}
+      data-reaction={reactions.last?.emoji}
+      onPointerMove={camera ? undefined : gaze.follow}
+      onPointerLeave={camera ? undefined : gaze.leave}
     >
       {camera ? <div className={styles.video}>{vm.slots.renderVideo(person.id)}</div> : (
         <span className={styles.face}>
@@ -124,12 +121,8 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
           ) : null}
         </div>
       ) : null}
-    </PersonContextMenu>
+    </div>
   )
-}
-
-function stageTag(reading: ReactNode) {
-  return reading ? <span className={`${styles.tag} ${styles.hoverTag}`}>{reading}</span> : null
 }
 
 /** A stage: the player, the live or a screen, with who opened it. */
@@ -139,6 +132,7 @@ export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
   const pinned = sameTarget(pin, target)
   const lit = sameTarget(spotlit, target)
   const canClose = vm.isHost || stage.ownerId === vm.selfId
+  const reading = size !== 'thumb' ? vm.slots.renderStageTag?.(stage) : null
   return (
     <div className={styles.tile} data-size={size} data-stage={stage.kind}>
       <div className={styles.stage}>{vm.slots.renderStage(stage, size === 'focus' ? 'focus' : 'thumb')}</div>
@@ -150,7 +144,7 @@ export function StageTile({ stage, size }: { stage: Stage; size: TileSize }) {
         </span>}
         {size !== 'thumb' && pinned ? <span className={styles.tag}><Pin size={12} aria-hidden="true" />{strings.pinned}</span> : null}
         {size !== 'thumb' && lit ? <span className={styles.tag}><Focus size={12} aria-hidden="true" />{strings.spotlit}</span> : null}
-        {size !== 'thumb' ? stageTag(vm.slots.renderStageTag?.(stage)) : null}
+        {reading ? <span className={styles.tag} data-reading>{reading}</span> : null}
       </div>
       {size !== 'thumb' ? (
         <div className={styles.corner}>

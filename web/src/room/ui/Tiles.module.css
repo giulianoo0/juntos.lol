@@ -148,25 +148,40 @@
 }
 
 /* The tile's buttons wait for the pointer, and stay for a touch screen. */
+/* The tile's buttons, and a big stage's tags, wait for the pointer, and
+   stay for a touch screen; the player's stage follows the player's own
+   controls instead. */
 .cornerButton,
-.cornerMenu {
+.cornerMenu,
+.tile:not([data-size="thumb"]) .stageTags {
   opacity: 0;
   transition: var(--transition-button), opacity var(--duration-fast) var(--ease-hover);
 }
 
 .tile:hover .cornerButton,
 .tile:hover .cornerMenu,
+.tile:hover .stageTags,
 .tile:focus-within .cornerButton,
 .tile:focus-within .cornerMenu,
+.tile:focus-within .stageTags,
 .cornerMenu[data-popup-open] {
   opacity: 1;
 }
 
 @media (hover: none) {
   .cornerButton,
-  .cornerMenu {
+  .cornerMenu,
+  .tile:not([data-size="thumb"]) .stageTags {
     opacity: 1;
   }
+}
+
+.tile:has(:global(.player-wrap:not(.controls-hidden))) :is(.stageTags, .cornerButton) {
+  opacity: 1;
+}
+
+.tile:has(:global(.player-wrap.controls-hidden)) :is(.stageTags, .cornerButton) {
+  opacity: 0;
 }
 
 .cornerMenu {
@@ -234,30 +249,13 @@
   white-space: nowrap;
 }
 
-.hoverTag {
+.corner .tag,
+.tag[data-reading] {
   padding-inline: var(--space-4);
+}
+
+.tag[data-reading] {
   font-variant-numeric: tabular-nums;
-}
-
-/* On a big stage the tags show on hover, like the corner buttons. */
-.tile:not([data-size="thumb"]) .stageTags {
-  opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-hover);
-}
-
-.tile:hover .stageTags,
-.tile:focus-within .stageTags {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .tile:not([data-size="thumb"]) .stageTags {
-    opacity: 1;
-  }
-}
-
-.corner .tag {
-  padding-inline: var(--space-4);
 }
 
 /* A tag (Fixado, Em destaque) grows out of a blur where it lands. */
@@ -280,14 +278,3 @@
   }
 }
 
-/* The player's stage follows the player's own controls: shown while they
-   are, gone with them while it plays untouched. */
-.tile:has(:global(.player-wrap:not(.controls-hidden))) .stageTags,
-.tile:has(:global(.player-wrap:not(.controls-hidden))) .cornerButton {
-  opacity: 1;
-}
-
-.tile:has(:global(.player-wrap.controls-hidden)) .stageTags,
-.tile:has(:global(.player-wrap.controls-hidden)) .cornerButton {
-  opacity: 0;
-}

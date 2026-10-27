@@ -92,17 +92,15 @@
   width: min(100%, 64rem);
 }
 
-.focusMain {
-  position: relative;
+.focusMain,
+.focusTile {
   display: grid;
   min-width: 0;
   min-height: 0;
 }
 
-.focusTile {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
+.focusMain {
+  position: relative;
 }
 
 .leaveSpotlight {
@@ -168,7 +166,7 @@
   grid-column: 1 / -1;
 }
 
-/* A group born where it stands: each tile out of a blur, one after the
+/* A group born where it stands: each tile fading up, one after the
    other, while the columns settle. */
 .people .thumb {
   animation: thumb-in var(--duration-spring-pop) var(--ease-spring-pop) both;
@@ -179,7 +177,6 @@
   from {
     opacity: 0;
     scale: 0.9;
-    filter: blur(var(--blur-sm));
   }
 }
 

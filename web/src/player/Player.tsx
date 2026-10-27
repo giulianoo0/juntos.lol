@@ -40,6 +40,7 @@ import { createSeekTracer, formatSeekTrace } from '../pipeline/seekTrace'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { lastUploadFailureDetail } from '../upload'
 import type { TorrentStats } from '../torrent'
+import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
 
 interface PlayerProps {
@@ -167,7 +168,13 @@ function subtitleSource(room: SubtitleBucket, track: TrackInfo): string {
 export function Player({ room, isController, memberId = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
   const { toast } = useToast()
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
-  const playerRef = useRef<HTMLDivElement>(null)
+  const playerRef = useRef<HTMLDivElement | null>(null)
+  // The tips render inside the player, so they show in fullscreen too.
+  const [tipRoot, setTipRoot] = useState<HTMLDivElement | null>(null)
+  const wrapRef = useCallback((node: HTMLDivElement | null) => {
+    playerRef.current = node
+    setTipRoot(node)
+  }, [])
   const controlsRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const syncRef = useRef<PlayState | undefined>(syncState)
@@ -1110,16 +1117,14 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const currentChapterIndex = chapterIndexAt(currentTime)
   const [seekHover, setSeekHover] = useState<{ leftPct: number; text: string } | null>(null)
   const hoverRectRef = useRef<DOMRect | null>(null)
-  const [behindBands, aheadBands] = useMemo(() => {
-    const behind: Array<{ from: number; to: number }> = []
+  const aheadBands = useMemo(() => {
     const ahead: Array<{ from: number; to: number }> = []
     for (const range of bufferedRanges) {
       const start = Math.min(Math.max(range.start, 0), seekMax)
       const end = Math.min(Math.max(range.end, 0), seekMax)
-      if (start < Math.min(currentTime, end)) behind.push({ from: start, to: Math.min(currentTime, end) })
       if (end > Math.max(start, currentTime)) ahead.push({ from: Math.max(start, currentTime), to: end })
     }
-    return [behind, ahead]
+    return ahead
   }, [bufferedRanges, currentTime, seekMax])
   const bufferAheadSec = useMemo(
     () => bufferAhead(bufferedRanges, currentTime),
@@ -1194,7 +1199,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
 
   return (
     <div
-      ref={playerRef}
+      ref={wrapRef}
       className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`}
       onPointerMove={() => revealControls(playing)}
       onPointerDown={(event) => {
@@ -1375,13 +1380,6 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
         >
           <div className="seek-track" aria-hidden="true">
             <div className="seek-played" style={{ width: pct(scrubSec ?? pendingSeekSec ?? shownSec) }} />
-            {behindBands.map((band) => (
-              <div
-                key={`b${band.from}`}
-                className="seek-behind"
-                style={{ left: pct(band.from), width: `${((band.to - band.from) / seekMax) * 100}%` }}
-              />
-            ))}
             {aheadBands.map((band) => (
               <div
                 key={`a${band.from}`}
@@ -1428,22 +1426,20 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
           ) : null}
         </div>
         <div className="controls-row">
-          <button
+          <Tip label={playLabel} container={tipRoot} render={<button
             className="control-button is-play"
             aria-label={playLabel}
-            data-tip={playLabel}
             disabled={controlsBlocked}
             onClick={togglePlay}
             onPointerUp={(event) => event.currentTarget.blur()}
-          >{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
-          <button
+          />}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</Tip>
+          <Tip label={t('room.skip90')} container={tipRoot} render={<button
             className="control-button skip-button"
             aria-label={t('room.skip90')}
-            data-tip={t('room.skip90')}
             disabled={controlsBlocked}
             onClick={() => showFeedback(seekBy(SKIP_SECONDS) ? seekFeedback(SKIP_SECONDS) : <Lock size={24} />)}
             onPointerUp={(event) => event.currentTarget.blur()}
-          ><RotateCw size={14} aria-hidden="true" /><small>{SKIP_SECONDS}</small></button>
+          />}><RotateCw size={14} aria-hidden="true" /><small>{SKIP_SECONDS}</small></Tip>
           <span className="timecode">
             <NumberFlowGroup>
               <Timecode seconds={scrubSec ?? pendingSeekSec ?? shownSec} />
@@ -1469,7 +1465,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             >LIVE</button>
           ) : null}
           <span className="controls-gap" />
-          <Settings groups={settingGroups} t={t} />
+          <Settings groups={settingGroups} t={t} tipRoot={tipRoot} />
           <input
             ref={fileInputRef}
             type="file"
@@ -1488,13 +1484,12 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             onPointerDown={holdVolume}
             onPointerLeave={chaseVolume}
           >
-            <button
+            <Tip label={muteLabel} container={tipRoot} render={<button
               className="control-button"
               aria-label={muteLabel}
-              data-tip={muteLabel}
               onClick={toggleMute}
               onPointerUp={(event) => event.currentTarget.blur()}
-            >{volumeIcon(muted ? 0 : volume, 16)}</button>
+            />}>{volumeIcon(muted ? 0 : volume, 16)}</Tip>
             <div className="volume-panel" ref={volumePanelRef}>
               <VolumeSlider
                 level={muted ? 0 : volume * boost}
@@ -1505,20 +1500,18 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
             </div>
           </div>
           {pip.mode !== 'none' ? (
-            <button
+            <Tip label={pipLabel} container={tipRoot} render={<button
               className="control-button"
               aria-label={pipLabel}
-              data-tip={pipLabel}
               aria-pressed={pip.active}
               onClick={pip.toggle}
-            ><PictureInPicture2 size={16} /></button>
+            />}><PictureInPicture2 size={16} /></Tip>
           ) : null}
-          <button
+          <Tip label={fullscreenLabel} container={tipRoot} render={<button
             className="control-button"
             aria-label={fullscreenLabel}
-            data-tip={fullscreenLabel}
             onClick={toggleFullscreen}
-          >{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</button>
+          />}>{fullscreen ? <Minimize size={16} /> : <Maximize size={16} />}</Tip>
         </div>
       </div>
       {room.bitmapSubsSkipped > 0 ? <span className="notice-chip">{t('room.bitmapSkipped')}</span> : null}

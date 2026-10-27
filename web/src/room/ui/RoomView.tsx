@@ -10,6 +10,7 @@ import { Dock } from './Dock'
 import { sourceLabel } from './sources'
 import { Header } from './Header'
 import { gridColumns, layoutOf, type Arrangement, type Target } from './layout'
+import { PeopleContextMenu } from './PersonMenu'
 import { SidePanel, type PanelTab } from './SidePanel'
 import { useRoomStrings } from './strings'
 import { PersonTile, StageTile } from './Tiles'
@@ -115,12 +116,14 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
           }}
           waiting={waiting}
         />
-        <div
-          className={styles.body}
-          data-panel={panelOpen || undefined}
-          data-right={right}
-          data-strip={arrange === 'strip' || undefined}
-          data-mode={layout.kind}
+        <PeopleContextMenu
+          render={<div
+            className={styles.body}
+            data-panel={panelOpen || undefined}
+            data-right={right}
+            data-strip={arrange === 'strip' || undefined}
+            data-mode={layout.kind}
+          />}
         >
           <main className={styles.main}>
             {layout.kind === 'grid' ? (
@@ -189,7 +192,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
               <SidePanel tab={tab} onTab={setTab} onClose={() => setPanelOpen(false)} />
             </div>
           </aside>
-        </div>
+        </PeopleContextMenu>
       </div>
       <Modal
         open={sharePicker !== null}

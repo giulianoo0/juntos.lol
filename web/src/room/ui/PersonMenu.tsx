@@ -1,9 +1,9 @@
 import { ContextMenu } from '@base-ui-components/react/context-menu'
 import { Crown, Ellipsis, Focus, MicOff, Pin, PinOff, UserRound, UserX, VideoOff } from 'lucide-react'
-import type { ReactElement, ReactNode } from 'react'
+import { useRef, useState, type PointerEvent, type ReactElement, type ReactNode, type MouseEvent } from 'react'
 import type { Person } from '../model'
 import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
-import popover from '../../ui/SpringPopover.module.css'
+import { springPopupClass, springPositionerClass, springRowClasses as rows } from '../../ui/springPresence'
 import { sameTarget, useRoomUi, type RoomUi } from './context'
 import { Face } from './Face'
 import { fill } from './strings'
@@ -71,7 +71,7 @@ export function PersonMenu({ person, trigger }: {
       triggerLabel={label}
       trigger={<Ellipsis size={15} aria-hidden="true" />}
       align="end"
-      width="15rem"
+      width={MENU_WIDTH}
     >
       {({ close }) => (
         <div role="menu" aria-label={person.name}>
@@ -85,31 +85,52 @@ export function PersonMenu({ person, trigger }: {
   )
 }
 
-function ContextRows({ person }: { person: Person }) {
-  const ui = useRoomUi()
-  return actionsFor(person, ui).map((action, index) => action ? (
-    <ContextMenu.Item key={action.label} className={popover.row} data-tone={action.tone} disabled={action.disabled} onClick={action.run}>
-      <span className={popover.mark} aria-hidden="true">{action.icon}</span>
-      <span className={popover.label}>{action.label}</span>
-    </ContextMenu.Item>
-  ) : <ContextMenu.Separator key={`rule-${index}`} className={popover.rule} />)
-}
+const MENU_WIDTH = '15rem'
 
-/** The same menu on a right click (or a long press) anywhere on `render`,
-    springing out of the pointer. */
-export function PersonContextMenu({ person, render, children }: {
-  person: Person
+/**
+ * One menu for everyone in the room, on a right click (or a long press)
+ * anywhere on `render`: it opens for the person under the pointer (the
+ * nearest `data-member`), springing out of it, and leaves the browser's own
+ * menu everywhere else.
+ */
+export function PeopleContextMenu({ render, children }: {
   render: ReactElement<Record<string, unknown>>
   children: ReactNode
 }) {
+  const ui = useRoomUi()
+  const [person, setPerson] = useState<Person | null>(null)
+  const [open, setOpen] = useState(false)
+  // Read in onOpenChange, which runs in the same event as the pick below.
+  const picked = useRef<Person | null>(null)
+  const pick = (event: MouseEvent | PointerEvent) => {
+    const id = (event.target as Element).closest('[data-member]')?.getAttribute('data-member')
+    picked.current = id ? ui.vm.people.find((one) => one.id === id) ?? null : null
+    if (picked.current) setPerson(picked.current)
+    return picked.current
+  }
   return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger render={render}>{children}</ContextMenu.Trigger>
+    <ContextMenu.Root open={open} onOpenChange={(next) => setOpen(next && picked.current !== null)}>
+      <ContextMenu.Trigger
+        render={render}
+        onPointerDownCapture={pick}
+        onContextMenuCapture={(event: MouseEvent) => { if (!pick(event)) event.stopPropagation() }}
+      >
+        {children}
+      </ContextMenu.Trigger>
       <ContextMenu.Portal>
-        <ContextMenu.Positioner className={popover.positioner} collisionPadding={16}>
-          <ContextMenu.Popup className={popover.popup} style={{ width: '15rem' }} aria-label={person.name}>
-            <Head person={person} />
-            <ContextRows person={person} />
+        <ContextMenu.Positioner className={springPositionerClass} collisionPadding={16}>
+          <ContextMenu.Popup className={springPopupClass} style={{ width: MENU_WIDTH }} aria-label={person?.name}>
+            {person ? (
+              <>
+                <Head person={person} />
+                {actionsFor(person, ui).map((action, index) => action ? (
+                  <ContextMenu.Item key={action.label} className={rows.row} data-tone={action.tone} disabled={action.disabled} onClick={action.run}>
+                    <span className={rows.mark} aria-hidden="true">{action.icon}</span>
+                    <span className={rows.label}>{action.label}</span>
+                  </ContextMenu.Item>
+                ) : <ContextMenu.Separator key={`rule-${index}`} className={rows.rule} />)}
+              </>
+            ) : null}
           </ContextMenu.Popup>
         </ContextMenu.Positioner>
       </ContextMenu.Portal>
