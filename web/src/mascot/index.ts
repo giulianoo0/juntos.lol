@@ -1,0 +1,10 @@
+export { MASCOT_ACCESSORIES, MASCOT_EXPRESSIONS, MASCOT_KINDS } from "./types";
+export type { MascotAccessory, MascotExpression, MascotKind, MascotProps } from "./types";
+export { Accessory } from "./accessories";
+export { Mascot, MascotFigure, poseFor, type MascotPose } from "./Mascot";
+export { KINDS } from "./kinds";
+export { BODY, BOWTIE, withColor, type EarArt, type KindArt, type Palette, type Part, type TopArt } from "./kind";
+export { DEFAULT_EYES, EXPRESSION_EYES, REFLECTION_GAZE, blinkFactor, levelScale, lookAtGaze, projectEye, type EyeLayout, type EyeRender, type EyeShape, type Gaze } from "./eyes";
+export { EAR_POSES, earPoseFor, earTransform, type EarPose, type EarPoseName } from "./ears";
+export { EYE_FRAMES, HELMET, ROUND_GLASSES, SUNGLASSES, eyeBox, eyeFrameFor, fitEye, lensGlass, type Box, type EyeFrame } from "./accessory-geometry";
+export { parseAvatar, serializeAvatar, type AvatarSpec } from "./avatar";
