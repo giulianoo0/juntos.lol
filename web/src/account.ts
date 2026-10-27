@@ -33,8 +33,8 @@ export interface Profile extends AccountCard {
 }
 
 export interface Friend extends AccountCard {
-  /** roomId only comes for a room anyone may walk into. */
-  presence: { inRoom: boolean; roomId?: string }
+  /** roomId only comes for a room anyone may walk into; withMe when it is the room one is in. */
+  presence: { inRoom: boolean; roomId?: string; withMe?: boolean }
 }
 
 export interface FriendRequests {
@@ -129,6 +129,28 @@ export async function dropFriendRequest(id: number): Promise<void> {
 export async function removeFriend(id: number): Promise<void> {
   const response = await fetch(`/api/friends/${id}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await errorCode(response))
+}
+
+/** A refused invite: `message` is the server's code; `roomId` comes with `dm_closed`, to copy as a link instead. */
+export class InviteError extends Error {
+  readonly roomId?: string
+
+  constructor(code: string, roomId?: string) {
+    super(code)
+    this.roomId = roomId
+  }
+}
+
+/**
+ * Has the bot DM friend `id` a link to the room one is in. Throws an
+ * InviteError: `not_in_room`, `dm_closed`, `invites_disabled`,
+ * `too_many_invites`, `not_friends` or another failure.
+ */
+export async function inviteFriend(id: number): Promise<void> {
+  const response = await fetch(`/api/friends/${id}/invite`, { method: 'POST' })
+  if (response.ok) return
+  const body = await response.json().catch(() => null) as { error?: string; roomId?: string } | null
+  throw new InviteError(body?.error ?? 'failed', body?.roomId)
 }
 
 /** An account's profile, or null when there is no such account. */

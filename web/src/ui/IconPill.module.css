@@ -58,6 +58,11 @@
   opacity: 0.5;
 }
 
+.pill[aria-busy="true"] {
+  cursor: progress;
+  opacity: 1;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .pill:not(:disabled):hover {
     background: linear-gradient(var(--pill-tint, transparent), var(--pill-tint, transparent)), var(--pill-bg-hover);

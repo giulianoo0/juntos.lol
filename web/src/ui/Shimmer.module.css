@@ -19,6 +19,19 @@
   to { background-position: -50% 0, 0 0; }
 }
 
+/* An icon can't clip a gradient, so its colour walks the same five. */
+.diaGlyph {
+  display: inline-grid;
+  animation: dia-glyph 2.2s linear infinite;
+}
+
+@keyframes dia-glyph {
+  0%, 100% { color: #c679c4; }
+  25% { color: #fa3d1d; }
+  50% { color: #ffb005; }
+  75% { color: #0358f7; }
+}
+
 /* A placeholder block in the shape of what is coming. */
 .skeleton {
   display: block;
@@ -39,6 +52,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dia,
+  .diaGlyph,
   .skeleton {
     animation-duration: 4s;
   }

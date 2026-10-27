@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { refreshMe } from '../account'
+import { ToastProvider } from '../ui/Toast'
 import { AccountPage } from './Account'
 
 const respond = (status: number, body?: unknown) => Promise.resolve(new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
@@ -37,14 +38,16 @@ function serve(signedIn: boolean, overrides: Record<string, () => Promise<Respon
 
 function renderAt(path: string) {
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/" element={<p>início</p>} />
-        <Route path="/conta" element={<AccountPage />} />
-        <Route path="/u/:id" element={<AccountPage />} />
-        <Route path="/room/:id" element={<p>sala</p>} />
-      </Routes>
-    </MemoryRouter>,
+    <ToastProvider>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/" element={<p>início</p>} />
+          <Route path="/conta" element={<AccountPage />} />
+          <Route path="/u/:id" element={<AccountPage />} />
+          <Route path="/room/:id" element={<p>sala</p>} />
+        </Routes>
+      </MemoryRouter>
+    </ToastProvider>,
   )
 }
 
@@ -105,6 +108,67 @@ describe('AccountPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pedir amizade' }))
     expect(await screen.findByText('Ninguém com esse número.')).toBeInTheDocument()
     expect(calls).toContainEqual({ method: 'POST', path: '/api/friends/requests', body: { id: 999 } })
+  })
+
+  it('invites an offline friend by DM', async () => {
+    const calls = await mine({ 'POST /api/friends/54/invite': () => respond(204) })
+    fireEvent.click(screen.getByRole('button', { name: 'Convidar dudu' }))
+    expect(await screen.findByText('Convite enviado')).toBeInTheDocument()
+    expect(calls).toContainEqual({ method: 'POST', path: '/api/friends/54/invite', body: undefined })
+  })
+
+  it('invites a friend who is in another room, but not one already in mine', async () => {
+    await mine({
+      'GET /api/friends': () => respond(200, { friends: [
+        { ...lu, presence: { inRoom: true, roomId: 'OMSRPLX0' } },
+        { ...dudu, presence: { inRoom: true, withMe: true } },
+      ] }),
+    })
+    expect(screen.getByRole('button', { name: 'Convidar lu' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Convidar dudu' })).toBeNull()
+  })
+
+  it('holds the invite button busy while the DM goes', async () => {
+    await mine({ 'POST /api/friends/54/invite': () => new Promise<Response>(() => undefined) })
+    const button = screen.getByRole('button', { name: 'Convidar dudu' })
+    fireEvent.click(button)
+    await waitFor(() => expect(button).toHaveAttribute('aria-busy', 'true'))
+    expect(button).toBeDisabled()
+  })
+
+  it('copies the room link when the friend takes no DMs from the bot', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+    await mine({ 'POST /api/friends/54/invite': () => respond(409, { error: 'dm_closed', roomId: 'LOCK1234' }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Convidar dudu' }))
+    expect(await screen.findByText('dudu não recebe DM do bot no Discord. Link da sala copiado.')).toBeInTheDocument()
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/room/LOCK1234`)
+  })
+
+  it('asks to join a room before inviting', async () => {
+    await mine({ 'POST /api/friends/54/invite': () => respond(409, { error: 'not_in_room' }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Convidar dudu' }))
+    expect(await screen.findByText('Entre numa sala primeiro')).toBeInTheDocument()
+  })
+
+  it('holds the place of friends and history with skeletons while they load', async () => {
+    const pending = () => new Promise<Response>(() => undefined)
+    serve(true, { 'GET /api/friends': pending, 'GET /api/friends/requests': pending, 'GET /api/users/128/history': pending })
+    await refreshMe()
+    renderAt('/conta')
+    const friends = await screen.findByRole('region', { name: 'Amigos' })
+    expect(friends).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('region', { name: 'Histórico' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.queryByText(/carregando/i)).toBeNull()
+  })
+
+  it('holds the place of a profile with a skeleton while it loads', async () => {
+    serve(true, { 'GET /api/users/7': () => new Promise<Response>(() => undefined) })
+    await refreshMe()
+    renderAt('/u/7')
+    const main = await screen.findByRole('main')
+    await waitFor(() => expect(main.firstElementChild).toHaveAttribute('aria-busy', 'true'))
+    expect(screen.queryByText(/carregando/i)).toBeNull()
   })
 
   it('shows someone else without their hidden history or the controls of the owner', async () => {
