@@ -15,7 +15,7 @@ console.log(ts(), 'live', link)
 const browser = await chromium.launch({ channel: 'chrome', args: ['--ignore-certificate-errors', '--autoplay-policy=no-user-gesture-required'] })
 const context = async () => {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'pt-BR' })
-  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
+  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
   return ctx
 }
 const wire = (page, tag) => {

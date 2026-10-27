@@ -50,7 +50,7 @@ const note = (map, key) => map.set(key, (map.get(key) ?? 0) + 1)
 async function join(index) {
   const who = `c${String(index).padStart(2, '0')}`
   const ctx = await browser.newContext({ locale: 'pt-BR', permissions: ['camera', 'microphone'] })
-  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
+  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
   const page = await ctx.newPage()
   page.on('pageerror', (error) => { note(errorsByClient, who); console.log(`[${who} pageerror]`, error.message.slice(0, 200)) })
   page.on('console', (message) => { if (message.type() === 'error') console.log(`[${who} console]`, message.text().slice(0, 160)) })

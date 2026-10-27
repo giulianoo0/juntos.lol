@@ -11,7 +11,7 @@ const link = process.env.LINK ?? 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'
 const OUT = new URL('.', import.meta.url).pathname
 const browser = await chromium.launch({ channel: 'chrome', args: ['--ignore-certificate-errors', '--autoplay-policy=no-user-gesture-required'] })
 const ctx = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'pt-BR' })
-await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
+await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
 const page = await ctx.newPage()
 page.on('console', (m) => { if (m.type() === 'error' || /youtube|pipeline|failed/i.test(m.text())) console.log('[console]', m.text().slice(0, 200)) })
 page.on('response', (r) => { if (r.status() >= 400) console.log('[http]', r.status(), r.url().slice(0, 120)) })

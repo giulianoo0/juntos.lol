@@ -4,7 +4,7 @@ const base = 'http://127.0.0.1:8090'
 const magnet = 'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel'
 const browser = await chromium.launch({ channel: 'chrome', args: ['--ignore-certificate-errors', '--autoplay-policy=no-user-gesture-required'] })
 const ctx = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'pt-BR' })
-await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
+await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
 const page = await ctx.newPage()
 page.on('console', (m) => { if (m.type() === 'error' || /remux-worker|pipeline|trouble|failed/.test(m.text())) console.log('[console]', m.text().slice(0, 200)) })
 page.on('response', (r) => { if (r.status() >= 400) console.log('[http]', r.status(), r.url().slice(0, 120)) })

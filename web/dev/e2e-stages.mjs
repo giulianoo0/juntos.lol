@@ -33,7 +33,7 @@ const fakeDisplay = () => {
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--autoplay-policy=no-user-gesture-required'] })
 const newPage = async (who) => {
   const ctx = await browser.newContext({ locale: 'pt-BR' })
-  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
+  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
   await ctx.addInitScript(fakeDisplay)
   const page = await ctx.newPage()
   page.on('console', (m) => { if (m.type() === 'error') console.log(`[${who} console]`, m.text().slice(0, 200)) })

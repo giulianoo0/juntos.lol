@@ -1,0 +1,142 @@
+.body {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.step {
+  display: grid;
+  gap: var(--space-4);
+  animation: step-in var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+@keyframes step-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+.hero {
+  display: grid;
+  place-items: center;
+  height: 10rem;
+  border-radius: var(--radius-lg, 20px);
+  background: radial-gradient(120% 90% at 50% 100%, color-mix(in oklab, var(--brand) 18%, transparent), color-mix(in oklab, var(--text) 4%, transparent) 70%);
+  overflow: hidden;
+}
+
+.text {
+  margin: 0;
+  font-size: var(--text-lg);
+  line-height: var(--leading-snug);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.crew,
+.kinds,
+.friends {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.kinds {
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 22rem;
+}
+
+.bob {
+  animation: bob 3.2s ease-in-out infinite;
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+.pop {
+  animation: step-in var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+.number {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.digits {
+  font-family: var(--font-display);
+  font-size: 3.5rem;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  color: var(--brand);
+}
+
+.wave {
+  align-self: center;
+  animation: bob 1.6s ease-in-out infinite;
+}
+
+.react {
+  position: relative;
+  display: grid;
+  place-items: end center;
+  height: 100%;
+  padding-bottom: var(--space-3);
+}
+
+.rise {
+  position: absolute;
+  bottom: 5.5rem;
+  animation: rise 2.6s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+.rise:nth-child(2) { margin-left: 3.5rem; }
+.rise:nth-child(3) { margin-left: -3.5rem; }
+
+@keyframes rise {
+  0% { opacity: 0; transform: translateY(14px) scale(0.5); }
+  15% { opacity: 1; transform: translateY(0) scale(1.1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-60px) rotate(-10deg); filter: blur(3px); }
+}
+
+.emoji {
+  display: block;
+}
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--text) 18%, transparent);
+  transition: width 360ms var(--ease-spring-settle), background-color 200ms ease;
+}
+
+.dot[data-on] {
+  width: 20px;
+  background: var(--brand);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step,
+  .bob,
+  .pop,
+  .wave,
+  .rise {
+    animation: none;
+  }
+}

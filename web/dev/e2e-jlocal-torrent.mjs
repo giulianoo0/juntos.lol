@@ -19,7 +19,7 @@ const check = (name, ok) => { console.log(ok ? 'OK  ' : 'FAIL', name); if (!ok) 
 const fleetCalls = []
 const newPage = async (who) => {
   const ctx = await browser.newContext({ ignoreHTTPSErrors: true, locale: 'pt-BR' })
-  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
+  await ctx.addInitScript(() => { try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1'); localStorage.setItem('ss.codec-notice.v1', '1') } catch {} })
   const page = await ctx.newPage()
   page.on('console', (m) => { if (m.type() === 'error' || /jlocal|torrent|failed/i.test(m.text())) console.log(`[${who} console]`, m.text().slice(0, 200)) })
   page.on('response', (r) => { if (r.status() >= 400 && !/\.m3u8/.test(r.url())) console.log(`[${who} http]`, r.status(), r.url().slice(0, 120)) })

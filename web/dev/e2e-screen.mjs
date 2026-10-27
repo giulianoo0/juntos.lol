@@ -10,7 +10,7 @@ const OUT = new URL('.', import.meta.url).pathname
 const shot = (page, name) => page.screenshot({ path: OUT + (process.env.TAG ?? '') + name + '.png' })
 
 const skipOverlays = () => {
-  try { localStorage.setItem('ss.onboarding.v1', '1') } catch {}
+  try { localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1') } catch {}
   try { localStorage.setItem('ss.codec-notice.v1', '1') } catch {}
 }
 

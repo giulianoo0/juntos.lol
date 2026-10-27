@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react'
+import { Onboarding } from './components/Onboarding'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { CodecSupportNotice } from './components/CodecSupport'
 import type { CreateRoomInput } from './pages/Home'
@@ -19,6 +20,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <CodecSupportNotice />
+      <Onboarding />
       <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<Home createRoom={createRoom} />} />

@@ -14,7 +14,7 @@ async function person(name) {
   const context = await browser.newContext({ locale: 'pt-BR', ignoreHTTPSErrors: true, viewport: { width: 1360, height: 860 } })
   await context.addInitScript(() => {
     try {
-      localStorage.setItem('ss.onboarding.v1', '1')
+      localStorage.setItem('ss.onboarding.v1', '1'); localStorage.setItem('ss.onboarding.v2', '1')
       localStorage.setItem('ss.codec-notice.v1', '1')
     } catch {}
   })
