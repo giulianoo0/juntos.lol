@@ -4,6 +4,7 @@ import { CodecSupportNotice } from './components/CodecSupport'
 import type { CreateRoomInput } from './pages/Home'
 
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })))
+const AccountPage = lazy(() => import('./pages/Account').then((module) => ({ default: module.AccountPage })))
 const RoomPage = lazy(() => import('./pages/Room').then((module) => ({ default: module.RoomPage })))
 const DevRoom = lazy(() => import('./room/ui/DevRoom').then((module) => ({ default: module.DevRoom })))
 
@@ -22,6 +23,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home createRoom={createRoom} />} />
           <Route path="/room/:id" element={<RoomPage />} />
+          <Route path="/conta" element={<AccountPage />} />
+          <Route path="/u/:id" element={<AccountPage />} />
           <Route path="/dev/sala" element={<DevRoom />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

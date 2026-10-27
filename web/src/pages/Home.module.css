@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
+  overflow-x: clip;
   background: var(--frame-ground);
   color: var(--text);
   font-family: var(--font-sans);
@@ -10,72 +11,190 @@
 
 .header {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  min-height: 4rem;
-  padding: var(--space-3) var(--space-8);
+  width: 100%;
+  max-width: 74rem;
+  min-height: 4.5rem;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-8);
+  box-sizing: border-box;
 }
 
 .brand {
   display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
   color: var(--text);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-semibold);
-  text-decoration: none;
+  border-radius: var(--radius-md);
 }
 
-.brand:focus-visible {
+.smallMark {
+  display: block;
+  width: 6.5rem;
+  height: auto;
+}
+
+.brand:focus-visible,
+.me:focus-visible,
+.discord:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 4px;
-  border-radius: var(--radius-md);
+}
+
+.discord {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--round-button);
+  padding: 0 var(--space-6) 0 var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--discord);
+  color: var(--white);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: var(--transition-button);
+}
+
+.me {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--round-button);
+  padding: 0 var(--space-5) 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--button-secondary-bg);
+  color: var(--text);
+  text-decoration: none;
+  transition: var(--transition-button);
+}
+
+.meNumber {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--brand);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .discord:hover {
+    background: var(--discord-hover);
+  }
+
+  .me:hover {
+    background: var(--button-secondary-hover);
+  }
+}
+
+.discord:active,
+.me:active {
+  transform: scale(var(--press-scale));
 }
 
 .main {
   display: flex;
   flex: 1;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-12);
-  padding: var(--space-10) var(--space-5) var(--space-16);
 }
 
 .hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-6);
-  --avatar-ring: var(--frame-ground);
+  gap: var(--space-10);
+  width: 100%;
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: var(--space-16) var(--space-8) 0;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.heroMark {
+  width: min(38.75rem, 86%);
+  height: auto;
+  color: var(--text);
+  animation: arrive var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    scale: 0.6;
+    filter: blur(var(--blur-md));
+  }
 }
 
 .title {
   margin: 0;
-  font-size: clamp(2rem, 6vw, 2.5rem);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.02em;
-  text-align: center;
+  font-family: var(--font-display);
+  font-size: clamp(2.25rem, 6vw, 4.25rem);
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
 }
 
-.form,
-.join,
-.or {
-  width: 100%;
-  max-width: 23.75rem;
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  height: 4.5rem;
+  padding: 0 2.75rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--brand);
+  color: var(--on-brand);
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  box-shadow: 0 18px 40px -16px color-mix(in oklab, var(--brand) 70%, transparent);
+  transition: var(--transition-button);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .create:hover,
+  .create[data-popup-open] {
+    background: var(--brand-hover);
+  }
+}
+
+.create:active {
+  transform: scale(var(--press-scale));
+}
+
+.create:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
 }
 
 /* The password field grows out of the lock with the spring. */
 .reveal {
-  transform-origin: 0 100%;
+  transform-origin: 100% 0;
   animation: reveal var(--duration-spring-pop) var(--ease-spring-pop) both;
 }
 
@@ -86,49 +205,259 @@
   }
 }
 
-.row {
-  display: flex;
-  gap: var(--space-3);
-}
-
 .error {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--danger);
 }
 
-.or {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-
-.or span {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-
 .join {
   display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--button-secondary-bg);
+}
+
+.code {
+  width: 11.25rem;
+  min-width: 0;
+  height: 2rem;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  /* 16px: a phone does not zoom into it. */
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  outline: none;
+}
+
+.code::placeholder {
+  color: var(--text-muted);
+}
+
+.code:not(:placeholder-shown) {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.join:focus-within {
+  box-shadow: inset 0 0 0 1px var(--field-focus-line);
+}
+
+/* What a room can show. */
+.sources {
+  padding: 6rem var(--space-8);
+  background: var(--frame-side);
+}
+
+.sourcesInner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3rem;
+  max-width: 74rem;
+  margin: 0 auto;
+}
+
+.sourcesText {
+  display: flex;
+  flex: 1 1 20rem;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.sourcesTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.875rem, 4vw, 3rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.stickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Brand stickers: the colors of the shimmer, on purpose. */
+.sticker {
+  padding: var(--space-4) var(--space-6);
+  border-radius: 1.125rem;
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  font-weight: 700;
+  rotate: var(--tilt);
+  animation: wiggle 5s var(--ease-in-out) var(--delay, 0s) infinite;
+}
+
+.sticker[data-tone="amber"] { background: #ffb005; color: #1a1200; }
+.sticker[data-tone="red"] { background: #fa3d1d; color: #fff; }
+.sticker[data-tone="blue"] { background: #0358f7; color: #fff; }
+.sticker[data-tone="lilac"] { background: #c679c4; color: #1a0718; }
+.sticker[data-tone="mist"] { background: #e1e1fe; color: #0c0c2a; }
+
+@keyframes wiggle {
+  50% {
+    rotate: calc(var(--tilt) * -1);
+  }
+}
+
+.preview {
+  display: grid;
+  flex: 999 1 32.5rem;
+  grid-template-columns: minmax(0, 1fr) 9.375rem;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: 0.875rem;
+  border-radius: 2rem;
+  background: var(--frame-ground);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-float);
+}
+
+.stage {
+  aspect-ratio: 16 / 9;
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(60% 70% at 30% 35%, oklch(0.45 0.09 45 / 0.9), transparent 70%),
+    radial-gradient(50% 60% at 75% 70%, oklch(0.32 0.08 270 / 0.9), transparent 70%),
+    oklch(0.16 0.01 270);
+}
+
+.tiles {
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+.tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: var(--tile);
+}
+
+.tile svg {
+  width: min(4rem, 80%);
+  height: auto;
+}
+
+.tileBurst {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  margin-left: -13px;
+  animation: float 2.8s var(--ease-out) infinite;
+}
+
+@keyframes float {
+  0% {
+    opacity: 0;
+    translate: 0 10px;
+    scale: 0.6;
+  }
+
+  15% {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1.1;
+  }
+
+  80% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    translate: 0 -24px;
+    scale: 0.9;
+  }
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  width: 100%;
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-8) var(--space-12);
+  box-sizing: border-box;
+  color: var(--text-muted);
+}
+
+.footerMark {
+  width: 5.5rem;
+  height: auto;
+}
+
+@media (max-width: 48rem) {
+  .preview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+
+  .tile {
+    aspect-ratio: 1;
+  }
 }
 
 @media (max-width: 30rem) {
   .header {
-    padding: var(--space-3) var(--space-5);
+    padding: var(--space-4) var(--space-5);
   }
 
-  .main {
-    justify-content: flex-start;
-    gap: var(--space-10);
-    padding-top: var(--space-12);
+  .discord {
+    padding: 0 var(--space-5);
+    font-size: var(--text-sm);
+  }
+
+  .hero {
+    gap: var(--space-8);
+    padding: var(--space-10) var(--space-5) 0;
+  }
+
+  .create {
+    height: 4rem;
+    padding: 0 var(--space-10);
+    font-size: 1.375rem;
+  }
+
+  .sources {
+    padding: var(--space-16) var(--space-5);
+  }
+
+  .footer {
+    padding: var(--space-8) var(--space-5) var(--space-10);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .heroMark,
+  .sticker,
+  .tileBurst {
+    animation: none;
+  }
+
   .reveal {
     animation-name: fade;
     animation-duration: var(--duration-fast);
