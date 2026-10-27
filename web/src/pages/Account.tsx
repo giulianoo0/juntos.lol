@@ -1,9 +1,10 @@
-import { Check, Clock, Film, Lock, LogOut, Monitor, Pencil, Plus, Radio, Send, X } from 'lucide-react'
+import { Check, Clock, Film, History, Lock, LogOut, Monitor, Pencil, Plus, Radio, Send, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
   acceptFriend,
   discordLoginUrl,
+  profilePath,
   dropFriendRequest,
   fetchFriendRequests,
   fetchFriends,
@@ -17,6 +18,7 @@ import {
   useMe,
   type AccountCard,
   type AccountStats,
+  type DiscordNames,
   type Friend,
   type FriendRequests,
   type HistoryEntry,
@@ -40,6 +42,8 @@ import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
 import { SiteHeader } from '../components/SiteHeader'
 import styles from './Account.module.css'
+
+type DiscordVisibility = Me['discordVisibility']
 
 const errorText: Record<string, string> = {
   user_not_found: 'account.userNotFound',
@@ -66,9 +70,16 @@ function whenLabel(iso: string, t: Translator, now = new Date()): string {
 
 const stagger = (index: number) => ({ '--i': index }) as CSSProperties
 
+/** The old `/u/:id` address, kept for links already out there. */
+export function LegacyProfile() {
+  const { id } = useParams()
+  return <Navigate to={`/c/${id ?? ''}`} replace />
+}
+
 /**
- * An account: `/conta` is one's own (nickname, avatar, friends, who sees
- * the history, sign out), `/u/:id` anyone's, as much as they show.
+ * An account at `/c/:id`: one's own (nickname, avatar, friends, who sees
+ * the history and the Discord, sign out) or anyone's, as much as they show.
+ * `/conta` sends to one's own, or asks to sign in.
  */
 export function AccountPage() {
   const t = useT()
@@ -81,7 +92,9 @@ export function AccountPage() {
     body = <Empty icon={<X size={28} />} title={t('account.notFound')} />
   } else if (loading) {
     body = <AccountSkeleton panels />
-  } else if (me && (wanted === null || wanted === me.id)) {
+  } else if (me && wanted === null) {
+    return <Navigate to={profilePath(me.id)} replace />
+  } else if (me && wanted === me.id) {
     body = <OwnAccount me={me} />
   } else if (wanted !== null) {
     body = <OtherAccount id={wanted} />
@@ -99,7 +112,7 @@ export function AccountPage() {
 
   return (
     <div className={styles.page}>
-      <SiteHeader you={Boolean(me && wanted !== null && wanted !== me.id)} />
+      <SiteHeader you={Boolean(me && wanted !== me.id)} />
       <main className={styles.main}>{body}</main>
     </div>
   )
@@ -128,13 +141,13 @@ function OwnAccount({ me }: { me: Me }) {
   useEffect(() => { void load() }, [load])
 
   const signOut = async () => {
-    await logout().catch(() => undefined)
     navigate('/')
+    await logout().catch(() => undefined)
   }
 
   return (
     <div className={styles.layout}>
-      <IdentityCard account={me} stats={me.stats} own>
+      <IdentityCard account={me} stats={me.stats} discord={me.discord} own>
         <Pill tone="soft" size="md" icon={<LogOut size={15} />} onClick={() => { void signOut() }}>{t('account.logout')}</Pill>
       </IdentityCard>
       <div className={styles.column}>
@@ -145,7 +158,7 @@ function OwnAccount({ me }: { me: Me }) {
         ) : (
           <>
             <FriendsPanel friends={friends} requests={requests} reload={load} />
-            <HistoryPanel history={history} loading={history === null} visibility={me.visibility} own />
+            <HistoryPanel history={history} loading={history === null} visibility={me.visibility} discordVisibility={me.discordVisibility} own />
           </>
         )}
       </div>
@@ -177,7 +190,7 @@ function OtherAccount({ id }: { id: number }) {
   if (profile === null) return <Empty icon={<X size={28} />} title={t('account.notFound')} />
   return (
     <div className={styles.layout}>
-      <IdentityCard account={profile} stats={profile.stats} />
+      <IdentityCard account={profile} stats={profile.stats} discord={profile.discord} />
       <div className={styles.column}>
         <HistoryPanel history={history ?? null} />
       </div>
@@ -186,9 +199,11 @@ function OtherAccount({ id }: { id: number }) {
 }
 
 /** The big card on the left: the creature, the number, the nickname and the counts. */
-function IdentityCard({ account, stats, own = false, children }: {
+function IdentityCard({ account, stats, discord, own = false, children }: {
   account: AccountCard
   stats?: AccountStats
+  /** The Discord names, when the account shows them or it is one's own. */
+  discord?: DiscordNames
   own?: boolean
   children?: ReactNode
 }) {
@@ -245,10 +260,10 @@ function IdentityCard({ account, stats, own = false, children }: {
           </div>
         )}
       </div>
-      {own ? (
+      {discord || own ? (
         <span className={styles.discordChip}>
           <DiscordGlyph size={16} />
-          Discord
+          {discord ? `@${discord.username}` : 'Discord'}
         </span>
       ) : null}
       {stats ? (
@@ -310,7 +325,7 @@ function AvatarDialog({ open, onOpenChange, avatar }: { open: boolean; onOpenCha
 function Person({ person, index, dim = false, children }: { person: AccountCard; index: number; dim?: boolean; children?: ReactNode }) {
   return (
     <li className={styles.person} data-dim={dim || undefined} style={stagger(index)}>
-      <Link className={styles.personLink} to={`/u/${person.id}`}>
+      <Link className={styles.personLink} to={profilePath(person.id)}>
         <AvatarFace avatar={person.avatar} seed={person.id} size={44} still={dim} />
         <span className={styles.personName}>
           {person.nickname} <span className={styles.personNumber}>#{person.id}</span>
@@ -472,14 +487,16 @@ const KIND_ICON: Record<string, ReactNode> = {
   live: <Radio size={22} />,
 }
 
-function HistoryPanel({ history, loading = false, visibility, own = false }: {
+function HistoryPanel({ history, loading = false, visibility, discordVisibility, own = false }: {
   history: HistoryEntry[] | null
   loading?: boolean
   visibility?: Visibility
+  discordVisibility?: DiscordVisibility
   own?: boolean
 }) {
   const t = useT()
-  const [shown, setShown] = useState<Visibility>(visibility ?? 'friends')
+  const [shown, setShown] = useState<Visibility>(visibility ?? 'private')
+  const [discordShown, setDiscordShown] = useState<DiscordVisibility>(discordVisibility ?? 'private')
 
   const choose = (next: Visibility) => {
     const before = shown
@@ -487,21 +504,44 @@ function HistoryPanel({ history, loading = false, visibility, own = false }: {
     updateMe({ visibility: next }).catch(() => setShown(before))
   }
 
+  const chooseDiscord = (next: DiscordVisibility) => {
+    const before = discordShown
+    setDiscordShown(next)
+    updateMe({ discordVisibility: next }).catch(() => setDiscordShown(before))
+  }
+
   return (
     <section className={styles.panel} aria-labelledby="history-title" aria-busy={loading || undefined}>
       <div className={styles.panelHead}>
         <h2 id="history-title" className={styles.panelTitle}>{t('account.history')}</h2>
         {own ? (
-          <Segmented
-            label={t('account.visibility')}
-            value={shown}
-            onChange={choose}
-            options={[
-              { value: 'public', label: t('account.public') },
-              { value: 'friends', label: t('account.friendsOnly') },
-              { value: 'private', label: t('account.private') },
-            ]}
-          />
+          <div className={styles.privacy}>
+            <div className={styles.privacyItem}>
+              <Tip label={t('account.visibility')}><History size={16} className={styles.quiet} aria-hidden="true" /></Tip>
+              <Segmented
+                label={t('account.visibility')}
+                value={shown}
+                onChange={choose}
+                options={[
+                  { value: 'public', label: t('account.public') },
+                  { value: 'friends', label: t('account.friendsOnly') },
+                  { value: 'private', label: t('account.private') },
+                ]}
+              />
+            </div>
+            <div className={styles.privacyItem}>
+              <Tip label={t('account.discordVisibility')}><span className={styles.privacyDiscord}><DiscordGlyph size={16} /></span></Tip>
+              <Segmented
+                label={t('account.discordVisibility')}
+                value={discordShown}
+                onChange={chooseDiscord}
+                options={[
+                  { value: 'public', label: t('account.public') },
+                  { value: 'private', label: t('account.private') },
+                ]}
+              />
+            </div>
+          </div>
         ) : null}
       </div>
       {loading ? (

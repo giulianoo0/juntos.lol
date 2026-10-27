@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock } from '../model'
+import { profilePath } from '../../account'
 import { Segmented } from '../../ui/Segmented'
 import { useTheme, type Theme } from '../../ui/theme'
 import { REACTIONS, splitReactions } from '../reactions'
@@ -202,7 +203,7 @@ export function DevRoom() {
       kick: (id) => setPeople((list) => list.filter((person) => person.id !== id)),
       setAccess: (mode) => setJoinMode(mode),
       closeStage: (stage) => setStages((list) => list.filter((item) => item.id !== stage.id)),
-      openProfile: (accountId) => navigate(`/u/${accountId}`),
+      openProfile: (accountId) => navigate(profilePath(accountId)),
     },
     slots: {
       renderVideo: (memberId) => {

@@ -7,7 +7,8 @@ import type { CreateRoomInput } from './pages/Home'
 
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })))
 const AccountPage = lazy(() => import('./pages/Account').then((module) => ({ default: module.AccountPage })))
-const DevRoom = lazy(() => import('./room/ui/DevRoom').then((module) => ({ default: module.DevRoom })))
+const LegacyProfile = lazy(() => import('./pages/Account').then((module) => ({ default: module.LegacyProfile })))
+const DevRoom =lazy(() => import('./room/ui/DevRoom').then((module) => ({ default: module.DevRoom })))
 
 async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
   const { createEmptyRoom } = await import('./upload')
@@ -26,7 +27,8 @@ export default function App() {
           <Route path="/" element={<Home createRoom={createRoom} />} />
           <Route path="/room/:id" element={null} />
           <Route path="/conta" element={<AccountPage />} />
-          <Route path="/u/:id" element={<AccountPage />} />
+          <Route path="/c/:id" element={<AccountPage />} />
+          <Route path="/u/:id" element={<LegacyProfile />} />
           <Route path="/dev/sala" element={<DevRoom />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

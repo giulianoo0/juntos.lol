@@ -24,7 +24,7 @@ import { claimOwnerFromHash, fetchRoomPreview, requestJoinTicket, setRoomAccess,
 import { useLocalMedia } from '../call/useLocalMedia'
 import { localLevel } from '../call/media'
 import { voiceLevel } from '../call/speaking'
-import { discordLoginUrl, updateMe, useMe } from '../account'
+import { discordLoginUrl, profilePath, updateMe, useMe } from '../account'
 import { serializeAvatar } from '../mascot'
 import { avatarOf, loadPickedAvatar, savePickedAvatar } from '../room/avatar'
 import { useCall, type CallMessage } from '../call/useCall'
@@ -886,7 +886,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         if (stage.kind === 'screen' && stage.ownerId === sync.memberId) { screenShare.stop(); return }
         sync.closeStage(stage.kind, stage.kind === 'screen' ? stage.ownerId : undefined)
       },
-      openProfile: (accountId) => navigate(`/u/${accountId}`),
+      openProfile: (accountId) => navigate(profilePath(accountId)),
     },
     slots: {
       renderVideo: (memberId) => <CallVideo memberId={memberId} />,

@@ -1,6 +1,7 @@
 import { useLocation } from 'react-router-dom'
 import { AvatarFace } from '../account/AvatarFace'
-import { discordLoginUrl, useMe } from '../account'
+import { discordLoginUrl, profilePath, useMe } from '../account'
+import { NotificationBell } from '../account/NotificationBell'
 import { useT } from '../i18n/useT'
 import { HeroWordmark } from '../pages/home/Wordmark'
 import { arrive } from '../ui/arrive'
@@ -27,12 +28,17 @@ export function SiteHeader({ logo = true, you = true }: {
           <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} />
         </MorphLink>
       ) : <span />}
-      {!you ? null : me ? (
-        <MorphLink className={`${styles.me} ${arrive}`} to="/conta" aria-label={`${me.nickname} #${me.id}`}>
-          <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
-          <span className={styles.number}>#{me.id}</span>
-        </MorphLink>
-      ) : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
+      {me ? (
+        <div className={styles.you}>
+          <NotificationBell />
+          {you ? (
+            <MorphLink className={`${styles.me} ${arrive}`} to={profilePath(me.id)} aria-label={`${me.nickname} #${me.id}`}>
+              <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
+              <span className={styles.number}>#{me.id}</span>
+            </MorphLink>
+          ) : null}
+        </div>
+      ) : !you ? null : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
         <a className={`${styles.discord} ${arrive}`} href={discordLoginUrl(location.pathname)}>
           <DiscordGlyph size={18} />
           {t('landing.signIn')}

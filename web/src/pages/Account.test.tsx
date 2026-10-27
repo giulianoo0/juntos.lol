@@ -3,11 +3,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { refreshMe } from '../account'
 import { ToastProvider } from '../ui/Toast'
-import { AccountPage } from './Account'
+import { AccountPage, LegacyProfile } from './Account'
 
 const respond = (status: number, body?: unknown) => Promise.resolve(new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
 
-const me = { id: 128, nickname: 'iag', avatar: 'fox.bowtie', visibility: 'friends', createdAt: '2026-10-01T00:00:00Z', stats: { sessions: 41, hours: 63, friends: 2 } }
+const me = { id: 128, nickname: 'iag', avatar: 'fox.bowtie', visibility: 'friends', discordVisibility: 'private', discord: { username: 'iag.x', globalName: 'Iag' }, createdAt: '2026-10-01T00:00:00Z', stats: { sessions: 41, hours: 63, friends: 2 } }
 const lu = { id: 7, nickname: 'lu', avatar: 'frog.crown' }
 const dudu = { id: 54, nickname: 'dudu', avatar: 'bear.cap' }
 const caio = { id: 301, nickname: 'caio', avatar: '' }
@@ -43,7 +43,8 @@ function renderAt(path: string) {
         <Routes>
           <Route path="/" element={<p>início</p>} />
           <Route path="/conta" element={<AccountPage />} />
-          <Route path="/u/:id" element={<AccountPage />} />
+          <Route path="/c/:id" element={<AccountPage />} />
+          <Route path="/u/:id" element={<LegacyProfile />} />
           <Route path="/room/:id" element={<p>sala</p>} />
         </Routes>
       </MemoryRouter>
@@ -89,8 +90,22 @@ describe('AccountPage', () => {
 
   it('chooses who sees the history', async () => {
     const calls = await mine()
-    fireEvent.click(screen.getByRole('radio', { name: 'Só eu' }))
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Quem vê o histórico' })).getByRole('radio', { name: 'Só eu' }))
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/me', body: { visibility: 'private' } }))
+  })
+
+  it('shows its own Discord name and chooses who sees it', async () => {
+    const calls = await mine()
+    expect(screen.getByText('@iag.x')).toBeInTheDocument()
+    const discord = screen.getByRole('radiogroup', { name: 'Quem vê o Discord' })
+    expect(within(discord).getByRole('radio', { name: 'Só eu' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(discord).getByRole('radio', { name: 'Público' }))
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/me', body: { discordVisibility: 'public' } }))
+  })
+
+  it('sends /conta to its own /c/ page', async () => {
+    await mine()
+    expect(screen.getByRole('heading', { name: 'iag' })).toBeInTheDocument()
   })
 
   it('leads into the room a friend is in, and answers a request', async () => {
@@ -179,6 +194,14 @@ describe('AccountPage', () => {
     expect(screen.getByRole('heading', { name: 'lu' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Mudar o avatar' })).toBeNull()
     expect(screen.queryByText('sessões')).toBeNull()
+    expect(screen.queryByText(/^@/)).toBeNull()
+  })
+
+  it('shows the Discord name of someone who made it public', async () => {
+    serve(true, { 'GET /api/users/7': () => respond(200, { ...lu, discord: { username: 'lu.discord' } }) })
+    await refreshMe()
+    renderAt('/c/7')
+    expect(await screen.findByText('@lu.discord')).toBeInTheDocument()
   })
 
   it('offers Discord to someone signed out, back to this page', async () => {

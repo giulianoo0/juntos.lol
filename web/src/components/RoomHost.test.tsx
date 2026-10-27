@@ -22,7 +22,7 @@ describe('RoomHost', () => {
     render(<MemoryRouter initialEntries={['/room/abc']}><Nav /><RoomHost /></MemoryRouter>)
     expect(await screen.findByText('sala abc')).toBeInTheDocument()
 
-    act(() => go('/u/7'))
+    act(() => go('/c/7'))
     expect(screen.getByText('sala abc')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Voltar para a sala' }))
     expect(screen.queryByRole('button', { name: 'Voltar para a sala' })).toBeNull()

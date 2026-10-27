@@ -21,8 +21,17 @@ export interface AccountStats {
   friends: number
 }
 
+/** The Discord names behind an account, as Discord last said them at sign-in. */
+export interface DiscordNames {
+  username: string
+  globalName?: string
+}
+
 export interface Me extends AccountCard {
   visibility: Visibility
+  /** Who sees the Discord names on the profile: everyone, or only oneself. */
+  discordVisibility: 'public' | 'private'
+  discord?: DiscordNames
   createdAt: string
   stats: AccountStats
 }
@@ -30,6 +39,8 @@ export interface Me extends AccountCard {
 /** A profile; stats are left out when the account does not show them to the viewer. */
 export interface Profile extends AccountCard {
   stats?: AccountStats
+  /** Only when the account shows it, or it is one's own. */
+  discord?: DiscordNames
 }
 
 export interface Friend extends AccountCard {
@@ -56,6 +67,21 @@ export interface MeChanges {
   nickname?: string
   avatar?: string
   visibility?: Visibility
+  discordVisibility?: 'public' | 'private'
+}
+
+/** A friend calling one into a room. */
+export interface RoomInvite {
+  from: AccountCard
+  roomId: string
+  roomName?: string
+  at: string
+}
+
+/** What waits on the signed-in account: requests to answer and calls into rooms. */
+export interface Notifications {
+  friendRequests: AccountCard[]
+  invites: RoomInvite[]
 }
 
 const json = { 'Content-Type': 'application/json' }
@@ -63,6 +89,11 @@ const json = { 'Content-Type': 'application/json' }
 async function errorCode(response: Response): Promise<string> {
   const body = await response.json().catch(() => null) as { error?: string } | null
   return body?.error ?? 'failed'
+}
+
+/** An account's page. */
+export function profilePath(id: number): string {
+  return `/c/${id}`
 }
 
 /** Where to send the browser to sign in; it comes back to `next`, a path on this site. */
@@ -128,6 +159,22 @@ export async function dropFriendRequest(id: number): Promise<void> {
 
 export async function removeFriend(id: number): Promise<void> {
   const response = await fetch(`/api/friends/${id}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await errorCode(response))
+}
+
+export async function fetchNotifications(): Promise<Notifications> {
+  const response = await fetch('/api/notifications')
+  if (!response.ok) throw new Error(await errorCode(response))
+  const body = await response.json() as Partial<Notifications> | null
+  return {
+    friendRequests: Array.isArray(body?.friendRequests) ? body.friendRequests : [],
+    invites: Array.isArray(body?.invites) ? body.invites : [],
+  }
+}
+
+/** Clears the call from friend `from`, joined or not. */
+export async function dismissInvite(from: number): Promise<void> {
+  const response = await fetch(`/api/invites/${from}`, { method: 'DELETE' })
   if (!response.ok) throw new Error(await errorCode(response))
 }
 
