@@ -124,6 +124,7 @@ export const ptBR: Record<string, string> = {
   'room.error': 'Falha ao processar o vídeo',
   'room.expired': 'Esta sala expirou.',
   'room.new': 'Criar nova sala',
+  'room.backToRoom': 'Voltar para a sala',
   'room.copyReport': 'Copiar o erro',
   'room.copyReportDone': 'Copiado',
   'room.copyReportFailed': 'Não deu para copiar',

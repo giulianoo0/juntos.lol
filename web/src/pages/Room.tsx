@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { CopyErrorReport } from '../components/CopyErrorReport'
@@ -17,7 +17,6 @@ import { JlocalPicker } from '../screen/JlocalPicker'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
 import { useStageHosts } from '../room/stageHosts'
-import { AccountPage } from './Account'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
@@ -89,13 +88,18 @@ const PREPARING_POLL_MS = 3_000
 // enough to outlast a cold seek, well short of the server's claim sweep.
 const PRODUCER_ALIVE_MS = 90_000
 
-export function RoomPage() {
-  const { id = '' } = useParams()
+/** A room, mounted above the routes: full screen on its own route, and
+    once you are in the call, waiting in the corner while you browse. */
+export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: boolean) => void }) {
   const t = useT()
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [preview, setPreview] = useState<RoomPreview | null>(null)
   const [missing, setMissing] = useState(false)
   const [entered, setEntered] = useState<{ nickname: string; mic: boolean; cam: boolean } | null>(null)
+  useEffect(() => {
+    onInCall(entered !== null)
+    return () => onInCall(false)
+  }, [entered, onInCall])
   const [entryError, setEntryError] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const owner = useMemo(() => claimOwnerFromHash(id) || ownerTokenFor(id) !== '', [id])
@@ -340,6 +344,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
 }) {
   const room = useMemo(() => initialRoom ?? emptyRoom(roomId), [initialRoom, roomId])
   const t = useT()
+  const navigate = useNavigate()
   const videoRef = useRef<HTMLVideoElement>(null)
   const mediaOffsetMsRef = useRef(0)
   const playerSeekRef = useRef<((seconds: number) => void) | null>(null)
@@ -881,11 +886,11 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         if (stage.kind === 'screen' && stage.ownerId === sync.memberId) { screenShare.stop(); return }
         sync.closeStage(stage.kind, stage.kind === 'screen' ? stage.ownerId : undefined)
       },
+      openProfile: (accountId) => navigate(`/u/${accountId}`),
     },
     slots: {
       renderVideo: (memberId) => <CallVideo memberId={memberId} />,
       renderStage: (stage) => hosts.slot(stage.id),
-      renderProfile: (accountId) => <AccountPage id={accountId} embedded />,
       renderStageTag: (stage) => stage.kind === 'media' && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
         ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
         : null,

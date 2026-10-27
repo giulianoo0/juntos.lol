@@ -11,7 +11,7 @@ const person = (id: string, name: string, extra: Partial<Person> = {}): Person =
 function model(overrides: Partial<RoomViewModel> = {}): RoomViewModel {
   const actions = Object.fromEntries([
     'setMic', 'setCam', 'share', 'react', 'sendChat', 'leave', 'copyLink', 'spotlight', 'answerRequest',
-    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'makeHost', 'setAccess', 'closeStage',
+    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'makeHost', 'setAccess', 'closeStage', 'openProfile',
   ].map((name) => [name, vi.fn()])) as unknown as RoomActions
   return {
     name: 'Sessão de sexta',
@@ -46,15 +46,12 @@ describe('RoomView', () => {
     expect(vm.actions.answerRequest).toHaveBeenCalledWith('r1', true)
   })
 
-  it('opens someone\'s profile from a right click, the call waiting in the corner', async () => {
-    const base = model({ people: [person('giu', 'Giu', { host: true }), person('ana', 'Ana', { accountId: 7 })] })
-    const vm = model({ ...base, slots: { ...base.slots, renderProfile: (id) => <p>perfil #{id}</p> } })
+  it('opens someone\'s profile from a right click', async () => {
+    const vm = model({ people: [person('giu', 'Giu', { host: true }), person('ana', 'Ana', { accountId: 7 })] })
     render(<RoomView vm={vm} />)
     fireEvent.contextMenu(document.querySelector('[data-member="ana"]')!)
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Ver perfil' }))
-    expect(await screen.findByText('perfil #7')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Voltar para a sala' }))
-    expect(screen.queryByRole('button', { name: 'Voltar para a sala' })).toBeNull()
+    expect(vm.actions.openProfile).toHaveBeenCalledWith(7)
   })
 
   it('shows a guest no requests to answer', () => {

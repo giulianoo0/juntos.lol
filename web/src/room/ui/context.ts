@@ -15,7 +15,7 @@ export interface RoomUi {
   /** Whose ids are in the spotlight, to mark their tile. */
   spotlit: Target | null
   nameOf: (memberId: string) => string
-  /** Shrinks the call into the corner over someone's profile. */
+  /** Opens someone's profile; the call waits in the corner meanwhile. */
   viewProfile: (accountId: number) => void
 }
 

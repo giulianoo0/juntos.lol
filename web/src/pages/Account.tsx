@@ -70,16 +70,11 @@ const stagger = (index: number) => ({ '--i': index }) as CSSProperties
  * An account: `/conta` is one's own (nickname, avatar, friends, who sees
  * the history, sign out), `/u/:id` anyone's, as much as they show.
  */
-export function AccountPage({ id, embedded = false }: {
-  /** Someone's account shown outside its route (behind a call in the corner). */
-  id?: number
-  /** Without the site's header: the page sits under a room. */
-  embedded?: boolean
-} = {}) {
+export function AccountPage() {
   const t = useT()
   const { id: param } = useParams()
   const { me, loading } = useMe()
-  const wanted = id ?? (param === undefined ? null : Number(param))
+  const wanted = param === undefined ? null : Number(param)
 
   let body: ReactNode = null
   if (wanted !== null && (!Number.isInteger(wanted) || wanted < 1)) {
@@ -104,7 +99,7 @@ export function AccountPage({ id, embedded = false }: {
 
   return (
     <div className={styles.page}>
-      {embedded ? null : <SiteHeader you={Boolean(me && wanted !== null && wanted !== me.id)} />}
+      <SiteHeader you={Boolean(me && wanted !== null && wanted !== me.id)} />
       <main className={styles.main}>{body}</main>
     </div>
   )

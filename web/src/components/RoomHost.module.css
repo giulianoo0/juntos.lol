@@ -1,0 +1,65 @@
+/* The room as the page, or as a card in the corner over another page: it
+   closes on the settle and opens back on the pop, by `scale` and
+   `translate` alone so the live call keeps its frames. */
+.host {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  overflow: hidden;
+  background: var(--frame-ground);
+  transform-origin: 100% 100%;
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    translate var(--duration-spring-pop) var(--ease-spring-pop);
+}
+
+.host[data-away] {
+  scale: var(--mini);
+  translate: calc(-1 * var(--space-6)) calc(-1 * var(--space-6));
+  border-radius: calc(var(--radius-2xl) / var(--mini));
+  box-shadow: 0 0 0 calc(1px / var(--mini)) var(--line), 0 calc(24px / var(--mini)) calc(60px / var(--mini)) rgb(0 0 0 / 0.45);
+  transition-duration: var(--duration-spring-settle);
+  transition-timing-function: var(--ease-spring-settle);
+}
+
+.back {
+  position: fixed;
+  z-index: 51;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  width: calc(100vw * var(--mini));
+  height: calc(100dvh * var(--mini));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-2xl);
+  background: none;
+  cursor: pointer;
+}
+
+.back:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .back:hover {
+    box-shadow: 0 0 0 2px var(--brand);
+  }
+}
+
+:root {
+  --mini: 0.22;
+}
+
+@media (max-width: 56rem) {
+  :root {
+    --mini: 0.36;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .host {
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--ease-out);
+  }
+}

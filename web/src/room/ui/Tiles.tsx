@@ -96,13 +96,13 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
       <ReactionBursts bursts={reactions.bursts} finish={reactions.finish} small={size === 'thumb' && avatar < 64} />
       <div className={styles.name}>
         {muted ? <MicOff size={13} aria-label={strings.micOff} role="img" /> : null}
-        <span className={styles.nameText}>{person.name}</span>
-        {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
         {person.host ? (
           <Tip label={strings.host}>
-            <Crown size={12} className={styles.crown} aria-hidden="true" />
+            <Crown size={12} className={styles.crown} fill="currentColor" aria-hidden="true" />
           </Tip>
         ) : null}
+        <span className={styles.nameText}>{person.name}</span>
+        {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
       </div>
       {size !== 'thumb' ? (
         <div className={styles.corner}>

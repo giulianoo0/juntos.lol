@@ -124,6 +124,7 @@ export const en: Record<string, string> = {
   'room.error': 'Video processing failed',
   'room.expired': 'This room has expired.',
   'room.new': 'Create new room',
+  'room.backToRoom': 'Back to the room',
   'room.copyReport': 'Copy the error',
   'room.copyReportDone': 'Copied',
   'room.copyReportFailed': 'Could not copy',

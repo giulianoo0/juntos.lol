@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
@@ -83,7 +83,7 @@ function renderRoom() {
   return render(
     <ToastProvider>
       <MemoryRouter initialEntries={['/room/abc123']}>
-        <Routes><Route path="/room/:id" element={<RoomPage />} /></Routes>
+        <RoomPage id="abc123" onInCall={() => {}} />
       </MemoryRouter>
     </ToastProvider>,
   )

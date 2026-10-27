@@ -76,10 +76,10 @@ function PeopleList() {
           <PersonContextMenu key={person.id} person={person} render={<li className={styles.person} />}>
             <Face id={person.id} avatar={person.avatar} size={32} />
             <span className={styles.personName}>
+              {person.host ? <Tip label={strings.host}><Crown size={13} className={styles.crown} fill="currentColor" aria-hidden="true" /></Tip> : null}
               <span className={styles.nameText}>{person.name}</span>
               {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
               {self ? <span className={styles.you}>{strings.you}</span> : null}
-              {person.host ? <Tip label={strings.host}><Crown size={13} className={styles.mark} aria-hidden="true" /></Tip> : null}
             </span>
             {person.cam && !person.hostCamOff ? null : (
               <Tip label={strings.camOff}><VideoOff size={15} className={styles.mark} aria-hidden="true" /></Tip>

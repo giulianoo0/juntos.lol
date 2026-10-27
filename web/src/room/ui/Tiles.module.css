@@ -132,11 +132,9 @@
 }
 
 .crown {
-  color: var(--on-scrim-muted);
-}
-
-.tile[data-size="thumb"]:not([data-camera]) .crown {
-  color: var(--text-faint);
+  display: block;
+  flex: none;
+  color: var(--amber-500);
 }
 
 .corner {

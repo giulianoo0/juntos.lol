@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock } from '../model'
 import { Segmented } from '../../ui/Segmented'
@@ -7,7 +7,6 @@ import { useTheme, type Theme } from '../../ui/theme'
 import { REACTIONS, splitReactions } from '../reactions'
 import { EntryScreen, WaitingRoom } from './Entry'
 import { RoomView } from './RoomView'
-import { AccountPage } from '../../pages/Account'
 import styles from './DevRoom.module.css'
 
 /* /dev/sala: the room with a fake model, to see every state without a
@@ -104,6 +103,7 @@ function parseSpot(value: string | null, people: Person[]): Spotlight | null {
 
 export function DevRoom() {
   const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
   const { theme, setTheme } = useTheme()
   const asked = params.get('theme')
   useEffect(() => {
@@ -202,6 +202,7 @@ export function DevRoom() {
       kick: (id) => setPeople((list) => list.filter((person) => person.id !== id)),
       setAccess: (mode) => setJoinMode(mode),
       closeStage: (stage) => setStages((list) => list.filter((item) => item.id !== stage.id)),
+      openProfile: (accountId) => navigate(`/u/${accountId}`),
     },
     slots: {
       renderVideo: (memberId) => {
@@ -209,7 +210,6 @@ export function DevRoom() {
         return <FakeCamera name={people[index]?.name ?? ''} hue={(index * 47 + 200) % 360} />
       },
       renderStage: (stage, size) => <FakeStage stage={stage} size={size} />,
-      renderProfile: (accountId) => <AccountPage id={accountId} embedded />,
       renderShare: (source, close) => (source === 'torrent' || source === 'youtube' || source === 'catalog' ? <SharePicker source={source} close={close} /> : null),
     },
     // `update` and the setters are stable enough for a dev page.

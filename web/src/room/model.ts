@@ -103,6 +103,8 @@ export interface RoomActions {
   setAccess: (mode: JoinMode, password?: string) => void
   /** Host, or the stage's owner. */
   closeStage: (stage: Stage) => void
+  /** Someone's account page; the call waits in the corner meanwhile. */
+  openProfile: (accountId: number) => void
 }
 
 export interface RoomSlots {
@@ -113,8 +115,6 @@ export interface RoomSlots {
   renderStage: (stage: Stage, size: 'focus' | 'thumb') => ReactNode
   /** A small reading beside the stage's tags, shown on hover (the buffer). */
   renderStageTag?: (stage: Stage) => ReactNode
-  /** Someone's account page, behind the call while it waits in the corner. */
-  renderProfile?: (accountId: number) => ReactNode
   /** The picker a "Compartilhar" pick opens (torrent, YouTube, catálogo),
       in a dialog; `null` when the pick needs no picker (tela, arquivo). */
   renderShare?: (source: ShareSource, close: () => void) => ReactNode
