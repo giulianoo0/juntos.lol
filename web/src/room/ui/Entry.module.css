@@ -1,9 +1,9 @@
 .page {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-10, 2.5rem);
+  display: grid;
+  grid-template-columns: minmax(0, 24rem) minmax(0, 24rem);
+  place-content: center;
+  align-items: stretch;
+  gap: var(--space-8);
   min-height: 100dvh;
   padding: var(--space-8);
   box-sizing: border-box;
@@ -15,15 +15,13 @@
 
 /* Your mascot on its own ground, the pills under it. */
 .stage {
-  align-self: stretch;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-6);
+  gap: var(--space-5);
   width: 100%;
-  max-width: 30rem;
-  padding: var(--space-8);
+  padding: var(--space-6);
   box-sizing: border-box;
   border-radius: var(--radius-3xl);
   background: radial-gradient(120% 90% at 50% 100%, color-mix(in oklab, var(--primary) 12%, var(--tile)) 0%, var(--tile) 62%);
@@ -106,15 +104,15 @@
 }
 
 .looks [role="radiogroup"]:last-child {
-  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
 .form {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: var(--space-5);
   width: 100%;
-  max-width: 24rem;
 }
 
 /* Six creatures a row: the whole crowd fits beside the stage. */
@@ -241,5 +239,13 @@
   .bob,
   .camera {
     animation: none;
+  }
+}
+
+/* A phone: the stage over the form, one column. */
+@media (max-width: 52rem) {
+  .page {
+    grid-template-columns: minmax(0, 26rem);
+    padding: var(--space-5);
   }
 }

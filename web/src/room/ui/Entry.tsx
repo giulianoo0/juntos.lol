@@ -15,7 +15,7 @@ import styles from './Entry.module.css'
 
 /** How long the mascot beams at a new look. */
 const CHEER_MS = 1_200
-const HERO_SIZE = 200
+const HERO_SIZE = 150
 
 type Look = { x: number; y: number }
 
