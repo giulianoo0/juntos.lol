@@ -14,6 +14,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/db/dbtest"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -64,7 +65,7 @@ func newAccountRig(t *testing.T, presence fixedPresence) accountRig {
 	t.Helper()
 	_, rdb := newRedis(t)
 	rooms := room.NewStore(rdb, 5*time.Hour)
-	accounts := account.NewStore(rdb)
+	accounts := account.NewStore(dbtest.New(t))
 	cfg := config.Config{
 		PublicOrigin: "https://juntos.test", DiscordClientID: "client", DiscordClientSecret: "secret",
 		DiscordAPIBase: fakeDiscord(t).URL,
@@ -186,7 +187,7 @@ func TestDiscordLoginIsOffWithoutASecret(t *testing.T) {
 	_, rdb := newRedis(t)
 	router := gin.New()
 	RegisterAccountRoutes(router.Group("/api"), config.Config{DiscordClientID: "client", PublicOrigin: "https://juntos.test"},
-		account.NewStore(rdb), room.NewStore(rdb, time.Hour), nil)
+		account.NewStore(nil), room.NewStore(rdb, time.Hour), nil)
 
 	for _, path := range []string{"/api/auth/discord", "/api/auth/discord/callback?code=x&state=y"} {
 		w := httptest.NewRecorder()

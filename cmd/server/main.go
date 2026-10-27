@@ -18,6 +18,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/db"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/objectstore"
@@ -37,6 +38,11 @@ func main() {
 		log.Fatal(err)
 	}
 	rdb := redis.NewClient(opts)
+	pool, err := db.Open(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer pool.Close()
 	store := room.NewStore(rdb, time.Duration(cfg.RoomTTLHours)*time.Hour)
 
 	bucket, err := objectstore.NewR2(objectstore.R2Config{
@@ -58,7 +64,7 @@ func main() {
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	hub := syncapi.NewHub(store, cfg, bucket)
 	defer hub.Close()
-	accounts := account.NewStore(rdb)
+	accounts := account.NewStore(pool)
 	hub.SetAccounts(httpapi.HubAccounts(accounts))
 
 	signer, err := worker.LoadOrCreateSigner(cfg.WorkerSigningKeyFile)

@@ -30,13 +30,25 @@ func TestLoadReadsObjectStoreEndpointOverride(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	setMediaEnv(t)
 	t.Setenv("REDIS_URL", "")
+	t.Setenv("DATABASE_URL", "")
 	cfg, err := Load()
 	require.NoError(t, err)
+	require.Equal(t, "postgres://localhost:5432/juntos?sslmode=disable", cfg.DatabaseURL)
 	require.Equal(t, 8080, cfg.Port)
 	require.Equal(t, int64(51200), cfg.MaxUploadMB)
 	require.Equal(t, "web/dist", cfg.WebDir)
 	require.Equal(t, 60, cfg.RoomIdleSeconds, "an empty room is reclaimed quickly")
 	require.Equal(t, 30, cfg.RoomsPerIPPerHour, "room creation is capped")
+}
+
+func TestLoadReadsTheDatabaseURL(t *testing.T) {
+	setMediaEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://juntos:s3cret@postgres:5432/juntos")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, "postgres://juntos:s3cret@postgres:5432/juntos", cfg.DatabaseURL)
 }
 
 func TestLoadRefusesIncompleteMediaStorage(t *testing.T) {

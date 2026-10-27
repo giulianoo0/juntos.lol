@@ -1,21 +1,21 @@
 package account
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
+
+	"github.com/giulianoo0/ss/internal/db/dbtest"
 )
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { rdb.Close() })
-	return NewStore(rdb)
+	return NewStore(dbtest.New(t))
 }
 
 func TestSignInDiscordNumbersAccountsInOrderAndFindsThemAgain(t *testing.T) {
@@ -184,6 +184,10 @@ func TestInvitesKeepTheNewestPerFriendAndExpire(t *testing.T) {
 	store := newTestStore(t)
 	ctx := t.Context()
 	now := time.Date(2026, 10, 27, 20, 0, 0, 0, time.UTC)
+	for i := 1; i <= 4; i++ {
+		_, err := store.SignInDiscord(ctx, DiscordUser{ID: fmt.Sprint(i), GlobalName: fmt.Sprint("Pessoa ", i)})
+		require.NoError(t, err)
+	}
 
 	require.NoError(t, store.AddInvite(ctx, 1, RoomInvite{From: 2, RoomID: "OLDROOM1", At: now.Add(-2 * time.Minute)}))
 	require.NoError(t, store.AddInvite(ctx, 1, RoomInvite{From: 2, RoomID: "NEWROOM1", At: now.Add(-time.Minute)}))
@@ -240,4 +244,87 @@ func TestSessionsResolveToTheirAccountUntilEnded(t *testing.T) {
 	id, err = store.SessionAccount(ctx, "inventado")
 	require.NoError(t, err)
 	require.Zero(t, id)
+}
+
+func TestSessionTokenIsKeptOnlyAsItsHash(t *testing.T) {
+	pool := dbtest.New(t)
+	store := NewStore(pool)
+	ctx := t.Context()
+	ana, _ := store.SignInDiscord(ctx, DiscordUser{ID: "1", GlobalName: "Ana"})
+
+	token, err := store.StartSession(ctx, ana.ID)
+	require.NoError(t, err)
+
+	sum := sha256.Sum256([]byte(token))
+	var hashed, plain int
+	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM account_sessions WHERE token_hash = $1", sum[:]).Scan(&hashed))
+	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM account_sessions WHERE token_hash = $1", []byte(token)).Scan(&plain))
+	require.Equal(t, 1, hashed)
+	require.Zero(t, plain, "o cookie em si nunca vai para o banco")
+}
+
+func TestSessionExpiresAndUseExtendsIt(t *testing.T) {
+	pool := dbtest.New(t)
+	store := NewStore(pool)
+	ctx := t.Context()
+	ana, _ := store.SignInDiscord(ctx, DiscordUser{ID: "1", GlobalName: "Ana"})
+	token, err := store.StartSession(ctx, ana.ID)
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, "UPDATE account_sessions SET expires_at = now() + interval '1 hour'")
+	require.NoError(t, err)
+	id, err := store.SessionAccount(ctx, token)
+	require.NoError(t, err)
+	require.Equal(t, ana.ID, id)
+	var left time.Duration
+	require.NoError(t, pool.QueryRow(ctx, "SELECT extract(epoch FROM expires_at - now())::bigint * 1000000000 FROM account_sessions").Scan(&left))
+	require.Greater(t, left, 29*24*time.Hour, "usar a sessão empurra o vencimento")
+
+	_, err = pool.Exec(ctx, "UPDATE account_sessions SET expires_at = now() - interval '1 second'")
+	require.NoError(t, err)
+	id, err = store.SessionAccount(ctx, token)
+	require.NoError(t, err)
+	require.Zero(t, id, "sessão vencida não entra")
+}
+
+func TestHistoryKeepsTheNewest200(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	ana, _ := store.SignInDiscord(ctx, DiscordUser{ID: "1", GlobalName: "Ana"})
+	start := time.Date(2026, 10, 1, 20, 0, 0, 0, time.UTC)
+
+	for i := range 205 {
+		require.NoError(t, store.RecordWatch(ctx, ana.ID, Watch{RoomID: "abc", Title: fmt.Sprint(i), Kind: "file", StartedAt: start.Add(time.Duration(i) * time.Minute), DurationSec: 1}))
+	}
+
+	history, err := store.History(ctx, ana.ID, 1000)
+	require.NoError(t, err)
+	require.Len(t, history, 200)
+	require.Equal(t, "204", history[0].Title)
+	require.Equal(t, "5", history[199].Title)
+	stored, _ := store.Get(ctx, ana.ID)
+	require.Equal(t, int64(205), stored.Sessions, "o contador conta tudo, mesmo o que saiu do histórico")
+}
+
+func TestSignInDiscordAtTheSameTimeOpensOneAccount(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+
+	var wg sync.WaitGroup
+	ids := make([]int64, 8)
+	for i := range ids {
+		wg.Go(func() {
+			created, err := store.SignInDiscord(ctx, DiscordUser{ID: "111", GlobalName: "Ana"})
+			require.NoError(t, err)
+			ids[i] = created.ID
+		})
+	}
+	wg.Wait()
+
+	for _, id := range ids {
+		require.Equal(t, ids[0], id)
+	}
+	other, err := store.SignInDiscord(ctx, DiscordUser{ID: "222", GlobalName: "Bia"})
+	require.NoError(t, err)
+	require.Equal(t, ids[0]+1, other.ID, "a corrida não queima número")
 }

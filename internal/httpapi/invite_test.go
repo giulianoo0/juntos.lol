@@ -15,6 +15,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/db/dbtest"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -74,7 +75,7 @@ func newInviteRig(t *testing.T, presence fixedPresence, dms *fakeDMs, botToken s
 	t.Helper()
 	_, rdb := newRedis(t)
 	rooms := room.NewStore(rdb, 5*time.Hour)
-	accounts := account.NewStore(rdb)
+	accounts := account.NewStore(dbtest.New(t))
 	cfg := config.Config{PublicOrigin: "https://juntos.test", DiscordBotToken: botToken,
 		DiscordAPIBase: dms.serve(t).URL, RoomTTLHours: 5}
 	router := gin.New()

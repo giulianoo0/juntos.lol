@@ -14,10 +14,12 @@ import (
 const mediaLifecycleHours = 5
 
 type Config struct {
-	Port              int
-	DataDir           string
-	WebDir            string
-	RedisURL          string
+	Port     int
+	DataDir  string
+	WebDir   string
+	RedisURL string
+	// DatabaseURL is the Postgres that keeps accounts and enrolled workers.
+	DatabaseURL       string
 	MaxUploadMB       int64
 	RoomTTLHours      int
 	MaxParticipants   int
@@ -95,6 +97,7 @@ func Load() (Config, error) {
 		DataDir:           "/data",
 		WebDir:            "web/dist",
 		RedisURL:          "redis://localhost:6379",
+		DatabaseURL:       "postgres://localhost:5432/juntos?sslmode=disable",
 		MaxUploadMB:       51200,
 		RoomTTLHours:      5,
 		MaxParticipants:   20,
@@ -122,6 +125,9 @@ func Load() (Config, error) {
 	}
 	if v := os.Getenv("REDIS_URL"); v != "" {
 		cfg.RedisURL = v
+	}
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		cfg.DatabaseURL = v
 	}
 	if cfg.MaxUploadMB, err = envInt64("MAX_UPLOAD_MB", cfg.MaxUploadMB); err != nil {
 		return Config{}, err

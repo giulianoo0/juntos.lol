@@ -5,19 +5,18 @@ package account
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -103,21 +102,32 @@ const (
 )
 
 type Store struct {
-	rdb *redis.Client
+	pool *pgxpool.Pool
 }
 
-func NewStore(rdb *redis.Client) *Store { return &Store{rdb: rdb} }
+func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-func accountKey(id int64) string         { return "account:" + strconv.FormatInt(id, 10) }
-func discordKey(discordID string) string { return "account:discord:" + discordID }
-func friendsKey(id int64) string         { return accountKey(id) + ":friends" }
-func incomingKey(id int64) string        { return accountKey(id) + ":requests:in" }
-func outgoingKey(id int64) string        { return accountKey(id) + ":requests:out" }
-func historyKey(id int64) string         { return accountKey(id) + ":history" }
-func sessionKey(token string) string     { return "account:session:" + token }
-func invitesKey(id int64) string         { return accountKey(id) + ":invites" }
+const accountColumns = `id, discord_id, nickname, avatar, visibility, discord_username,
+	discord_global_name, discord_public, created_at, sessions, watched_seconds`
 
-const seqKey = "account:seq"
+func scanAccount(row pgx.Row) (Account, error) {
+	var a Account
+	var discordPublic bool
+	err := row.Scan(&a.ID, &a.DiscordID, &a.Nickname, &a.Avatar, &a.Visibility, &a.DiscordUsername,
+		&a.DiscordGlobalName, &discordPublic, &a.CreatedAt, &a.Sessions, &a.WatchedSeconds)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Account{}, ErrNotFound
+	}
+	if err != nil {
+		return Account{}, err
+	}
+	a.CreatedAt = a.CreatedAt.UTC()
+	a.DiscordVisibility = VisibilityPrivate
+	if discordPublic {
+		a.DiscordVisibility = VisibilityPublic
+	}
+	return a, nil
+}
 
 // SignInDiscord finds the account behind a Discord user, or opens the next
 // numbered one named after them. Coming back never spends a number, and
@@ -126,99 +136,63 @@ func (s *Store) SignInDiscord(ctx context.Context, user DiscordUser) (Account, e
 	if user.ID == "" {
 		return Account{}, ErrInvalid
 	}
-	names := []any{"discordUsername", cleanDiscordName(user.Username), "discordGlobalName", cleanDiscordName(user.GlobalName)}
-	if id, err := s.rdb.Get(ctx, discordKey(user.ID)).Int64(); err == nil {
-		if err := s.rdb.HSet(ctx, accountKey(id), names...).Err(); err != nil {
-			return Account{}, err
-		}
-		return s.Get(ctx, id)
-	} else if !errors.Is(err, redis.Nil) {
+	username, globalName := cleanDiscordName(user.Username), cleanDiscordName(user.GlobalName)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
 		return Account{}, err
 	}
-	id, err := s.rdb.Incr(ctx, seqKey).Result()
-	if err != nil {
+	defer tx.Rollback(ctx)
+	// Two sign-ins of the same person wait on each other here, so the second
+	// finds the first's account instead of spending a number.
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", user.ID); err != nil {
+		return Account{}, err
+	}
+	found, err := scanAccount(tx.QueryRow(ctx, `UPDATE accounts SET discord_username = $2, discord_global_name = $3
+		WHERE discord_id = $1 RETURNING `+accountColumns, user.ID, username, globalName))
+	if err == nil {
+		return found, tx.Commit(ctx)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Account{}, err
+	}
+	var id int64
+	if err := tx.QueryRow(ctx, "SELECT nextval(pg_get_serial_sequence('accounts', 'id'))").Scan(&id); err != nil {
 		return Account{}, err
 	}
 	nickname := cleanNickname(user.displayName())
 	if nickname == "" {
 		nickname = "#" + strconv.FormatInt(id, 10)
 	}
-	created := Account{ID: id, DiscordID: user.ID, Nickname: nickname, Visibility: VisibilityPrivate,
-		DiscordUsername: cleanDiscordName(user.Username), DiscordGlobalName: cleanDiscordName(user.GlobalName),
-		DiscordVisibility: VisibilityPrivate, CreatedAt: time.Now().UTC().Truncate(time.Second)}
-	fields := append([]any{
-		"discordId", user.ID, "nickname", nickname, "avatar", "",
-		"visibility", created.Visibility, "discordVisibility", created.DiscordVisibility,
-		"createdAt", created.CreatedAt.Format(time.RFC3339), "sessions", 0, "watchedSeconds", 0,
-	}, names...)
-	if err := s.rdb.HSet(ctx, accountKey(id), fields...).Err(); err != nil {
-		return Account{}, err
-	}
-	won, err := s.rdb.SetNX(ctx, discordKey(user.ID), id, 0).Result()
+	created, err := scanAccount(tx.QueryRow(ctx, `INSERT INTO accounts
+		(id, discord_id, nickname, visibility, discord_username, discord_global_name, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING `+accountColumns,
+		id, user.ID, nickname, VisibilityPrivate, username, globalName, time.Now().UTC().Truncate(time.Second)))
 	if err != nil {
 		return Account{}, err
 	}
-	if !won {
-		// Another sign-in of the same person got there first: theirs stands.
-		s.rdb.Del(ctx, accountKey(id))
-		existing, err := s.rdb.Get(ctx, discordKey(user.ID)).Int64()
-		if err != nil {
-			return Account{}, err
-		}
-		return s.Get(ctx, existing)
-	}
-	return created, nil
+	return created, tx.Commit(ctx)
 }
 
 // ByDiscord is the account a Discord user signed in as, or ErrNotFound.
 func (s *Store) ByDiscord(ctx context.Context, discordID string) (Account, error) {
-	id, err := s.rdb.Get(ctx, discordKey(discordID)).Int64()
-	if errors.Is(err, redis.Nil) {
-		return Account{}, ErrNotFound
-	}
-	if err != nil {
-		return Account{}, err
-	}
-	return s.Get(ctx, id)
+	return scanAccount(s.pool.QueryRow(ctx, "SELECT "+accountColumns+" FROM accounts WHERE discord_id = $1", discordID))
 }
 
 func (s *Store) Get(ctx context.Context, id int64) (Account, error) {
-	fields, err := s.rdb.HGetAll(ctx, accountKey(id)).Result()
-	if err != nil {
-		return Account{}, err
-	}
-	if len(fields) == 0 {
-		return Account{}, ErrNotFound
-	}
-	created, _ := time.Parse(time.RFC3339, fields["createdAt"])
-	sessions, _ := strconv.ParseInt(fields["sessions"], 10, 64)
-	watched, _ := strconv.ParseInt(fields["watchedSeconds"], 10, 64)
-	discordShown := fields["discordVisibility"]
-	if discordShown != VisibilityPublic {
-		discordShown = VisibilityPrivate
-	}
-	return Account{
-		ID: id, DiscordID: fields["discordId"], Nickname: fields["nickname"], Avatar: fields["avatar"],
-		DiscordUsername: fields["discordUsername"], DiscordGlobalName: fields["discordGlobalName"],
-		DiscordVisibility: discordShown, Visibility: fields["visibility"], CreatedAt: created,
-		Sessions: sessions, WatchedSeconds: watched,
-	}, nil
+	return scanAccount(s.pool.QueryRow(ctx, "SELECT "+accountColumns+" FROM accounts WHERE id = $1", id))
 }
 
 func (s *Store) Update(ctx context.Context, id int64, changes Changes) (Account, error) {
-	fields := []any{}
+	var nickname *string
 	if changes.Nickname != nil {
-		nickname := strings.TrimSpace(*changes.Nickname)
-		if !validNickname(nickname) {
+		trimmed := strings.TrimSpace(*changes.Nickname)
+		if !validNickname(trimmed) {
 			return Account{}, ErrInvalid
 		}
-		fields = append(fields, "nickname", nickname)
+		nickname = &trimmed
 	}
-	if changes.Avatar != nil {
-		if *changes.Avatar != "" && !ValidAvatar(*changes.Avatar) {
-			return Account{}, ErrInvalid
-		}
-		fields = append(fields, "avatar", *changes.Avatar)
+	if changes.Avatar != nil && *changes.Avatar != "" && !ValidAvatar(*changes.Avatar) {
+		return Account{}, ErrInvalid
 	}
 	if changes.Visibility != nil {
 		switch *changes.Visibility {
@@ -226,37 +200,41 @@ func (s *Store) Update(ctx context.Context, id int64, changes Changes) (Account,
 		default:
 			return Account{}, ErrInvalid
 		}
-		fields = append(fields, "visibility", *changes.Visibility)
 	}
+	var discordPublic *bool
 	if changes.DiscordVisibility != nil {
 		switch *changes.DiscordVisibility {
 		case VisibilityPublic, VisibilityPrivate:
 		default:
 			return Account{}, ErrInvalid
 		}
-		fields = append(fields, "discordVisibility", *changes.DiscordVisibility)
+		public := *changes.DiscordVisibility == VisibilityPublic
+		discordPublic = &public
 	}
-	if exists, err := s.rdb.Exists(ctx, accountKey(id)).Result(); err != nil {
-		return Account{}, err
-	} else if exists == 0 {
-		return Account{}, ErrNotFound
-	}
-	if len(fields) > 0 {
-		if err := s.rdb.HSet(ctx, accountKey(id), fields...).Err(); err != nil {
-			return Account{}, err
-		}
-	}
-	return s.Get(ctx, id)
+	return scanAccount(s.pool.QueryRow(ctx, `UPDATE accounts SET
+		nickname = COALESCE($2, nickname), avatar = COALESCE($3, avatar),
+		visibility = COALESCE($4, visibility), discord_public = COALESCE($5, discord_public)
+		WHERE id = $1 RETURNING `+accountColumns, id, nickname, changes.Avatar, changes.Visibility, discordPublic))
 }
 
-// StartSession opens a sign-in for the cookie; the token is the only key to it.
+func hashToken(token string) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return sum[:]
+}
+
+// StartSession opens a sign-in for the cookie; the token is the only key to
+// it, and only its hash is kept.
 func (s *Store) StartSession(ctx context.Context, id int64) (string, error) {
 	raw := make([]byte, sessionLen)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
 	token := hex.EncodeToString(raw)
-	if err := s.rdb.Set(ctx, sessionKey(token), id, sessionTTL).Err(); err != nil {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM account_sessions WHERE expires_at < now()"); err != nil {
+		return "", err
+	}
+	if _, err := s.pool.Exec(ctx, "INSERT INTO account_sessions (token_hash, account_id, expires_at) VALUES ($1, $2, $3)",
+		hashToken(token), id, time.Now().Add(sessionTTL)); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -268,15 +246,27 @@ func (s *Store) SessionAccount(ctx context.Context, token string) (int64, error)
 	if len(token) != sessionLen*2 {
 		return 0, nil
 	}
-	id, err := s.rdb.GetEx(ctx, sessionKey(token), sessionTTL).Int64()
-	if errors.Is(err, redis.Nil) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `UPDATE account_sessions SET expires_at = $2
+		WHERE token_hash = $1 AND expires_at > now() RETURNING account_id`,
+		hashToken(token), time.Now().Add(sessionTTL)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	return id, err
 }
 
 func (s *Store) EndSession(ctx context.Context, token string) error {
-	return s.rdb.Del(ctx, sessionKey(token)).Err()
+	_, err := s.pool.Exec(ctx, "DELETE FROM account_sessions WHERE token_hash = $1", hashToken(token))
+	return err
+}
+
+// pair orders a friendship's two ids the way its row keeps them.
+func pair(a, b int64) (int64, int64) {
+	if a < b {
+		return a, b
+	}
+	return b, a
 }
 
 // RequestFriend asks `to` to be friends with `from`. When `to` had already
@@ -295,133 +285,172 @@ func (s *Store) AskFriend(ctx context.Context, from, to int64) (state FriendStat
 	if _, err := s.Get(ctx, to); err != nil {
 		return "", false, err
 	}
-	if already, err := s.rdb.SIsMember(ctx, friendsKey(from), to).Result(); err != nil {
+	if already, err := s.AreFriends(ctx, from, to); err != nil {
 		return "", false, err
 	} else if already {
 		return FriendAccepted, false, nil
 	}
-	if asked, err := s.rdb.SIsMember(ctx, incomingKey(from), to).Result(); err != nil {
+	var asked bool
+	if err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM friend_requests WHERE from_id = $1 AND to_id = $2)", to, from).Scan(&asked); err != nil {
 		return "", false, err
-	} else if asked {
+	}
+	if asked {
 		return FriendAccepted, false, s.AcceptFriend(ctx, from, to)
 	}
-	pipe := s.rdb.TxPipeline()
-	pipe.SAdd(ctx, outgoingKey(from), to)
-	added := pipe.SAdd(ctx, incomingKey(to), from)
-	if _, err := pipe.Exec(ctx); err != nil {
+	tag, err := s.pool.Exec(ctx, "INSERT INTO friend_requests (from_id, to_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", from, to)
+	if err != nil {
 		return "", false, err
 	}
-	return FriendRequested, added.Val() == 1, nil
+	return FriendRequested, tag.RowsAffected() == 1, nil
 }
 
 // AcceptFriend is `id` saying yes to the request `from` sent.
 func (s *Store) AcceptFriend(ctx context.Context, id, from int64) error {
-	removed, err := s.rdb.SRem(ctx, incomingKey(id), from).Result()
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if removed == 0 {
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, "DELETE FROM friend_requests WHERE from_id = $1 AND to_id = $2", from, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return ErrNoRequest
 	}
-	pipe := s.rdb.TxPipeline()
-	pipe.SRem(ctx, outgoingKey(from), id)
-	pipe.SRem(ctx, outgoingKey(id), from)
-	pipe.SRem(ctx, incomingKey(from), id)
-	pipe.SAdd(ctx, friendsKey(id), from)
-	pipe.SAdd(ctx, friendsKey(from), id)
-	_, err = pipe.Exec(ctx)
-	return err
+	if _, err := tx.Exec(ctx, "DELETE FROM friend_requests WHERE from_id = $1 AND to_id = $2", id, from); err != nil {
+		return err
+	}
+	a, b := pair(id, from)
+	if _, err := tx.Exec(ctx, "INSERT INTO friendships (a, b) VALUES ($1, $2) ON CONFLICT DO NOTHING", a, b); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // DeclineFriend is `id` saying no to the request `from` sent; a friendship
 // already made stays.
 func (s *Store) DeclineFriend(ctx context.Context, id, from int64) error {
-	removed, err := s.rdb.SRem(ctx, incomingKey(id), from).Result()
+	tag, err := s.pool.Exec(ctx, "DELETE FROM friend_requests WHERE from_id = $1 AND to_id = $2", from, id)
 	if err != nil {
 		return err
 	}
-	if removed == 0 {
+	if tag.RowsAffected() == 0 {
 		return ErrNoRequest
 	}
-	return s.rdb.SRem(ctx, outgoingKey(from), id).Err()
+	return nil
 }
 
 // RemoveFriend ends a friendship, and also withdraws or declines a pending
 // request between the two.
 func (s *Store) RemoveFriend(ctx context.Context, id, other int64) error {
-	pipe := s.rdb.TxPipeline()
-	pipe.SRem(ctx, friendsKey(id), other)
-	pipe.SRem(ctx, friendsKey(other), id)
-	pipe.SRem(ctx, incomingKey(id), other)
-	pipe.SRem(ctx, outgoingKey(id), other)
-	pipe.SRem(ctx, incomingKey(other), id)
-	pipe.SRem(ctx, outgoingKey(other), id)
-	_, err := pipe.Exec(ctx)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	a, b := pair(id, other)
+	if _, err := tx.Exec(ctx, "DELETE FROM friendships WHERE a = $1 AND b = $2", a, b); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM friend_requests
+		WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1)`, id, other); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) Friends(ctx context.Context, id int64) ([]int64, error) {
-	return s.ids(ctx, friendsKey(id))
+	return s.ids(ctx, `SELECT CASE WHEN a = $1 THEN b ELSE a END AS other
+		FROM friendships WHERE a = $1 OR b = $1 ORDER BY other`, id)
 }
 
 func (s *Store) AreFriends(ctx context.Context, a, b int64) (bool, error) {
-	return s.rdb.SIsMember(ctx, friendsKey(a), b).Result()
+	a, b = pair(a, b)
+	var friends bool
+	err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM friendships WHERE a = $1 AND b = $2)", a, b).Scan(&friends)
+	return friends, err
 }
 
 func (s *Store) FriendCount(ctx context.Context, id int64) (int64, error) {
-	return s.rdb.SCard(ctx, friendsKey(id)).Result()
+	var count int64
+	err := s.pool.QueryRow(ctx, "SELECT count(*) FROM friendships WHERE a = $1 OR b = $1", id).Scan(&count)
+	return count, err
 }
 
 // FriendRequests are the asks waiting on `id` and the ones `id` sent.
 func (s *Store) FriendRequests(ctx context.Context, id int64) (incoming, outgoing []int64, err error) {
-	if incoming, err = s.ids(ctx, incomingKey(id)); err != nil {
+	if incoming, err = s.ids(ctx, "SELECT from_id FROM friend_requests WHERE to_id = $1 ORDER BY from_id", id); err != nil {
 		return nil, nil, err
 	}
-	outgoing, err = s.ids(ctx, outgoingKey(id))
+	outgoing, err = s.ids(ctx, "SELECT to_id FROM friend_requests WHERE from_id = $1 ORDER BY to_id", id)
 	return incoming, outgoing, err
 }
 
-func (s *Store) ids(ctx context.Context, key string) ([]int64, error) {
-	members, err := s.rdb.SMembers(ctx, key).Result()
+func (s *Store) ids(ctx context.Context, query string, args ...any) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]int64, 0, len(members))
-	for _, member := range members {
-		if id, err := strconv.ParseInt(member, 10, 64); err == nil {
-			ids = append(ids, id)
-		}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, err
 	}
-	slices.Sort(ids)
+	if ids == nil {
+		ids = []int64{}
+	}
 	return ids, nil
 }
 
-// RecordWatch keeps a watch at the top of the account's history and counts it.
+// RecordWatch keeps a watch at the top of the account's history and counts
+// it; past historyKept, the oldest go.
 func (s *Store) RecordWatch(ctx context.Context, id int64, watch Watch) error {
-	raw, err := json.Marshal(watch)
-	if err != nil {
-		return fmt.Errorf("marshal watch: %w", err)
+	with := watch.With
+	if with == nil {
+		with = []int64{}
 	}
-	pipe := s.rdb.TxPipeline()
-	pipe.LPush(ctx, historyKey(id), raw)
-	pipe.LTrim(ctx, historyKey(id), 0, historyKept-1)
-	pipe.HIncrBy(ctx, accountKey(id), "sessions", 1)
-	pipe.HIncrBy(ctx, accountKey(id), "watchedSeconds", watch.DurationSec)
-	_, err = pipe.Exec(ctx)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO watches (account_id, room_id, title, kind, started_at, duration_sec, with_ids)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		id, watch.RoomID, watch.Title, watch.Kind, watch.StartedAt, watch.DurationSec, with); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE accounts SET sessions = sessions + 1, watched_seconds = watched_seconds + $2
+		WHERE id = $1`, id, watch.DurationSec); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM watches WHERE account_id = $1 AND id NOT IN (
+		SELECT id FROM watches WHERE account_id = $1 ORDER BY started_at DESC, id DESC LIMIT $2)`,
+		id, historyKept); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) History(ctx context.Context, id int64, limit int) ([]Watch, error) {
-	raws, err := s.rdb.LRange(ctx, historyKey(id), 0, int64(limit)-1).Result()
+	rows, err := s.pool.Query(ctx, `SELECT room_id, title, kind, started_at, duration_sec, with_ids
+		FROM watches WHERE account_id = $1 ORDER BY started_at DESC, id DESC LIMIT $2`, id, limit)
 	if err != nil {
 		return nil, err
 	}
-	history := make([]Watch, 0, len(raws))
-	for _, raw := range raws {
+	history, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Watch, error) {
 		var watch Watch
-		if json.Unmarshal([]byte(raw), &watch) == nil {
-			history = append(history, watch)
+		err := row.Scan(&watch.RoomID, &watch.Title, &watch.Kind, &watch.StartedAt, &watch.DurationSec, &watch.With)
+		watch.StartedAt = watch.StartedAt.UTC()
+		if len(watch.With) == 0 {
+			watch.With = nil
 		}
+		return watch, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if history == nil {
+		history = []Watch{}
 	}
 	return history, nil
 }
@@ -484,37 +513,43 @@ type RoomInvite struct {
 }
 
 func (s *Store) AddInvite(ctx context.Context, to int64, invite RoomInvite) error {
-	raw, err := json.Marshal(invite)
-	if err != nil {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM room_invites WHERE expires_at < now()"); err != nil {
 		return err
 	}
-	pipe := s.rdb.TxPipeline()
-	pipe.HSet(ctx, invitesKey(to), strconv.FormatInt(invite.From, 10), raw)
-	pipe.Expire(ctx, invitesKey(to), InviteTTL)
-	_, err = pipe.Exec(ctx)
+	_, err := s.pool.Exec(ctx, `INSERT INTO room_invites (to_id, from_id, room_id, at, expires_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (to_id, from_id) DO UPDATE
+		SET room_id = excluded.room_id, at = excluded.at, expires_at = excluded.expires_at`,
+		to, invite.From, invite.RoomID, invite.At, invite.At.Add(InviteTTL))
 	return err
 }
 
 // Invites are the calls still waiting on `to`, newest first; the stale ones
 // are dropped on the way.
 func (s *Store) Invites(ctx context.Context, to int64, now time.Time) ([]RoomInvite, error) {
-	raws, err := s.rdb.HGetAll(ctx, invitesKey(to)).Result()
+	if _, err := s.pool.Exec(ctx, "DELETE FROM room_invites WHERE to_id = $1 AND expires_at < $2", to, now); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, "SELECT from_id, room_id, at FROM room_invites WHERE to_id = $1 ORDER BY at DESC", to)
 	if err != nil {
 		return nil, err
 	}
-	invites := make([]RoomInvite, 0, len(raws))
-	for field, raw := range raws {
+	invites, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (RoomInvite, error) {
 		var invite RoomInvite
-		if json.Unmarshal([]byte(raw), &invite) != nil || now.Sub(invite.At) > InviteTTL {
-			s.rdb.HDel(ctx, invitesKey(to), field)
-			continue
-		}
-		invites = append(invites, invite)
+		err := row.Scan(&invite.From, &invite.RoomID, &invite.At)
+		invite.At = invite.At.UTC()
+		return invite, err
+	})
+	if err != nil {
+		return nil, err
 	}
-	slices.SortFunc(invites, func(a, b RoomInvite) int { return b.At.Compare(a.At) })
+	if invites == nil {
+		invites = []RoomInvite{}
+	}
 	return invites, nil
 }
 
 func (s *Store) DropInvite(ctx context.Context, to, from int64) error {
-	return s.rdb.HDel(ctx, invitesKey(to), strconv.FormatInt(from, 10)).Err()
+	_, err := s.pool.Exec(ctx, "DELETE FROM room_invites WHERE to_id = $1 AND from_id = $2", to, from)
+	return err
 }
