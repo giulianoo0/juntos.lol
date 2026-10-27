@@ -14,6 +14,7 @@ services:
       - "${APP_BIND:-127.0.0.1:8099}:8080"
     environment:
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://juntos:${POSTGRES_PASSWORD}@postgres:5432/juntos?sslmode=disable
       DATA_DIR: /data
       WEB_DIR: /web
       GIN_MODE: release
@@ -48,12 +49,36 @@ services:
       # optional: the site works without it, /docs just 404s.
       - ./web-docs:/web/docs:ro
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --maxmemory-policy volatile-ttl
+
+  # What must outlive a restart: accounts, friends, history, sign-ins and the
+  # enrolled workers. Rooms stay in Redis. Not published: only the app and
+  # pg_dump (through `docker compose exec`) reach it.
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: juntos
+      POSTGRES_DB: juntos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # From 18 on the image keeps its data under a versioned directory
+      # inside /var/lib/postgresql, so the volume goes on the parent.
+      - ss-pg:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U juntos -d juntos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # The torrent worker: joins swarms and serves the bytes straight to the
   # host's browser over HTTPS on its own port — never through the site's
@@ -126,5 +151,6 @@ services:
 
 volumes:
   ss-data:
+  ss-pg:
   # The worker's torrents, identity and certificates.
   ss-worker-data:

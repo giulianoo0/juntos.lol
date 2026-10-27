@@ -34,6 +34,8 @@ RUN go mod download
 COPY cmd cmd
 COPY internal internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /bin/server ./cmd/server
+# The one-off import of accounts from Redis, run inside this image at deploy.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /bin/migrate-redis ./cmd/migrate-redis
 
 FROM debian:trixie-slim
 
@@ -45,6 +47,7 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY --from=go-build /bin/server /bin/server
+COPY --from=go-build /bin/migrate-redis /bin/migrate-redis
 COPY --from=web-build --chown=app:app /src/web/dist /web
 
 ENV WEB_DIR=/web
