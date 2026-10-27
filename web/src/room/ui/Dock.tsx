@@ -1,11 +1,12 @@
-import { Link, LogOut, MessageSquare, Mic, MicOff, MonitorUp, Smile, Video, VideoOff } from 'lucide-react'
+import { Link, LogOut, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, Smile, Video, VideoOff } from 'lucide-react'
 import type { ShareSource } from '../model'
 import { REACTIONS, reactionSrc } from '../reactions'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
-import { SpringPopover, SpringRow } from '../../ui/SpringPopover'
+import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
 import { useRoomUi } from './context'
 import { sourceIcon, sourceLabel } from './sources'
+import { fill } from './strings'
 import styles from './Dock.module.css'
 
 /** The dock: the room's link, then mic, camera, Compartilhar, reactions
@@ -21,6 +22,7 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
   const mic = Boolean(self?.mic && !self.hostMuted)
   const cam = Boolean(self?.cam && !self.hostCamOff)
   const labels = sourceLabel(strings)
+  const mine = vm.stages.filter((stage) => stage.ownerId === vm.selfId)
   return (
     <>
       <footer className={styles.dock}>
@@ -42,6 +44,16 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
           >
             {({ close }) => (
               <div role="menu" aria-label={strings.shareTitle}>
+                {mine.map((stage) => (
+                  <SpringRow
+                    key={stage.id}
+                    icon={<MonitorX size={16} />}
+                    label={mine.length === 1 ? strings.stopSharing : fill(strings.stopSharingThis, { title: stage.title })}
+                    tone="danger"
+                    onSelect={() => { close(); vm.actions.closeStage(stage) }}
+                  />
+                ))}
+                {mine.length > 0 ? <SpringRule /> : null}
                 {vm.sources.map((source) => (
                   <SpringRow key={source} icon={sourceIcon[source]} label={labels[source]} onSelect={() => { close(); onShare(source) }} />
                 ))}
