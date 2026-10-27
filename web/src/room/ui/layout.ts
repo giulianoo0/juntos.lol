@@ -2,6 +2,10 @@ import type { Person, Spotlight, Stage } from '../model'
 
 export type Target = { kind: 'stage' | 'person'; id: string }
 
+/** How the tiles beside the focus stand: one column splitting its height,
+    a column of pairs, or a strip under the stage that scrolls sideways. */
+export type Arrangement = 'column' | 'pairs' | 'strip'
+
 export type Layout =
   | { kind: 'grid'; tiles: Target[] }
   | {
@@ -12,6 +16,7 @@ export type Layout =
     focus: Target
     /** The column: the other stages, then the people. */
     side: Target[]
+    arrange: Arrangement
   }
 
 export interface LayoutInput {
@@ -23,6 +28,8 @@ export interface LayoutInput {
   leftSpotlight: boolean
   /** The viewer chose "Pessoas": everything as one grid, the pin aside. */
   everyone?: boolean
+  /** The side panel takes the right, so the people go under the stage. */
+  panelOpen?: boolean
 }
 
 function spotlightTarget(spotlight: Spotlight): Target {
@@ -39,7 +46,7 @@ function spotlightTarget(spotlight: Spotlight): Target {
 
 /** What goes where: the pin, then the spotlight, then the first stage, and
     a grid of people when nothing is on stage. */
-export function layoutOf({ people, stages, spotlight, pin, leftSpotlight, everyone = false }: LayoutInput): Layout {
+export function layoutOf({ people, stages, spotlight, pin, leftSpotlight, everyone = false, panelOpen = false }: LayoutInput): Layout {
   const all: Target[] = [
     ...stages.map(({ id }): Target => ({ kind: 'stage', id })),
     ...people.map(({ id }): Target => ({ kind: 'person', id })),
@@ -59,7 +66,8 @@ export function layoutOf({ people, stages, spotlight, pin, leftSpotlight, everyo
   if (!focus) return { kind: 'grid', tiles: all }
 
   const side = all.filter((target) => target.kind !== focus.kind || target.id !== focus.id)
-  return { kind: 'focus', reason, focus, side }
+  const arrange: Arrangement = panelOpen || side.length > 6 ? 'strip' : side.length > 2 ? 'pairs' : 'column'
+  return { kind: 'focus', reason, focus, side, arrange }
 }
 
 /** How many columns the people grid takes. */
