@@ -7,12 +7,19 @@ export function DiaText({ children, className = '' }: { children: ReactNode; cla
 }
 
 /** Content on its way: skeletons in its shape, named once for screen readers. */
-export function Loading({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+export function Loading({ label, inline = false, className, children }: {
+  label: string
+  /** Inside a line of text: a span rather than a block. */
+  inline?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  const Box = inline ? 'span' : 'div'
   return (
-    <div role="status" aria-busy="true" className={className}>
+    <Box role="status" aria-busy="true" className={className}>
       <span className="sr-only">{label}</span>
       {children}
-    </div>
+    </Box>
   )
 }
 

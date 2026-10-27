@@ -19,8 +19,8 @@ describe('UploadAvailability', () => {
   it('waits quietly until any byte count exists', () => {
     render(<UploadAvailability t={t} progress={null} />)
 
-    expect(screen.getByText('Waiting for the initial upload...')).toBeInTheDocument()
-    expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('status')[0]).toHaveAttribute('aria-busy', 'true')
+    expect(screen.queryByText(/Waiting|%/)).not.toBeInTheDocument()
   })
 
   it('measures the wait against the point playback can start, not the whole file', () => {
@@ -90,7 +90,9 @@ describe('UploadAvailability', () => {
     it('declines to guess before it has watched the transfer', () => {
       renderPrep({ sourceBytes: 600 * MB, receivedBytes: 10 * MB, previewTargetBytes: 60 * MB })
 
-      expect(screen.getByText('estimating…')).toBeInTheDocument()
+      const eta = screen.getByText('Starts playing in').nextElementSibling
+      expect(eta).toHaveAttribute('aria-busy', 'true')
+      expect(eta).toHaveTextContent(/^Loading$/)
     })
 
     it('predicts from the rate it observed', () => {
@@ -129,7 +131,9 @@ describe('UploadAvailability', () => {
         sourceBytes: 600 * MB, receivedBytes: 0, previewTargetBytes: 60 * MB,
       }} />)
 
-      expect(screen.getByText('estimating…')).toBeInTheDocument()
+      const eta = screen.getByText('Starts playing in').nextElementSibling
+      expect(eta).toHaveAttribute('aria-busy', 'true')
+      expect(eta).toHaveTextContent(/^Loading$/)
     })
   })
 })
