@@ -110,9 +110,8 @@ describe('Player', () => {
       <Player room={sparse} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />,
     )
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
     fireEvent.click(await screen.findByRole('button', { name: 'Portugues' }))
-    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
+    expect(screen.getByRole('button', { name: 'Portugues' })).toHaveAttribute('aria-pressed', 'true')
 
     const full: RoomInfo = {
       ...sparse,
@@ -124,10 +123,10 @@ describe('Player', () => {
     }
     rerender(<Player room={full} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
 
-    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
+    expect(screen.getByRole('button', { name: 'Portugues' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('opens one settings group at a time, in place', async () => {
+  it('splits the settings into Audio and Subtitles, subtitles first', async () => {
     const withTracks: RoomInfo = {
       ...room,
       subtitleTracks: [
@@ -139,18 +138,14 @@ describe('Player', () => {
     render(<Player room={withTracks} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
 
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    const subtitles = await screen.findByRole('button', { name: /subtitles|legendas/i })
-    expect(subtitles).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
-
-    fireEvent.click(subtitles)
-
-    expect(subtitles).toHaveAttribute('aria-expanded', 'true')
+    const subtitles = await screen.findByRole('radio', { name: 'Subtitles' })
+    expect(subtitles).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument()
-    expect(screen.getByTestId('setting-subtitles')).toBeInTheDocument()
+    expect(screen.queryByRole('slider', { name: 'Movie' })).not.toBeInTheDocument()
 
-    fireEvent.click(subtitles)
-    expect(subtitles).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(screen.getByRole('radio', { name: 'Audio' }))
+
+    expect(await screen.findByRole('slider', { name: 'Movie' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
   })
 
@@ -162,15 +157,12 @@ describe('Player', () => {
     }
     render(<Player room={withTracks} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />)
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
-    expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'English' })).toBeInTheDocument()
 
     fireEvent.pointerDown(document.body)
 
     const gear = await screen.findByRole('button', { name: /settings|configurações/i })
     expect(gear).toHaveAttribute('aria-expanded', 'false')
-    fireEvent.click(gear)
-    expect(await screen.findByRole('button', { name: /subtitles|legendas/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'English' })).not.toBeInTheDocument()
   })
 
@@ -185,8 +177,7 @@ describe('Player', () => {
 
     expect(container.querySelector('track')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
-    expect(screen.getByRole('button', { name: /import file/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /import file/i })).toBeInTheDocument()
     expect(screen.queryByText('Legendas')).not.toBeInTheDocument()
     expect(container.querySelector('input[type="file"]')?.getAttribute('accept')).toBe('.srt,.ass,.ssa,.vtt,.sub')
   })
@@ -205,7 +196,7 @@ describe('Player', () => {
     await waitFor(() => expect(container.querySelector('track')?.getAttribute('src')).toBe('blob:local-1'))
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/subtitles/import'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    expect(await screen.findByTestId('setting-subtitles')).toHaveTextContent('Filme.srt')
+    expect(await screen.findByRole('button', { name: 'Filme.srt' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('sends a host import to the room and picks it once it lands', async () => {
@@ -239,7 +230,7 @@ describe('Player', () => {
     )
     await waitFor(() => expect(container.querySelector('track')?.getAttribute('src')).toBe('https://media.example.test/rooms/r1/g2/subs/sub_1000_und.vtt?g=2&s=d'))
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    expect(await screen.findByTestId('setting-subtitles')).toHaveTextContent('Filme.srt')
+    expect(await screen.findByRole('button', { name: 'Filme.srt' })).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() => expect(send).toHaveBeenLastCalledWith('subtitles', { subtitles: { track: 1000, delayMs: 0 } }))
   })
 
@@ -260,10 +251,9 @@ describe('Player', () => {
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subtitle delay/i }))
-    fireEvent.click(screen.getByRole('button', { name: /copy from host/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /copy from host/i }))
 
-    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
+    expect(screen.getByRole('button', { name: 'Portugues' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('setting-subtitleDelay')).toHaveTextContent('+0.50 s')
     expect(send).not.toHaveBeenCalledWith('subtitles', expect.anything())
   })

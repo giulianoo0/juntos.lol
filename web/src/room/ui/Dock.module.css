@@ -1,4 +1,5 @@
 .dock {
+  grid-area: dock;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -33,8 +34,20 @@
   padding: 0 var(--space-6) 0 var(--space-5);
 }
 
-.leave {
+/* Sair stands under the room's right column, as wide as it; with nothing
+   on the right it keeps its own width at the dock's end. */
+.leaveCell {
+  grid-area: leave;
   justify-self: end;
+  align-self: center;
+  display: flex;
+  width: 100%;
+  min-width: max-content;
+  padding-left: var(--space-3);
+}
+
+.leave {
+  flex: 1;
 }
 
 .leaveIcon {
@@ -56,9 +69,15 @@
   border: 0;
   border-radius: var(--radius-full);
   background: none;
-  font-size: 1.375rem;
   cursor: pointer;
   transition: var(--transition-button);
+}
+
+.reactionImage {
+  display: block;
+  width: 1.75rem;
+  height: 1.75rem;
+  user-select: none;
 }
 
 .reaction:active {
@@ -80,9 +99,13 @@
    and Sair shrink to their icons; the dock fits 390px. */
 @media (max-width: 56rem) {
   .dock {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
-    padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+    padding: var(--space-3) var(--space-1) calc(var(--space-3) + env(safe-area-inset-bottom));
+  }
+
+  .leaveCell {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .link {

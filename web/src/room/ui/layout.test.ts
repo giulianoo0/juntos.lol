@@ -24,6 +24,7 @@ describe('layoutOf', () => {
       reason: 'auto',
       focus: { kind: 'stage', id: 'media' },
       side: [{ kind: 'stage', id: 'screen:bruno' }, ...people.map(({ id }) => ({ kind: 'person', id }))],
+      arrange: 'pairs',
     })
   })
 
@@ -40,6 +41,7 @@ describe('layoutOf', () => {
       reason: 'spotlight',
       focus: { kind: 'person', id: 'ana' },
       side: [{ kind: 'person', id: 'giu' }, { kind: 'person', id: 'bruno' }],
+      arrange: 'column',
     })
   })
 
@@ -65,6 +67,30 @@ describe('layoutOf', () => {
   it('forgets a pin or a spotlight on something that is gone', () => {
     const layout = layoutOf({ people, stages: [], spotlight: { kind: 'live' }, pin: { kind: 'stage', id: 'media' }, leftSpotlight: false })
     expect(layout.kind).toBe('grid')
+  })
+})
+
+describe('the people beside a stage', () => {
+  const crowd = (count: number) => Array.from({ length: count }, (_, index) => person(`p${index}`))
+  const arrangeOf = (count: number, panelOpen = false) => {
+    const layout = layoutOf({ people: crowd(count), stages: [media], spotlight: null, pin: null, leftSpotlight: false, panelOpen })
+    return layout.kind === 'focus' ? layout.arrange : null
+  }
+
+  it('stand in one column for one or two, splitting its height', () => {
+    expect([1, 2].map((count) => arrangeOf(count))).toEqual(['column', 'column'])
+  })
+
+  it('pair up in the column from three to six', () => {
+    expect([3, 6].map((count) => arrangeOf(count))).toEqual(['pairs', 'pairs'])
+  })
+
+  it('move to a strip under the stage from seven', () => {
+    expect(arrangeOf(7)).toBe('strip')
+  })
+
+  it('move to the strip whenever the panel takes the right', () => {
+    expect([1, 4].map((count) => arrangeOf(count, true))).toEqual(['strip', 'strip'])
   })
 })
 

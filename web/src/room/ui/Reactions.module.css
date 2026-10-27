@@ -1,0 +1,100 @@
+/* Reactions rise from the middle of the tile, over the face and under
+   the name tag's buttons; they never take the pointer. */
+.bursts {
+  --burst-size: 3rem;
+  --rise: 9rem;
+
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.bursts[data-small] {
+  --burst-size: 2rem;
+  --rise: 4.5rem;
+}
+
+/* The sway is its own layer, so it adds to the rise instead of fighting it. */
+.sway {
+  position: absolute;
+  left: calc(50% + var(--x));
+  top: 52%;
+  width: var(--burst-size);
+  height: var(--burst-size);
+  margin: calc(var(--burst-size) / -2) 0 0 calc(var(--burst-size) / -2);
+  animation: sway 0.9s var(--ease-in-out) 3 alternate both;
+}
+
+.emoji {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  animation: rise 2.4s var(--ease-out) both;
+}
+
+@keyframes sway {
+  from {
+    translate: calc(var(--sway) * -1) 0;
+  }
+
+  to {
+    translate: var(--sway) 0;
+  }
+}
+
+/* Pops in on the spring's overshoot, rises, and leaves in a blur. */
+@keyframes rise {
+  0% {
+    opacity: 0;
+    transform: translateY(var(--space-4)) scale(0.4);
+    filter: blur(var(--blur-sm));
+  }
+
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(1.12);
+    filter: blur(0);
+  }
+
+  24% {
+    transform: translateY(calc(var(--rise) * -0.12)) scale(1);
+  }
+
+  72% {
+    opacity: 1;
+    filter: blur(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(calc(var(--rise) * -1)) scale(0.9) rotate(var(--tilt));
+    filter: blur(var(--blur-sm));
+  }
+}
+
+/* Without motion: it shows on the face for a moment and fades. */
+@media (prefers-reduced-motion: reduce) {
+  .sway {
+    animation: none;
+  }
+
+  .emoji {
+    animation: still 1.6s linear both;
+  }
+
+  @keyframes still {
+    0%,
+    100% {
+      opacity: 0;
+    }
+
+    12%,
+    80% {
+      opacity: 1;
+    }
+  }
+}

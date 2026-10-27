@@ -88,6 +88,9 @@
   /* A coluna lateral da sala (Chat | Pessoas) e a coluna dos palcos. */
   --side-width: 21.25rem;
   --stage-column: 20rem;
+  /* A coluna em pares (3 a 6 pessoas) e a faixa embaixo do palco. */
+  --stage-column-pairs: 25rem;
+  --strip-height: 8.5rem;
   --dialog-width: 28rem;
 
   --blur-xs: 2px;

@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock } from '../model'
 import { Segmented } from '../../ui/Segmented'
 import { useTheme, type Theme } from '../../ui/theme'
+import { REACTIONS, splitReactions } from '../reactions'
 import { EntryScreen, WaitingRoom } from './Entry'
 import { RoomView } from './RoomView'
 import styles from './DevRoom.module.css'
@@ -147,7 +148,7 @@ export function DevRoom() {
     spotlight,
     requests,
     knocks,
-    chat,
+    ...splitReactions(chat),
     sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
     actions: {
       setMic: (on) => update(selfId, { mic: on, hostMuted: false }),
@@ -160,7 +161,11 @@ export function DevRoom() {
           }
         }
       },
-      react: (emoji) => toast(emoji),
+      // As in the room: a reaction is a chat line holding only the emoji.
+      react: (emoji) => {
+        const self = people.find((person) => person.id === selfId)
+        setChat((list) => [...list, { id: `c${Date.now()}`, authorId: selfId, author: self?.name ?? '', text: emoji, at: Date.now() }])
+      },
       sendChat: (text) => {
         const self = people.find((person) => person.id === selfId)
         setChat((list) => [...list, { id: `c${Date.now()}`, authorId: selfId, author: self?.name ?? '', text, at: Date.now() }])
@@ -227,6 +232,20 @@ export function DevRoom() {
     }, 6000)
     return () => window.clearInterval(timer)
   }, [params])
+
+  // ?reacts=1: the others react now and then, a few at once.
+  useEffect(() => {
+    if (params.get('reacts') !== '1') return undefined
+    let turn = 0
+    const timer = window.setInterval(() => {
+      turn += 1
+      const who = people[turn % people.length]
+      if (!who) return
+      const emoji = REACTIONS[turn % REACTIONS.length] ?? '🔥'
+      setChat((list) => [...list, { id: `r${Date.now()}`, authorId: who.id, author: who.name, text: emoji, at: Date.now() }])
+    }, 450)
+    return () => window.clearInterval(timer)
+  }, [params, people])
 
   return (
     <>

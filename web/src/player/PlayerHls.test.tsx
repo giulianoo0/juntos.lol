@@ -383,7 +383,6 @@ describe('Player HLS lifecycle', () => {
     Object.defineProperty(video, 'textTracks', { configurable: true, value: textTracks })
 
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
     fireEvent.click(await screen.findByRole('button', { name: 'English' }))
     expect(textTracks[0].mode).toBe('hidden')
     expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=1')

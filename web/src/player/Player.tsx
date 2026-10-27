@@ -11,7 +11,7 @@ import type Hls from 'hls.js'
 import type { HlsConfig, LoaderCallbacks, LoaderConfiguration, LoaderContext } from 'hls.js'
 import type { MediaRegion, PlayState, RoomInfo, TrackInfo } from '../types'
 import { DelayControl } from './DelayControl'
-import { formatDelay, retimeCues } from './subtitleDelay'
+import { retimeCues } from './subtitleDelay'
 import { publishImportedSubtitle, readSubtitleFile, SUBTITLE_FILE_ACCEPT } from './subtitleImport'
 import type { HostSubtitles } from './useSync'
 import type { Translator } from '../i18n/useT'
@@ -20,6 +20,7 @@ import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
 import { boostOf, canBoost, setBoost } from './audioBoost'
 import { MAX_LEVEL, snapLevel, VolumeSlider } from '../ui/VolumeSlider'
+import { PillSlider } from '../ui/PillSlider'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { plog } from './playerLog'
 import { Settings, type SettingGroup } from './Settings'
@@ -1021,8 +1022,10 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
   const settingGroups: SettingGroup[] = useMemo(() => {
+    const filmLevel = muted ? 0 : volume * boost
     const groups: SettingGroup[] = [{
       id: 'subtitles',
+      tab: 'subtitles',
       label: t('room.subtitles'),
       current: subtitle,
       onPick: pickSubtitle,
@@ -1041,11 +1044,11 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       ],
     }, {
       id: 'subtitleDelay',
-      label: t('room.subtitleDelay'),
+      tab: 'subtitles',
+      label: t('room.subtitleDelayShort'),
       current: 0,
       onPick: () => undefined,
       options: [],
-      valueLabel: formatDelay(delayMs, t.language),
       panel: (
         <>
           <DelayControl valueMs={delayMs} onChange={pickDelay} t={t} />
@@ -1061,7 +1064,8 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
     if (audioTracks.length > 1) {
       groups.push({
         id: 'audio',
-        label: t('room.audio'),
+        tab: 'audio',
+        label: t('room.audioTrack'),
         current: audioTrack,
         onPick: (value) => {
           setAudioTrack(value)
@@ -1074,9 +1078,28 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
         })),
       })
     }
+    // The film's volume under its tracks, as the Áudio tab reads.
+    groups.push({
+      id: 'volume',
+      tab: 'audio',
+      label: t('room.filmVolume'),
+      current: 0,
+      onPick: () => undefined,
+      options: [],
+      panel: (
+        <PillSlider
+          label={t('room.filmVolume')}
+          value={filmLevel}
+          max={videoRef.current !== null && canBoost(videoRef.current) ? MAX_LEVEL : 1}
+          valueText={`${Math.round(filmLevel * 100)}%`}
+          onChange={applyVolume}
+        />
+      ),
+    })
     if (levels.length > 1) {
       groups.push({
         id: 'quality',
+        tab: 'audio',
         label: t('room.quality'),
         current: level,
         onPick: (value) => {
@@ -1093,7 +1116,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       })
     }
     return groups
-  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
+  }, [muted, volume, boost, applyVolume, videoRef, subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
 
   const seekMax = Math.max(timelineEnd, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
