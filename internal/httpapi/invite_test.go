@@ -163,8 +163,33 @@ func TestInviteFriendRefusals(t *testing.T) {
 			require.Equal(t, tt.want, w.Code, w.Body.String())
 			require.JSONEq(t, `"`+tt.wantError+`"`, jsonField(t, w, "error"))
 			require.NotContains(t, w.Body.String(), "222")
+			if tt.closedDMs {
+				require.JSONEq(t, `"OPEN1234"`, jsonField(t, w, "roomId"), "DM fechada devolve a sala para copiar o link")
+			}
 		})
 	}
+}
+
+func TestFriendsSayWhoIsInMyRoom(t *testing.T) {
+	rig := newInviteRig(t, fixedPresence{1: "LOCK1234", 2: "LOCK1234", 3: "OPEN1234"}, &fakeDMs{}, "bot")
+	rig.openRoom(t, "LOCK1234", room.Room{})
+	rig.openRoom(t, "OPEN1234", room.Room{})
+	require.NoError(t, rig.rooms.SetAccess(t.Context(), "LOCK1234", room.Access{Mode: room.JoinPassword, PasswordHash: "x"}))
+	ana, session := rig.signIn(t, "1", "Ana")
+	bia, _ := rig.signIn(t, "2", "Bia")
+	caio, _ := rig.signIn(t, "3", "Caio")
+	dani, _ := rig.signIn(t, "4", "Dani")
+	for _, friend := range []account.Account{bia, caio, dani} {
+		rig.befriend(t, ana.ID, friend.ID)
+	}
+
+	friends := rig.do(http.MethodGet, "/api/friends", "", session)
+
+	require.JSONEq(t, `[
+		{"id":2,"nickname":"Bia","avatar":"","presence":{"inRoom":true,"withMe":true}},
+		{"id":3,"nickname":"Caio","avatar":"","presence":{"inRoom":true,"roomId":"OPEN1234"}},
+		{"id":4,"nickname":"Dani","avatar":"","presence":{"inRoom":false}}
+	]`, jsonField(t, friends, "friends"))
 }
 
 func TestInviteNeedsSignIn(t *testing.T) {

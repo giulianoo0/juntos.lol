@@ -386,6 +386,8 @@ type friendPresence struct {
 	InRoom bool `json:"inRoom"`
 	// RoomID is only shown for a room anyone may walk into.
 	RoomID string `json:"roomId,omitempty"`
+	// WithMe is set when the friend is in the viewer's own room.
+	WithMe bool `json:"withMe,omitempty"`
 }
 
 type friendCard struct {
@@ -411,8 +413,9 @@ func (a *accountRoutes) friends(c *gin.Context) {
 	}
 	var present map[int64]string
 	if a.presence != nil {
-		present = a.presence.Presence(ids)
+		present = a.presence.Presence(append([]int64{me.ID}, ids...))
 	}
+	myRoom := present[me.ID]
 	openRooms := map[string]bool{}
 	friends := make([]friendCard, 0, len(found))
 	for _, each := range found {
@@ -420,6 +423,7 @@ func (a *accountRoutes) friends(c *gin.Context) {
 		// A private account shows no presence, not even to friends.
 		if roomID, here := present[each.ID]; here && each.Visibility != account.VisibilityPrivate {
 			friend.Presence.InRoom = true
+			friend.Presence.WithMe = roomID == myRoom
 			open, known := openRooms[roomID]
 			if !known {
 				stored, err := a.rooms.Get(ctx, roomID)
@@ -588,7 +592,8 @@ func (a *accountRoutes) inviteFriend(c *gin.Context) {
 	err = a.bot.SendDM(ctx, friend.DiscordID, message)
 	switch {
 	case errors.Is(err, discord.ErrDMClosed):
-		c.JSON(http.StatusConflict, gin.H{"error": "dm_closed"})
+		// The viewer is in that room, so it is theirs to copy as a link.
+		c.JSON(http.StatusConflict, gin.H{"error": "dm_closed", "roomId": roomID})
 	case err != nil:
 		slog.WarnContext(ctx, "discord invite failed", "error", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "discord_failed"})
