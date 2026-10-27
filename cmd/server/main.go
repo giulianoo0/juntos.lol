@@ -16,6 +16,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
@@ -57,6 +58,8 @@ func main() {
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	hub := syncapi.NewHub(store, cfg, bucket)
 	defer hub.Close()
+	accounts := account.NewStore(rdb)
+	hub.SetAccounts(httpapi.HubAccounts(accounts))
 
 	signer, err := worker.LoadOrCreateSigner(cfg.WorkerSigningKeyFile)
 	if err != nil {
@@ -145,6 +148,7 @@ func main() {
 			Remux: remuxOrch, Authorizer: hub.AuthorizeMember}, workerHub.HandleLink),
 		httpapi.WithPluginFetch(sessions, quota),
 		httpapi.WithDiscord(httpapi.DiscordApp(cfg, store, rdb, hub)),
+		httpapi.WithAccounts(accounts),
 	)
 
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {

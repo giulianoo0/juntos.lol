@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
@@ -26,6 +27,7 @@ type serverOptions struct {
 	pluginSessions    *Sessions
 	pluginQuota       *Quota
 	discord           http.Handler
+	accounts          *account.Store
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
@@ -124,6 +126,13 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	}
 	RegisterRelayRoute(r, options.torrentAccess.Service)
 	registerDiscordRoute(r, options.discord)
+	if options.accounts != nil {
+		var presence PresenceSource
+		if hub != nil {
+			presence = hub
+		}
+		RegisterAccountRoutes(r.Group("/api"), cfg, options.accounts, store, presence)
+	}
 	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
 	registerFrontend(r, cfg.WebDir)
 	return r

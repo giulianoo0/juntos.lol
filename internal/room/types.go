@@ -47,6 +47,9 @@ type Member struct {
 	Cam        bool `json:"cam,omitempty"`
 	HostMuted  bool `json:"hostMuted,omitempty"`
 	HostCamOff bool `json:"hostCamOff,omitempty"`
+	// The account a signed-in member is, by its public number, and its avatar.
+	AccountID int64  `json:"accountId,omitempty"`
+	Avatar    string `json:"avatar,omitempty"`
 }
 
 // ScreenShare is one member publishing their screen to the room right now.

@@ -113,6 +113,8 @@ type Outbound struct {
 	// Set on an event from outside the loop that only the host may see.
 	toController bool
 	closeAfter   bool
+	// Set on the reset that follows a swap of the media stage.
+	mediaChanged bool
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.

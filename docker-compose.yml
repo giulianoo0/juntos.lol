@@ -39,6 +39,8 @@ services:
       DISCORD_APP_ID: ${DISCORD_APP_ID:-}
       DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY:-}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
     volumes:
       - ss-data:/data
       # The documentation is built from its own repository and rsynced here,

@@ -99,3 +99,38 @@ func TestLoadDiscordApp(t *testing.T) {
 	_, err = Load()
 	require.Error(t, err)
 }
+
+func TestLoadDiscordLogin(t *testing.T) {
+	tests := []struct {
+		name     string
+		appID    string
+		clientID string
+		secret   string
+		origin   string
+		wantID   string
+		enabled  bool
+	}{
+		{name: "client id cai para o app id", appID: "app", secret: "s", origin: "https://juntos.lol", wantID: "app", enabled: true},
+		{name: "client id próprio vence o app id", appID: "app", clientID: "client", secret: "s", origin: "https://juntos.lol", wantID: "client", enabled: true},
+		{name: "sem secret o login fica desligado", appID: "app", origin: "https://juntos.lol", wantID: "app"},
+		{name: "sem origem pública não há redirect", appID: "app", secret: "s", wantID: "app"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMediaEnv(t)
+			t.Setenv("DISCORD_APP_ID", tt.appID)
+			t.Setenv("DISCORD_CLIENT_ID", tt.clientID)
+			t.Setenv("DISCORD_CLIENT_SECRET", tt.secret)
+			t.Setenv("PUBLIC_ORIGIN", tt.origin)
+
+			cfg, err := Load()
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantID, cfg.DiscordClientID)
+			require.Equal(t, tt.enabled, cfg.DiscordLoginEnabled())
+			if tt.enabled {
+				require.Equal(t, tt.origin+"/api/auth/discord/callback", cfg.DiscordRedirectURI())
+			}
+		})
+	}
+}
