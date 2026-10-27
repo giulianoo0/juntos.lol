@@ -6,6 +6,8 @@ import { avatarOf } from '../avatar'
 import { Field } from '../../ui/Field'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
+import { arrive } from '../../ui/arrive'
+import { Loading, Skeleton } from '../../ui/Shimmer'
 import { AvatarEditor } from '../../account/AvatarEditor'
 import { Face, FaceStack } from './Face'
 import { presentLine, useRoomStrings } from './strings'
@@ -92,7 +94,7 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
   const expression: MascotExpression = cheer ? 'happy' : vm.mic && vm.level ? 'speaking' : 'idle'
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${arrive}`}>
       <div className={styles.stage}>
         <div className={styles.hero} ref={heroRef} data-hero>
           <div ref={popRef} className={styles.pop}>
@@ -147,11 +149,36 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
         ) : null}
         {!needsPassword && vm.error ? <p className={styles.error} role="alert">{vm.error}</p> : null}
         <div className={styles.actions}>
-          <Pill type="submit" tone="primary" size="lg" block disabled={!ready}>{strings.join}</Pill>
+          <Pill type="submit" tone="primary" size="lg" block disabled={!ready} loading={vm.busy}>{strings.join}</Pill>
           {vm.account ? null : <a className={styles.discord} href={vm.loginUrl}>{strings.withDiscord}</a>}
         </div>
       </form>
     </div>
+  )
+}
+
+/** The door before the room answers: the same places, shimmering. */
+export function EntrySkeleton() {
+  const strings = useRoomStrings()
+  return (
+    <Loading label={strings.loading} className={styles.page}>
+      <div className={styles.stage}>
+        <Skeleton round height="auto" className={styles.heroSkeleton} />
+        <div className={styles.toggles}>
+          <Skeleton round width="2.25rem" height="2.25rem" />
+          <Skeleton round width="2.25rem" height="2.25rem" />
+        </div>
+      </div>
+      <div className={styles.form}>
+        <div className={styles.title}>
+          <Skeleton width="60%" height="1.75rem" />
+          <Skeleton width="40%" height="0.9rem" />
+        </div>
+        <Skeleton height="2.75rem" />
+        <Skeleton height="6.5rem" />
+        <Skeleton round height="2.75rem" />
+      </div>
+    </Loading>
   )
 }
 

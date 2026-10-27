@@ -75,6 +75,7 @@ const ptBR = {
   nobody: 'Ninguém ainda',
   waiting: 'Esperando o host deixar você entrar',
   cancel: 'Cancelar',
+  loading: 'Carregando',
 } as const
 
 export type RoomStrings = Record<keyof typeof ptBR, string>
@@ -152,6 +153,7 @@ const en: RoomStrings = {
   nobody: 'Nobody yet',
   waiting: 'Waiting for the host to let you in',
   cancel: 'Cancel',
+  loading: 'Loading',
 }
 
 export function useRoomStrings(): RoomStrings {

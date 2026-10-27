@@ -84,6 +84,13 @@
   }
 }
 
+/* The mascot's place while the door is on its way. */
+.heroSkeleton {
+  width: 15rem;
+  max-width: 60vw;
+  aspect-ratio: 1;
+}
+
 .toggles {
   display: flex;
   justify-content: center;
@@ -197,7 +204,8 @@
     padding: var(--space-10) var(--space-6);
   }
 
-  .mascot {
+  .mascot,
+  .heroSkeleton {
     width: 11rem;
   }
 

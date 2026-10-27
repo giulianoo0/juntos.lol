@@ -191,7 +191,6 @@ export const en: Record<string, string> = {
   'room.liveInSync': 'In sync with the room',
   'room.liveBehind': 'Out of sync. Click to catch up',
   'error.screenshare': 'Screen sharing is unavailable.',
-  'status.connecting': 'Connecting',
   'status.buffering': 'Buffering',
   'status.loading': 'Loading',
   'error.fileChanged': 'That file is still being written. Wait for the download to finish, then choose it again.',

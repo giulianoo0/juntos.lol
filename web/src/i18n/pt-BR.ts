@@ -191,7 +191,6 @@ export const ptBR: Record<string, string> = {
   'room.liveInSync': 'Sincronizado com a sala',
   'room.liveBehind': 'Fora de sincronia. Clique para alcançar',
   'error.screenshare': 'Não foi possível compartilhar a tela.',
-  'status.connecting': 'Conectando',
   'status.buffering': 'Carregando',
   'status.loading': 'Carregando',
   'error.fileChanged': 'Esse arquivo ainda está sendo gravado. Espere o download terminar e escolha de novo.',

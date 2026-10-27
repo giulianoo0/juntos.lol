@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useParams } from 'react-router-dom'
 import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
-import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
@@ -18,7 +17,7 @@ import { JlocalPicker } from '../screen/JlocalPicker'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
 import { useStageHosts } from '../room/stageHosts'
-import { EntryScreen, RoomView, WaitingRoom } from '../room/ui'
+import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
 import { claimOwnerFromHash, fetchRoomPreview, requestJoinTicket, setRoomAccess, type JoinMode, type RoomPreview } from '../join'
@@ -137,7 +136,7 @@ export function RoomPage() {
   }, [id])
 
   if (missing) return <RoomGate step="expired" />
-  if (!preview) return <RoomGate step="connecting" />
+  if (!preview) return <EntrySkeleton />
 
   const joinMode: JoinMode = owner ? 'open' : preview.joinMode
   if (!entered) {
@@ -228,7 +227,7 @@ function emptyRoom(id: string): RoomInfo {
   }
 }
 
-type GateStep = 'connecting' | 'join' | 'expired' | 'denied' | 'preparing' | 'buffering' | 'failed' | 'error' | null
+type GateStep = 'join' | 'expired' | 'denied' | 'preparing' | 'buffering' | 'failed' | 'error' | null
 
 /** One panel that changes what it asks for, rather than swapping screens. */
 function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, overlay = false, inline = false, leaving = false, failure, errorMessage }: {
@@ -257,13 +256,6 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
       style={inline ? { display: 'grid', placeItems: 'center', padding: 16, overflow: 'auto' } : undefined}
     >
       <MorphPanel className="gate-panel raised" sizeKey={shown} morphing={morphing}>
-        {shown === 'connecting' ? (
-          <div className="gate-centered">
-            <span className="stage-spinner" aria-hidden="true" />
-            <StatusPill status="connecting" label={t('status.connecting')} />
-          </div>
-        ) : null}
-
         {shown === 'join' ? (
           <form className="join-card" onSubmit={(event) => {
             event.preventDefault()
@@ -1156,7 +1148,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
 /** A password room turned the hello away: back to the entrance for it. */
 function PasswordAgain({ bad, onAgain }: { bad: boolean; onAgain: (bad: boolean) => void }) {
   useEffect(() => { onAgain(bad) }, [bad, onAgain])
-  return <RoomGate step="connecting" />
+  return <EntrySkeleton />
 }
 
 function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
