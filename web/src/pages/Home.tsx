@@ -1,6 +1,6 @@
 import { Lock, Plus } from 'lucide-react'
-import { useRef, useState, type CSSProperties, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { discordLoginUrl, useMe } from '../account'
 import { AvatarFace } from '../account/AvatarFace'
 import { useT } from '../i18n/useT'
@@ -37,7 +37,9 @@ const SOURCES = [
  * The landing: the shimmering lettering, "Bora <word> junto?", one big
  * "Criar sala" (a name and, behind the lock, a password; without an account
  * it offers Discord and goes on without one), a small field for a code, and
- * the crew on the couch.
+ * the crew on the couch. Signing in from the create panel comes back with
+ * `?create=1` (and the name, and whether it had a password, never the
+ * password itself) to finish what was started.
  */
 export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => Promise<{ roomID: string }> }) {
   const t = useT()
@@ -49,22 +51,51 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [code, setCode] = useState('')
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useSearchParams()
+  const resumed = useRef(false)
   const nameRef = useRef<HTMLInputElement>(null)
   const room = roomCodeFrom(code)
 
-  const create = async (event: FormEvent) => {
-    event.preventDefault()
-    if (busy) return
+  const submit = async (input: CreateRoomInput) => {
     setBusy(true)
     setError('')
     try {
-      const created = await createRoom({ name: name.trim(), password: withPassword ? password : '' })
+      const created = await createRoom(input)
       navigate(`/room/${created.roomID}`)
     } catch {
       setError(t('landing.failed'))
       setBusy(false)
     }
   }
+
+  const create = (event: FormEvent) => {
+    event.preventDefault()
+    if (busy) return
+    void submit({ name: name.trim(), password: withPassword ? password : '' })
+  }
+
+  // Back from Discord: create right away, unless the room had a password,
+  // which has to be typed again. The ask leaves the address so a reload
+  // does not make a second room.
+  useEffect(() => {
+    if (loading || resumed.current || search.get('create') !== '1') return
+    resumed.current = true
+    const back = search.get('name') ?? ''
+    const locked = search.get('locked') === '1'
+    setSearch({}, { replace: true })
+    setName(back)
+    setWithPassword(locked)
+    setOpen(true)
+    if (me && !locked) void submit({ name: back.trim(), password: '' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, me, search])
+
+  const comeBack = new URLSearchParams({ create: '1' })
+  if (name.trim()) comeBack.set('name', name.trim())
+  if (withPassword) comeBack.set('locked', '1')
+  // The server drops a way back longer than 512 bytes; a long name stays behind.
+  if (`/?${comeBack}`.length > 500) comeBack.delete('name')
 
   return (
     <div className={styles.page}>
@@ -100,9 +131,11 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
               align="center"
               width="22rem"
               initialFocus={nameRef}
+              open={open}
+              onOpenChange={setOpen}
             >
               {() => (
-                <form className={styles.form} onSubmit={(event) => { void create(event) }}>
+                <form className={styles.form} onSubmit={create}>
                   <div className={styles.row}>
                     <Field
                       ref={nameRef}
@@ -133,11 +166,11 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
                       />
                     </div>
                   ) : null}
-                  <Pill type="submit" tone="brand" size="lg" block disabled={busy}>
+                  <Pill type="submit" tone="brand" size="lg" block loading={busy}>
                     {me ? t('landing.go') : t('landing.continue')}
                   </Pill>
                   {me ? null : (
-                    <PillLink tone="soft" size="md" block icon={<DiscordGlyph size={16} />} href={discordLoginUrl('/')}>
+                    <PillLink tone="soft" size="md" block icon={<DiscordGlyph size={16} />} href={discordLoginUrl(`/?${comeBack}`)}>
                       {t('landing.signIn')}
                     </PillLink>
                   )}
