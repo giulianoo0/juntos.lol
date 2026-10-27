@@ -1,9 +1,10 @@
 /* The DiaShimmer of the logo, on words: the ink stays readable and the five
-   colours sweep over it left to right. */
+   colours sweep over it left to right. Only the fill goes transparent, so
+   `color` keeps the button's ink for the layer under the band. */
 .dia {
   --dia-ink: currentColor;
 
-  color: transparent;
+  -webkit-text-fill-color: transparent;
   background-image:
     linear-gradient(100deg, transparent 30%, #c679c4 40%, #fa3d1d 45%, #ffb005 50%, #e1e1fe 55%, #0358f7 60%, transparent 70%),
     linear-gradient(var(--dia-ink), var(--dia-ink));

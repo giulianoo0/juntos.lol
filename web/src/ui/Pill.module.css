@@ -36,6 +36,12 @@
   opacity: 0.5;
 }
 
+/* Working is not refused: the label stays in full ink under the shimmer. */
+.pill[data-loading]:disabled {
+  cursor: progress;
+  opacity: 1;
+}
+
 .sm {
   height: 2rem;
   padding: 0 var(--space-4);
