@@ -103,7 +103,7 @@ describe('RoomView reactions', () => {
     render(<RoomView vm={vm} />)
     fireEvent.click(screen.getByRole('button', { name: 'Reações' }))
     const laugh = await screen.findByRole('menuitem', { name: '😂' })
-    expect(laugh.querySelector('img')).toHaveAttribute('src', '/emoji/1f602.png')
+    expect(laugh.querySelector('img')).toHaveAttribute('src', '/emoji/1f602.png?v=2')
     fireEvent.click(laugh)
     expect(vm.actions.react).toHaveBeenCalledWith('😂')
   })
@@ -116,7 +116,7 @@ describe('RoomView reactions', () => {
     rerender(<RoomView vm={{ ...vm, reactions: [...vm.reactions, { id: 'new', memberId: 'ana', emoji: '😂', at: Date.now() }] }} />)
 
     const bursts = [...container.querySelectorAll('[data-reaction-burst]')]
-    expect(bursts.map((burst) => burst.getAttribute('src'))).toEqual(['/emoji/1f602.png'])
+    expect(bursts.map((burst) => burst.getAttribute('src'))).toEqual(['/emoji/1f602.png?v=2'])
     expect(bursts[0]?.closest('[data-member]')?.getAttribute('data-member')).toBe('ana')
     expect(container.querySelector('[data-member="ana"]')).toHaveAttribute('data-reaction', '😂')
   })

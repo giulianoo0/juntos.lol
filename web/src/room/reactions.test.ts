@@ -10,7 +10,7 @@ describe('reactions', () => {
   it('offers six reactions, each with its Apple picture in the app', () => {
     expect(REACTIONS).toEqual(['👏', '😂', '😮', '❤️', '🔥', '🍿'])
     expect(REACTIONS.map(reactionSrc)).toEqual([
-      '/emoji/1f44f.png', '/emoji/1f602.png', '/emoji/1f62e.png', '/emoji/2764-fe0f.png', '/emoji/1f525.png', '/emoji/1f37f.png',
+      '/emoji/1f44f.png?v=2', '/emoji/1f602.png?v=2', '/emoji/1f62e.png?v=2', '/emoji/2764-fe0f.png?v=2', '/emoji/1f525.png?v=2', '/emoji/1f37f.png?v=2',
     ])
     expect([reactionSrc('🦆'), reactionSrc('constructor')]).toEqual([null, null])
   })

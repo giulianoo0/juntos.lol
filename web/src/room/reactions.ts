@@ -20,7 +20,9 @@ const UNIFIED: Record<string, string> = {
 export const FRESH_MS = 8_000
 
 export function reactionSrc(emoji: string): string | null {
-  return Object.hasOwn(UNIFIED, emoji) ? `/emoji/${UNIFIED[emoji]}.png` : null
+  // ?v=2: the first deploy answered these with the app's HTML, and the CDN
+  // and browsers kept that for hours; a new address skips the bad copies.
+  return Object.hasOwn(UNIFIED, emoji) ? `/emoji/${UNIFIED[emoji]}.png?v=2` : null
 }
 
 export function isReaction(text: string): boolean {
