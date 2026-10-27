@@ -30,7 +30,7 @@ func TestTorrentRoutesWithoutWorkers(t *testing.T) {
 	_ = mr
 	signer, err := worker.LoadOrCreateSigner("")
 	require.NoError(t, err)
-	registry := worker.NewRegistry(rdb)
+	registry := worker.NewRegistry(rdb, worker.NewMemoryEnrollments())
 	service := &worker.Service{Registry: registry, Hub: worker.NewHub(registry, signer, "secret"), Signer: signer, Blocklist: &worker.Blocklist{}}
 	r := gin.New()
 	RegisterTorrentRoutes(r.Group("/api"), config.Config{}, TorrentAccess{

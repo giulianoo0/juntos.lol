@@ -75,7 +75,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	registry := worker.NewRegistry(rdb)
+	registry := worker.NewRegistry(rdb, worker.NewPGEnrollments(pool))
 	workerHub := worker.NewHub(registry, signer, cfg.WorkerEnrollmentSecret)
 	quota := httpapi.NewQuota(rdb, cfg.TorrentDispatchPerHour, cfg.TorrentConcurrentJobs, cfg.TorrentBytesPerDayGB<<30)
 	torrents := &worker.Service{

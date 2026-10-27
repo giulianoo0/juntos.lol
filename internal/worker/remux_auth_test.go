@@ -27,7 +27,7 @@ func TestTheMediaOwnerStartsTheRemux(t *testing.T) {
 	_, generation, err := store.SwapSource(ctx, "r1", "m2", "movie.mkv", "uploading", now)
 	require.NoError(t, err)
 
-	registry := NewRegistry(rdb)
+	registry := NewRegistry(rdb, NewMemoryEnrollments())
 	index := 0
 	require.NoError(t, registry.SaveJob(ctx, &JobRecord{ID: "t_1", SessionID: "s", WorkerID: "w", State: JobServing, FileIndex: &index, LastSeenAt: now}, time.Hour))
 	o := NewRemuxOrchestrator(&Service{Registry: registry, Hub: &Hub{registry: registry}}, store, config.Config{})

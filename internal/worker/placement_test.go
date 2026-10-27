@@ -10,12 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newRegistry(t *testing.T) *Registry {
+func newRedisClient(t *testing.T) *redis.Client {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	return NewRegistry(rdb)
+	return rdb
+}
+
+func newRegistry(t *testing.T) *Registry {
+	t.Helper()
+	return NewRegistry(newRedisClient(t), NewMemoryEnrollments())
 }
 
 func live(r *Registry, id string, hb Heartbeat) {

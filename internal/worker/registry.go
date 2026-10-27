@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -102,37 +101,31 @@ func (w *Worker) Holds(infohash string) (TorrentDigest, bool) {
 	return TorrentDigest{}, false
 }
 
-// Registry is liveness in memory (this instance's links) plus durable facts
-// in Redis: who is enrolled, with which key, and what jobs exist.
+// Registry is liveness in memory (this instance's links) plus durable facts:
+// who is enrolled and with which key in Enrollments, what jobs exist in Redis.
 type Registry struct {
-	mu      sync.RWMutex
-	workers map[string]*Worker
-	rdb     *redis.Client
+	mu          sync.RWMutex
+	workers     map[string]*Worker
+	rdb         *redis.Client
+	enrollments Enrollments
 }
 
-func NewRegistry(rdb *redis.Client) *Registry {
-	return &Registry{workers: map[string]*Worker{}, rdb: rdb}
+func NewRegistry(rdb *redis.Client, enrollments Enrollments) *Registry {
+	return &Registry{workers: map[string]*Worker{}, rdb: rdb, enrollments: enrollments}
 }
-
-func workerKey(id string) string { return "worker:" + id }
 
 const workersBySeen = "workers:by_seen"
 
 func (r *Registry) Enroll(ctx context.Context, id, pubkey, publicBase string) error {
-	pipe := r.rdb.TxPipeline()
-	pipe.HSet(ctx, workerKey(id), "pubkey", pubkey, "publicBase", publicBase, "enrolledAt", time.Now().UTC().Format(time.RFC3339))
-	pipe.ZAdd(ctx, workersBySeen, redis.Z{Score: float64(time.Now().Unix()), Member: id})
-	_, err := pipe.Exec(ctx)
-	return err
+	if err := r.enrollments.Enroll(ctx, id, pubkey, publicBase); err != nil {
+		return err
+	}
+	return r.rdb.ZAdd(ctx, workersBySeen, redis.Z{Score: float64(time.Now().Unix()), Member: id}).Err()
 }
 
 // PubKey answers an enrolled worker's key, "" when unknown.
 func (r *Registry) PubKey(ctx context.Context, id string) (string, error) {
-	v, err := r.rdb.HGet(ctx, workerKey(id), "pubkey").Result()
-	if err == redis.Nil {
-		return "", nil
-	}
-	return v, err
+	return r.enrollments.PubKey(ctx, id)
 }
 
 func (r *Registry) Attach(ctx context.Context, id, pubkey, publicBase string, l *link) {
@@ -147,7 +140,9 @@ func (r *Registry) Attach(ctx context.Context, id, pubkey, publicBase string, l 
 	w.LastSeen = time.Now()
 	w.link = l
 	r.mu.Unlock()
-	r.rdb.HSet(ctx, workerKey(id), "publicBase", publicBase)
+	if err := r.enrollments.SetPublicBase(ctx, id, publicBase); err != nil {
+		log.Printf("worker %s: keep public base: %v", id, err)
+	}
 	r.rdb.ZAdd(ctx, workersBySeen, redis.Z{Score: float64(time.Now().Unix()), Member: id})
 }
 
@@ -177,7 +172,9 @@ func (r *Registry) Observe(ctx context.Context, id string, l *link, hb Heartbeat
 	r.mu.Unlock()
 	r.rdb.ZAdd(ctx, workersBySeen, redis.Z{Score: float64(time.Now().Unix()), Member: id})
 	if hb.Cert != nil && hb.Cert.NotAfter != nil {
-		r.rdb.HSet(ctx, workerKey(id), "certNotAfter", strconv.FormatInt(*hb.Cert.NotAfter, 10))
+		if err := r.enrollments.SetCertNotAfter(ctx, id, *hb.Cert.NotAfter); err != nil {
+			log.Printf("worker %s: keep cert expiry: %v", id, err)
+		}
 	}
 	return true
 }
@@ -195,7 +192,9 @@ func (r *Registry) Cull(ctx context.Context, now time.Time, maxAge time.Duration
 	}
 	r.mu.Unlock()
 	for _, id := range stale {
-		r.rdb.Del(ctx, workerKey(id))
+		if err := r.enrollments.Forget(ctx, id); err != nil {
+			log.Printf("worker %s: forget enrollment: %v", id, err)
+		}
 		r.rdb.ZRem(ctx, workersBySeen, id)
 		log.Printf("worker %s silent for over %s; forgotten", id, maxAge)
 	}
