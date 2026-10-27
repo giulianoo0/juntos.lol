@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { refreshMe } from '../account'
 import { Home } from './Home'
@@ -17,11 +17,16 @@ async function signedIn(me: typeof giu | null) {
   await refreshMe()
 }
 
-function renderHome(createRoom = vi.fn().mockResolvedValue({ roomID: 'K7Q2M9XA' })) {
+function Where() {
+  const location = useLocation()
+  return <output data-testid="where">{location.pathname + location.search}</output>
+}
+
+function renderHome(createRoom = vi.fn().mockResolvedValue({ roomID: 'K7Q2M9XA' }), at = '/') {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[at]}>
       <Routes>
-        <Route path="/" element={<Home createRoom={createRoom} />} />
+        <Route path="/" element={<><Home createRoom={createRoom} /><Where /></>} />
         <Route path="/room/:id" element={<RoomStub />} />
       </Routes>
     </MemoryRouter>,
@@ -73,10 +78,68 @@ describe('Home', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Não deu para criar a sala')
   })
 
-  it('suggests signing in with Discord before creating, coming back home', async () => {
+  it('signing in from the create panel comes back to create the room, with its name', async () => {
     renderHome()
     const panel = await openCreate()
-    expect(within(panel).getByRole('link', { name: 'Entrar com Discord' })).toHaveAttribute('href', '/api/auth/discord?next=%2F')
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Nome da sala' }), { target: { value: 'Sexta & cia' } })
+    const next = new URL(within(panel).getByRole('link', { name: 'Entrar com Discord' }).getAttribute('href')!, 'https://juntos.lol').searchParams.get('next')!
+    const back = new URL(next, 'https://juntos.lol')
+    expect(back.pathname).toBe('/')
+    expect(back.searchParams.get('create')).toBe('1')
+    expect(back.searchParams.get('name')).toBe('Sexta & cia')
+  })
+
+  it('never puts the password in the sign-in link, only that there was one', async () => {
+    renderHome()
+    const panel = await openCreate()
+    fireEvent.click(within(panel).getByRole('button', { name: 'Senha' }))
+    fireEvent.change(within(panel).getByLabelText('Senha', { selector: 'input' }), { target: { value: 'pipoca' } })
+    const href = within(panel).getByRole('link', { name: 'Entrar com Discord' }).getAttribute('href')!
+    expect(decodeURIComponent(decodeURIComponent(href))).not.toContain('pipoca')
+    const back = new URL(new URL(href, 'https://juntos.lol').searchParams.get('next')!, 'https://juntos.lol')
+    expect(back.searchParams.get('locked')).toBe('1')
+  })
+
+  it('back from signing in, creates the room by itself and drops the ask from the address', async () => {
+    await signedIn(giu)
+    let finish: (value: { roomID: string }) => void = () => {}
+    const createRoom = renderHome(vi.fn(() => new Promise<{ roomID: string }>((resolve) => { finish = resolve })), '/?create=1&name=Sexta')
+    const panel = await screen.findByRole('dialog')
+    const go = within(panel).getByRole('button', { name: 'Criar' })
+    expect(go).toHaveAttribute('aria-busy', 'true')
+    expect(go).toBeDisabled()
+    expect(createRoom).toHaveBeenCalledTimes(1)
+    expect(createRoom).toHaveBeenCalledWith({ name: 'Sexta', password: '' })
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/)
+    await act(async () => { finish({ roomID: 'K7Q2M9XA' }) })
+    expect(await screen.findByText('sala K7Q2M9XA')).toBeInTheDocument()
+  })
+
+  it('back from signing in with a locked room, asks the password again instead of creating', async () => {
+    await signedIn(giu)
+    const createRoom = renderHome(undefined, '/?create=1&name=Sexta&locked=1')
+    const panel = await screen.findByRole('dialog')
+    expect(within(panel).getByRole('textbox', { name: 'Nome da sala' })).toHaveValue('Sexta')
+    expect(within(panel).getByLabelText('Senha', { selector: 'input' })).toHaveValue('')
+    expect(createRoom).not.toHaveBeenCalled()
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/)
+  })
+
+  it('back without an account (the sign-in failed), only opens the panel', async () => {
+    const createRoom = renderHome(undefined, '/?create=1&name=Sexta')
+    const panel = await screen.findByRole('dialog')
+    expect(within(panel).getByRole('textbox', { name: 'Nome da sala' })).toHaveValue('Sexta')
+    expect(createRoom).not.toHaveBeenCalled()
+    expect(screen.getByTestId('where')).toHaveTextContent(/^\/$/)
+  })
+
+  it('shows the create button working while the room is made, under the same words', async () => {
+    renderHome(vi.fn(() => new Promise<{ roomID: string }>(() => {})))
+    const panel = await openCreate()
+    fireEvent.click(within(panel).getByRole('button', { name: 'Continuar sem conta' }))
+    const go = within(panel).getByRole('button', { name: 'Continuar sem conta' })
+    expect(go).toHaveAttribute('aria-busy', 'true')
+    expect(go).toBeDisabled()
   })
 
   it('with an account, the corner leads to it and creating asks nothing', async () => {

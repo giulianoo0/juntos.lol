@@ -11,6 +11,23 @@ export function DiaGlyph({ children }: { children: ReactNode }) {
   return <span className={styles.diaGlyph}>{children}</span>
 }
 
+/** Content on its way: skeletons in its shape, named once for screen readers. */
+export function Loading({ label, inline = false, className, children }: {
+  label: string
+  /** Inside a line of text: a span rather than a block. */
+  inline?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  const Box = inline ? 'span' : 'div'
+  return (
+    <Box role="status" aria-busy="true" className={className}>
+      <span className="sr-only">{label}</span>
+      {children}
+    </Box>
+  )
+}
+
 /** A shimmering block holding the place of content that is on its way. */
 export function Skeleton({ width, height = '1em', round = false, className = '', style }: {
   width?: CSSProperties['width']

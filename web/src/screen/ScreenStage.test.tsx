@@ -77,6 +77,19 @@ it('gives every listed screen a tile of its own', async () => {
   expect(screen.getByText('enzoka')).toBeTruthy()
 })
 
+it('holds the place of a screen still on its way, without writing that it connects', async () => {
+  renderStage({
+    memberId: 'm3',
+    isController: false,
+    screens: [{ memberId: 'm1', nickname: 'giuli', since: '2026-01-01T00:00:00Z' }],
+  })
+
+  await waitFor(() => expect(watchScreen).toHaveBeenCalledTimes(1))
+  const tile = await screen.findByRole('status')
+  expect(tile).toHaveAttribute('aria-busy', 'true')
+  expect(tile).toHaveTextContent(/^Loading$/)
+})
+
 it('says nobody is sharing when the room lists no screen', async () => {
   renderStage({ memberId: 'm3', isController: false, shareOpen: false })
   await waitFor(() => expect(fetchScreenRelay).toHaveBeenCalled())

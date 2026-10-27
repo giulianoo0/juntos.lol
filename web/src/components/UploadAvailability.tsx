@@ -5,6 +5,7 @@ import type { RoomUploadProgress } from '../upload'
 import type { TorrentStats } from '../torrent'
 import { TorrentReadout } from './TorrentReadout'
 import { SlotText } from '../ui/SlotText'
+import { Loading, Skeleton } from '../ui/Shimmer'
 import NumberFlow from '@number-flow/react'
 import { numbersAnimate } from '../engine'
 import { GATE_OPEN_SEC } from '../player/gate'
@@ -92,16 +93,17 @@ export function UploadAvailability({
 
   const started = received > 0 || total > 0
   const label = !started
-    ? t('room.waitingInitial')
+    ? null
     : barPct >= 100 && prep.previewPhase !== 'unavailable'
       ? t('prep.phaseSegmenting')
       : t(phaseKey(prep))
-  const etaLabel = eta !== null ? formatDuration(eta, t) : barPct >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
+  const etaLabel = eta !== null ? formatDuration(eta, t) : barPct >= 100 ? t('prep.etaAlmost') : null
+  const etaPending = <Loading inline label={t('status.loading')}><Skeleton width="4em" height="0.9em" style={{ display: 'inline-block', verticalAlign: 'middle' }} /></Loading>
 
   const buffering = wait !== null && wait !== undefined
   const bufferLeft = buffering && !wait.cold ? wait.secondsLeft : null
   const bufferPct = bufferLeft === null ? 0 : Math.max(0, Math.min(100, Math.round((1 - bufferLeft / GATE_OPEN_SEC) * 100)))
-  const stageKey = !buffering ? label : wait.cold ? 'cold' : 'buffer'
+  const stageKey = !buffering ? label ?? 'waiting' : wait.cold ? 'cold' : 'buffer'
   const shownPct = buffering ? bufferPct : barPct
 
   return (
@@ -109,7 +111,7 @@ export function UploadAvailability({
       <h1>{t('room.processing')}</h1>
       <p>
         <SlotText k={stageKey} block>
-          {!buffering ? label : wait.cold ? t('room.preparingPart') : (
+          {!buffering ? label ?? <Loading inline label={t('status.loading')}><Skeleton width="14em" height="0.9em" style={{ display: 'inline-block', maxWidth: '100%', verticalAlign: 'middle' }} /></Loading> : wait.cold ? t('room.preparingPart') : (
             <span className="text-shimmer">{t('room.bufferingLead')}</span>
           )}
         </SlotText>
@@ -128,8 +130,8 @@ export function UploadAvailability({
         <div className="prep-eta">
           <span>{buffering || (target.bytes > 0 && !target.certain) ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
           {buffering
-            ? <strong>{bufferLeft !== null ? <NumberFlow animated={numbersAnimate} value={bufferLeft} suffix={t('room.bufferingTail')} /> : t('prep.etaUnknown')}</strong>
-            : <strong>{etaLabel}</strong>}
+            ? bufferLeft !== null ? <strong><NumberFlow animated={numbersAnimate} value={bufferLeft} suffix={t('room.bufferingTail')} /></strong> : etaPending
+            : etaLabel !== null ? <strong>{etaLabel}</strong> : etaPending}
         </div>
       </div>
       {swarm ? <TorrentReadout stats={swarm} /> : null}

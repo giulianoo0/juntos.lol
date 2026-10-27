@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
 import { VolumeControl } from '../ui/VolumeControl'
+import { Loading, Skeleton } from '../ui/Shimmer'
 import { loadStageVolume, saveStageVolume } from '../ui/stageVolume'
 import { useStageFullscreen } from '../ui/useStageFullscreen'
 import { unlockAudio, useAudioLocked } from '../ui/audioUnlock'
@@ -116,7 +117,11 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
   return (
     <div ref={stageRef} className={`player-wrap live-stage ${status === 'live' ? 'is-live' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`} onDoubleClick={toggleFullscreen}>
       <canvas ref={canvasRef} role="img" aria-label={title} />
-      {status !== 'live' ? <div className="live-waiting">{t('room.liveWaiting')}</div> : null}
+      {status !== 'live' ? (
+        <Loading label={t('status.loading')} className="live-waiting stage-skeleton">
+          <Skeleton width="100%" height="100%" />
+        </Loading>
+      ) : null}
       {status === 'live' && soundLocked && !muted ? (
         <button type="button" className="stage-unlock" onClick={unlockAudio} onDoubleClick={(event) => event.stopPropagation()}>
           <Volume2 size={15} aria-hidden="true" />{t('room.tapForSound')}

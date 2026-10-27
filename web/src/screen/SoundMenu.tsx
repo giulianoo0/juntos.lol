@@ -4,6 +4,7 @@ import type { Translator } from '../i18n/useT'
 import { fetchJLocalSoundApps, type JLocalAudioApp } from '../jlocal/audio'
 import { setAppMuted, setSoundEnabled, useSoundChoice } from '../jlocal/soundChoice'
 import { MorphingMenu } from '../ui/MorphingMenu'
+import { Loading, Skeleton } from '../ui/Shimmer'
 
 /**
  * Which sounds go out with a companion share: one switch for all of it, then
@@ -39,7 +40,12 @@ export function SoundMenu({ t }: { t: Translator }) {
           {choice.enabled ? (
             <>
               <span className="sound-menu-hint">{t('jlocal.soundPick')}</span>
-              {apps === null ? <span className="sound-menu-hint">{t('jlocal.loading')}</span>
+              {apps === null ? (
+                <Loading label={t('status.loading')} className="sound-menu-skeleton">
+                  <Skeleton width="70%" height="0.8rem" />
+                  <Skeleton width="50%" height="0.8rem" />
+                </Loading>
+              )
                 : apps.length === 0 ? <span className="sound-menu-hint">{t('jlocal.soundNoApps')}</span>
                 : apps.map((app) => {
                   const on = !choice.muted.includes(app.id)

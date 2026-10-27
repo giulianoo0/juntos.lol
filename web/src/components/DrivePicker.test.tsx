@@ -58,3 +58,17 @@ describe('DrivePicker folder browsing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 })
+
+describe('DrivePicker while a link is read', () => {
+  it('keeps the button words, marks it working and holds the place of the list', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    const user = userEvent.setup()
+    render(<DrivePicker maxFileBytes={10_000} onPicked={vi.fn()} t={t} />)
+    await user.type(screen.getByLabelText('drive.link'), `https://drive.google.com/drive/folders/${FOLDER}`)
+    await user.click(screen.getByRole('button', { name: 'drive.load' }))
+    const button = await screen.findByRole('button', { name: 'drive.load' })
+    await waitFor(() => expect(button).toHaveAttribute('aria-busy', 'true'))
+    expect(button).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true')
+  })
+})

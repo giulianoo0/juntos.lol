@@ -4,6 +4,7 @@
 
 import type { Translator } from '../i18n/useT'
 import type { WorkerProbe } from '../torrent'
+import { Loading, Skeleton } from '../ui/Shimmer'
 
 function looksLocal(readBase: string): boolean {
   try {
@@ -19,12 +20,16 @@ export function WorkerProbes({ probes, t }: { probes: WorkerProbe[]; t: Translat
   return (
     <div className="worker-probes" aria-live="polite">
       <span className="worker-probes-title">
-        {probes.some((p) => p.state === 'testing') ? t('home.workersTesting') : t('home.workersTested')}
+        {t('home.workersTested')}
       </span>
       {probes.map((probe) => (
         <span key={probe.id} className={`worker-probe ${probe.chosen ? 'is-chosen' : ''} ${probe.state === 'down' ? 'is-down' : ''}`}>
           <code>{probe.id.replace(/^w_/, '').slice(0, 6)}</code>
-          {probe.state === 'testing' ? t('home.workerTesting')
+          {probe.state === 'testing' ? (
+            <Loading inline label={t('status.loading')}>
+              <Skeleton width="5em" height="0.8em" style={{ display: 'inline-block', verticalAlign: 'middle' }} />
+            </Loading>
+          )
             : probe.state === 'down' ? (looksLocal(probe.readBase) ? t('home.workerLocalBlocked') : t('home.workerOffline'))
               : `${probe.mbit} Mbit/s${probe.ttfbMs !== undefined ? ` · ${probe.ttfbMs}ms` : ''}`}
           {probe.holds ? <em>{t('home.workerHolds')}</em> : null}

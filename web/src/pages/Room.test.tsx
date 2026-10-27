@@ -129,6 +129,15 @@ afterEach(() => {
 })
 
 describe('entrada da sala', () => {
+  it('guarda o lugar da porta enquanto a prévia da sala não chega', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    renderRoom()
+
+    const door = screen.getByRole('status')
+    expect(door).toHaveAttribute('aria-busy', 'true')
+    expect(door).toHaveTextContent(/^Carregando$/)
+  })
+
   it('entra com o nome digitado, sem os espaços', async () => {
     serve()
     renderRoom()
@@ -183,6 +192,17 @@ describe('porta com senha', () => {
 
     expect(await screen.findByText(message)).toBeInTheDocument()
     expect(FakeWebSocket.instances).toHaveLength(0)
+  })
+
+  it('o botão de entrar trabalha com o mesmo nome enquanto confere a senha', async () => {
+    serve({ preview: { joinMode: 'password' } })
+    vi.mocked(fetch).mockImplementation(((url: string) => String(url).endsWith('/join') ? new Promise(() => {}) : json({ body: { joinMode: 'password', memberCount: 1, nicknames: ['Giuli'] } })) as never)
+    renderRoom()
+    fireEvent.change(await screen.findByLabelText('Senha da sala'), { target: { value: 'pipoca' } })
+    fireEvent.click(joinButton())
+
+    await waitFor(() => expect(joinButton()).toHaveAttribute('aria-busy', 'true'))
+    expect(joinButton()).toBeDisabled()
   })
 
   it('volta para a senha quando o socket recusa o ticket', async () => {

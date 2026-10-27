@@ -3,6 +3,7 @@ import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from 'motion/r
 import { Check, Gauge, Maximize, Minimize, MonitorOff, MonitorUp, Replace, Volume2, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { Button } from '../ui/Button'
+import { Loading, Skeleton } from '../ui/Shimmer'
 import { IconButton } from '../ui/IconButton'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { VolumeControl } from '../ui/VolumeControl'
@@ -319,8 +320,12 @@ const Tile = forwardRef<HTMLDivElement, {
         {tile.nickname || t('room.screenSomeone')}
         {tile.self ? <em> · {t('room.screenYou')}</em> : null}
       </span>
-      {tile.status === 'live' ? null : (
-        <span className="screen-tile-state" aria-live="polite">{t(tile.stalled ? 'room.screenStalled' : 'room.screenConnecting')}</span>
+      {tile.status === 'live' ? null : tile.stalled ? (
+        <span className="screen-tile-state" aria-live="polite">{t('room.screenStalled')}</span>
+      ) : (
+        <Loading label={t('status.loading')} className="screen-tile-state stage-skeleton">
+          <Skeleton width="100%" height="100%" />
+        </Loading>
       )}
     </motion.div>
   )
