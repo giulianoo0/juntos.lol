@@ -372,6 +372,8 @@ export const ptBR: Record<string, string> = {
   "mascot.color.roxo": "Roxo",
   "mascot.color.terra": "Terra",
   "mascot.color.verde": "Verde",
+  "theme.light": "Modo claro",
+  "theme.dark": "Modo escuro",
   "landing.signIn": "Entrar com Discord",
   "landing.account": "Sua conta",
   "landing.titleBefore": "Bora",

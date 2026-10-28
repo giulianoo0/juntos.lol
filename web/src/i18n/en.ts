@@ -372,6 +372,8 @@ export const en: Record<string, string> = {
   "mascot.color.roxo": "Purple",
   "mascot.color.terra": "Earth",
   "mascot.color.verde": "Green",
+  "theme.light": "Light mode",
+  "theme.dark": "Dark mode",
   "landing.signIn": "Sign in with Discord",
   "landing.account": "Your account",
   "landing.titleBefore": "Let's",

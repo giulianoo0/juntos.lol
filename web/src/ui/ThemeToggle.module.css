@@ -1,0 +1,48 @@
+.toggle {
+  display: grid;
+  place-items: center;
+  width: var(--round-button);
+  height: var(--round-button);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--button-secondary-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+/* The new mark is born where the old one was, on the popover's spring. */
+.glyph {
+  display: grid;
+  animation: glyph-in var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+@keyframes glyph-in {
+  from {
+    scale: 0;
+    rotate: -90deg;
+    filter: blur(var(--blur-sm));
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .toggle:hover {
+    background: var(--button-secondary-hover);
+  }
+}
+
+.toggle:active {
+  transform: scale(var(--press-scale));
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glyph {
+    animation: none;
+  }
+}
