@@ -67,6 +67,8 @@ export type KindArt = Palette & {
   front?: readonly Part[];
   /** Where the eyes show (a mask, a screen); the head when absent. */
   eyeClip?: string;
+  /** The left eye's own patch (x0, y0, x1, y1), mirrored for the right: the eye sits in its middle and never leaves it. */
+  socket?: { box: readonly [number, number, number, number]; scale?: number };
   /** Moves the hats up or down to sit on the head's top. */
   hat?: number;
   /** Shrinks the hats around their brim, for a head whose top is already a cap. */

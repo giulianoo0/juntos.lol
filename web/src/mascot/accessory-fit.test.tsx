@@ -85,6 +85,23 @@ describe("eyes and accessories, every pose", () => {
     }
   });
 
+  for (const kind of MASCOT_KINDS.filter((k) => KINDS[k].socket)) {
+    it(`keeps each of the ${kind}'s eyes in its own patch, never in the other one`, () => {
+      const [x0, y0, x1, y1] = KINDS[kind].socket!.box;
+      for (const accessory of ACCESSORIES.filter((a) => !EYE_FRAMES[a]?.clip)) {
+        const frame = eyeFrameFor(accessory, KINDS[kind]);
+        for (const side of [-1, 1] as const) {
+          const patch = side < 0 ? { x0, y0, x1, y1 } : { x0: 100 - x1, y0, x1: 100 - x0, y1 };
+          for (const eye of everyEye(side).map((e) => fitEye(e, side, frame))) {
+            const box = eyeBox(eye);
+            expect(inside(box, patch), `${accessory} ${JSON.stringify(eye)}`).toBe(true);
+            expect(side < 0 ? box.x1 < 50 : box.x0 > 50).toBe(true);
+          }
+        }
+      }
+    });
+  }
+
   it("fits the frames to the head: the brim rides the hat, the cups the sides, the scarf and the bow tie the chin", () => {
     const { hat, hatScale } = KINDS.mushroom;
     expect(eyeFrameFor("beanie", KINDS.mushroom)!.left.y0).toBeCloseTo(HAT_BRIM + (EYE_FRAMES.beanie!.left.y0 - HAT_BRIM) * hatScale! + hat!, 6);

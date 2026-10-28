@@ -10,6 +10,7 @@ export const cactus: KindArt = {
   eye: "#f8f8fa",
   ...RED_TIE,
   rim: false,
+  socket: { box: [30, 44.5, 48.5, 63.5] },
   shape: "M29 46 C29 32 38 24 50 24 C62 24 71 32 71 46 V84 Q71 89 66 89 H34 Q29 89 29 84 Z",
   ear: {
     path: "M31 67 H22 C17 67 15 64 15 59 V46 C15 43 17 41 19.5 41 C22 41 24 43 24 46 V58 H31 Z",

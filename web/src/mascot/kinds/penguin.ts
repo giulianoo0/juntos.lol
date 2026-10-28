@@ -20,6 +20,7 @@ export const penguin: KindArt = {
     { d: ellipse(69, 66, 4, 2.6), fill: "#ff9eb1", opacity: 0.55 },
   ],
   eyeClip: MASK,
+  socket: { box: [29, 44.5, 47, 63.5] },
   front: [{ d: "M45.4 63.2 Q50 61.4 54.6 63.2 L50.9 68.8 Q50 70 49.1 68.8 Z", fill: "accent" }],
   fit: { helmet: [67, 39.5] },
 };

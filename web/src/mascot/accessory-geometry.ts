@@ -238,23 +238,36 @@ export function fitEye(eye: EyeRender, side: -1 | 1, frame: EyeFrame | null): Ey
 
 const frames = new WeakMap<KindArt, Map<MascotAccessory, EyeFrame | null>>();
 
+const meet = (a: Box, b?: Box): Box => (b ? { x0: Math.max(a.x0, b.x0), y0: Math.max(a.y0, b.y0), x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1) } : a);
+
+/** The kind's sockets inside the accessory's frame; lenses keep their own. */
+function socketFrame(art: KindArt, frame: EyeFrame | null): EyeFrame | null {
+  if (!art.socket || frame?.clip) return frame;
+  const [x0, y0, x1, y1] = art.socket.box;
+  const left = meet({ x0, y0, x1, y1 }, frame?.left);
+  const right = meet({ x0: 100 - x1, y0, x1: 100 - x0, y1 }, frame?.right);
+  return { left, right, scale: art.socket.scale ?? 1, centered: true, clip: null };
+}
+
 /**
  * The frame on this head: the brim rides the hat (`KindArt.hat`), the cups sit
- * on the head's sides and the scarf and the bow tie over its chin.
+ * on the head's sides and the scarf and the bow tie over its chin; a kind with
+ * sockets keeps each eye in its own.
  */
 export function eyeFrameFor(accessory: MascotAccessory, art?: KindArt): EyeFrame | null {
   const frame = EYE_FRAMES[accessory];
-  if (!frame || !art) return frame;
+  if (!art || (!frame && !art.socket)) return frame;
   let known = frames.get(art);
   if (!known) frames.set(art, (known = new Map()));
   if (known.has(accessory)) return known.get(accessory)!;
   let fitted = frame;
-  if (HATS.has(accessory)) {
+  if (frame && HATS.has(accessory)) {
     const y0 = HAT_BRIM + (frame.left.y0 - HAT_BRIM) * (art.hatScale ?? 1) + (art.hat ?? 0);
     fitted = { ...frame, left: { ...frame.left, y0 }, right: { ...frame.right, y0 } };
   } else if (accessory === "headphones" || accessory === "cat-headphones") fitted = cupsFrame(headphonesFor(art));
   else if (accessory === "scarf") fitted = aboveFrame(scarfFor(art).top);
   else if (accessory === "bowtie") fitted = aboveFrame(bowtieFor(art).top);
+  fitted = socketFrame(art, fitted);
   known.set(accessory, fitted);
   return fitted;
 }
