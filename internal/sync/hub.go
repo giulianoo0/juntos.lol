@@ -129,7 +129,7 @@ var resumeGrace = 45 * time.Second
 
 // leaveGrace holds the seat of a tab that said it was going, just long enough
 // for a reload to take it back.
-var leaveGrace = 4 * time.Second
+var leaveGrace = 10 * time.Second
 
 type clientInbound struct {
 	client  *client

@@ -1,6 +1,6 @@
 // Who is in the room, end to end on the real room page: a second tab of the same browser
 // takes the first one's seat (the old tab says so), closing a tab takes the person out in
-// seconds, and the host's kick takes someone out at once.
+// seconds, a reload walks back into the same seat, and the host's kick takes someone out at once.
 //
 //   BASE=http://127.0.0.1:8090 PW=<dir with playwright> node dev/e2e-presence.mjs
 
@@ -69,9 +69,17 @@ try {
   console.log('second tab took the seat: yes')
   await firstTab.screenshot({ path: path.join(here, 'presence-replaced.png') })
 
+  await secondTab.reload()
+  await until('the reloaded tab back in the room', async () => (await secondTab.locator('[data-member]').count()) > 0)
+  if (await secondTab.getByLabel('Seu nome').isVisible()) throw new Error('the reload stopped at the door')
+  await new Promise((f) => setTimeout(f, 1500))
+  const reloaded = (await people(host)).sort()
+  if (JSON.stringify(reloaded) !== JSON.stringify(seat)) throw new Error(`the reload changed the seats: ${reloaded}`)
+  console.log('reload walked back in, same seat: yes')
+
   const closedAt = Date.now()
   await secondTab.close()
-  await until('the closed tab leaving the room', async () => (await people(host)).length === 1, 10000)
+  await until('the closed tab leaving the room', async () => (await people(host)).length === 1, 15000)
   console.log(`closed tab gone in ${Date.now() - closedAt} ms`)
 
   const kickedContext = await browserContext()

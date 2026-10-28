@@ -22,7 +22,7 @@ import { useStageHosts } from '../room/stageHosts'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
-import { claimOwnerFromHash, fetchRoomPreview, requestJoinTicket, setRoomAccess, type JoinMode, type RoomPreview } from '../join'
+import { claimOwnerFromHash, fetchRoomPreview, rememberForReload, requestJoinTicket, setRoomAccess, takeReload, type JoinMode, type RoomPreview } from '../join'
 import { useLocalMedia } from '../call/useLocalMedia'
 import { localLevel } from '../call/media'
 import { voiceLevel } from '../call/speaking'
@@ -97,11 +97,21 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [preview, setPreview] = useState<RoomPreview | null>(null)
   const [missing, setMissing] = useState(false)
-  const [entered, setEntered] = useState<{ nickname: string; mic: boolean; cam: boolean } | null>(null)
+  // A reload walks straight back in: the seat is still being held.
+  const [entered, setEntered] = useState<{ nickname: string; mic: boolean; cam: boolean } | null>(() => {
+    const nickname = takeReload(id)
+    return nickname ? { nickname, mic: false, cam: false } : null
+  })
   useEffect(() => {
     onInCall(entered !== null)
     return () => onInCall(false)
   }, [entered, onInCall])
+  useEffect(() => {
+    if (!entered) return
+    const remember = () => rememberForReload(id, entered.nickname)
+    window.addEventListener('pagehide', remember)
+    return () => window.removeEventListener('pagehide', remember)
+  }, [entered, id])
   const [entryError, setEntryError] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const owner = useMemo(() => claimOwnerFromHash(id) || ownerTokenFor(id) !== '', [id])

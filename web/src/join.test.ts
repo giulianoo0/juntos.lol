@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { claimOwnerFromHash, fetchRoomPreview, joinTicketFor, requestJoinTicket, setRoomAccess } from './join'
+import { RELOAD_WINDOW_MS, claimOwnerFromHash, fetchRoomPreview, joinTicketFor, rememberForReload, requestJoinTicket, setRoomAccess, takeReload } from './join'
 import { ownerTokenFor } from './upload'
 
 const respond = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
@@ -42,6 +42,20 @@ describe('join', () => {
     expect(url).toBe('/api/rooms/ABC/access')
     expect(init.method).toBe('PATCH')
     expect(JSON.parse(init.body)).toEqual({ memberId: 'm1', capability: 'cap', joinMode: 'approval' })
+  })
+
+  it('walks a reload back in under the same name, once and only within the window', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    rememberForReload('r1', 'giuli')
+    now.mockReturnValue(1_000_000 + RELOAD_WINDOW_MS - 1)
+    expect(takeReload('r1')).toBe('giuli')
+    expect(takeReload('r1')).toBeNull()
+
+    rememberForReload('r1', 'giuli')
+    now.mockReturnValue(1_000_000 + 2 * RELOAD_WINDOW_MS)
+    expect(takeReload('r1')).toBeNull()
+    expect(takeReload('r2')).toBeNull()
+    now.mockRestore()
   })
 
   it('takes the host token out of the link it came in and remembers it', () => {

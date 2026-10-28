@@ -67,6 +67,29 @@ export function joinTicketFor(roomId: string): string {
   try { return sessionStorage.getItem(ticketKey(roomId)) ?? '' } catch { return '' }
 }
 
+const reloadKey = (roomId: string) => `ss.reload.${roomId}`
+
+/** How long the server holds the seat of a tab that went away; a reload inside it walks back in. */
+export const RELOAD_WINDOW_MS = 10_000
+
+/** Notes, as the tab goes, who it was in the room. */
+export function rememberForReload(roomId: string, nickname: string): void {
+  try { sessionStorage.setItem(reloadKey(roomId), JSON.stringify({ nickname, at: Date.now() })) } catch { /* the door just asks again */ }
+}
+
+/** The name this tab had in the room, if it went away moments ago; asked once. */
+export function takeReload(roomId: string): string | null {
+  try {
+    const kept = sessionStorage.getItem(reloadKey(roomId))
+    sessionStorage.removeItem(reloadKey(roomId))
+    if (!kept) return null
+    const { nickname, at } = JSON.parse(kept) as { nickname?: string; at?: number }
+    return nickname && at && Date.now() - at < RELOAD_WINDOW_MS ? nickname : null
+  } catch {
+    return null
+  }
+}
+
 const DEVICE_KEY = 'juntos-device'
 
 /**
