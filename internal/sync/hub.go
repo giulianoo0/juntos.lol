@@ -245,8 +245,11 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		writeHandshakeError(conn, "invalid_hello")
 		return
 	}
-	nickname := hello.Nickname
 	identity := pickedAvatar(h.identify(c.Request), hello.Avatar)
+	nickname := hello.Nickname
+	if identity.AccountID != 0 && identity.Nickname != "" {
+		nickname = identity.Nickname
+	}
 
 	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
 	if roomConnection == nil {

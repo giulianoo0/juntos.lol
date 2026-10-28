@@ -104,7 +104,7 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
   const [busy, setBusy] = useState(false)
   const owner = useMemo(() => claimOwnerFromHash(id) || ownerTokenFor(id) !== '', [id])
   const local = useLocalMedia()
-  const { me } = useMe()
+  const { me, loading: meLoading } = useMe()
   const [picked, setPicked] = useState(loadPickedAvatar)
   // The microphone's level at the door, for the mascot to talk with.
   const meterRef = useRef<{ level(): number; close(): void } | null>(null)
@@ -141,9 +141,14 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
   }, [id])
 
   if (missing) return <RoomGate step="expired" />
-  if (!preview) return <EntrySkeleton />
+  if (!preview || meLoading) return <EntrySkeleton />
 
   const joinMode: JoinMode = owner ? 'open' : preview.joinMode
+  // An account walks in under its own name and face: the door only asks
+  // for the password, when there is one.
+  if (!entered && me && joinMode !== 'password') {
+    return <AccountEntry nickname={me.nickname} onEnter={setEntered} />
+  }
   if (!entered) {
     const storedNickname = (() => { try { return localStorage.getItem('ss.nickname') || '' } catch { return '' } })()
     const entryAvatar = me?.avatar || picked || serializeAvatar(avatarOf(undefined, storedNickname || id))
@@ -171,7 +176,7 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
       renderPreview: () => <PreviewVideo stream={local.previewStream} />,
       join: ({ nickname: typed, password }) => {
         setEntryError(undefined)
-        const nickname = typed || guestName()
+        const nickname = me?.nickname || typed || guestName()
         const go = () => {
           try { localStorage.setItem('ss.nickname', nickname) } catch {}
           // The face shown at the door is the one the room sees.
@@ -207,6 +212,12 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
       }}
     />
   )
+}
+
+/** Seats an account straight away; the skeleton stays up for the instant it takes. */
+function AccountEntry({ nickname, onEnter }: { nickname: string; onEnter: (choice: { nickname: string; mic: boolean; cam: boolean }) => void }) {
+  useEffect(() => { onEnter({ nickname, mic: false, cam: false }) }, [nickname, onEnter])
+  return <EntrySkeleton />
 }
 
 function PreviewVideo({ stream }: { stream: MediaStream | null }) {

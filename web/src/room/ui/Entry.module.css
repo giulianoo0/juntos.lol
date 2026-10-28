@@ -141,13 +141,6 @@
   --avatar-ring: var(--frame-ground);
 }
 
-.number {
-  margin-inline-start: var(--space-2);
-  font-family: var(--font-mono);
-  font-weight: var(--weight-regular);
-  color: var(--text-faint);
-}
-
 .actions {
   display: grid;
   justify-items: center;
@@ -207,30 +200,6 @@
   color: var(--text-muted);
 }
 
-@media (max-width: 40rem) {
-  .page {
-    gap: var(--space-8);
-    padding: var(--space-5) var(--space-5) var(--space-10);
-    align-content: start;
-  }
-
-  .stage {
-    min-height: 0;
-    padding: var(--space-10) var(--space-6);
-  }
-
-  .mascot,
-  .heroSkeleton {
-    width: 11rem;
-  }
-
-  .camera {
-    width: 4.5rem;
-    height: 4.5rem;
-    right: -1rem;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .knock {
     animation: none;
@@ -242,10 +211,54 @@
   }
 }
 
-/* A phone: the stage over the form, one column. */
+/* A phone: one column, the room's name on top and the button always in
+   reach at the bottom, however long the choices run. */
 @media (max-width: 52rem) {
   .page {
-    grid-template-columns: minmax(0, 26rem);
-    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    width: 100%;
+    max-width: 28rem;
+    margin-inline: auto;
+    padding: var(--space-5) var(--space-4) 0;
+  }
+
+  .form {
+    display: contents;
+  }
+
+  .title {
+    order: -1;
+  }
+
+  .stage {
+    gap: var(--space-4);
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .mascot,
+  .heroSkeleton {
+    width: 8.5rem;
+  }
+
+  .camera {
+    width: 4rem;
+    height: 4rem;
+    right: -1rem;
+  }
+
+  .looks {
+    padding-top: var(--space-4);
+  }
+
+  .actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    order: 1;
+    margin-top: auto;
+    padding: var(--space-4) 0 calc(var(--space-4) + env(safe-area-inset-bottom));
+    background: linear-gradient(to bottom, transparent, var(--frame-ground) var(--space-4));
   }
 }

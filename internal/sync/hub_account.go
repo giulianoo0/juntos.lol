@@ -14,7 +14,9 @@ import (
 // Identity is the account a socket signed in as, as the room shows it.
 type Identity struct {
 	AccountID int64
-	Avatar    string
+	// Nickname is the account's own; a signed-in member never picks another.
+	Nickname string
+	Avatar   string
 	// Unlisted: a private account, whose number the room never shows.
 	Unlisted bool
 }

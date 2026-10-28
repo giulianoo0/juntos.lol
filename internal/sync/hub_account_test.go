@@ -30,7 +30,7 @@ func (a *cookieAccounts) Identify(r *http.Request) (Identity, bool) {
 		return Identity{}, false
 	}
 	id, _ := strconv.ParseInt(cookie.Value, 10, 64)
-	return Identity{AccountID: id, Avatar: "fox.bowtie"}, id > 0
+	return Identity{AccountID: id, Nickname: "conta" + cookie.Value, Avatar: "fox.bowtie"}, id > 0
 }
 
 func (a *cookieAccounts) RecordWatch(_ context.Context, id int64, watch account.Watch) error {
@@ -90,6 +90,17 @@ func TestHubShowsWhichAccountAMemberIs(t *testing.T) {
 	require.Equal(t, int64(7), welcome.Members[0].AccountID)
 	require.Equal(t, "fox.bowtie", welcome.Members[0].Avatar)
 	require.Zero(t, welcome.Members[1].AccountID, "visita sem conta segue anônima")
+}
+
+func TestHubSeatsAnAccountUnderItsOwnNickname(t *testing.T) {
+	_, _, server := newAccountHub(t)
+	signed := dialAs(t, server, 7)
+	helloHubClient(t, signed, "outro nome", 1)
+	guest := dialAs(t, server, 0)
+	welcome := helloHubClient(t, guest, "visita", 2)
+
+	require.Equal(t, "conta7", welcome.Members[0].Nickname, "a conta não escolhe apelido na porta")
+	require.Equal(t, "visita", welcome.Members[1].Nickname)
 }
 
 func TestHubPresenceFollowsSignedInMembers(t *testing.T) {

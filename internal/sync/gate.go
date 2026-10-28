@@ -16,6 +16,8 @@ const (
 	// A stall reported with this much media ready is the browser's idle-network
 	// event, not playback running dry; the room does not stop for it.
 	stallCredibleBufferMs int64 = 5000
+	// A stall this close to the end of the media is the episode ending.
+	endSlackMs int64 = 1000
 )
 
 // memberReport is the latest readiness a client reported. Only the room
@@ -244,8 +246,25 @@ func (r *roomConn) gateOnStall(ctx context.Context, now int64) {
 	if !state.Playing {
 		return
 	}
+	positionMs := ExpectedPositionMs(state, now)
+	// Running dry at the end of the media is the episode ending: a remux can
+	// stop a few seconds short of the container's duration. The room pauses
+	// at the end instead of waiting for media that will never come.
+	if storedRoom, err := r.hub.store.Get(ctx, r.id); err == nil && storedRoom.DurationMs > 0 &&
+		positionMs >= storedRoom.DurationMs-endSlackMs {
+		state.Playing = false
+		state.PositionMs = storedRoom.DurationMs
+		state.ServerTimeMs = now
+		if err := r.hub.store.SetState(ctx, r.id, state); err != nil {
+			slog.ErrorContext(ctx, "persist end of media failed", "room_id", r.id, "error", err)
+			return
+		}
+		r.playing = false
+		r.broadcast(Outbound{Type: "state", State: &state})
+		return
+	}
 	slog.InfoContext(ctx, "room stopped for a stalled viewer", "room_id", r.id)
-	r.openGate(ctx, nil, ExpectedPositionMs(state, now), state, now)
+	r.openGate(ctx, nil, positionMs, state, now)
 }
 
 // handleIgnore drops a member from everything the room waits for. It is the

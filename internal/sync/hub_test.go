@@ -494,6 +494,27 @@ func TestHubStopsTheRoomWhenSomeoneStallsMidPlayback(t *testing.T) {
 	}
 }
 
+func TestHubPausesAtTheEndWhenTheMediaRunsOutShortOfItsDuration(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	require.NoError(t, store.SetMediaDuration(t.Context(), "r1", 30_500))
+	host, guest := startedRoom(t, server)
+	time.Sleep(600 * time.Millisecond)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_600, BufferAheadMs: 0, Stalled: true}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		ended := readHubEvent(t, conn)
+		require.Equal(t, "state", ended.Type)
+		require.False(t, ended.State.Playing)
+		require.Equal(t, int64(30_500), ended.State.PositionMs)
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(300*time.Millisecond)))
+		var event Outbound
+		require.Error(t, conn.ReadJSON(&event), "the room waited for media past the end: %+v", event)
+	}
+}
+
 func TestHubDoesNotStopForAStallReportedOverAFullBuffer(t *testing.T) {
 	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.gateTimeout = time.Minute

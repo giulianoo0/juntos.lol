@@ -130,7 +130,7 @@ afterEach(() => {
 
 describe('entrada da sala', () => {
   it('guarda o lugar da porta enquanto a prévia da sala não chega', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    vi.stubGlobal('fetch', vi.fn((url: string) => url === '/api/me' ? json({ status: 401 }) : new Promise(() => {})))
     renderRoom()
 
     const door = screen.getByRole('status')

@@ -137,7 +137,7 @@ func (h hubAccounts) Identify(r *http.Request) (syncapi.Identity, bool) {
 	if err != nil {
 		return syncapi.Identity{}, false
 	}
-	return syncapi.Identity{AccountID: signed.ID, Avatar: signed.Avatar, Unlisted: signed.Visibility == account.VisibilityPrivate}, true
+	return syncapi.Identity{AccountID: signed.ID, Nickname: signed.Nickname, Avatar: signed.Avatar, Unlisted: signed.Visibility == account.VisibilityPrivate}, true
 }
 
 func (h hubAccounts) RecordWatch(ctx context.Context, accountID int64, watch account.Watch) error {

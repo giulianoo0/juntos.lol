@@ -235,13 +235,14 @@ describe('EntryScreen', () => {
     expect(vm.setAvatar).toHaveBeenLastCalledWith('cat.crown')
   })
 
-  it('offers Discord to who is not signed in, and shows the number to who is', () => {
+  it('offers Discord to who is not signed in, and asks no name of who is', () => {
     const { rerender } = render(<EntryScreen vm={entry({ joinMode: 'open' })} />)
     expect(screen.getByRole('link', { name: /Discord/ })).toHaveAttribute('href', '/api/auth/discord?next=%2Froom%2Fr1')
     expect(screen.getByRole('button', { name: 'Entrar' })).toBeEnabled()
-    rerender(<EntryScreen vm={entry({ joinMode: 'open', account: { id: 7 } })} />)
+    rerender(<EntryScreen vm={entry({ account: { id: 7 } })} />)
     expect(screen.queryByRole('link', { name: /Discord/ })).toBeNull()
-    expect(screen.getByText('#7')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Seu nome')).toBeNull()
+    expect(screen.getByLabelText('Senha da sala')).toBeInTheDocument()
   })
 
   it('waits for the password before letting you in', () => {

@@ -119,6 +119,7 @@ const TAP_TOGGLE_DELAY_MS = 200
  * stopped arriving, which a full buffer does all the time.
  */
 const STALL_BUFFER_SEC = 1
+const END_SLACK_MS = 1000
 const NO_SUBTITLE_TRACKS: NonNullable<RoomInfo['subtitleTracks']> = []
 const NO_FONT_URLS: string[] = []
 /** Tracks imported into this browser alone are indexed from here, above any
@@ -1280,6 +1281,12 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
         onWaiting={(event) => {
           setLoading(true)
           const video = event.currentTarget
+          // A remux can end a few seconds short of the container's duration:
+          // running dry there is the end of the episode, not a stall.
+          if (knownEndMs !== null && (video.currentTime + mediaOffsetSec) * 1000 >= knownEndMs - END_SLACK_MS) {
+            reportEnded()
+            return
+          }
           if (bufferAhead(readBufferedRanges(video), video.currentTime) < STALL_BUFFER_SEC) onBuffering?.(true)
         }}
         onSeeking={() => setLoading(true)}
