@@ -9,6 +9,7 @@ import type { CreateRoomInput } from './pages/Home'
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })))
 const AccountPage = lazy(() => import('./pages/Account').then((module) => ({ default: module.AccountPage })))
 const LegacyProfile = lazy(() => import('./pages/Account').then((module) => ({ default: module.LegacyProfile })))
+const DataPage = lazy(() => import('./pages/Data').then((module) => ({ default: module.DataPage })))
 const DevRoom =lazy(() => import('./room/ui/DevRoom').then((module) => ({ default: module.DevRoom })))
 
 async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/conta" element={<AccountPage />} />
           <Route path="/c/:id" element={<AccountPage />} />
           <Route path="/u/:id" element={<LegacyProfile />} />
+          <Route path="/data" element={<DataPage />} />
           <Route path="/dev/sala" element={<DevRoom />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

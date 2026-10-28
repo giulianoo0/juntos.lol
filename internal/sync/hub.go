@@ -28,6 +28,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
+	"github.com/giulianoo0/ss/internal/usage"
 )
 
 const (
@@ -54,6 +55,8 @@ type Hub struct {
 	onPosition func(roomID string, positionMs int64)
 
 	onStageClose func(roomID, kind string)
+
+	usage *usage.Counter
 
 	mu           stdsync.Mutex
 	rooms        map[string]*roomConn
@@ -137,6 +140,11 @@ type clientInbound struct {
 	// rateLimited stands in for a dropped message: the room tells the
 	// sender, since only the room writes to its socket.
 	rateLimited bool
+}
+
+// SetUsage wires the counting in. Set once at startup.
+func (h *Hub) SetUsage(counter *usage.Counter) {
+	h.usage = counter
 }
 
 func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
@@ -603,6 +611,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	r.hub.mu.Unlock()
 	r.markDevice(request.client)
 	r.arrived(ctx, request.client)
+	r.countEntered(request.client)
 	r.touch()
 	members := r.members()
 	gating := r.gating
@@ -859,6 +868,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 func (r *roomConn) finalizeLeave(disconnected *client) {
 	defer r.hub.roomChanged(r.id)
 	r.logSyncSummary(disconnected)
+	r.countStay(disconnected)
 	delete(r.ignored, disconnected.id)
 	r.forgetStageRequests(disconnected.id)
 	r.hub.mu.Lock()

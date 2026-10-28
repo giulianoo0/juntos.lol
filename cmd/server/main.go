@@ -24,6 +24,7 @@ import (
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
+	"github.com/giulianoo0/ss/internal/usage"
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
@@ -66,6 +67,12 @@ func main() {
 	defer hub.Close()
 	accounts := account.NewStore(pool)
 	hub.SetAccounts(httpapi.HubAccounts(accounts))
+	counter := usage.New(rdb, pool)
+	hub.SetUsage(counter)
+	go counter.Run(ctx, func() int {
+		_, members := hub.Live()
+		return members
+	})
 
 	signer, err := worker.LoadOrCreateSigner(cfg.WorkerSigningKeyFile)
 	if err != nil {
@@ -87,6 +94,7 @@ func main() {
 		TicketTTL: time.Duration(cfg.WorkerTicketMinutes) * time.Minute,
 		RelayBase: cfg.WorkerRelayBase,
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
+		Usage:     counter,
 	}
 	var swarmMu sync.Mutex
 	lastSwarm := map[string]worker.SwarmStats{}
@@ -155,6 +163,7 @@ func main() {
 		httpapi.WithPluginFetch(sessions, quota),
 		httpapi.WithDiscord(httpapi.DiscordApp(cfg, store, rdb, hub, accounts)),
 		httpapi.WithAccounts(accounts),
+		httpapi.WithUsage(counter),
 	)
 
 	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {

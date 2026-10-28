@@ -26,6 +26,9 @@ createRoot(document.getElementById('root')!).render(
 
 registerYoutubeBackend(jlocalBackend)
 
+// One page load for /data's tally: nothing in it names the browser.
+try { navigator.sendBeacon?.('/api/visit') } catch {}
+
 const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
 const idle = window.requestIdleCallback
 if (typeof idle === 'function') idle(checkPlugins, { timeout: 3_000 })

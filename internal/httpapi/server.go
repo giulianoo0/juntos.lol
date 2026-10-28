@@ -13,6 +13,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
+	"github.com/giulianoo0/ss/internal/usage"
 )
 
 type ServerOption func(*serverOptions)
@@ -28,6 +29,7 @@ type serverOptions struct {
 	pluginQuota       *Quota
 	discord           http.Handler
 	accounts          *account.Store
+	usage             *usage.Counter
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
@@ -85,7 +87,17 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	r.GET("/api/config", publicConfig(cfg))
 	r.POST("/api/human", human.Verify)
 	r.POST("/api/human/failure", human.Failure)
-	RegisterRoomRoutes(r.Group("/api"), store, cfg, roomReaders)
+	r.POST("/api/visit", countVisit(options.usage, cfg.BehindCloudflare))
+	data := dataSources{usage: options.usage, accounts: options.accounts, rooms: store}
+	if hub != nil {
+		data.live = hub.Live
+	}
+	if options.torrentAccess.Service != nil {
+		data.fleet = options.torrentAccess.Service.Fleet
+	}
+	r.GET("/api/data", serveData(data))
+	counted := r.Group("/api", countRoutes(options.usage))
+	RegisterRoomRoutes(counted, store, cfg, roomReaders)
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
 	options.clientMediaHooks.NotifyPlaylists = waiter.Notify
@@ -107,7 +119,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if hub != nil {
 		authorizer = hub
 	}
-	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
+	RegisterSourceRoute(counted, store, cfg, authorizer, options.sourceHooks)
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)

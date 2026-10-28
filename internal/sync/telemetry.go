@@ -6,8 +6,11 @@ package sync
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/giulianoo0/ss/internal/usage"
 )
 
 const driftLogMs = 1000
@@ -139,4 +142,40 @@ func (r *roomConn) logSyncSummary(c *client) {
 		"device", t.device, "media_kbps", t.mediaKbps,
 		"bandwidth_avg_kbps", t.bandwidthAvg(), "bandwidth_min_kbps", t.bandwidthMin,
 		"dropped_permille", t.droppedPermille())
+}
+
+// countEntered tells the day's tally someone took a seat: the browser's own
+// random id and the account number go in hashed, as package usage keeps them.
+func (r *roomConn) countEntered(c *client) {
+	r.hub.usage.Add(usage.Metrics{"room_joins": 1})
+	r.hub.usage.Distinct("room_people", c.device)
+	if c.member.AccountID != 0 {
+		r.hub.usage.Distinct("room_accounts", strconv.FormatInt(c.member.AccountID, 10))
+	}
+}
+
+// countStay folds a finished seat into the day: how long, on what, how the
+// link held up.
+func (r *roomConn) countStay(c *client) {
+	t := &c.telemetry
+	metrics := usage.Metrics{
+		"room_sessions":      1,
+		"room_seconds":       int64(time.Since(c.member.JoinedAt) / time.Second),
+		"device_" + t.device: 1,
+	}
+	if t.stalls > 0 {
+		metrics["stalls"] = t.stalls
+	}
+	if avg := t.bandwidthAvg(); avg > 0 {
+		metrics["viewer_kbps_sum"] = avg
+		metrics["viewer_kbps_n"] = 1
+	}
+	if t.mediaKbps > 0 {
+		metrics["media_kbps_sum"] = t.mediaKbps
+		metrics["media_kbps_n"] = 1
+	}
+	if c.member.AccountID != 0 {
+		metrics["signed_in_sessions"] = 1
+	}
+	r.hub.usage.Add(metrics)
 }

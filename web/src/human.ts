@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { loadPublicConfig } from './publicConfig'
 
 // Turnstile in front of opening and entering rooms. The server names the
@@ -146,4 +146,13 @@ export function ensureHuman(): Promise<void> {
 /** The server said the check ran out: forget it, so the next ensureHuman asks again. */
 export function forgetHuman() {
   try { localStorage.removeItem(STORAGE_KEY) } catch {}
+}
+
+/** Starts the check as soon as a page that leads into a room is on screen,
+    so the click that opens or enters one rarely waits for it. A failure here
+    is reported and left for that click to retry. */
+export function useHumanPrecheck() {
+  useEffect(() => {
+    void ensureHuman().catch(() => undefined)
+  }, [])
 }

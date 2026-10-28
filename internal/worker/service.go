@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/giulianoo0/ss/internal/remux"
+	"github.com/giulianoo0/ss/internal/usage"
 	"log/slog"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ type Service struct {
 	// from so the room can tell its own producer from a stale one.
 	OnLive    func(roomID, workerID string, state remux.LiveState)
 	RelayBase string
+	Usage     *usage.Counter
 }
 
 // QuotaCharger is the slice of the quota the service needs.
@@ -196,6 +198,11 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 			current.State, current.Name, current.Files = JobListed, result.Name, result.Files
 		}
 	}
+	if current.State == JobListed {
+		s.Usage.Add(usage.Metrics{"torrents": 1})
+	} else {
+		s.Usage.Add(usage.Metrics{"torrents_failed": 1})
+	}
 	if current.State == JobFailed && s.Quota != nil {
 		_ = s.Quota.ReleaseJob(ctx, current.SessionID, current.ID)
 	}
@@ -332,6 +339,11 @@ func (s *Service) resolveYoutube(job JobRecord) {
 	default:
 		current.State, current.Summary = JobListed, result.Summary
 	}
+	if current.State == JobListed {
+		s.Usage.Add(usage.Metrics{"youtube": 1})
+	} else {
+		s.Usage.Add(usage.Metrics{"youtube_failed": 1})
+	}
 	if current.State == JobFailed && s.Quota != nil {
 		_ = s.Quota.ReleaseJob(ctx, current.SessionID, current.ID)
 	}
@@ -438,6 +450,7 @@ func (s *Service) Select(ctx context.Context, sessionID, jobID string, fileIndex
 	}
 	job.State = JobServing
 	_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+	s.Usage.Add(usage.Metrics{"torrent_plays": 1, "torrent_file_bytes": file.Size})
 	return s.grant(job, file)
 }
 
@@ -627,6 +640,7 @@ func (s *Service) Charge(workerID string, hb Heartbeat) {
 		if size := selectedSize(owner); size > 0 && delta > size {
 			delta = size
 		}
+		s.Usage.Add(usage.Metrics{"torrent_bytes": delta})
 		if s.Quota != nil {
 			_ = s.Quota.AddBytes(ctx, owner.SessionID, delta)
 		}
@@ -756,6 +770,7 @@ func (s *Service) StartLive(ctx context.Context, roomID, url, relay, broadcast s
 			return nil, errors.New(result.Error)
 		}
 	}
+	s.Usage.Add(usage.Metrics{"lives": 1})
 	return job, nil
 }
 

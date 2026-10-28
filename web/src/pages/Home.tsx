@@ -1,7 +1,7 @@
 import { Lock, Plus } from 'lucide-react'
 import { HumanTip } from '../ui/HumanTip'
 import { usePublicConfig } from '../publicConfig'
-import { HumanError } from '../human'
+import { HumanError, useHumanPrecheck } from '../human'
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { discordLoginUrl, useMe } from '../account'
@@ -48,6 +48,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
   const location = useLocation()
   const { me, loading } = useMe()
   const config = usePublicConfig()
+  useHumanPrecheck()
   const [name, setName] = useState('')
   const [withPassword, setWithPassword] = useState(false)
   const [password, setPassword] = useState('')
