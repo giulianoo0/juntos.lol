@@ -24,6 +24,15 @@ describe('seriesOf', () => {
     expect(stay.headline).toBe(15)
   })
 
+  it('média por dia ignora os dias de antes de começar a contar', () => {
+    const report = reportOf([
+      { day: '2026-10-26', metrics: {} },
+      { day: '2026-10-27', metrics: { visitors: 30 } },
+      { day: '2026-10-28', metrics: { visitors: 10 } },
+    ])
+    expect(series(report, 7, 'visitors').headline).toBe(20)
+  })
+
   it('dia sem sessão não tem média, em vez de zero', () => {
     const report = reportOf([{ day: '2026-10-28', metrics: {} }])
     expect(series(report, 7, 'avgStay').points[0].value).toBeNull()

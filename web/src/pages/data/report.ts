@@ -48,8 +48,11 @@ function ratio(top: number | undefined, bottom: number | undefined, scale = 1): 
 type Headline = (days: { day: string; metrics: Metrics }[], points: Point[]) => number | null
 
 const sum: Headline = (_, points) => points.reduce((total, point) => total + (point.value ?? 0), 0)
-const mean: Headline = (_, points) => {
-  const values = points.map((point) => point.value).filter((value): value is number => value !== null)
+// Only days the site was counting: the ones before it began have no metrics
+// at all and would drag the average to nothing.
+const mean: Headline = (days, points) => {
+  const values = points.filter((point, i) => point.value !== null && Object.keys(days[i].metrics).length > 0)
+    .map((point) => point.value as number)
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null
 }
 const peak: Headline = (_, points) => Math.max(0, ...points.map((point) => point.value ?? 0))
