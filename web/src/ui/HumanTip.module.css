@@ -1,0 +1,37 @@
+.trigger {
+  display: inline-flex;
+}
+
+.block {
+  display: grid;
+  width: 100%;
+}
+
+.positioner {
+  z-index: var(--layer-over-dialog);
+}
+
+/* The spring popover's look, opened by hover while the check runs. */
+.popup {
+  width: auto;
+  padding: var(--space-4) var(--space-5);
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.credit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}

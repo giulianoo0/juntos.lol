@@ -7,6 +7,7 @@ import { Field } from '../../ui/Field'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
 import { HumanTip } from '../../ui/HumanTip'
+import { useHumanCheck } from '../../human'
 import { arrive } from '../../ui/arrive'
 import { Loading, Skeleton } from '../../ui/Shimmer'
 import { AvatarEditor } from '../../account/AvatarEditor'
@@ -59,6 +60,7 @@ function hop(element: HTMLElement | null) {
     name, how you look and, when asked, the password. */
 export function EntryScreen({ vm }: { vm: EntryViewModel }) {
   const strings = useRoomStrings()
+  const checking = useHumanCheck()
   const [nickname, setNickname] = useState(vm.nickname)
   const [password, setPassword] = useState('')
   const [avatar, setAvatar] = useState(vm.avatar)
@@ -160,7 +162,7 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
         {!needsPassword && vm.error ? <p className={styles.error} role="alert">{vm.error}</p> : null}
         <div className={styles.actions}>
           <HumanTip block>
-            <Pill type="submit" tone="primary" size="lg" block disabled={!ready} loading={vm.busy}>{strings.join}</Pill>
+            <Pill type="submit" tone="primary" size="lg" block disabled={!ready} loading={vm.busy && !checking} waiting={checking}>{strings.join}</Pill>
           </HumanTip>
           {vm.account ? null : <a className={styles.discord} href={vm.loginUrl}>{strings.withDiscord}</a>}
         </div>

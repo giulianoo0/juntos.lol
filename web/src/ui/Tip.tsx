@@ -6,10 +6,8 @@ import styles from './Tip.module.css'
  * A short name over an icon or an action, on hover and keyboard focus, at
  * once. The only place a word may sit beside a mark that does not say it.
  */
-export function Tip({ label, detail, children, render, side = 'top', container, open, block = false }: {
+export function Tip({ label, children, render, side = 'top', container, open, block = false }: {
   label: string
-  /** A line under the label: a credit, never an explanation. */
-  detail?: ReactNode
   children?: ReactNode
   /** The trigger itself (a button): it keeps its own name. */
   render?: ReactElement<Record<string, unknown>>
@@ -28,9 +26,7 @@ export function Tip({ label, detail, children, render, side = 'top', container, 
       </Tooltip.Trigger>
       <Tooltip.Portal container={container ?? undefined}>
         <Tooltip.Positioner side={side} sideOffset={6} className={styles.positioner}>
-          <Tooltip.Popup className={styles.tip}>
-            {detail ? <><span>{label}</span><span className={styles.detail}>{detail}</span></> : label}
-          </Tooltip.Popup>
+          <Tooltip.Popup className={styles.tip}>{label}</Tooltip.Popup>
         </Tooltip.Positioner>
       </Tooltip.Portal>
     </Tooltip.Root>

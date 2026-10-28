@@ -1,7 +1,8 @@
 import { Lock, Plus } from 'lucide-react'
 import { HumanTip } from '../ui/HumanTip'
 import { usePublicConfig } from '../publicConfig'
-import { HumanError, useHumanPrecheck } from '../human'
+import { HumanError, useHumanCheck, useHumanPrecheck } from '../human'
+import { Spinner } from '../ui/Spinner'
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { discordLoginUrl, useMe } from '../account'
@@ -49,6 +50,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
   const { me, loading } = useMe()
   const config = usePublicConfig()
   useHumanPrecheck()
+  const checking = useHumanCheck()
   const [name, setName] = useState('')
   const [withPassword, setWithPassword] = useState(false)
   const [password, setPassword] = useState('')
@@ -116,8 +118,9 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
           />
 
           <div className={styles.actions}>
+            <HumanTip>
             <SpringPopover
-              trigger={<><Plus size={22} strokeWidth={3} aria-hidden="true" />{t('landing.create')}</>}
+              trigger={<>{checking ? <Spinner size="1.375rem" /> : <Plus size={22} strokeWidth={3} aria-hidden="true" />}{t('landing.create')}</>}
               triggerClassName={styles.create}
               align="center"
               width="22rem"
@@ -158,7 +161,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
                     </div>
                   ) : null}
                   <HumanTip block>
-                    <Pill type="submit" tone="brand" size="lg" block loading={busy}>
+                    <Pill type="submit" tone="brand" size="lg" block loading={busy && !checking} waiting={checking}>
                       {me ? t('landing.go') : t('landing.continue')}
                     </Pill>
                   </HumanTip>
@@ -171,6 +174,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
                 </form>
               )}
             </SpringPopover>
+            </HumanTip>
 
             <form className={styles.join} onSubmit={(event) => { event.preventDefault(); if (room) navigate(`/room/${room}`) }}>
               <input

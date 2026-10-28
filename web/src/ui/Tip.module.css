@@ -27,22 +27,6 @@
     transform var(--duration-fast) var(--ease-out);
 }
 
-.tip:has(.detail) {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-1);
-  padding-block: var(--space-3);
-}
-
-/* The credit under the label, quieter than it. */
-.detail {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-2xs);
-  color: color-mix(in oklab, var(--background) 68%, transparent);
-}
-
 .tip[data-starting-style],
 .tip[data-ending-style] {
   opacity: 0;
