@@ -1,3 +1,4 @@
+import { LostPage } from '../components/LostPage'
 import { Check, Clock, Film, History, Lock, LogOut, Monitor, Pencil, Plus, Radio, Send, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
@@ -34,7 +35,7 @@ import { Field } from '../ui/Field'
 import { hueOf } from '../ui/hue'
 import { IconPill } from '../ui/IconPill'
 import { Modal } from '../ui/Modal'
-import { Pill } from '../ui/Pill'
+import { Pill, PillLink } from '../ui/Pill'
 import { Segmented } from '../ui/Segmented'
 import { Skeleton } from '../ui/Shimmer'
 import { SpringPopover } from '../ui/SpringPopover'
@@ -68,6 +69,18 @@ function whenLabel(iso: string, t: Translator, now = new Date()): string {
   return then.toLocaleDateString(t.language, { day: 'numeric', month: 'short' })
 }
 
+// Where a release name stops being the title: resolution, source, codec, audio.
+const RELEASE_TAG = /\b(?:\d{3,4}p|4k|uhd|web(?:-?dl|rip)?|blu-?ray|bdrip|hdtv|dvdrip|remux|[hx]\.?26[45]|hevc|av1|aac|ddp?\d|atmos|hdr\d*|10bit|multi|dual)\b/i
+
+/** A file name as a person would say it: `Helluva.Boss.S03E05.1080p.mkv` is "Helluva Boss S03E05". */
+export function readableTitle(raw: string): string {
+  if (!/\.[a-z0-9]{2,4}$/i.test(raw) || raw.includes(' ')) return raw
+  const spaced = raw.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[._]+/g, ' ')
+  const cut = spaced.search(RELEASE_TAG)
+  const title = (cut > 0 ? spaced.slice(0, cut) : spaced).replace(/[\s\-[(]+$/, '').trim()
+  return title || raw
+}
+
 const stagger = (index: number) => ({ '--i': index }) as CSSProperties
 
 /** The old `/u/:id` address, kept for links already out there. */
@@ -89,7 +102,7 @@ export function AccountPage() {
 
   let body: ReactNode = null
   if (wanted !== null && (!Number.isInteger(wanted) || wanted < 1)) {
-    body = <Empty icon={<X size={28} />} title={t('account.notFound')} />
+    body = <MissingAccount signedIn={Boolean(me)} />
   } else if (loading) {
     body = <AccountSkeleton panels />
   } else if (me && wanted === null) {
@@ -97,7 +110,7 @@ export function AccountPage() {
   } else if (me && wanted === me.id) {
     body = <OwnAccount me={me} />
   } else if (wanted !== null) {
-    body = <OtherAccount id={wanted} />
+    body = <OtherAccount id={wanted} signedIn={Boolean(me)} />
   } else {
     body = (
       <div className={styles.signedOut}>
@@ -166,7 +179,7 @@ function OwnAccount({ me }: { me: Me }) {
   )
 }
 
-function OtherAccount({ id }: { id: number }) {
+function OtherAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
   const t = useT()
   const [profile, setProfile] = useState<Profile | null | undefined>(undefined)
   const [history, setHistory] = useState<HistoryEntry[] | null | undefined>(undefined)
@@ -187,7 +200,7 @@ function OtherAccount({ id }: { id: number }) {
 
   if (failed) return <Empty title={t('account.loadFailed')} action={<Pill tone="soft" size="md" onClick={() => { void load() }}>{t('account.retry')}</Pill>} />
   if (profile === undefined) return <AccountSkeleton />
-  if (profile === null) return <Empty icon={<X size={28} />} title={t('account.notFound')} />
+  if (profile === null) return <MissingAccount signedIn={signedIn} />
   return (
     <div className={styles.layout}>
       <IdentityCard account={profile} stats={profile.stats} discord={profile.discord} />
@@ -559,7 +572,7 @@ function HistoryPanel({ history, loading = false, visibility, discordVisibility,
               <div className={styles.cover} data-hue={hueOf(entry.title)} aria-hidden="true">
                 {KIND_ICON[entry.kind] ?? <Film size={22} />}
               </div>
-              <span className={styles.entryTitle}>{entry.title}</span>
+              <span className={styles.entryTitle} title={entry.title}>{readableTitle(entry.title)}</span>
               <div className={styles.entryFoot}>
                 <span className={styles.when}>{whenLabel(entry.startedAt, t)}</span>
                 <span className={styles.with}>
@@ -628,6 +641,21 @@ function EntrySkeleton({ index }: { index: number }) {
       <Skeleton width="80%" height="0.875rem" />
       <Skeleton width="40%" height="0.75rem" />
     </li>
+  )
+}
+
+/** No account under that number: a way to make one, or home for who already has one. */
+function MissingAccount({ signedIn }: { signedIn: boolean }) {
+  const t = useT()
+  return (
+    <LostPage
+      title={t('account.notFound')}
+      action={signedIn ? (
+        <PillLink tone="soft" size="lg" href="/">{t('lost.home')}</PillLink>
+      ) : (
+        <PillLink tone="brand" size="lg" icon={<DiscordGlyph size={18} />} href={discordLoginUrl('/conta')}>{t('lost.createAccount')}</PillLink>
+      )}
+    />
   )
 }
 

@@ -1,0 +1,49 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--frame-ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.lost {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  min-height: 70dvh;
+  padding: var(--space-8) var(--space-4);
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.bob {
+  display: grid;
+  animation: bob 3.4s var(--ease-in-out) infinite;
+}
+
+@keyframes bob {
+  50% {
+    translate: 0 -0.5rem;
+  }
+}
+
+.title {
+  margin: 0;
+  max-width: 22rem;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-snug);
+  color: var(--text);
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bob {
+    animation: none;
+  }
+}

@@ -447,19 +447,26 @@
 .entry {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-3);
-  border-radius: 1.375rem;
-  background: var(--frame-ground);
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .cover {
   display: grid;
   place-items: center;
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 16 / 10;
   border-radius: var(--radius-2xl);
-  background: linear-gradient(160deg, var(--cover-from), var(--cover-to));
+  background:
+    radial-gradient(120% 90% at 20% 0%, color-mix(in oklab, white 14%, transparent), transparent 60%),
+    linear-gradient(160deg, var(--cover-from), var(--cover-to));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 8%, transparent);
   color: var(--cover-ink);
+}
+
+.cover svg {
+  width: 1.75rem;
+  height: 1.75rem;
+  opacity: 0.9;
 }
 
 .cover[data-hue="1"] { --cover-from: var(--hue-1-bg); --cover-to: var(--hue-1); --cover-ink: var(--hue-1-ink); }
@@ -472,7 +479,7 @@
 .cover[data-hue="8"] { --cover-from: var(--hue-8-bg); --cover-to: var(--hue-8); --cover-ink: var(--hue-8-ink); }
 
 .coverSkeleton {
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 16 / 10;
   border-radius: var(--radius-2xl);
 }
 
@@ -483,6 +490,8 @@
 .entryTitle {
   display: -webkit-box;
   overflow: hidden;
+  padding-inline: var(--space-1);
+  overflow-wrap: anywhere;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-snug);
@@ -496,6 +505,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   margin-top: auto;
+  padding-inline: var(--space-1);
 }
 
 .when {

@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
+import { NotFoundPage } from './components/LostPage'
 import { Onboarding } from './components/Onboarding'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { CodecSupportNotice } from './components/CodecSupport'
 import { RoomHost } from './components/RoomHost'
 import type { CreateRoomInput } from './pages/Home'
@@ -30,7 +31,7 @@ export default function App() {
           <Route path="/c/:id" element={<AccountPage />} />
           <Route path="/u/:id" element={<LegacyProfile />} />
           <Route path="/dev/sala" element={<DevRoom />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
         <RoomHost />
       </Suspense>

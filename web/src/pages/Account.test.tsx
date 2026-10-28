@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { refreshMe } from '../account'
 import { ToastProvider } from '../ui/Toast'
-import { AccountPage, LegacyProfile } from './Account'
+import { AccountPage, LegacyProfile, readableTitle } from './Account'
 
 const respond = (status: number, body?: unknown) => Promise.resolve(new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
 
@@ -216,5 +216,17 @@ describe('AccountPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sair' }))
     expect(await screen.findByText('início')).toBeInTheDocument()
     expect(calls).toContainEqual({ method: 'POST', path: '/api/auth/logout', body: undefined })
+  })
+})
+
+describe('readableTitle', () => {
+  it('turns a release file name into the title', () => {
+    expect(readableTitle('Helluva.Boss.S03E05.1080p.WEB-DL.MeGusta.mkv')).toBe('Helluva Boss S03E05')
+    expect(readableTitle('Helluva.Boss.S03E05.The.Audition.1080p.AMZN.WEB-DL.ENG.ITA.DDP5.1.H264-x.mkv')).toBe('Helluva Boss S03E05 The Audition')
+  })
+
+  it('leaves a title that is already a title alone', () => {
+    expect(readableTitle('Meu filme favorito')).toBe('Meu filme favorito')
+    expect(readableTitle('Lofi Girl - beats to relax')).toBe('Lofi Girl - beats to relax')
   })
 })

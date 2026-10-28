@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { ensureHuman } from '../human'
+import { NotFoundPage } from '../components/LostPage'
 import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { CopyErrorReport } from '../components/CopyErrorReport'
@@ -140,7 +142,7 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
     return () => controller.abort()
   }, [id])
 
-  if (missing) return <RoomGate step="expired" />
+  if (missing) return <NotFoundPage title={t('room.expired')} />
   if (!preview || meLoading) return <EntrySkeleton />
 
   const joinMode: JoinMode = owner ? 'open' : preview.joinMode
@@ -188,11 +190,11 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
           void local.setCam(false)
           setEntered(choice)
         }
-        if (joinMode !== 'password') { go(); return }
         setBusy(true)
-        void requestJoinTicket(id, password).then(go).catch((error: unknown) => {
+        const ticket = async () => { if (joinMode === 'password') await requestJoinTicket(id, password) }
+        void ensureHuman().then(ticket).then(go).catch((error: unknown) => {
           const code = error instanceof Error ? error.message : 'failed'
-          setEntryError(t(code === 'bad_password' ? 'room.badPassword' : code === 'too_many_attempts' ? 'room.tooManyAttempts' : 'room.error'))
+          setEntryError(t(code === 'bad_password' ? 'room.badPassword' : code === 'too_many_attempts' ? 'room.tooManyAttempts' : code === 'human_failed' ? 'human.failed' : 'room.error'))
         }).finally(() => setBusy(false))
       },
     }
