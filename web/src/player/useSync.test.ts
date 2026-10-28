@@ -85,6 +85,48 @@ describe('useSync', () => {
     localStorage.clear()
   })
 
+  it('names the same browser in the hello of every tab', () => {
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const first = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const second = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const [a, b] = FakeWebSocket.instances
+    act(() => { a.onopen?.(); b.onopen?.() })
+    const device = JSON.parse(a.send.mock.calls[0][0] as string).device
+    expect(device).toBeTruthy()
+    expect(JSON.parse(b.send.mock.calls[0][0] as string).device).toBe(device)
+    first.unmount()
+    second.unmount()
+    localStorage.clear()
+  })
+
+  it('says it is leaving when the tab goes away and when the room page closes', () => {
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    const leaves = () => socket.send.mock.calls.filter(([frame]) => JSON.parse(frame as string).type === 'leave').length
+    act(() => { window.dispatchEvent(new Event('pagehide')) })
+    expect(leaves()).toBe(1)
+    unmount()
+    expect(leaves()).toBe(2)
+  })
+
+  it('stops for good when another tab of this browser takes the seat', () => {
+    vi.useFakeTimers()
+    vi.spyOn(Date, 'now').mockReturnValue(100_000)
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.receive({ type: 'error', error: 'replaced' }))
+    expect(result.current.replaced).toBe(true)
+    expect(result.current.left).toBe(true)
+    act(() => { socket.onclose?.() })
+    act(() => { vi.advanceTimersByTime(30_000) })
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    unmount()
+    vi.useRealTimers()
+  })
+
   it('bumps roomVersion on every room update without treating uploads as ready', () => {
     const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))

@@ -113,7 +113,8 @@ func (h *Hub) validTicket(roomID, ticket string) bool {
 }
 
 // admit decides whether a hello may take a seat. The host and a member
-// taking back their own seat always may; otherwise the room's mode decides.
+// taking back their own seat, from this tab or another, always may;
+// otherwise the room's mode decides.
 // An approval room parks the socket in the lobby until the host answers.
 // It returns the handshake error to send, and whether one was already sent.
 func (h *Hub) admit(conn *websocket.Conn, storedRoom *room.Room, hello Inbound) (string, bool) {
@@ -122,6 +123,9 @@ func (h *Hub) admit(conn *websocket.Conn, storedRoom *room.Room, hello Inbound) 
 		return "", false
 	}
 	if hello.MemberID != "" && h.AuthorizeMember(storedRoom.ID, hello.MemberID, hello.Capability) {
+		return "", false
+	}
+	if hello.Device != "" && h.deviceSeated(storedRoom.ID, hello.Device) {
 		return "", false
 	}
 	switch storedRoom.JoinMode {

@@ -67,6 +67,24 @@ export function joinTicketFor(roomId: string): string {
   try { return sessionStorage.getItem(ticketKey(roomId)) ?? '' } catch { return '' }
 }
 
+const DEVICE_KEY = 'juntos-device'
+
+/**
+ * The secret every tab of this browser shares, the hello's `device`: a
+ * second tab takes over the first one's seat instead of joining twice.
+ */
+export function deviceId(): string {
+  try {
+    const kept = localStorage.getItem(DEVICE_KEY)
+    if (kept) return kept
+    const made = crypto.randomUUID()
+    localStorage.setItem(DEVICE_KEY, made)
+    return made
+  } catch {
+    return ''
+  }
+}
+
 /** The host's switch for who gets in. A password room needs a password the first time. */
 export async function setRoomAccess(roomId: string, memberId: string, capability: string, joinMode: JoinMode, password?: string): Promise<void> {
   const response = await fetch(`${room(roomId)}/access`, {

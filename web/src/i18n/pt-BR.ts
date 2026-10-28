@@ -157,6 +157,8 @@ export const ptBR: Record<string, string> = {
   'room.stillHere': 'Estou aqui',
   'room.kickedTitle': 'Você foi removido da sala',
   'room.kickedGuide': 'Quem está no controle tirou você da sala. Se foi engano, é só entrar de novo com o link.',
+  'room.replacedTitle': 'A sala está aberta em outra aba',
+  'room.replacedRejoin': 'Usar esta aba',
   'room.closedIdleTitle': 'A sala fechou',
   'room.closedIdleGuide': 'Ninguém respondeu ao aviso, então você foi tirado da sala para não deixar tudo ligado à toa. Se quiser, é só entrar de novo.',
   'room.closedIdleRejoin': 'Entrar de novo',

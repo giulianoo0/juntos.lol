@@ -113,13 +113,99 @@ func TestHubResumeReplacesAHalfOpenSocket(t *testing.T) {
 	require.Equal(t, "m2", welcome.MemberID)
 	require.Len(t, welcome.Members, 2)
 	requireNoEvent(t, host, 100*time.Millisecond)
-	// The old socket is closed by the server, and its going does not count as leaving.
+	// The old socket is told and closed by the server, and its going does not count as leaving.
+	require.Equal(t, "replaced", readHubEvent(t, guest).ErrCode)
 	require.NoError(t, guest.SetReadDeadline(time.Now().Add(time.Second)))
 	var stale Outbound
 	require.Error(t, guest.ReadJSON(&stale))
 	requireNoEvent(t, host, 100*time.Millisecond)
 	require.NoError(t, again.WriteJSON(Inbound{Type: "heartbeat", ClientTimeMs: 4}))
 	require.Equal(t, "pong", readHubEvent(t, again).Type)
+}
+
+const browser = "browser-0123456789abcdef"
+
+func helloFromBrowser(t *testing.T, conn *websocket.Conn, nickname string) Outbound {
+	t.Helper()
+	require.NoError(t, conn.WriteJSON(Inbound{Type: "hello", Nickname: nickname, ClientTimeMs: 9, Device: browser}))
+	welcome := readHubEvent(t, conn)
+	require.Equal(t, "welcome", welcome.Type)
+	require.Equal(t, "pong", readHubEvent(t, conn).Type)
+	return welcome
+}
+
+func TestHubSecondTabOfTheSameBrowserTakesTheSeat(t *testing.T) {
+	holdSeats(t)
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	first := dialHubWS(t, server)
+	firstWelcome := helloFromBrowser(t, first, "guest")
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+	mic := true
+	require.NoError(t, first.WriteJSON(Inbound{Type: "media", Mic: &mic}))
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+	require.Equal(t, "members", readHubEvent(t, first).Type)
+	require.NoError(t, store.StartScreenShare(t.Context(), "r1", room.ScreenShare{MemberID: "m2", Nickname: "guest", Since: time.Now().UTC()}))
+
+	second := dialHubWS(t, server)
+	welcome := helloFromBrowser(t, second, "guest")
+	require.Equal(t, "m2", welcome.MemberID)
+	require.Equal(t, firstWelcome.Capability, welcome.Capability)
+	require.Len(t, welcome.Members, 2)
+	require.Equal(t, "replaced", readHubEvent(t, first).ErrCode)
+
+	// What the old tab was sending stays with it.
+	require.Equal(t, "roomUpdated", readHubEvent(t, host).Type)
+	members := readHubEvent(t, host)
+	require.Equal(t, "members", members.Type)
+	require.Len(t, members.Members, 2)
+	for _, member := range members.Members {
+		require.False(t, member.Mic, member.ID)
+	}
+	stored, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, stored.Screens)
+}
+
+func TestHubTabThatSaysItIsLeavingIsGoneWithoutTheLongGrace(t *testing.T) {
+	holdSeats(t)
+	previous := leaveGrace
+	leaveGrace = 50 * time.Millisecond
+	t.Cleanup(func() { leaveGrace = previous })
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "leave"}))
+	require.NoError(t, guest.Close())
+	members := readHubEvent(t, host)
+	require.Equal(t, "members", members.Type)
+	require.Len(t, members.Members, 1)
+}
+
+func TestHubKickDropsASeatHeldForADroppedSocket(t *testing.T) {
+	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	guestWelcome := helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+	require.NoError(t, guest.Close())
+	requireNoEvent(t, host, 100*time.Millisecond)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "kick", TargetID: "m2"}))
+	members := readHubEvent(t, host)
+	require.Equal(t, "members", members.Type)
+	require.Len(t, members.Members, 1)
+
+	again := dialHubWS(t, server)
+	welcome := resumeHubClient(t, again, "guest", "m2", guestWelcome.Capability, 3)
+	require.Equal(t, "m3", welcome.MemberID, "a kicked seat came back")
 }
 
 func TestHubResumeWithAWrongCapabilityIsAFreshJoin(t *testing.T) {

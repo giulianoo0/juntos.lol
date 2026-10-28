@@ -30,8 +30,9 @@ type client struct {
 	report           memberReport
 	telemetry        syncTelemetry
 	lastTitleRequest time.Time
-	// Set by the room before a kick is written; a kicked seat is not held.
-	kicked   bool
+	// The tab said it is going: its seat is held only for a reload.
+	leaving  bool
+	device   string
 	identity Identity
 	watch    *watchSpan
 }

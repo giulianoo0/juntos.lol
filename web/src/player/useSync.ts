@@ -5,7 +5,7 @@ import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } 
 import type { ChatMessage, MediaSnapshot, Member, MemberReadiness, PlayState, PresenceEvent, RoomWaiting, Spotlight, StageKind, TitleRequest } from '../types'
 import { initialStages, stagesReducer, type StagesState } from '../room/stages'
 import { loadPickedAvatar } from '../room/avatar'
-import { joinTicketFor } from '../join'
+import { deviceId, joinTicketFor } from '../join'
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
 
@@ -92,6 +92,8 @@ interface SyncResult {
   stillThereDeadlineMs: number | null
   left: boolean
   kicked: boolean
+  /** Another tab of this browser took the seat. */
+  replaced: boolean
   leave: () => void
   send: (type: string, payload?: Record<string, unknown>) => boolean
   reportBuffering: (stalled: boolean) => void
@@ -173,6 +175,7 @@ export function useSync(
   const [stillThereDeadlineMs, setStillThereDeadlineMs] = useState<number | null>(null)
   const [left, setLeft] = useState(false)
   const [kicked, setKicked] = useState(false)
+  const [replaced, setReplaced] = useState(false)
   const titleSeqRef = useRef(0)
   const [stages, dispatchStage] = useReducer(stagesReducer, initialStages)
   const [door, setDoor] = useState<Door>('in')
@@ -234,6 +237,15 @@ export function useSync(
       return current
     })
   }, [videoRef])
+
+  /** A tab that is going says so: its seat is let go of in seconds instead of held. */
+  const sayGoodbye = useCallback(() => {
+    const socket = socketRef.current
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'leave' }))
+  }, [])
+  // Leaving the room's page is leaving the room. The socket's own effect
+  // also reruns for a new nickname, and that keeps the seat.
+  useEffect(() => sayGoodbye, [roomId, sayGoodbye])
 
   useEffect(() => {
     let disposed = false
@@ -327,6 +339,7 @@ export function useSync(
           ownerToken: ownerTokenFor(roomId),
           ...(joinTicketFor(roomId) ? { ticket: joinTicketFor(roomId) } : {}),
           ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
+          ...(deviceId() ? { device: deviceId() } : {}),
           ...(picked ? { avatar: picked } : {}),
         }))
       }
@@ -340,6 +353,8 @@ export function useSync(
         retry = window.setTimeout(connect, backoff * (0.75 + Math.random() * 0.5))
       }
       socket.onmessage = (event) => {
+        // A socket this tab already moved on from: its last words are not ours.
+        if (socketRef.current !== socket) return
         lastHeardRef.current = Date.now()
         const message = JSON.parse(String(event.data)) as Outbound
         if (message.serverTimeMs !== undefined && message.clientTimeMs !== undefined) {
@@ -402,8 +417,10 @@ export function useSync(
             }
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
-            if (message.error === 'kicked') {
-              setKicked(true)
+            if (message.error === 'kicked' || message.error === 'replaced') {
+              halted = true
+              if (message.error === 'kicked') setKicked(true)
+              else setReplaced(true)
               setLeft(true)
               setConnected(false)
             }
@@ -480,6 +497,7 @@ export function useSync(
     }
     window.addEventListener('online', wakeUp)
     document.addEventListener('visibilitychange', wakeUp)
+    window.addEventListener('pagehide', sayGoodbye)
 
     const heartbeat = window.setInterval(() => {
       const socket = socketRef.current
@@ -511,15 +529,17 @@ export function useSync(
       if (retry !== null) window.clearTimeout(retry)
       window.removeEventListener('online', wakeUp)
       document.removeEventListener('visibilitychange', wakeUp)
+      window.removeEventListener('pagehide', sayGoodbye)
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [nickname, roomId, send, sendReadiness, videoRef, left, doorNonce])
+  }, [nickname, roomId, send, sendReadiness, videoRef, left, doorNonce, sayGoodbye])
   const leave = useCallback(() => {
+    sayGoodbye()
     setLeft(true)
     setStillThereDeadlineMs(null)
     setConnected(false)
-  }, [])
+  }, [sayGoodbye])
 
   const waitingForStart = waiting !== null
   useEffect(() => {
@@ -596,6 +616,7 @@ export function useSync(
     stillThereDeadlineMs,
     left,
     kicked,
+    replaced,
     leave,
     send,
     reportBuffering,

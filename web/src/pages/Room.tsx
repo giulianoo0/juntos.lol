@@ -1146,13 +1146,13 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         <DialogContent
           className="still-there-dialog"
           closeLabel={t('room.closedIdleHome')}
-          title={t(sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
-          description={t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
+          title={t(sync.replaced ? 'room.replacedTitle' : sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
+          description={sync.replaced ? undefined : t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
           onCloseClick={() => { window.location.assign("/") }}
         >
           <div className="closed-idle-actions">
             <button type="button" className="primary-button" autoFocus onClick={() => window.location.reload()}>
-              {t('room.closedIdleRejoin')}
+              {t(sync.replaced ? 'room.replacedRejoin' : 'room.closedIdleRejoin')}
             </button>
             <Link className="secondary-button" to="/">{t('room.closedIdleHome')}</Link>
           </div>

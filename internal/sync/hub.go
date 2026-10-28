@@ -62,7 +62,10 @@ type Hub struct {
 	join         joinBook
 	accounts     Accounts
 	// presence counts, per signed-in account, its seats in each room.
-	presence  map[int64]map[string]int
+	presence map[int64]map[string]int
+	// devices is, per room, the seat each browser holds: a second tab of the
+	// same browser takes that seat over instead of adding a person.
+	devices   map[string]map[string]string
 	closed    bool
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -110,6 +113,7 @@ type joinRequest struct {
 	// The seat a reconnecting socket asks to take back, or "" for a fresh join.
 	memberID   string
 	capability string
+	device     string
 	result     chan string
 }
 
@@ -122,6 +126,10 @@ type detachedSeat struct {
 // resumeGrace is how long a dropped socket's seat is held for it. A variable
 // so tests can shrink it.
 var resumeGrace = 45 * time.Second
+
+// leaveGrace holds the seat of a tab that said it was going, just long enough
+// for a reload to take it back.
+var leaveGrace = 4 * time.Second
 
 type clientInbound struct {
 	client  *client
@@ -154,6 +162,7 @@ func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
 		capabilities:  make(map[string]map[string]string),
 		grants:        make(map[string]map[stageGrantKey]time.Time),
 		presence:      make(map[int64]map[string]int),
+		devices:       make(map[string]map[string]string),
 		ctx:           ctx,
 		cancel:        cancel,
 		upgrader: websocket.Upgrader{
@@ -194,6 +203,15 @@ func (h *Hub) AuthorizeMember(roomID, memberID, capability string) bool {
 	want := h.capabilities[roomID][memberID]
 	h.mu.Unlock()
 	return want != "" && len(want) == len(capability) && subtle.ConstantTimeCompare([]byte(want), []byte(capability)) == 1
+}
+
+// deviceSeated reports whether the browser behind device already has a seat
+// in the room, so another tab of it may come in without asking again.
+func (h *Hub) deviceSeated(roomID, device string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.devices[roomID][device]
+	return ok
 }
 
 func (h *Hub) Close() {
@@ -272,7 +290,8 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	result := make(chan string, 1)
 	request := joinRequest{
 		client: client, nickname: nickname, clientTimeMs: hello.ClientTimeMs,
-		ownerToken: hello.OwnerToken, memberID: hello.MemberID, capability: hello.Capability, result: result,
+		ownerToken: hello.OwnerToken, memberID: hello.MemberID, capability: hello.Capability, device: hello.Device,
+		result: result,
 	}
 	select {
 	case roomConnection.register <- request:
@@ -408,6 +427,7 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 	if h.rooms[roomID] == connection {
 		delete(h.rooms, roomID)
 		delete(h.capabilities, roomID)
+		delete(h.devices, roomID)
 		delete(h.grants, roomID)
 		for accountID, rooms := range h.presence {
 			if delete(rooms, roomID); len(rooms) == 0 {
@@ -510,6 +530,13 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if request.memberID != "" && r.resume(request) {
 		return
 	}
+	if previous := r.onDevice(request.device); previous != nil {
+		if previous.member.AccountID == request.client.identity.AccountID {
+			r.reseat(previous, request, true)
+			return
+		}
+		r.dismiss(previous, Outbound{Type: "error", ErrCode: "replaced", closeAfter: true})
+	}
 	if len(r.clients)+len(r.detached) >= r.hub.cfg.MaxParticipants {
 		request.result <- "room_full"
 		return
@@ -517,6 +544,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	memberID := fmt.Sprintf("m%d", r.nextMember)
 	r.nextMember++
 	request.client.id = memberID
+	request.client.device = request.device
 	capabilityBytes := make([]byte, 32)
 	if _, err := rand.Read(capabilityBytes); err != nil {
 		request.result <- "internal_error"
@@ -573,6 +601,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	}
 	r.hub.capabilities[r.id][memberID] = request.client.capability
 	r.hub.mu.Unlock()
+	r.markDevice(request.client)
 	r.arrived(ctx, request.client)
 	r.touch()
 	members := r.members()
@@ -630,8 +659,8 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.send(sender, Outbound{Type: "error", ErrCode: "not_controller"})
 		return
 	}
-	target, ok := r.clients[message.TargetID]
-	if !ok || target == sender {
+	target := r.seat(message.TargetID)
+	if target == nil || target == sender || message.Type == "transfer" && r.clients[target.id] != target {
 		r.send(sender, Outbound{Type: "error", ErrCode: "member_not_found"})
 		return
 	}
@@ -649,30 +678,43 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 		r.replayStageRequests()
 	case "kick":
-		target.kicked = true
-		r.send(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
+		r.dismiss(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
 	}
 	r.touch()
+}
+
+// dismiss lets a member go at once, whether their socket is live or held;
+// a live one hears farewell before it is closed.
+func (r *roomConn) dismiss(target *client, farewell Outbound) {
+	if r.clients[target.id] == target {
+		r.send(target, farewell)
+		delete(r.clients, target.id)
+		close(target.send)
+	} else {
+		delete(r.detached, target.id)
+	}
+	r.finalizeLeave(target)
 }
 
 // handleDisconnect parks a member whose socket dropped: the seat, the
 // capability and any screen they were sharing stay for resumeGrace, so a
 // browser that reconnects a moment later is still the same person to
-// everyone else. Nothing is announced until the grace runs out.
+// everyone else. Nothing is announced until the grace runs out. A tab that
+// said it was leaving gets only leaveGrace.
 func (r *roomConn) handleDisconnect(disconnected *client) {
 	if disconnected == nil || r.clients[disconnected.id] != disconnected {
 		return
 	}
 	delete(r.clients, disconnected.id)
 	close(disconnected.send)
-	if disconnected.kicked {
-		r.finalizeLeave(disconnected)
-		return
+	grace := resumeGrace
+	if disconnected.leaving {
+		grace = leaveGrace
 	}
-	until := time.Now().Add(resumeGrace)
+	until := time.Now().Add(grace)
 	r.detached[disconnected.id] = &detachedSeat{client: disconnected, until: until}
 	expire := r.expire
-	time.AfterFunc(resumeGrace+10*time.Millisecond, func() {
+	time.AfterFunc(grace+10*time.Millisecond, func() {
 		select {
 		case expire <- struct{}{}:
 		default:
@@ -698,33 +740,66 @@ func (r *roomConn) expireDetached(now time.Time) {
 // held or still occupied by a socket the server has not noticed is dead. A
 // mismatched capability is nobody's seat: the caller joins fresh.
 func (r *roomConn) resume(request joinRequest) bool {
-	var previous *client
-	if seat, held := r.detached[request.memberID]; held {
-		previous = seat.client
-	} else if connected, live := r.clients[request.memberID]; live {
-		previous = connected
-	}
+	previous := r.seat(request.memberID)
 	if previous == nil || len(previous.capability) != len(request.capability) ||
 		subtle.ConstantTimeCompare([]byte(previous.capability), []byte(request.capability)) != 1 {
 		return false
 	}
-	if _, held := r.detached[request.memberID]; held {
-		delete(r.detached, request.memberID)
-	} else {
-		// The old socket is replaced; when its pump finally returns, the
-		// unregister finds a different client in the seat and does nothing.
-		delete(r.clients, request.memberID)
+	r.reseat(previous, request, false)
+	return true
+}
+
+// onDevice is the seat another tab of the same browser holds, if any.
+func (r *roomConn) onDevice(device string) *client {
+	if device == "" {
+		return nil
+	}
+	for _, seat := range r.seats() {
+		if seat.device == device {
+			return seat
+		}
+	}
+	return nil
+}
+
+func (r *roomConn) markDevice(member *client) {
+	if member.device == "" {
+		return
+	}
+	r.hub.mu.Lock()
+	if r.hub.devices[r.id] == nil {
+		r.hub.devices[r.id] = make(map[string]string)
+	}
+	r.hub.devices[r.id][member.device] = member.id
+	r.hub.mu.Unlock()
+}
+
+// reseat hands a seat to a new socket. A socket still in it is told it was
+// replaced, which only another tab acts on. A seat moved to another tab
+// leaves behind what the old tab was sending: its screen, mic and camera.
+func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
+	if r.clients[previous.id] == previous {
+		// When its pump finally returns, the unregister finds a different
+		// client in the seat and does nothing.
+		r.send(previous, Outbound{Type: "error", ErrCode: "replaced", closeAfter: true})
+		delete(r.clients, previous.id)
 		close(previous.send)
+	} else {
+		delete(r.detached, previous.id)
 	}
 	next := request.client
 	next.id = previous.id
 	next.capability = previous.capability
+	next.device = previous.device
 	next.member = previous.member
 	next.report = previous.report
 	next.telemetry = previous.telemetry
 	next.lastTitleRequest = previous.lastTitleRequest
 	next.identity = previous.identity
 	next.watch = previous.watch
+	if moved {
+		next.member.Mic, next.member.Cam = false, false
+	}
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
 	renamed := false
@@ -739,7 +814,7 @@ func (r *roomConn) resume(request joinRequest) bool {
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket state failed", "room_id", r.id, "error", err)
 		request.result <- "internal_error"
-		return true
+		return
 	}
 	if state.Rate == 0 {
 		state.Rate = 1
@@ -748,7 +823,15 @@ func (r *roomConn) resume(request joinRequest) bool {
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket chat failed", "room_id", r.id, "error", err)
 		request.result <- "internal_error"
-		return true
+		return
+	}
+	if moved {
+		stopped, err := r.hub.store.StopScreenShare(ctx, r.id, next.id)
+		if err != nil {
+			slog.ErrorContext(ctx, "stop moved member's screen share failed", "room_id", r.id, "member_id", next.id, "error", err)
+		} else if stopped {
+			r.broadcastExcept(next, Outbound{Type: "roomUpdated"})
+		}
 	}
 	r.clients[next.id] = next
 	r.touch()
@@ -757,19 +840,18 @@ func (r *roomConn) resume(request joinRequest) bool {
 	r.send(next, Outbound{
 		Type: "welcome", MemberID: next.id, State: &state, ControllerID: r.controllerID,
 		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
-		Capability: next.capability, Gating: &gating,
+		Capability: next.capability, Gating: &gating, HostSubtitles: r.hostSubtitles,
 	})
 	r.send(next, Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
 	})
-	if renamed {
+	if renamed || moved {
 		r.broadcastExcept(next, Outbound{Type: "members", ControllerID: r.controllerID, Members: members})
 	}
 	if r.gate != nil {
 		r.broadcastWaiting()
 	}
 	request.result <- ""
-	return true
 }
 
 // finalizeLeave is a member really going: the seat, the capability, the
@@ -781,6 +863,9 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 	r.forgetStageRequests(disconnected.id)
 	r.hub.mu.Lock()
 	delete(r.hub.capabilities[r.id], disconnected.id)
+	if r.hub.devices[r.id][disconnected.device] == disconnected.id {
+		delete(r.hub.devices[r.id], disconnected.device)
+	}
 	r.hub.mu.Unlock()
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
@@ -897,6 +982,8 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.touch()
 	case "stillHere":
 		r.touch()
+	case "leave":
+		event.client.leaving = true
 	case "media", "hostMute", "hostCamOff":
 		r.handleCall(event.client, message)
 	case "admit", "deny":

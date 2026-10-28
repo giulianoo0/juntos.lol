@@ -34,6 +34,9 @@ type Inbound struct {
 	// held; the server hands it back while it is still being kept.
 	MemberID   string `json:"memberId,omitempty"`
 	Capability string `json:"capability,omitempty"`
+	// Device on a hello names the browser, the same in all its tabs; it is
+	// kept secret, so it never goes out to anyone.
+	Device string `json:"device,omitempty"`
 	// Kind names a stage (media, live, screen; member too for a spotlight)
 	// on stageRequest, stageClose and spotlight; RequestID and Allow are the
 	// host's stageAnswer.
@@ -58,6 +61,10 @@ func decodeHello(data []byte) (Inbound, bool) {
 	}
 	if hello.Type != "hello" || !validNickname(hello.Nickname) {
 		return Inbound{}, false
+	}
+	// Too short to be a secret: the hello joins as if it named none.
+	if len(hello.Device) < 16 || len(hello.Device) > 64 {
+		hello.Device = ""
 	}
 	return hello, true
 }

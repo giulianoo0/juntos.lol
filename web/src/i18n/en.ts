@@ -157,6 +157,8 @@ export const en: Record<string, string> = {
   'room.stillHere': 'I am here',
   'room.kickedTitle': 'You were removed from the room',
   'room.kickedGuide': 'Whoever holds the controls took you out of the room. If that was a mistake, just join again with the link.',
+  'room.replacedTitle': 'The room is open in another tab',
+  'room.replacedRejoin': 'Use this tab',
   'room.closedIdleTitle': 'The room closed',
   'room.closedIdleGuide': 'Nobody answered, so you were taken out of the room rather than leaving everything running for no one. Join again whenever you like.',
   'room.closedIdleRejoin': 'Join again',
