@@ -65,6 +65,19 @@ func TestAbandonedSweepReclaimsAnEmptyRoomNobodyIsWatching(t *testing.T) {
 	require.NotContains(t, reclaimed, "busy")
 }
 
+func TestAbandonedSweepSparesARoomWhoseHostIsStillAtTheDoor(t *testing.T) {
+	hub, store, _ := newHubTestServer(t, config.Config{})
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "fresh", Status: room.StatusEmpty, CreatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+	}))
+
+	hub.sweepAbandoned()
+
+	_, err := store.Get(t.Context(), "fresh")
+	require.NoError(t, err)
+}
+
 func TestHubTransferHandsTheControlsToTheTarget(t *testing.T) {
 	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	host := dialHubWS(t, server)

@@ -1135,6 +1135,10 @@ func (r *roomConn) cleanupIdle() {
 
 const abandonedSweepEvery = time.Minute
 
+// arrivalGrace is how long a new room waits for its host, who may still be
+// picking a face at the door.
+const arrivalGrace = 10 * time.Minute
+
 // sweepAbandoned reclaims every stored room that has no goroutine here and no
 // work left to protect: the idle timer only fires once per goroutine.
 func (h *Hub) sweepAbandoned() {
@@ -1149,7 +1153,7 @@ func (h *Hub) sweepAbandoned() {
 		h.mu.Lock()
 		_, live := h.rooms[id]
 		h.mu.Unlock()
-		if live {
+		if live || h.awaitingHost(id) {
 			continue
 		}
 		h.reclaimIdle(id)
@@ -1168,6 +1172,13 @@ func (h *Hub) sweepAbandonedLoop() {
 			h.sweepAbandoned()
 		}
 	}
+}
+
+func (h *Hub) awaitingHost(id string) bool {
+	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
+	defer cancel()
+	stored, err := h.store.Get(ctx, id)
+	return err == nil && time.Since(stored.CreatedAt) < arrivalGrace
 }
 
 // reclaimIdle tears down a room nobody is in, unless it still has work
