@@ -39,6 +39,25 @@ func (a *API) EditFollowup(ctx context.Context, token, messageID string, message
 	return err
 }
 
+// AddGuildMember puts a signed-in person in the server with the role, through
+// the guilds.join token of their sign-in. Someone already there keeps their
+// place and just gains the role, which the join alone would not give them.
+func (a *API) AddGuildMember(ctx context.Context, guildID, userID, accessToken, roleID string) error {
+	member := map[string]any{"access_token": accessToken}
+	if roleID != "" {
+		member["roles"] = []string{roleID}
+	}
+	path := "/guilds/" + url.PathEscape(guildID) + "/members/" + url.PathEscape(userID)
+	if _, err := a.call(ctx, http.MethodPut, path, true, member); err != nil {
+		return err
+	}
+	if roleID == "" {
+		return nil
+	}
+	_, err := a.call(ctx, http.MethodPut, path+"/roles/"+url.PathEscape(roleID), true, struct{}{})
+	return err
+}
+
 // ErrDMClosed is Discord refusing the bot a DM: the person shares no server
 // with the app, hasn't installed it, or turned DMs off.
 var ErrDMClosed = errors.New("discord dm closed")

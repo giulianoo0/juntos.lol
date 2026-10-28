@@ -406,6 +406,12 @@
   color: var(--text-muted);
 }
 
+.footerLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 .footerMark {
   width: 5.5rem;
   height: auto;

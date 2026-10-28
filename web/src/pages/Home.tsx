@@ -13,6 +13,7 @@ import { roomCodeFrom } from '../roomCode'
 import { DiscordGlyph } from '../ui/DiscordGlyph'
 import { Field } from '../ui/Field'
 import { IconPill } from '../ui/IconPill'
+import { GITHUB_URL, GithubGlyph } from '../ui/GithubGlyph'
 import { Pill, PillLink } from '../ui/Pill'
 import { SpringPopover } from '../ui/SpringPopover'
 import { Couch } from './home/Couch'
@@ -218,11 +219,16 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
 
       <footer className={styles.footer}>
         <SmallWordmark className={styles.footerMark} />
-        {config?.discordAppId ? (
-          <PillLink tone="soft" size="md" icon={<Plus size={15} />} href={`https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(config.discordAppId)}`} target="_blank" rel="noopener noreferrer">
-            {t('landing.addDiscord')}
+        <div className={styles.footerLinks}>
+          <PillLink tone="soft" size="md" icon={<GithubGlyph size={15} />} href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
+            GitHub
           </PillLink>
-        ) : null}
+          {config?.discordAppId ? (
+            <PillLink tone="soft" size="md" icon={<Plus size={15} />} href={`https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(config.discordAppId)}`} target="_blank" rel="noopener noreferrer">
+              {t('landing.addDiscord')}
+            </PillLink>
+          ) : null}
+        </div>
       </footer>
     </div>
   )

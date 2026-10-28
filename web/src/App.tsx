@@ -1,6 +1,5 @@
 import { lazy, Suspense } from 'react'
 import { NotFoundPage } from './components/LostPage'
-import { Onboarding } from './components/Onboarding'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { CodecSupportNotice } from './components/CodecSupport'
 import { RoomHost } from './components/RoomHost'
@@ -23,7 +22,6 @@ export default function App() {
   return (
     <BrowserRouter>
       <CodecSupportNotice />
-      <Onboarding />
       <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<Home createRoom={createRoom} />} />

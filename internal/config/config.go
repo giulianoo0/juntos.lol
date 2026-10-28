@@ -73,6 +73,10 @@ type Config struct {
 	// secret and a public origin to come back to, the login routes are off.
 	DiscordClientID     string
 	DiscordClientSecret string
+	// Who signs in with Discord joins this server with this role, through
+	// the bot; without a guild nobody is added anywhere.
+	DiscordGuildID      string
+	DiscordMemberRoleID string
 
 	// Turnstile in front of opening and entering rooms; without a secret
 	// nobody is asked. Hostnames are where the widget may have been solved.
@@ -232,6 +236,8 @@ func Load() (Config, error) {
 		cfg.DiscordClientID = cfg.DiscordAppID
 	}
 	cfg.DiscordClientSecret = strings.TrimSpace(os.Getenv("DISCORD_CLIENT_SECRET"))
+	cfg.DiscordGuildID = strings.TrimSpace(os.Getenv("DISCORD_GUILD_ID"))
+	cfg.DiscordMemberRoleID = strings.TrimSpace(os.Getenv("DISCORD_MEMBER_ROLE_ID"))
 	if v := strings.TrimSuffix(strings.TrimSpace(os.Getenv("DISCORD_API_BASE")), "/"); v != "" {
 		cfg.DiscordAPIBase = v
 	}

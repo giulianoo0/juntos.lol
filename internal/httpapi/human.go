@@ -74,7 +74,7 @@ func (g *HumanGate) Require() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if reason := g.refusal(c.Request); reason != "" {
 			slog.InfoContext(c.Request.Context(), "human check", "result", "required", "reason", reason,
-				"path", c.FullPath(), "ip", requestIP(c.Request, g.behindEdge))
+				"path", c.FullPath())
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "human_required"})
 			return
 		}
@@ -106,11 +106,11 @@ func (g *HumanGate) Verify(c *gin.Context) {
 			reason = "siteverify: " + err.Error()
 		}
 		slog.WarnContext(ctx, "human check", "result", "failed", "reason", reason, "action", result.Action,
-			"hostname", result.Hostname, "ip", ip)
+			"hostname", result.Hostname)
 		c.JSON(http.StatusForbidden, gin.H{"error": "human_failed"})
 		return
 	}
-	slog.InfoContext(ctx, "human check", "result", "passed", "ip", ip)
+	slog.InfoContext(ctx, "human check", "result", "passed")
 	expires := g.now().Add(humanTTL)
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     humanCookie,
@@ -137,7 +137,7 @@ func (g *HumanGate) Failure(c *gin.Context) {
 	}
 	if g.failures.allow(requestIP(c.Request, g.behindEdge)) {
 		slog.WarnContext(c.Request.Context(), "human check", "result", "client_failed", "reason", report.Reason,
-			"ip", requestIP(c.Request, g.behindEdge), "ua", c.Request.UserAgent())
+			"ua", c.Request.UserAgent())
 	}
 	c.Status(http.StatusNoContent)
 }

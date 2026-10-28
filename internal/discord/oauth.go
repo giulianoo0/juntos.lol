@@ -15,14 +15,16 @@ import (
 const AuthorizeURL = "https://discord.com/oauth2/authorize"
 
 // OAuth signs a person in with Discord's authorization code flow, asking
-// only for who they are.
+// for who they are and, with JoinGuild, leave to put them in the server.
 type OAuth struct {
 	// Base is the REST API, e.g. https://discord.com/api/v10.
 	Base         string
 	ClientID     string
 	ClientSecret string
 	RedirectURI  string
-	Client       *http.Client
+	// JoinGuild also asks for guilds.join, so the bot can add them.
+	JoinGuild bool
+	Client    *http.Client
 }
 
 // User is the slice of /users/@me an account is made from.
@@ -45,7 +47,7 @@ func (o *OAuth) AuthorizeURL(state string) string {
 	query := url.Values{
 		"response_type": {"code"},
 		"client_id":     {o.ClientID},
-		"scope":         {"identify"},
+		"scope":         {o.scope()},
 		"redirect_uri":  {o.RedirectURI},
 		"state":         {state},
 		"prompt":        {"none"},
@@ -53,9 +55,16 @@ func (o *OAuth) AuthorizeURL(state string) string {
 	return AuthorizeURL + "?" + query.Encode()
 }
 
-// User trades the code for a token, reads who it belongs to and lets the
-// token go: nothing is kept of it.
-func (o *OAuth) User(ctx context.Context, code string) (User, error) {
+func (o *OAuth) scope() string {
+	if o.JoinGuild {
+		return "identify guilds.join"
+	}
+	return "identify"
+}
+
+// User trades the code for a token and reads who it belongs to. The token
+// comes back for the guild join only; nothing keeps it.
+func (o *OAuth) User(ctx context.Context, code string) (User, string, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -65,31 +74,31 @@ func (o *OAuth) User(ctx context.Context, code string) (User, error) {
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, o.Base+"/oauth2/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return User{}, err
+		return User{}, "", err
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	var token struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := o.do(request, &token); err != nil {
-		return User{}, fmt.Errorf("discord token: %w", err)
+		return User{}, "", fmt.Errorf("discord token: %w", err)
 	}
 	if token.AccessToken == "" {
-		return User{}, errors.New("discord token: empty access token")
+		return User{}, "", errors.New("discord token: empty access token")
 	}
 	request, err = http.NewRequestWithContext(ctx, http.MethodGet, o.Base+"/users/@me", nil)
 	if err != nil {
-		return User{}, err
+		return User{}, "", err
 	}
 	request.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	var user User
 	if err := o.do(request, &user); err != nil {
-		return User{}, fmt.Errorf("discord user: %w", err)
+		return User{}, "", fmt.Errorf("discord user: %w", err)
 	}
 	if user.ID == "" {
-		return User{}, errors.New("discord user: no id")
+		return User{}, "", errors.New("discord user: no id")
 	}
-	return user, nil
+	return user, token.AccessToken, nil
 }
 
 func (o *OAuth) do(request *http.Request, into any) error {

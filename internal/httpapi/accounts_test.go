@@ -155,6 +155,44 @@ func TestDiscordLogin(t *testing.T) {
 	}
 }
 
+func TestDiscordLoginJoinsTheServerWithItsRole(t *testing.T) {
+	discord := fakeDiscord(t)
+	joined := make(chan string, 4)
+	discord.Config.Handler.(*http.ServeMux).HandleFunc("PUT /guilds/{guild}/members/{user}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			AccessToken string   `json:"access_token"`
+			Roles       []string `json:"roles"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		joined <- r.Header.Get("Authorization") + " " + r.PathValue("guild") + " " + r.PathValue("user") + " " + body.AccessToken + " " + strings.Join(body.Roles, ",")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{}`))
+	})
+	discord.Config.Handler.(*http.ServeMux).HandleFunc("PUT /guilds/{guild}/members/{user}/roles/{role}", func(w http.ResponseWriter, r *http.Request) {
+		joined <- "role " + r.PathValue("role")
+		w.WriteHeader(http.StatusNoContent)
+	})
+	_, rdb := newRedis(t)
+	cfg := config.Config{
+		PublicOrigin: "https://juntos.test", DiscordClientID: "client", DiscordClientSecret: "secret",
+		DiscordAPIBase: discord.URL, DiscordBotToken: "bot-token", DiscordGuildID: "G1", DiscordMemberRoleID: "R1",
+	}
+	router := gin.New()
+	RegisterAccountRoutes(router.Group("/api"), cfg, account.NewStore(dbtest.New(t)), room.NewStore(rdb, 5*time.Hour), nil)
+	rig := accountRig{router: router}
+
+	start := rig.do(http.MethodGet, "/api/auth/discord", "")
+	authorize, err := url.Parse(start.Header().Get("Location"))
+	require.NoError(t, err)
+	require.Equal(t, "identify guilds.join", authorize.Query().Get("scope"))
+	back := rig.do(http.MethodGet, "/api/auth/discord/callback?code=good-code&state="+url.QueryEscape(authorize.Query().Get("state")), "",
+		cookieNamed(start, oauthStateCookie))
+	require.Equal(t, http.StatusFound, back.Code)
+
+	require.Equal(t, "Bot bot-token G1 80351110224678912 user-token R1", <-joined)
+	require.Equal(t, "role R1", <-joined, "quem já estava no servidor também ganha o cargo")
+}
+
 func TestDiscordCallbackRefusesABadState(t *testing.T) {
 	tests := []struct {
 		name   string

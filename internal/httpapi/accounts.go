@@ -96,6 +96,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 		routes.login = &discord.OAuth{
 			Base: cfg.DiscordAPIBase, ClientID: cfg.DiscordClientID, ClientSecret: cfg.DiscordClientSecret,
 			RedirectURI: cfg.DiscordRedirectURI(), Client: &http.Client{Timeout: 10 * time.Second},
+			JoinGuild: cfg.DiscordGuildID != "" && routes.bot != nil,
 		}
 	}
 	rg.GET("/auth/discord", routes.startLogin)
@@ -195,7 +196,7 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	user, err := a.login.User(ctx, code)
+	user, discordToken, err := a.login.User(ctx, code)
 	if err != nil {
 		slog.WarnContext(ctx, "discord login failed", "error", err)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "discord_failed"})
@@ -206,6 +207,9 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 		slog.ErrorContext(ctx, "sign in account", "error", err)
 		c.Status(http.StatusInternalServerError)
 		return
+	}
+	if a.login.JoinGuild {
+		go a.joinGuild(user.ID, discordToken)
 	}
 	token, err := a.accounts.StartSession(ctx, signed.ID)
 	if err != nil {
@@ -218,6 +222,16 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 		HttpOnly: true, Secure: a.secureCookie(c.Request), SameSite: http.SameSiteLaxMode,
 	})
 	c.Redirect(http.StatusFound, next)
+}
+
+// joinGuild puts the person who just signed in in the juntos server with its
+// role. It runs beside the sign-in, which never waits for it nor fails by it.
+func (a *accountRoutes) joinGuild(discordID, accessToken string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := a.bot.AddGuildMember(ctx, a.cfg.DiscordGuildID, discordID, accessToken, a.cfg.DiscordMemberRoleID); err != nil {
+		slog.WarnContext(ctx, "discord guild join failed", "error", err)
+	}
 }
 
 // safeNext keeps a same-site path to come back to, and turns anything that

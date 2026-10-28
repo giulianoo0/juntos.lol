@@ -9,6 +9,7 @@ import { arrive } from '../ui/arrive'
 import { DiscordGlyph } from '../ui/DiscordGlyph'
 import { MorphLink } from '../ui/MorphLink'
 import { Skeleton } from '../ui/Shimmer'
+import { GithubLink } from '../ui/GithubLink'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import styles from './SiteHeader.module.css'
 
@@ -41,6 +42,7 @@ export function SiteHeader({ logo = true, you = true }: {
         </MorphLink>
       ) : <span />}
       <div className={styles.you}>
+        <GithubLink />
         <ThemeToggle />
         {me ? (
           <>
