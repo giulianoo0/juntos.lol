@@ -1,9 +1,9 @@
 import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_EYES, EXPRESSION_EYES, KINDS, MASCOT_ACCESSORIES, MASCOT_KINDS, Mascot, projectEye, type MascotAccessory, type MascotExpression } from ".";
-import { BEANIE, BOWTIE_TOP, CAP, CROWN, EYE_FRAMES, HAT_BRIM, ROUND_GLASSES, SCARF, SUNGLASSES, bowtieFor, eyeBox, eyeFrameFor, fitEye, headphonesFor, helmetFor, lensGlass, scarfFor, type Box, type LensRect } from "./accessory-geometry";
+import { BEANIE, BOWTIE_TOP, CAP, CROWN, EYE_FRAMES, HAT_BRIM, ROUND_GLASSES, SCARF, SUNGLASSES, bowtieFor, eyeBox, eyeFrameFor, eyeLayoutFor, fitEye, headphonesFor, helmetFor, lensGlass, scarfFor, type Box, type LensRect } from "./accessory-geometry";
 import { ROUND_FIT, fitOf } from "./kind";
-import { WONDER_SHAPE, type EyeRender } from "./eyes";
+import { WONDER_SHAPE, irisOf, type EyeLayout, type EyeRender, type Gaze } from "./eyes";
 import { createManualClock, setMascotClock, type ManualClock } from "./testing";
 
 const ACCESSORIES = MASCOT_ACCESSORIES.map((a) => a.id);
@@ -24,16 +24,16 @@ function inGlass(box: Box, glass: LensRect, tolerance = EPS) {
   return [[box.x0, box.y0], [box.x1, box.y0], [box.x0, box.y1], [box.x1, box.y1]].every(([x, y]) => Math.hypot(x! - cx, y! - cy) <= glass.rx + tolerance);
 }
 
-function everyEye(side: -1 | 1): EyeRender[] {
+function everyEye(side: -1 | 1, layout: EyeLayout = DEFAULT_EYES): (EyeRender & { gaze: Gaze })[] {
   const shapes = [...EXPRESSIONS.map((e) => EXPRESSION_EYES[e].shape), WONDER_SHAPE];
-  const eyes: EyeRender[] = [];
+  const eyes: (EyeRender & { gaze: Gaze })[] = [];
   for (let yaw = -1.2; yaw <= 1.2 + EPS; yaw += 0.15)
     for (let pitch = -0.6; pitch <= 0.75 + EPS; pitch += 0.15)
       for (const shape of shapes)
         for (const level of [1, 1.15])
           for (const blink of [1, 0.1]) {
-            const eye = projectEye(DEFAULT_EYES, side, { yaw, pitch }, { w: shape.w, h: shape.h * level }, blink);
-            if (eye.opacity > 0) eyes.push(eye);
+            const eye = projectEye(layout, side, { yaw, pitch }, { w: shape.w, h: shape.h * level }, blink);
+            if (eye.opacity > 0) eyes.push({ ...eye, gaze: { yaw, pitch } });
           }
   return eyes;
 }
@@ -92,10 +92,16 @@ describe("eyes and accessories, every pose", () => {
         const frame = eyeFrameFor(accessory, KINDS[kind]);
         for (const side of [-1, 1] as const) {
           const patch = side < 0 ? { x0, y0, x1, y1 } : { x0: 100 - x1, y0, x1: 100 - x0, y1 };
-          for (const eye of everyEye(side).map((e) => fitEye(e, side, frame))) {
+          for (const raw of everyEye(side, eyeLayoutFor(KINDS[kind]))) {
+            const eye = fitEye(raw, side, frame);
             const box = eyeBox(eye);
             expect(inside(box, patch), `${accessory} ${JSON.stringify(eye)}`).toBe(true);
             expect(side < 0 ? box.x1 < 50 : box.x0 > 50).toBe(true);
+            const iris = KINDS[kind].iris;
+            if (iris) {
+              const pupil = irisOf(eye, raw.gaze, iris.pupil, iris.shut);
+              expect(inside(eyeBox({ ...eye, ...pupil, rotate: 0 }), eyeBox({ ...eye, rotate: 0 })), `${accessory} pupil ${JSON.stringify(raw.gaze)}`).toBe(true);
+            }
           }
         }
       }

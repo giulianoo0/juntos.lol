@@ -49,6 +49,26 @@ describe("Mascot", () => {
     expect(Math.abs(height("listening") - height("speaking"))).toBeLessThan(0.5);
   });
 
+  it("gives the panda and the owl round eyes whose pupil follows them into a happy line", () => {
+    const clock = createManualClock(0);
+    setMascotClock(clock);
+    const size = (el: Element) => [Number(el.getAttribute("width")), Number(el.getAttribute("height"))] as const;
+    for (const [kind, shut] of [["panda", false], ["owl", true]] as const) {
+      const { container, rerender, unmount } = render(<Mascot kind={kind} expression="idle" still />);
+      const eye = () => size(container.querySelector('[data-eye="left"]')!);
+      const pupil = () => size(container.querySelector('[data-part="iris-left"] rect')!);
+      const [w, h] = eye();
+      expect(w / h, kind).toBeGreaterThan(0.85);
+      expect(pupil()[0], kind).toBeLessThan(w * 0.7);
+      rerender(<Mascot kind={kind} expression="happy" still />);
+      act(() => clock.advance(1500));
+      const [hw, hh] = eye();
+      expect(hh, kind).toBeLessThan(hw / 4);
+      expect(pupil()[0], kind).toBeCloseTo(shut ? hw : 0, 1);
+      unmount();
+    }
+  });
+
   it("wears every accessory on every kind, nothing when asked for none", () => {
     for (const kind of MASCOT_KINDS) {
       for (const { id } of MASCOT_ACCESSORIES) {

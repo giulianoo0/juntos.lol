@@ -1,11 +1,10 @@
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { Accessory } from "./accessories";
-import { earTuckFor, eyeFrameFor, fitEye, helmetFor, showsEars, showsTop, type EyeFrame } from "./accessory-geometry";
+import { earTuckFor, eyeFrameFor, eyeLayoutFor, fitEye, helmetFor, showsEars, showsTop, type EyeFrame } from "./accessory-geometry";
 import { getMascotClock } from "./clock";
 import { EAR_POSES, earPoseFor, earTransform, type EarPose } from "./ears";
 import {
   BLINK_MS,
-  DEFAULT_EYES,
   DOUBLE_BLINK_CHANCE,
   DOUBLE_BLINK_GAP_MS,
   EXPRESSION_EYES,
@@ -14,6 +13,7 @@ import {
   WONDER_MS,
   WONDER_SHAPE,
   blinkFactor,
+  irisOf,
   levelScale,
   lookAtGaze,
   nextBlinkDelay,
@@ -21,6 +21,7 @@ import {
   nextGlanceDelay,
   projectEye,
   type EyeRender,
+  type Iris,
   type Gaze,
   type EyeShape,
 } from "./eyes";
@@ -60,9 +61,25 @@ function write(el: Element, name: string, value: string) {
   if (el.getAttribute(name) !== value) el.setAttribute(name, value);
 }
 
-function applyEye(el: SVGRectElement | null, eye: EyeRender) {
+function irisAttrs(eye: EyeRender, iris: Iris) {
+  return {
+    pupil: { x: (iris.x - iris.width / 2).toFixed(3), y: (iris.y - iris.height / 2).toFixed(3), width: iris.width.toFixed(3), height: iris.height.toFixed(3), rx: iris.rx.toFixed(3) },
+    glint: { cx: iris.glint[0].toFixed(3), cy: iris.glint[1].toFixed(3), r: iris.glint[2].toFixed(3), opacity: iris.open.toFixed(3) },
+    group: { transform: eyeAttrs(eye).transform, opacity: eye.opacity.toFixed(3) },
+  };
+}
+
+type Eye = { eye: EyeRender; iris: Iris | null };
+
+function applyEye(el: SVGRectElement | null, iris: SVGGElement | null, { eye, iris: pupil }: Eye) {
   if (!el) return;
   for (const [name, value] of Object.entries(eyeAttrs(eye))) write(el, name, value);
+  if (!iris || !pupil) return;
+  const attrs = irisAttrs(eye, pupil);
+  for (const [name, value] of Object.entries(attrs.group)) write(iris, name, value);
+  for (const [name, value] of Object.entries(attrs.pupil)) write(iris.children[0]!, name, value);
+  const glint = iris.children[1];
+  if (glint) for (const [name, value] of Object.entries(attrs.glint)) write(glint, name, value);
 }
 
 const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
@@ -141,11 +158,13 @@ const MIRROR = "translate(100 0) scale(-1 1)";
 const SHRINK = `translate(${BODY.cx} ${BODY.cy}) scale(0.84) translate(${-BODY.cx} ${-BODY.cy})`;
 
 /** Both eyes for a pose, kept inside the accessory's frame (lenses, under the brim, between the ear cups). */
-function eyesFor(gaze: Gaze, shape: EyeShape, frame: EyeFrame | null, blink = 1) {
-  return {
-    left: fitEye(projectEye(DEFAULT_EYES, -1, gaze, shape, blink), -1, frame),
-    right: fitEye(projectEye(DEFAULT_EYES, 1, gaze, shape, blink), 1, frame),
+function eyesFor(art: KindArt, gaze: Gaze, shape: EyeShape, frame: EyeFrame | null, blink = 1): { left: Eye; right: Eye } {
+  const layout = eyeLayoutFor(art);
+  const one = (side: -1 | 1): Eye => {
+    const eye = fitEye(projectEye(layout, side, gaze, shape, blink), side, frame);
+    return { eye, iris: art.iris ? irisOf(eye, gaze, art.iris.pupil, art.iris.shut) : null };
   };
+  return { left: one(-1), right: one(1) };
 }
 
 const chinOf = (kind: MascotKind) => fitOf(KINDS[kind]).chin;
@@ -165,6 +184,8 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
   const svgRef = useRef<SVGSVGElement>(null);
   const eyeLRef = useRef<SVGRectElement>(null);
   const eyeRRef = useRef<SVGRectElement>(null);
+  const irisLRef = useRef<SVGGElement>(null);
+  const irisRRef = useRef<SVGGElement>(null);
   const headRef = useRef<SVGGElement>(null);
   const breathRef = useRef<SVGGElement>(null);
   const props = useRef({ expression, lookAt, level, accessory, still });
@@ -321,9 +342,9 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
 
       const current: Gaze = { yaw: s.yaw.value, pitch: s.pitch.value };
       const currentShape: EyeShape = { w: s.w.value, h: s.h.value * s.level.value };
-      const eyes = eyesFor(current, currentShape, eyeFrameFor(worn, KINDS[kindNow]), blink);
-      applyEye(eyeLRef.current, eyes.left);
-      applyEye(eyeRRef.current, eyes.right);
+      const eyes = eyesFor(KINDS[kindNow], current, currentShape, eyeFrameFor(worn, KINDS[kindNow]), blink);
+      applyEye(eyeLRef.current, irisLRef.current, eyes.left);
+      applyEye(eyeRRef.current, irisRRef.current, eyes.right);
       const earPose = { angle: s.angle.value, lift: s.lift.value };
       const tuck = earTuckFor(worn);
       earGroups().forEach((g) => {
@@ -399,6 +420,7 @@ export function Mascot({ kind, expression, color, level, size = 96, lookAt = nul
       lookAt={lookAt}
       svgRef={svgRef}
       eyeRefs={[eyeLRef, eyeRRef]}
+      irisRefs={[irisLRef, irisRRef]}
       headRef={headRef}
       breathRef={breathRef}
     />
@@ -414,16 +436,28 @@ type FigureProps = Pick<MascotProps, "kind" | "color" | "expression" | "classNam
   xmlns?: string;
   svgRef?: Ref<SVGSVGElement>;
   eyeRefs?: readonly [Ref<SVGRectElement>, Ref<SVGRectElement>];
+  irisRefs?: readonly [Ref<SVGGElement>, Ref<SVGGElement>];
   headRef?: Ref<SVGGElement>;
   breathRef?: Ref<SVGGElement>;
 };
 
 /** The drawing at one pose: the React Mascot animates it in place, renderMascotSvg serves it as markup. */
-export function MascotFigure({ kind, color, expression, accessory, pose, clipId, size, className, title, lookAt = null, xmlns, svgRef, eyeRefs, headRef, breathRef }: FigureProps) {
+export function MascotFigure({ kind, color, expression, accessory, pose, clipId, size, className, title, lookAt = null, xmlns, svgRef, eyeRefs, irisRefs, headRef, breathRef }: FigureProps) {
   const art = withColor(KINDS[kind], color);
   const frame = eyeFrameFor(accessory, art);
   const tuck = earTuckFor(accessory);
-  const eyes = eyesFor(eyeGaze(pose.gaze), pose.shape, frame);
+  const eyes = eyesFor(art, eyeGaze(pose.gaze), pose.shape, frame);
+  const iris = (side: "left" | "right", ref?: Ref<SVGGElement>) => {
+    const { eye, iris: pupil } = eyes[side];
+    if (!art.iris || !pupil) return null;
+    const attrs = irisAttrs(eye, pupil);
+    return (
+      <g ref={ref} data-part={`iris-${side}`} {...attrs.group}>
+        <rect {...attrs.pupil} fill={paint(art, art.iris.fill)} />
+        {art.iris.glint ? <circle {...attrs.glint} fill={paint(art, art.iris.glint)} /> : null}
+      </g>
+    );
+  };
   const chin = fitOf(art).chin;
   const helmet = accessory === "space-helmet" ? helmetFor(art).transform : undefined;
   const top = showsTop(art, accessory) ? art.top! : null;
@@ -484,8 +518,10 @@ export function MascotFigure({ kind, color, expression, accessory, pose, clipId,
               </g>
             ) : null}
             <g data-part="eyes" clipPath={`url(#${clipId}-eyes)`} fill={accessory === "sunglasses" ? EYE_WHITE : art.eye}>
-              <rect ref={eyeRefs?.[0]} data-eye="left" data-part="eye-left" {...eyeAttrs(eyes.left)} />
-              <rect ref={eyeRefs?.[1]} data-eye="right" data-part="eye-right" {...eyeAttrs(eyes.right)} />
+              <rect ref={eyeRefs?.[0]} data-eye="left" data-part="eye-left" {...eyeAttrs(eyes.left.eye)} />
+              {iris("left", irisRefs?.[0])}
+              <rect ref={eyeRefs?.[1]} data-eye="right" data-part="eye-right" {...eyeAttrs(eyes.right.eye)} />
+              {iris("right", irisRefs?.[1])}
             </g>
             {art.front ? (
               <g data-part="front" transform={tuck < 1 ? SHRINK : undefined}>

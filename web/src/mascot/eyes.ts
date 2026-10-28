@@ -16,6 +16,8 @@ export type EyeShape = { w: number; h: number };
 
 export type EyeRender = { x: number; y: number; width: number; height: number; rx: number; rotate: number; opacity: number };
 
+export type Iris = { x: number; y: number; width: number; height: number; rx: number; glint: readonly [cx: number, cy: number, r: number]; open: number };
+
 export const DEFAULT_EYES: EyeLayout = {
   cx: 50,
   cy: 58,
@@ -42,6 +44,23 @@ export function projectEye(layout: EyeLayout, side: -1 | 1, gaze: Gaze, shape: E
   const rotate = -deg(yaw) * Math.sin(gaze.pitch) * 1.2;
   const opacity = facing <= 0.08 ? 0 : Math.min(1, (facing - 0.08) / 0.12);
   return { x, y, width, height, rx: Math.max(0, Math.min(width, height) / 2), rotate, opacity };
+}
+
+const clamp = (v: number, lo = -1, hi = 1) => Math.min(hi, Math.max(lo, v));
+
+/**
+ * The pupil inside a round eye, before the eye's rotation: it leans toward the
+ * gaze and, as the eye flattens (a blink, happy), shrinks away or fills it (`shut`).
+ */
+export function irisOf(eye: EyeRender, gaze: Gaze, pupil: number, shut = false): Iris {
+  const open = clamp((eye.height / Math.max(eye.width, 1e-6) - 0.18) / 0.3, 0, 1);
+  const k = shut ? 1 - (1 - pupil) * open : pupil * open;
+  const width = eye.width * k;
+  const height = Math.min(eye.height, width);
+  const x = eye.x + ((eye.width - width) / 2) * 0.8 * clamp(gaze.yaw / 0.7);
+  const y = eye.y - ((eye.height - height) / 2) * 0.8 * clamp(gaze.pitch / 0.5);
+  const r = Math.min(width, height);
+  return { x, y, width, height, rx: r / 2, glint: [x + width * 0.22, y - height * 0.22, r * 0.2], open };
 }
 
 export type ExpressionEyes = { shape: EyeShape; gaze: Gaze | null; followsLevel: boolean; blinks: boolean; glances: boolean };

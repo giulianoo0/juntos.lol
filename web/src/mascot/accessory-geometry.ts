@@ -1,4 +1,4 @@
-import { DEFAULT_EYES, FRONT_GAZE, projectEye, type EyeRender } from "./eyes";
+import { DEFAULT_EYES, FRONT_GAZE, projectEye, type EyeLayout, type EyeRender } from "./eyes";
 import { ROUND_FIT, fitOf, type KindArt } from "./kind";
 import type { MascotAccessory, MascotExpression } from "./types";
 
@@ -249,10 +249,17 @@ function socketFrame(art: KindArt, frame: EyeFrame | null): EyeFrame | null {
   return { left, right, scale: art.socket.scale ?? 1, centered: true, clip: null };
 }
 
+/** A round eye takes the widest square of a round glass and most of its height. */
+function roundInLens(frame: EyeFrame, size: number, accessory: MascotAccessory): EyeFrame {
+  const half = (roundLeft.rx - MARGIN) / Math.SQRT2;
+  const boxes = accessory === "round-glasses" ? { left: roundBox(roundLeft, half), right: roundBox(roundRight, half) } : frame;
+  return { ...frame, left: boxes.left, right: boxes.right, scale: (0.85 * (boxes.left.y1 - boxes.left.y0)) / size };
+}
+
 /**
  * The frame on this head: the brim rides the hat (`KindArt.hat`), the cups sit
  * on the head's sides and the scarf and the bow tie over its chin; a kind with
- * sockets keeps each eye in its own.
+ * sockets keeps each eye in its own, and round eyes fill most of a lens.
  */
 export function eyeFrameFor(accessory: MascotAccessory, art?: KindArt): EyeFrame | null {
   const frame = EYE_FRAMES[accessory];
@@ -268,9 +275,13 @@ export function eyeFrameFor(accessory: MascotAccessory, art?: KindArt): EyeFrame
   else if (accessory === "scarf") fitted = aboveFrame(scarfFor(art).top);
   else if (accessory === "bowtie") fitted = aboveFrame(bowtieFor(art).top);
   fitted = socketFrame(art, fitted);
+  if (art.iris && fitted?.clip) fitted = roundInLens(fitted, art.iris.size, accessory);
   known.set(accessory, fitted);
   return fitted;
 }
+
+/** The kind's eyes before any pose: round ones keep their own size. */
+export const eyeLayoutFor = (art?: KindArt): EyeLayout => (art?.iris ? { ...DEFAULT_EYES, width: art.iris.size, height: art.iris.size } : DEFAULT_EYES);
 
 /** Ears and the top fold into the helmet; every other accessory leaves them as they are. */
 export const earTuckFor = (accessory: MascotAccessory): number => (accessory === "space-helmet" ? HELMET.earTuck : 1);

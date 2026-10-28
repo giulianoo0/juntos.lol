@@ -69,6 +69,8 @@ export type KindArt = Palette & {
   eyeClip?: string;
   /** The left eye's own patch (x0, y0, x1, y1), mirrored for the right: the eye sits in its middle and never leaves it. */
   socket?: { box: readonly [number, number, number, number]; scale?: number };
+  /** Round eyes this wide instead of the tall ones, with a pupil (`pupil` of the eye; `shut` fills the closed eye with it) and a glint on it. */
+  iris?: { size: number; fill: Paint; pupil: number; shut?: boolean; glint?: Paint };
   /** Moves the hats up or down to sit on the head's top. */
   hat?: number;
   /** Shrinks the hats around their brim, for a head whose top is already a cap. */
