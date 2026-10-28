@@ -1,4 +1,7 @@
 import { Lock, Plus } from 'lucide-react'
+import { HumanTip } from '../ui/HumanTip'
+import { usePublicConfig } from '../publicConfig'
+import { HumanError } from '../human'
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { discordLoginUrl, useMe } from '../account'
@@ -16,8 +19,6 @@ import { TurningTitle } from './home/TurningTitle'
 import { SiteHeader } from '../components/SiteHeader'
 import { HeroWordmark, SmallWordmark } from './home/Wordmark'
 import styles from './Home.module.css'
-
-const DISCORD_INSTALL = 'https://discord.com/oauth2/authorize?client_id=1564358804206911529'
 
 export interface CreateRoomInput {
   name: string
@@ -46,6 +47,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
   const navigate = useNavigate()
   const location = useLocation()
   const { me, loading } = useMe()
+  const config = usePublicConfig()
   const [name, setName] = useState('')
   const [withPassword, setWithPassword] = useState(false)
   const [password, setPassword] = useState('')
@@ -64,8 +66,8 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
     try {
       const created = await createRoom(input)
       navigate(`/room/${created.roomID}`)
-    } catch {
-      setError(t('landing.failed'))
+    } catch (error) {
+      setError(t(error instanceof HumanError ? 'human.failed' : 'landing.failed'))
       setBusy(false)
     }
   }
@@ -154,9 +156,11 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
                       />
                     </div>
                   ) : null}
-                  <Pill type="submit" tone="brand" size="lg" block loading={busy}>
-                    {me ? t('landing.go') : t('landing.continue')}
-                  </Pill>
+                  <HumanTip block>
+                    <Pill type="submit" tone="brand" size="lg" block loading={busy}>
+                      {me ? t('landing.go') : t('landing.continue')}
+                    </Pill>
+                  </HumanTip>
                   {me ? null : (
                     <PillLink tone="soft" size="md" block icon={<DiscordGlyph size={16} />} href={discordLoginUrl(`/?${comeBack}`)}>
                       {t('landing.signIn')}
@@ -209,9 +213,11 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
 
       <footer className={styles.footer}>
         <SmallWordmark className={styles.footerMark} />
-        <PillLink tone="soft" size="md" icon={<Plus size={15} />} href={DISCORD_INSTALL} target="_blank" rel="noopener noreferrer">
-          {t('landing.addDiscord')}
-        </PillLink>
+        {config?.discordAppId ? (
+          <PillLink tone="soft" size="md" icon={<Plus size={15} />} href={`https://discord.com/oauth2/authorize?client_id=${encodeURIComponent(config.discordAppId)}`} target="_blank" rel="noopener noreferrer">
+            {t('landing.addDiscord')}
+          </PillLink>
+        ) : null}
       </footer>
     </div>
   )

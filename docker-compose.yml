@@ -4,7 +4,6 @@ services:
       context: .
       args:
         GIT_SHA: ${GIT_SHA:-dev}
-        DISCORD_URL: ${DISCORD_URL:-}
     # Without a policy here the host coming back up leaves the site off the
     # air: Docker restarts and starts only the containers that carry one.
     # unless-stopped rather than always, so a deliberate stop during a deploy
@@ -42,6 +41,10 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      CATALOG_ADDON_URL: ${CATALOG_ADDON_URL:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-}
+      TURNSTILE_HOSTNAMES: ${TURNSTILE_HOSTNAMES:-}
     volumes:
       - ss-data:/data
       # The documentation is built from its own repository and rsynced here,

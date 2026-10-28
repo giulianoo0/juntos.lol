@@ -120,7 +120,7 @@ func TestInviteFriendSendsADM(t *testing.T) {
 	body := string(message)
 	require.Contains(t, body, `"allowed_mentions":{"parse":[]}`)
 	require.Contains(t, body, `"accent_color":16742981`)
-	require.Contains(t, body, `https://juntos.lol/icon-512.png`)
+	require.Contains(t, body, `https://juntos.test/icon-512.png`)
 	require.Contains(t, body, `Ana\\_\\[x\\]\\(y\\)`, "apelido escapado")
 	require.Contains(t, body, `(#1) te chamou pra sala`)
 	require.Contains(t, body, `Noite \\*de\\* filme`)

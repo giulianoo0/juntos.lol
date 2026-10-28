@@ -73,6 +73,16 @@ type Config struct {
 	// secret and a public origin to come back to, the login routes are off.
 	DiscordClientID     string
 	DiscordClientSecret string
+
+	// Turnstile in front of opening and entering rooms; without a secret
+	// nobody is asked. Hostnames are where the widget may have been solved.
+	// CatalogAddonURL is the Stremio-protocol addon the catalog reads, in the
+	// browser; the server only hands its address over.
+	CatalogAddonURL string
+
+	TurnstileSiteKey   string
+	TurnstileSecret    string
+	TurnstileHostnames []string
 }
 
 // DiscordLoginEnabled reports whether accounts can be signed into through Discord.
@@ -200,6 +210,20 @@ func Load() (Config, error) {
 	}
 	if cfg.RoomsPerIPPerHour, err = envInt("ROOMS_PER_IP_PER_HOUR", cfg.RoomsPerIPPerHour); err != nil {
 		return Config{}, err
+	}
+	cfg.CatalogAddonURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("CATALOG_ADDON_URL")), "/")
+	if cfg.CatalogAddonURL == "" {
+		cfg.CatalogAddonURL = "https://tmdb.elfhosted.com"
+	}
+	cfg.TurnstileSiteKey = strings.TrimSpace(os.Getenv("TURNSTILE_SITE_KEY"))
+	cfg.TurnstileSecret = strings.TrimSpace(os.Getenv("TURNSTILE_SECRET"))
+	for _, host := range strings.Split(os.Getenv("TURNSTILE_HOSTNAMES"), ",") {
+		if host = strings.TrimSpace(host); host != "" {
+			cfg.TurnstileHostnames = append(cfg.TurnstileHostnames, host)
+		}
+	}
+	if cfg.TurnstileSecret != "" && (cfg.TurnstileSiteKey == "" || len(cfg.TurnstileHostnames) == 0) {
+		return Config{}, fmt.Errorf("TURNSTILE_SITE_KEY and TURNSTILE_HOSTNAMES are required with TURNSTILE_SECRET")
 	}
 	cfg.DiscordAppID = strings.TrimSpace(os.Getenv("DISCORD_APP_ID"))
 	cfg.DiscordBotToken = strings.TrimSpace(os.Getenv("DISCORD_BOT_TOKEN"))

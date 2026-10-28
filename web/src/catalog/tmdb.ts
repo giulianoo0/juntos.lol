@@ -1,17 +1,18 @@
-// The TMDB addon (tmdb.elfhosted.com) is the metadata source: it speaks the
-// Stremio addon protocol like Cinemeta did, but answers in the viewer's
+import { loadPublicConfig } from '../publicConfig'
+
+// The TMDB addon, at the address the server's config names, is the metadata
+// source: it speaks the Stremio addon protocol like Cinemeta did, but answers in the viewer's
 // language and knows the IMDb id of everything, which is what the stream
 // plugins need. Every response is CORS-open, so the browser talks to it
 // directly — the server never proxies catalog traffic.
-const TMDB = 'https://tmdb.elfhosted.com'
-
-function metadataBase(): string {
+async function metadataBase(): Promise<string> {
+  const { catalogAddonUrl } = await loadPublicConfig()
   // Mirrors useT: pt-BR unless the viewer picked English.
   let language = 'pt-BR'
   try {
     if (localStorage.getItem('ss.language') === 'en') language = 'en-US'
   } catch {}
-  return `${TMDB}/${encodeURIComponent(JSON.stringify({ language }))}`
+  return `${catalogAddonUrl}/${encodeURIComponent(JSON.stringify({ language }))}`
 }
 
 export type MetaType = 'movie' | 'series'
@@ -150,14 +151,14 @@ function localizeGenre(genre: string, base: string): string {
 }
 
 export async function fetchCatalog(type: MetaType, genre?: string): Promise<CatalogMeta[]> {
-  const base = metadataBase()
+  const base = await metadataBase()
   const extra = genre ? `/genre=${encodeURIComponent(localizeGenre(genre, base))}` : ''
   const payload = await getJSON<unknown>(`${base}/catalog/${type}/tmdb.top${extra}.json`)
   return parseCatalogMetas(payload, type)
 }
 
 export async function fetchMeta(type: MetaType, id: string): Promise<MetaDetail | null> {
-  const payload = await getJSON<unknown>(`${metadataBase()}/meta/${type}/${encodeURIComponent(id)}.json`)
+  const payload = await getJSON<unknown>(`${await metadataBase()}/meta/${type}/${encodeURIComponent(id)}.json`)
   return parseMetaDetail(payload)
 }
 
@@ -169,7 +170,7 @@ export async function searchCatalog(query: string): Promise<CatalogMeta[]> {
   const [movies, series] = await Promise.all(
     (['movie', 'series'] as const).map(async (type) => {
       try {
-        const payload = await getJSON<unknown>(`${metadataBase()}/catalog/${type}/tmdb.search/${search}.json`)
+        const payload = await getJSON<unknown>(`${await metadataBase()}/catalog/${type}/tmdb.search/${search}.json`)
         return parseCatalogMetas(payload, type)
       } catch {
         return []

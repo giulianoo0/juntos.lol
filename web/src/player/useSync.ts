@@ -1,3 +1,4 @@
+import { ensureHuman, forgetHuman, humanReady } from '../human'
 import { GATE_READY_BUFFER_MS } from './gate'
 import { playbackHealth } from './playbackHealth'
 import { useCallback, useEffect, useReducer, useRef, useState, type RefObject } from 'react'
@@ -241,7 +242,14 @@ export function useSync(
     // A password room said no: the door stays shut until a ticket is in hand.
     let halted = false
 
+    // The socket only opens for a browser that passed the bot check lately.
     const connect = () => {
+      if (disposed) return
+      if (humanReady()) open()
+      else void ensureHuman().catch(() => undefined).finally(open)
+    }
+
+    const open = () => {
       if (disposed) return
       const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}`)
@@ -303,7 +311,9 @@ export function useSync(
         }
       }
 
+      let opened = false
       socket.onopen = () => {
+        opened = true
         attempt = 0
         lastHeardRef.current = Date.now()
         setConnected(true)
@@ -322,6 +332,8 @@ export function useSync(
       }
       socket.onclose = () => {
         setConnected(false)
+        // Refused at the upgrade: most likely the day's check ran out.
+        if (!opened) forgetHuman()
         if (disposed || halted || socketRef.current !== socket) return
         const backoff = Math.min(RECONNECT_MIN_MS * 2 ** attempt, RECONNECT_MAX_MS)
         attempt += 1

@@ -8,6 +8,7 @@
  */
 import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
 import { mockCreateRoom, mocksEnabled } from './mocks'
+import { ensureHuman, forgetHuman } from './human'
 import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // From the leaf module, never from remuxJob: a value import of remuxJob here
@@ -181,11 +182,19 @@ export function clearResumableSource(roomID: string): void {
 
 // A room is born empty: what it plays is opened in it afterwards.
 async function createRoom(nickname: string, name?: string, password?: string): Promise<CreateRoomResponse> {
-  const response = await fetch('/api/rooms', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nickname, ...(name ? { name } : {}), ...(password ? { joinMode: 'password', password } : {}) }),
-  })
+  const post = async () => {
+    await ensureHuman()
+    return fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname, ...(name ? { name } : {}), ...(password ? { joinMode: 'password', password } : {}) }),
+    })
+  }
+  let response = await post()
+  if (response.status === 403) {
+    forgetHuman()
+    response = await post()
+  }
   if (!response.ok) throw new Error('create room failed')
   const created = await response.json() as CreateRoomResponse
   rememberOwnerToken(created)

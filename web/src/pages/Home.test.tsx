@@ -13,7 +13,9 @@ const respond = (status: number, body?: unknown) => Promise.resolve(new Response
 const giu = { id: 128, nickname: 'giu', avatar: 'fox.bowtie', visibility: 'friends', createdAt: '2026-10-01T00:00:00Z', stats: { sessions: 2, hours: 1, friends: 3 } }
 
 async function signedIn(me: typeof giu | null) {
-  vi.stubGlobal('fetch', vi.fn((input: string) => input === '/api/me' ? respond(me ? 200 : 401, me ?? { error: 'not_signed_in' }) : respond(404)))
+  vi.stubGlobal('fetch', vi.fn((input: string) => input === '/api/me' ? respond(me ? 200 : 401, me ?? { error: 'not_signed_in' })
+    : input === '/api/config' ? respond(200, { turnstileSiteKey: '', discordAppId: '42', catalogAddonUrl: '' })
+    : respond(404)))
   await refreshMe()
 }
 
@@ -169,10 +171,10 @@ describe('Home', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Bora assistir junto?' })).toBeInTheDocument()
   })
 
-  it('offers the Discord app in a new tab', () => {
+  it('offers the Discord app the server names, in a new tab', async () => {
     renderHome()
-    const link = screen.getByRole('link', { name: 'Adicionar ao Discord' })
-    expect(link).toHaveAttribute('href', 'https://discord.com/oauth2/authorize?client_id=1564358804206911529')
+    const link = await screen.findByRole('link', { name: 'Adicionar ao Discord' })
+    expect(link).toHaveAttribute('href', 'https://discord.com/oauth2/authorize?client_id=42')
     expect(link).toHaveAttribute('target', '_blank')
   })
 })

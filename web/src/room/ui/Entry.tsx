@@ -6,6 +6,7 @@ import { avatarOf } from '../avatar'
 import { Field } from '../../ui/Field'
 import { IconPill } from '../../ui/IconPill'
 import { Pill } from '../../ui/Pill'
+import { HumanTip } from '../../ui/HumanTip'
 import { arrive } from '../../ui/arrive'
 import { Loading, Skeleton } from '../../ui/Shimmer'
 import { AvatarEditor } from '../../account/AvatarEditor'
@@ -158,7 +159,9 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
         ) : null}
         {!needsPassword && vm.error ? <p className={styles.error} role="alert">{vm.error}</p> : null}
         <div className={styles.actions}>
-          <Pill type="submit" tone="primary" size="lg" block disabled={!ready} loading={vm.busy}>{strings.join}</Pill>
+          <HumanTip block>
+            <Pill type="submit" tone="primary" size="lg" block disabled={!ready} loading={vm.busy}>{strings.join}</Pill>
+          </HumanTip>
           {vm.account ? null : <a className={styles.discord} href={vm.loginUrl}>{strings.withDiscord}</a>}
         </div>
       </form>

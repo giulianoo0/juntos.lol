@@ -182,11 +182,11 @@ Todas obrigatórias, validadas no boot. Corte seco significa falhar alto na
 largada, não descobrir no meio de uma sala.
 
 ```
-R2_ACCOUNT_ID          e270a2e902b37cc9c371a473a0de188f
-R2_BUCKET              ss-media
+R2_ACCOUNT_ID          (id da conta Cloudflare)
+R2_BUCKET              (nome do bucket)
 R2_ACCESS_KEY_ID       (token de API do R2)
 R2_SECRET_ACCESS_KEY   (SHA-256 do valor do token)
-MEDIA_PUBLIC_URL       https://media.giuli.dev
+MEDIA_PUBLIC_URL       (domínio público do bucket)
 ```
 
 ## Infraestrutura já provisionada

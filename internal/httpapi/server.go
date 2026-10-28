@@ -81,6 +81,10 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if hub != nil {
 		roomReaders = hub
 	}
+	human := NewHumanGate(cfg)
+	r.GET("/api/config", publicConfig(cfg))
+	r.POST("/api/human", human.Verify)
+	r.POST("/api/human/failure", human.Failure)
 	RegisterRoomRoutes(r.Group("/api"), store, cfg, roomReaders)
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
@@ -110,7 +114,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterLiveRoutes(r.Group("/api"), store, cfg, authorizer, options.sourceHooks, options.torrentAccess.Service)
 	if hub != nil {
 		RegisterJoinRoutes(r.Group("/api"), store, cfg, hub, hub, hub.NotifyRoomUpdated)
-		r.GET("/ws/rooms/:id", hub.HandleWS)
+		r.GET("/ws/rooms/:id", human.Require(), hub.HandleWS)
 		r.GET("/api/live", func(c *gin.Context) {
 			_, members := hub.Live()
 			census, err := store.Census(c.Request.Context())

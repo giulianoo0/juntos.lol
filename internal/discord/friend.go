@@ -82,7 +82,7 @@ func friendHeader(from string, number int64) string {
 func FriendRequestMessage(origin string, request FriendRequest) map[string]any {
 	header := text("### " + friendHeader(request.From, request.Number) + " te mandou um pedido de amizade")
 	return cardMessage(cardAccent, []any{
-		section([]any{header}, thumbnail(cardLogo, "juntos")),
+		section([]any{header}, thumbnail(cardLogo(origin), "juntos")),
 		map[string]any{
 			"type": componentRow,
 			"components": []any{

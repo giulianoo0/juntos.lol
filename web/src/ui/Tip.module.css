@@ -6,6 +6,11 @@
   display: inline-flex;
 }
 
+.blockTrigger {
+  display: grid;
+  width: 100%;
+}
+
 /* Ink on the page's colour, small, quick: the lawcore's tip. Text tips are
    the one popup outside the spring (lawcore-design-eng, motion.md). */
 .tip {

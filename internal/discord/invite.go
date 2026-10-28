@@ -21,7 +21,7 @@ func InviteMessage(origin string, invite Invite) map[string]any {
 	if door := doorLabel(invite.Room.Door); door != "" {
 		header = append(header, text(door))
 	}
-	parts := []any{section(header, thumbnail(cardLogo, "juntos"))}
+	parts := []any{section(header, thumbnail(cardLogo(origin), "juntos"))}
 	if invite.Room.Playing != "" {
 		playing := text("▶️ **" + escapeMarkdown(invite.Room.Playing) + "**")
 		if invite.Room.Image != "" {

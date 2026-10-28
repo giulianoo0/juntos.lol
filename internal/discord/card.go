@@ -180,9 +180,12 @@ const (
 	// cardAccent is juntos' orange; a closed room goes grey.
 	cardAccent       = 0xFF7A45
 	cardClosedAccent = 0x4F545C
-
-	cardLogo = "https://juntos.lol/icon-512.png"
 )
+
+// cardLogo is juntos' icon, served by the site itself.
+func cardLogo(origin string) string {
+	return origin + "/icon-512.png"
+}
 
 // roomCard is the live card: the room's name and door beside the logo, what
 // is playing, who is in, and the buttons to join.
@@ -192,7 +195,7 @@ func (n *Notifier) roomCard(roomID string, link *Link, card Card) map[string]any
 		header = append(header, text(door))
 	}
 	parts := []any{
-		section(header, thumbnail(cardLogo, "juntos")),
+		section(header, thumbnail(cardLogo(n.Origin), "juntos")),
 		map[string]any{"type": componentSeparator, "divider": true, "spacing": 1},
 	}
 	if card.Playing != "" {

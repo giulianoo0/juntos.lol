@@ -175,7 +175,7 @@ func TestCardIgnoresRoomsFromElsewhere(t *testing.T) {
 }
 
 func TestRoomCard(t *testing.T) {
-	const logo = "https://juntos.lol/icon-512.png"
+	const logo = "https://juntos.test/icon-512.png"
 	tests := []struct {
 		name  string
 		link  Link

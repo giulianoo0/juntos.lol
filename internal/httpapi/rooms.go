@@ -36,7 +36,7 @@ func RegisterRoomRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Confi
 	if len(authorizer) > 0 {
 		members = authorizer[0]
 	}
-	rg.POST("/rooms", roomCreationLimit(cfg.RoomsPerIPPerHour, cfg.BehindCloudflare), createRoom(store, cfg))
+	rg.POST("/rooms", NewHumanGate(cfg).Require(), roomCreationLimit(cfg.RoomsPerIPPerHour, cfg.BehindCloudflare), createRoom(store, cfg))
 	rg.GET("/rooms/:id", getRoom(store, cfg.MediaPublicURL, members))
 }
 
