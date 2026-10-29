@@ -161,7 +161,7 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
         ) : null}
         {!needsPassword && vm.error ? <p className={styles.error} role="alert">{vm.error}</p> : null}
         <div className={styles.actions}>
-          <HumanTip block>
+          <HumanTip block shown>
             <Pill type="submit" tone="primary" size="lg" block disabled={!ready} loading={vm.busy && !checking} waiting={checking}>{strings.join}</Pill>
           </HumanTip>
           {vm.account ? null : <a className={styles.discord} href={vm.loginUrl}>{strings.withDiscord}</a>}

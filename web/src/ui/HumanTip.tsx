@@ -8,13 +8,13 @@ import styles from './HumanTip.module.css'
 
 /** Around a button that opens or enters a room. The bot check starts as soon
     as it is on screen; while it runs, hovering the button springs open what
-    is going on. */
-export function HumanTip({ children, block = false }: { children: ReactNode; block?: boolean }) {
+    is going on; `shown` keeps it open over the button for the whole check. */
+export function HumanTip({ children, block = false, shown = false }: { children: ReactNode; block?: boolean; shown?: boolean }) {
   const t = useT()
   const checking = useHumanCheck()
   useHumanPrecheck()
   return (
-    <Tooltip.Root disabled={!checking}>
+    <Tooltip.Root disabled={!checking} {...(shown ? { open: checking } : {})}>
       <Tooltip.Trigger delay={0} render={<span className={block ? styles.block : styles.trigger} />}>
         {children}
       </Tooltip.Trigger>

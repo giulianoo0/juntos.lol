@@ -119,7 +119,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
           />
 
           <div className={styles.actions}>
-            <HumanTip>
+            <HumanTip shown>
             <SpringPopover
               trigger={<>{checking ? <Spinner size="1.375rem" /> : <Plus size={22} strokeWidth={3} aria-hidden="true" />}{t('landing.create')}</>}
               triggerClassName={styles.create}
