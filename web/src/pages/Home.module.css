@@ -481,3 +481,7 @@
     }
   }
 }
+
+.create:disabled {
+  cursor: progress;
+}

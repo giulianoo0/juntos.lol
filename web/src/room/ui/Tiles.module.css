@@ -278,3 +278,13 @@
   }
 }
 
+
+/* A thumb is a button: what the stage holds never takes the click, and the
+   preparing panel, sized for the stage, stays out of it. */
+.tile[data-size="thumb"] .stage {
+  pointer-events: none;
+}
+
+.tile[data-size="thumb"] .stage :global(.stage-gate) {
+  display: none;
+}

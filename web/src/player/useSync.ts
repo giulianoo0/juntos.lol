@@ -95,6 +95,8 @@ interface SyncResult {
   /** Another tab of this browser took the seat. */
   replaced: boolean
   leave: () => void
+  /** Lets the seat go now, for a tab on its way out. */
+  sayGoodbye: () => void
   send: (type: string, payload?: Record<string, unknown>) => boolean
   reportBuffering: (stalled: boolean) => void
   /** Requests, grants and the spotlight around the room's stages (see room/stages). */
@@ -618,6 +620,7 @@ export function useSync(
     kicked,
     replaced,
     leave,
+    sayGoodbye,
     send,
     reportBuffering,
     stages,

@@ -10,6 +10,7 @@ export interface SpringPopoverProps {
   /** The trigger's accessible name and hover tip, when it shows only an icon. */
   triggerLabel?: string
   triggerAttributes?: Record<`data-${string}`, string | undefined>
+  triggerDisabled?: boolean
   /** The panel's heading; never a second line under it. */
   title?: string
   align?: 'start' | 'center' | 'end'
@@ -35,6 +36,7 @@ export function SpringPopover({
   triggerRender,
   triggerLabel,
   triggerAttributes,
+  triggerDisabled,
   title,
   align = 'start',
   side = 'bottom',
@@ -58,6 +60,7 @@ export function SpringPopover({
         render={triggerRender}
         aria-label={triggerLabel}
         title={triggerRender ? undefined : triggerLabel}
+        disabled={triggerDisabled}
         {...triggerAttributes}
       >
         {trigger}

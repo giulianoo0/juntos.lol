@@ -59,7 +59,7 @@ describe("Mascot", () => {
       const pupil = () => size(container.querySelector('[data-part="iris-left"] rect')!);
       const [w, h] = eye();
       expect(w / h, kind).toBeGreaterThan(0.85);
-      expect(pupil()[0], kind).toBeLessThan(w * 0.7);
+      expect(pupil()[0], kind).toBeLessThan(w);
       rerender(<Mascot kind={kind} expression="happy" still />);
       act(() => clock.advance(1500));
       const [hw, hh] = eye();

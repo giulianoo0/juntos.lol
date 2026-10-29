@@ -35,3 +35,9 @@
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* A disabled button swallows no hover, so the wrapper gets it and the tip opens. */
+.trigger > :disabled,
+.block > :disabled {
+  pointer-events: none;
+}

@@ -123,6 +123,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
             <SpringPopover
               trigger={<>{checking ? <Spinner size="1.375rem" /> : <Plus size={22} strokeWidth={3} aria-hidden="true" />}{t('landing.create')}</>}
               triggerClassName={styles.create}
+              triggerDisabled={checking}
               align="center"
               width="22rem"
               initialFocus={nameRef}
@@ -188,7 +189,9 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
                 autoCorrect="off"
                 onChange={(event) => setCode(event.target.value)}
               />
-              <Pill type="submit" tone="soft" size="sm" disabled={!room}>{t('landing.enter')}</Pill>
+              <HumanTip>
+                <Pill type="submit" tone="soft" size="sm" disabled={!room} waiting={checking}>{t('landing.enter')}</Pill>
+              </HumanTip>
             </form>
           </div>
 

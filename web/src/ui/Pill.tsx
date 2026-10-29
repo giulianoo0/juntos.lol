@@ -37,7 +37,7 @@ export const Pill = forwardRef<HTMLButtonElement, PillOwn & ButtonHTMLAttributes
       type={type}
       aria-busy={loading || waiting || undefined}
       data-loading={loading || undefined}
-      disabled={disabled || loading}
+      disabled={disabled || loading || waiting}
       className={pillClass({ tone, size, block }, className)}
       {...rest}
     >
