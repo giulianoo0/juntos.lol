@@ -41,6 +41,8 @@ interface Attached {
   poll: ReturnType<typeof setInterval>
   low: boolean
   lastFollow: number
+  /** The position last handed to the app. */
+  sentMs: number | null
   followTimer: ReturnType<typeof setTimeout> | null
   /** Set while a guest waits on the bucket: who to promote as, again if the upload dies. */
   wanted: ControllerAuth | null
@@ -52,6 +54,11 @@ const POLL_MS = 1000
 const UPLOAD_WATCH_MS = 5_000
 /** A seek burst reaches the app as one follow now and its last one later. */
 const FOLLOW_DEBOUNCE_MS = 3_000
+/**
+ * Play, pause and the gate opening name the place the app already has; they
+ * go nowhere, so the seek after them is not held back as part of a burst.
+ */
+const SAME_PLACE_MS = 2_000
 const rooms = new Map<string, Attached>()
 const listeners = new Set<() => void>()
 
@@ -84,6 +91,7 @@ export async function attachLocalRoom(roomId: string, generation: number, source
     poll: setInterval(() => { void refreshLocalMedia(roomId) }, POLL_MS),
     low: false,
     lastFollow: -Infinity,
+    sentMs: null,
     followTimer: null,
     wanted: null,
     uploadWatch: null,
@@ -91,12 +99,14 @@ export async function attachLocalRoom(roomId: string, generation: number, source
   rooms.set(roomId, attached)
   const send = () => {
     attached.lastFollow = Date.now()
+    attached.sentMs = attached.positionMs
     void app.invoke('local_follow', { key: attached.key, positionMs: attached.positionMs }).catch(() => undefined)
   }
   const handle = {
     follow: (absoluteMs: number) => {
       attached.positionMs = Math.max(0, Math.round(absoluteMs))
       if (attached.followTimer !== null) return
+      if (attached.sentMs !== null && Math.abs(attached.positionMs - attached.sentMs) < SAME_PLACE_MS) return
       const since = Date.now() - attached.lastFollow
       if (since >= FOLLOW_DEBOUNCE_MS) {
         send()

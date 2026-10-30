@@ -64,6 +64,22 @@ describe('a room played from the desktop cache', () => {
     }
   })
 
+  it('a play at the same place does not hold the next seek back', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    vi.useFakeTimers()
+    try {
+      const handle = remuxHandleFor('ROOM1')
+      handle?.follow(10_000)
+      await vi.advanceTimersByTimeAsync(3_000)
+      handle?.follow(10_400)
+      handle?.follow(420_000)
+      const follows = () => invoke.mock.calls.filter(([cmd]) => cmd === 'local_follow').map(([, args]) => args.positionMs)
+      expect(follows()).toEqual([10_000, 420_000])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a browser guest promotes the room and starts the upload at the playhead', async () => {
     await attachLocalRoom('ROOM1', 4, source)
     remuxHandleFor('ROOM1')?.follow(42_000)
