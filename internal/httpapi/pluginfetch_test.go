@@ -214,16 +214,13 @@ func TestPluginFetchLeavesThroughTheConfiguredProxy(t *testing.T) {
 		_, _ = io.WriteString(w, "via proxy")
 	})
 	proxy, asked := connectProxy(t)
-	fetcher := NewPluginFetcher(config.Config{PublicOrigin: "https://ss.test", PluginFetchProxy: proxy.URL})
-	fetcher.tlsInsecureForTests(upstream.server.Client())
-	r := gin.New()
-	RegisterPluginFetchRoute(r.Group("/api"), fetcher, nil, nil)
+	r := proxiedHopRig(t, upstream, proxy, "203.0.113.10")
 
 	w := hop(r, "https://addon.test:"+upstream.port()+"/x")
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Equal(t, "via proxy", w.Body.String())
-	require.Equal(t, []string{"addon.test:" + upstream.port()}, *asked)
+	require.Equal(t, []string{"203.0.113.10:" + upstream.port()}, *asked, "the proxy is sent to the address checked here, never to a name it resolves itself")
 	require.Len(t, upstream.hits, 1)
 	require.Empty(t, upstream.hits[0].Header.Get("Origin"))
 
@@ -231,6 +228,36 @@ func TestPluginFetchLeavesThroughTheConfiguredProxy(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, hop(r, target).Code, target)
 	}
 	require.Len(t, *asked, 1)
+}
+
+// The proxy sits in a private network of its own: a name pointing there must
+// be refused here, before the proxy is asked to go.
+func TestPluginFetchThroughTheProxyRefusesANameThatResolvesIntoPrivateSpace(t *testing.T) {
+	upstream := newUpstream(t, func(w http.ResponseWriter, r *http.Request) {})
+	proxy, asked := connectProxy(t)
+	for _, private := range []string{"192.168.1.1", "100.100.0.1", "10.0.0.8"} {
+		r := proxiedHopRig(t, upstream, proxy, private)
+
+		w := hop(r, "https://addon.test:"+upstream.port()+"/x")
+
+		require.Equal(t, http.StatusBadGateway, w.Code, "address %s", private)
+	}
+	require.Empty(t, *asked)
+	require.Empty(t, upstream.hits)
+}
+
+// proxiedHopRig is the hop leaving through proxy, with every name resolving to answer.
+func proxiedHopRig(t *testing.T, upstream *upstreamRig, proxy *httptest.Server, answer string) *gin.Engine {
+	t.Helper()
+	fetcher := NewPluginFetcher(config.Config{PublicOrigin: "https://ss.test", PluginFetchProxy: proxy.URL})
+	fetcher.resolve = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr(answer)}, nil
+	}
+	fetcher.allowAddr = func(addr netip.Addr) bool { return publicAddr(addr) || addr.String() == "203.0.113.10" }
+	fetcher.tlsInsecureForTests(upstream.server.Client())
+	r := gin.New()
+	RegisterPluginFetchRoute(r.Group("/api"), fetcher, nil, nil)
+	return r
 }
 
 func TestPluginFetchCapsTheBody(t *testing.T) {
@@ -296,6 +323,8 @@ func TestPublicAddr(t *testing.T) {
 	for _, bad := range []string{
 		"0.0.0.0", "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.0.1", "169.254.1.1", "100.64.0.1",
 		"224.0.0.1", "255.255.255.255", "::", "::1", "fe80::1", "fc00::1", "ff02::1", "::ffff:192.168.0.1",
+		// IPv6 spellings that carry an IPv4 address a translator would reach.
+		"64:ff9b::c0a8:1", "64:ff9b:1::a00:1", "2002:c0a8:101::1",
 	} {
 		require.False(t, publicAddr(netip.MustParseAddr(bad)), bad)
 	}
