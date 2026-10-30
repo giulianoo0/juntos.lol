@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use ss_remux::bridge::{Bridge, InputTarget};
 use ss_remux::plan::{self, SourcePlan};
-use ss_remux::{process, youtube, ByteSource};
+use ss_remux::{process, subs, youtube, ByteSource};
 
 use crate::hls::{self, Variant};
 use crate::{cache, upload_plan};
@@ -92,10 +92,34 @@ struct Running {
     caps: Vec<String>,
 }
 
+/// The subtitles a video's page offers, and the client that reaches them.
+struct PageSubtitles {
+    client: reqwest::Client,
+    picks: Vec<youtube::SubtitlePick>,
+}
+
+/// Closes a bridge input however its reader ends, aborted included.
+struct Revoke(Arc<Bridge>, String);
+
+impl Drop for Revoke {
+    fn drop(&mut self) {
+        self.0.revoke(&self.1, "");
+    }
+}
+
+/// The subtitle pass for one room's source: one per room and generation.
+struct Subtitles {
+    room_id: String,
+    generation: u64,
+    task: tokio::task::JoinHandle<()>,
+}
+
 struct Production {
     dir: PathBuf,
     sources: Vec<Arc<dyn ByteSource>>,
     plan: SourcePlan,
+    page_subtitles: Option<PageSubtitles>,
+    subtitles: Mutex<Option<Subtitles>>,
     meta: Mutex<Meta>,
     running: Mutex<Option<Running>>,
     used: Mutex<SystemTime>,
@@ -107,11 +131,13 @@ struct Production {
 }
 
 impl Production {
-    fn new(dir: PathBuf, sources: Vec<Arc<dyn ByteSource>>, plan: SourcePlan, meta: Meta) -> Arc<Self> {
+    fn new(dir: PathBuf, sources: Vec<Arc<dyn ByteSource>>, plan: SourcePlan, page_subtitles: Option<PageSubtitles>, meta: Meta) -> Arc<Self> {
         Arc::new(Production {
             dir,
             sources,
             plan,
+            page_subtitles,
+            subtitles: Mutex::new(None),
             meta: Mutex::new(meta),
             running: Mutex::new(None),
             used: Mutex::new(SystemTime::now()),
@@ -133,6 +159,8 @@ pub struct Producer {
     ffprobe: String,
     cap_bytes: u64,
     bridge: tokio::sync::OnceCell<Arc<Bridge>>,
+    client: reqwest::Client,
+    subtitle_rooms: subs::Rooms,
     entries: Mutex<HashMap<String, Arc<Production>>>,
     /// One prepare per key at a time: a second one waits and reuses the first.
     preparing: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -146,6 +174,8 @@ impl Producer {
             ffprobe,
             cap_bytes,
             bridge: tokio::sync::OnceCell::new(),
+            client: reqwest::Client::new(),
+            subtitle_rooms: subs::new_rooms(),
             entries: Mutex::new(HashMap::new()),
             preparing: Mutex::new(HashMap::new()),
         })
@@ -172,7 +202,7 @@ impl Producer {
             return Ok(existing.meta.lock().clone());
         }
         let bridge = self.bridge().await?;
-        let (sources, plan): (Vec<Arc<dyn ByteSource>>, SourcePlan) = match input {
+        let (sources, plan, page_subtitles): (Vec<Arc<dyn ByteSource>>, SourcePlan, Option<PageSubtitles>) = match input {
             Input::Container(bytes) => {
                 let (url, cap) = bridge.register_input(InputTarget { source: bytes.clone(), reader: format!("probe:{key}") });
                 let args: Vec<String> = ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", &url]
@@ -181,12 +211,13 @@ impl Producer {
                     .collect();
                 let probed = process::run_capture(&self.ffprobe, &args, Duration::from_secs(120)).await;
                 bridge.revoke(&cap, "");
-                (vec![bytes], plan::plan_streams(&probed?)?)
+                (vec![bytes], plan::plan_streams(&probed?)?, None)
             }
             Input::Youtube(resolver, url) => {
                 let materialized = resolver.materialize(&youtube::Request { url }).await?;
                 let sources = materialized.streams.into_iter().map(|s| s as Arc<dyn ByteSource>).collect();
-                (sources, materialized.plan)
+                let page = PageSubtitles { client: resolver.client.clone(), picks: materialized.subtitles };
+                (sources, materialized.plan, Some(page))
             }
         };
         let dir = self.root.join(key).join("hls");
@@ -202,7 +233,7 @@ impl Producer {
             low_resolution: plan::low_resolution(&plan),
             regions: stored.map(|m| m.regions).unwrap_or_default(),
         };
-        let production = Production::new(dir, sources, plan, meta.clone());
+        let production = Production::new(dir, sources, plan, page_subtitles, meta.clone());
         self.entries.lock().insert(key.to_string(), production);
         self.evict();
         self.follow(key, 0).await?;
@@ -367,9 +398,79 @@ impl Producer {
 
     pub async fn stop(&self, key: &str) {
         let production = self.entries.lock().get(key).cloned();
+        if let Some(subtitles) = production.as_ref().and_then(|p| p.subtitles.lock().take()) {
+            subtitles.task.abort();
+        }
         if let (Some(production), Ok(bridge)) = (production, self.bridge().await) {
             self.stop_running(&production, &bridge).await;
         }
+    }
+
+    /// Publishes the source's subtitles to the room, where every member reads
+    /// them: the container's own tracks, pulled once the first frames are
+    /// out so the pass does not hold the picture back, or the page's. Once
+    /// per room and generation; a new one replaces the pass before it.
+    pub async fn subtitles(self: &Arc<Self>, key: &str, api_base: String, room_id: String, generation: u64) -> anyhow::Result<()> {
+        let Some(production) = self.entries.lock().get(key).cloned() else { bail!("unknown source") };
+        let bridge = self.bridge().await?;
+        let mut held = production.subtitles.lock();
+        if held.as_ref().is_some_and(|s| s.room_id == room_id && s.generation == generation) {
+            return Ok(());
+        }
+        if let Some(previous) = held.take() {
+            previous.task.abort();
+        }
+        let this = self.clone();
+        let source = production.clone();
+        let (room, key) = (room_id.clone(), key.to_string());
+        let task = tokio::spawn(async move {
+            let run_id = format!("local_{key}");
+            if let Some(page) = &source.page_subtitles {
+                if page.picks.is_empty() {
+                    return;
+                }
+                let publisher = youtube::subs::Publisher {
+                    client: page.client.clone(),
+                    api: this.client.clone(),
+                    api_base,
+                    room_id: room,
+                    run_id: run_id.clone(),
+                    media_generation: generation,
+                    claim: None,
+                };
+                if let Err(e) = publisher.run(page.picks.clone()).await {
+                    tracing::warn!(run = %run_id, error = %e, "page subtitles not published");
+                }
+                return;
+            }
+            if source.plan.subtitles.is_empty() {
+                return;
+            }
+            while !this.regions(&key).iter().any(|r| r.produced_ms > 0) {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            let dir = this.root.join(&key).join("subs");
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            let (input_url, cap) = bridge.register_input(InputTarget { source: source.sources[0].clone(), reader: format!("subs:{key}") });
+            let _input = Revoke(bridge.clone(), cap);
+            let extractor = subs::Extractor {
+                ffmpeg_path: this.ffmpeg.clone(),
+                client: this.client.clone(),
+                api_base,
+                room_id: room.clone(),
+                run_id: run_id.clone(),
+                media_generation: generation,
+                claim: None,
+                input_url,
+                dir,
+                state: subs::room_state(&this.subtitle_rooms, &room, generation, &source.plan),
+            };
+            if let Err(e) = extractor.run(&source.plan, 0, 0).await {
+                tracing::warn!(run = %run_id, error = %e, "subtitle pass failed");
+            }
+        });
+        *held = Some(Subtitles { room_id, generation, task });
+        Ok(())
     }
 
     fn evict(&self) {
@@ -458,7 +559,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let plan = plan::plan_streams(PROBE).unwrap();
         let meta = Meta { key: "k".into(), title: "Filme".into(), duration_ms: plan.duration_ms, audio_langs: vec![], video_codecs: None, low_resolution: None, regions: vec![] };
-        producer.entries.lock().insert("k".into(), Production::new(dir, vec![Arc::new(Empty)], plan, meta));
+        producer.entries.lock().insert("k".into(), Production::new(dir, vec![Arc::new(Empty)], plan, None, meta));
         producer
     }
 
@@ -547,4 +648,129 @@ mod tests {
         assert!(covered(&regions, 1_200_000, false, 1_199_955));
         assert!(!covered(&regions, 1_200_000, false, 1_300_000));
     }
+
+    /// A server for one test: the page's subtitle document, and the room's
+    /// subtitle route, which keeps every body it is sent.
+    async fn subtitle_server() -> (String, Arc<Mutex<Vec<(String, serde_json::Value)>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let posts = Arc::new(Mutex::new(Vec::new()));
+        let seen = posts.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { return };
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut raw = Vec::new();
+                    let mut chunk = [0u8; 8192];
+                    let (head, body) = loop {
+                        let n = socket.read(&mut chunk).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        raw.extend_from_slice(&chunk[..n]);
+                        let Some(end) = raw.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                        let head = String::from_utf8_lossy(&raw[..end]).into_owned();
+                        let length = head
+                            .lines()
+                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap()))
+                            .unwrap_or(0);
+                        while raw.len() < end + 4 + length {
+                            let n = socket.read(&mut chunk).await.unwrap_or(0);
+                            if n == 0 {
+                                return;
+                            }
+                            raw.extend_from_slice(&chunk[..n]);
+                        }
+                        break (head, raw[end + 4..end + 4 + length].to_vec());
+                    };
+                    let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
+                    let reply = if head.starts_with("GET") {
+                        "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOlá, coração – 字幕\n".to_string()
+                    } else {
+                        seen.lock().push((path, serde_json::from_slice(&body).unwrap()));
+                        "{}".to_string()
+                    };
+                    let status = if head.starts_with("GET") { "200 OK" } else { "201 Created" };
+                    let response = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len());
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (base, posts)
+    }
+
+    #[cfg(unix)]
+    fn page_producer(root: &Path, base: &str) -> Arc<Producer> {
+        let producer = Producer::new(root.join("cache"), "true".into(), "true".into(), u64::MAX);
+        let dir = root.join("cache/y/hls");
+        std::fs::create_dir_all(&dir).unwrap();
+        let plan = plan::plan_streams(PROBE).unwrap();
+        let meta = Meta { key: "y".into(), title: "Clipe".into(), duration_ms: plan.duration_ms, audio_langs: vec![], video_codecs: None, low_resolution: None, regions: vec![] };
+        let page = PageSubtitles {
+            client: reqwest::Client::new(),
+            picks: vec![youtube::SubtitlePick { language: "pt-BR".into(), title: "Português (Brasil)".into(), url: format!("{base}/sub.vtt"), auto: false }],
+        };
+        producer.entries.lock().insert("y".into(), Production::new(dir, vec![Arc::new(Empty)], plan, Some(page), meta));
+        producer
+    }
+
+    async fn posts_settle(posts: &Arc<Mutex<Vec<(String, serde_json::Value)>>>, count: usize) {
+        for _ in 0..100 {
+            if posts.lock().len() >= count {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_videos_subtitles_go_to_the_room_where_a_browser_posts_them_once_per_source() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, posts) = subtitle_server().await;
+        let producer = page_producer(root.path(), &base);
+
+        producer.subtitles("y", base.clone(), "R1".into(), 4).await.unwrap();
+        producer.subtitles("y", base.clone(), "R1".into(), 4).await.unwrap();
+        posts_settle(&posts, 1).await;
+
+        let sent = posts.lock().clone();
+        assert_eq!(sent.len(), 1, "the same source was published twice");
+        let (path, body) = &sent[0];
+        assert_eq!(path, "/api/rooms/R1/subtitles");
+        assert!(body.get("claim").is_none());
+        assert_eq!(body["mediaGeneration"], 4);
+        assert_eq!(body["complete"], true);
+        assert_eq!(body["tracks"][0]["language"], "pt-BR");
+        assert_eq!(body["tracks"][0]["title"], "Português (Brasil)");
+        assert!(body["tracks"][0]["vtt"].as_str().unwrap().contains("Olá, coração – 字幕"));
+
+        producer.subtitles("y", base.clone(), "R1".into(), 5).await.unwrap();
+        posts_settle(&posts, 2).await;
+        assert_eq!(posts.lock().len(), 2, "a new source in the room was not published");
+        assert_eq!(posts.lock()[1].1["mediaGeneration"], 5);
+    }
+
+    #[tokio::test]
+    async fn subtitles_for_a_source_never_prepared_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let producer = Producer::new(root.path().join("cache"), "true".into(), "true".into(), u64::MAX);
+        assert!(producer.subtitles("nope", "http://127.0.0.1:9".into(), "R1".into(), 1).await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stopping_the_source_stops_its_subtitle_pass() {
+        let root = tempfile::tempdir().unwrap();
+        let (base, _posts) = subtitle_server().await;
+        let producer = page_producer(root.path(), &base);
+        producer.subtitles("y", base, "R1".into(), 4).await.unwrap();
+        producer.stop("y").await;
+        let production = producer.entries.lock().get("y").cloned().unwrap();
+        assert!(production.subtitles.lock().is_none());
+    }
 }
+

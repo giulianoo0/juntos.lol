@@ -19,7 +19,8 @@ pub struct Publisher {
     pub room_id: String,
     pub run_id: String,
     pub media_generation: u64,
-    pub claim: String,
+    /// None for the app that opened the video itself (see subs::publish_url).
+    pub claim: Option<String>,
 }
 
 impl Publisher {
@@ -34,19 +35,15 @@ impl Publisher {
         if tracks.is_empty() {
             anyhow::bail!("no subtitle document could be fetched");
         }
-        let body = serde_json::json!({
-            "claim": self.claim,
-            "mediaGeneration": self.media_generation,
-            "complete": true,
-            "tracks": tracks,
-        });
-        let url = format!("{}/api/rooms/{}/subtitles/fleet", self.api_base, self.room_id);
+        let count = tracks.len();
+        let body = crate::subs::publish_body(&self.claim, self.media_generation, true, tracks);
+        let url = crate::subs::publish_url(&self.api_base, &self.room_id, &self.claim);
         let mut last = None;
         for attempt in 0..3 {
             let response = self.api.post(&url).json(&body).send().await.context("subtitles send")?;
             let status = response.status();
             if status.is_success() {
-                tracing::info!(run = %self.run_id, tracks = tracks.len(), "youtube subtitles published");
+                tracing::info!(run = %self.run_id, tracks = count, "youtube subtitles published");
                 return Ok(());
             }
             let text = response.text().await.unwrap_or_default();

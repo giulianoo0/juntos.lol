@@ -176,6 +176,8 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
     void app.invoke('upload_stop', { roomId }).catch(() => undefined)
     void app.invoke('local_stop', { key: attached.key }).catch(() => undefined)
   })
+  // Everyone reads the subtitles from the room; an app too old to send them says no.
+  void app.invoke('local_subtitles', { key: meta.key, roomId, mediaGeneration: generation }).catch(() => undefined)
   emit()
   void refreshLocalMedia(roomId)
   return null

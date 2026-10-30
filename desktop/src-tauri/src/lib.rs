@@ -73,6 +73,7 @@ pub fn run() {
             commands::local_low,
             commands::local_stop,
             commands::upload_start,
+            commands::local_subtitles,
             commands::upload_stop,
             commands::upload_status,
             commands::update_status,

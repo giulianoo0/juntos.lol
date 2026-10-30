@@ -155,6 +155,20 @@ pub async fn local_stop(state: State<'_, AppState>, key: String) -> Result<(), S
     Ok(())
 }
 
+/// Publishes the prepared source's subtitles to the room this app produces.
+#[tauri::command]
+pub async fn local_subtitles(state: State<'_, AppState>, key: String, room_id: String, media_generation: u64) -> Result<(), String> {
+    if !valid_room(&room_id) {
+        return Err("invalid room".into());
+    }
+    let api_base = state.site.as_str().trim_end_matches('/').to_string();
+    state.producer.subtitles(&key, api_base, room_id, media_generation).await.map_err(|e| e.to_string())
+}
+
+fn valid_room(room_id: &str) -> bool {
+    !room_id.is_empty() && room_id.len() <= 64 && room_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// Starts sending the cache to the room with the claim the site got from
 /// `local/promote`; a new claim for the same room replaces the upload.
 #[tauri::command]
@@ -169,7 +183,7 @@ pub fn upload_start(
     if state.producer.meta(&key).is_none() {
         return Err("unknown source".into());
     }
-    if room_id.is_empty() || room_id.len() > 64 || !room_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if !valid_room(&room_id) {
         return Err("invalid room".into());
     }
     let run_id = format!("run_{:016x}", rand::random::<u64>());

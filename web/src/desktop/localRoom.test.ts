@@ -43,6 +43,24 @@ describe('a room played from the desktop cache', () => {
     expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, regions })
   })
 
+  it('has the app publish the source\'s subtitles to the room, and a guest copy never does', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    expect(invoke).toHaveBeenCalledWith('local_subtitles', { key: 't-abc-0', roomId: 'ROOM1', mediaGeneration: 4 })
+    invoke.mockClear()
+    await openLocalCopy('GUEST2', 4, { kind: 'torrent', magnet: 'magnet:?xt=urn:btih:abc', index: 0 }, 'Filme')
+    expect(invoke).not.toHaveBeenCalledWith('local_subtitles', expect.anything())
+  })
+
+  it('an app too old to publish subtitles still plays the room', async () => {
+    const plain = invoke.getMockImplementation() as (cmd: string, args?: unknown) => Promise<unknown>
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'local_subtitles') throw new Error('command local_subtitles not found')
+      return plain(cmd, args)
+    })
+    expect(await attachLocalRoom('ROOM1', 4, source)).toBeNull()
+    expect(remuxHandleFor('ROOM1')).toBeDefined()
+  })
+
   it('hands the room position to the app', async () => {
     await attachLocalRoom('ROOM1', 4, source)
     remuxHandleFor('ROOM1')?.follow(42_000)
