@@ -67,8 +67,9 @@ impl AppState {
     }
 }
 
+/// The error with its causes (`{:#}` on an anyhow chain), short enough for the site.
 fn err(error: impl std::fmt::Display) -> String {
-    error.to_string().chars().take(400).collect()
+    format!("{error:#}").chars().take(400).collect()
 }
 
 #[tauri::command]

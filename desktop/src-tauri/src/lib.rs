@@ -195,10 +195,28 @@ mod tests {
     #[test]
     fn the_site_is_granted_each_command_the_build_declares() {
         let granted: Vec<String> = site_permissions().collect();
-        assert_eq!(granted.len(), 28);
+        assert_eq!(granted.len(), 30);
         assert_eq!(granted[0], "allow-app-hello");
         assert!(granted.contains(&"allow-local-prepare".to_string()));
         assert!(granted.contains(&"allow-screen-start".to_string()));
         assert!(granted.iter().all(|p| !p.contains('_')));
+    }
+
+    // A command the handler takes but the list leaves out is refused to the
+    // site at run time, which no other test sees.
+    #[test]
+    fn every_command_the_app_handles_is_granted_to_the_site() {
+        let source = include_str!("lib.rs");
+        let start = source.find("generate_handler![").unwrap();
+        let end = start + source[start..].find("])").unwrap();
+        let granted: Vec<String> = site_permissions().collect();
+        let handled: Vec<&str> = source[start..end]
+            .split(|c: char| c == ',' || c == '[' || c.is_whitespace())
+            .filter_map(|item| item.rsplit("::").next().filter(|_| item.contains("::")))
+            .collect();
+        assert!(handled.len() >= 30, "{handled:?}");
+        for command in handled {
+            assert!(granted.contains(&format!("allow-{}", command.replace('_', "-"))), "{command} is handled but not granted");
+        }
     }
 }

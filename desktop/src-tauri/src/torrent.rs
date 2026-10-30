@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use librqbit::{AddTorrent, AddTorrentOptions, Session, SessionOptions};
+use librqbit::dht::DhtPersistenceConfig;
+use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Session, SessionOptions};
 use serde::Serialize;
 use ss_remux::torrent::local::Local;
 use ss_remux::torrent::{TorrentFiles, TorrentSource};
@@ -39,6 +40,15 @@ pub struct Stats {
     pub progress: f64,
 }
 
+fn options(dht: DhtSessionConfig) -> SessionOptions {
+    SessionOptions {
+        fastresume: true,
+        trackers: ss_remux::torrent::tracker_urls(),
+        dht: Some(dht),
+        ..Default::default()
+    }
+}
+
 pub struct Torrents {
     local: Arc<Local>,
 }
@@ -46,12 +56,22 @@ pub struct Torrents {
 impl Torrents {
     pub async fn new(dir: PathBuf) -> anyhow::Result<Self> {
         std::fs::create_dir_all(&dir)?;
-        let opts = SessionOptions {
-            fastresume: true,
-            trackers: ss_remux::torrent::tracker_urls(),
+        // The DHT's table lives with the app's own torrents: librqbit's
+        // default is one file for every program on the machine built on it,
+        // whose remembered port another of them may hold.
+        let persisted = DhtSessionConfig {
+            persistence: Some(DhtPersistenceConfig { config_filename: Some(dir.join("dht.json")), ..Default::default() }),
             ..Default::default()
         };
-        let session = Session::new_with_opts(dir, opts).await.context("torrent session")?;
+        let session = match Session::new_with_opts(dir.clone(), options(persisted)).await {
+            Ok(session) => session,
+            Err(e) => {
+                // A port taken since it was remembered: a fresh one for this run.
+                tracing::warn!(error = %format!("{e:#}"), "torrent session with the remembered DHT failed; starting without it");
+                let fresh = DhtSessionConfig { persistence: None, ..Default::default() };
+                Session::new_with_opts(dir, options(fresh)).await.context("torrent session")?
+            }
+        };
         Ok(Self { local: Local::new(session) })
     }
 
