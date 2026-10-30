@@ -1,25 +1,11 @@
-/// Every command the site may call; each becomes an `allow-<name>`
-/// permission that the runtime capability grants to the site's origin only.
-const COMMANDS: &[&str] = &[
-    "app_hello",
-    "torrent_open",
-    "torrent_select",
-    "torrent_stats",
-    "youtube_resolve",
-    "local_prepare",
-    "local_regions",
-    "local_follow",
-    "local_low",
-    "local_stop",
-    "upload_start",
-    "upload_stop",
-    "upload_status",
-    "update_status",
-    "update_restart",
-    "update_now",
-];
+/// Every command the site may call, one per line of commands.txt; each
+/// becomes an `allow-<name>` permission that the runtime capability grants to
+/// the site's origin only (see `site_permissions` in src/lib.rs).
+const COMMANDS: &str = include_str!("commands.txt");
 
 fn main() {
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)))
+    println!("cargo:rerun-if-changed=commands.txt");
+    let commands: Vec<&'static str> = COMMANDS.lines().filter(|line| !line.is_empty()).collect();
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(commands.leak())))
         .expect("tauri build");
 }
