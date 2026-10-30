@@ -599,6 +599,16 @@ pub struct Resolver {
     update_lock: tokio::sync::Mutex<()>,
 }
 
+/// yt-dlp's arguments for one resolve. Only the YouTube extractor: the
+/// generic one would fetch any URL from this machine's network. No config
+/// file either, where an `--exec` would run with every resolve.
+fn resolve_args(url: &str) -> Vec<String> {
+    ["--ignore-config", "--use-extractors", "youtube", "-J", "--no-playlist", "--no-warnings", "--socket-timeout", "20", "--", url]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 impl Resolver {
     pub async fn new(cfg: Config) -> Self {
         let mut builder = reqwest::Client::builder()
@@ -653,7 +663,7 @@ impl Resolver {
 
     async fn run_ytdlp(&self, url: &str) -> Result<Info, Error> {
         let mut cmd = self.command();
-        cmd.args(["-J", "--no-playlist", "--no-warnings", "--socket-timeout", "20", "--"]).arg(url);
+        cmd.args(resolve_args(url));
         let output = tokio::time::timeout(RESOLVE_TIMEOUT, cmd.output())
             .await
             .map_err(|_| Error::Tool("yt-dlp timed out".into()))?
@@ -851,6 +861,16 @@ mod tests {
         assert_eq!(classify_failure("ERROR: Unsupported URL: https://x").code(), "youtube_unsupported");
         assert_eq!(classify_failure("ERROR: something odd").code(), "youtube_tool");
         assert!(stale_extractor("ERROR: Unable to extract nsig"));
+    }
+
+    #[test]
+    fn ytdlp_resolves_with_the_youtube_extractor_alone_and_no_config() {
+        let args = resolve_args("--exec=rm");
+        assert_eq!(args.last().map(String::as_str), Some("--exec=rm"));
+        assert_eq!(args[args.len() - 2], "--");
+        let joined = args.join(" ");
+        assert!(joined.contains("--ignore-config"), "{joined}");
+        assert!(joined.contains("--use-extractors youtube "), "{joined}");
     }
 }
 
