@@ -11,7 +11,6 @@ ss-youtube = { path = "../ss-youtube" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 axum = { version = "0.7", features = ["http2"] }
-async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -26,12 +25,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 moq-net = { version = "0.2", optional = true }
 moq-native = { version = "0.19", optional = true }
 moq-mux = { version = "0.9", optional = true }
-hang = { version = "0.20", optional = true }
-url = "2"
+url = { version = "2", optional = true }
 
 [features]
 # A YouTube live put on the MoQ relay; only the fleet worker carries it.
-live = ["dep:moq-net", "dep:moq-native", "dep:moq-mux", "dep:hang"]
+live = ["dep:moq-net", "dep:moq-native", "dep:moq-mux", "dep:url"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
