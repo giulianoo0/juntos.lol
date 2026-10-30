@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod hls;
+pub mod serve;
 pub mod site;
 pub mod upload_plan;
 

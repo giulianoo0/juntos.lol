@@ -83,9 +83,63 @@ pub fn slice(source: &Variant, from: usize, prefix: &str, variant: usize) -> Str
     out
 }
 
+/// What a master names besides the variants: the audio languages in order
+/// (variants 1..), and the video CODECS when the player cannot infer them.
+#[derive(Clone, Debug, Default)]
+pub struct MasterInfo {
+    pub audio_langs: Vec<String>,
+    pub video_codecs: Option<String>,
+    pub bandwidth: u64,
+}
+
+/// The region's master, in the shape the fleet's publisher writes it.
+pub fn master(prefix: &str, info: &MasterInfo) -> String {
+    let mut out = String::from("#EXTM3U\n#EXT-X-VERSION:7\n");
+    for (index, lang) in info.audio_langs.iter().enumerate() {
+        let default = if index == 0 { "DEFAULT=YES,AUTOSELECT=YES," } else { "" };
+        out.push_str(&format!(
+            "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"audio_{n}\",LANGUAGE=\"{lang}\",{default}URI=\"{uri}\"\n",
+            n = index + 1,
+            uri = playlist_name(prefix, index + 1),
+        ));
+    }
+    let codecs = match &info.video_codecs {
+        Some(video) if info.audio_langs.is_empty() => format!(",CODECS=\"{video}\""),
+        Some(video) => format!(",CODECS=\"{video},mp4a.40.2\""),
+        None => String::new(),
+    };
+    let audio = if info.audio_langs.is_empty() { "" } else { ",AUDIO=\"aud\"" };
+    out.push_str(&format!(
+        "#EXT-X-STREAM-INF:BANDWIDTH={}{codecs}{audio}\n{}\n",
+        info.bandwidth.max(2_000_000),
+        playlist_name(prefix, 0),
+    ));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn master_names_the_region_variants() {
+        let info = MasterInfo { audio_langs: vec!["jpn".into(), "eng".into()], video_codecs: None, bandwidth: 0 };
+        let m = master("r2_", &info);
+        assert!(m.starts_with("#EXTM3U\n#EXT-X-VERSION:7\n"));
+        assert!(m.contains("LANGUAGE=\"jpn\",DEFAULT=YES,AUTOSELECT=YES,URI=\"r2_client_stream_1.m3u8\""));
+        assert!(m.contains("URI=\"r2_client_stream_2.m3u8\""));
+        assert!(m.contains("#EXT-X-STREAM-INF:BANDWIDTH=2000000,AUDIO=\"aud\"\nr2_client_stream_0.m3u8\n"));
+    }
+
+    #[test]
+    fn master_declares_codecs_only_when_known() {
+        let info = MasterInfo { audio_langs: vec!["eng".into()], video_codecs: Some("av01.0.08M.10".into()), bandwidth: 5_000_000 };
+        assert!(master("", &info).contains("BANDWIDTH=5000000,CODECS=\"av01.0.08M.10,mp4a.40.2\",AUDIO=\"aud\""));
+        let silent = MasterInfo { audio_langs: vec![], video_codecs: None, bandwidth: 0 };
+        let m = master("", &silent);
+        assert!(!m.contains("EXT-X-MEDIA"));
+        assert!(m.ends_with("#EXT-X-STREAM-INF:BANDWIDTH=2000000\nclient_stream_0.m3u8\n"));
+    }
 
     const LOCAL: &str = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:5\n#EXT-X-MEDIA-SEQUENCE:0\n\
 #EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"r2_cinit_0.mp4\"\n\
