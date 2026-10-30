@@ -210,7 +210,7 @@ impl Producer {
         }
         let prefix = upload_plan::region_prefix(n);
         let base = production.dir.to_string_lossy().into_owned();
-        let args = plan::ffmpeg_args(&urls, &base, &prefix, &production.plan, start_seconds, None);
+        let args = plan::ffmpeg_args(&urls, &base, &prefix, &production.plan, start_seconds, None, None);
         let process = process::spawn(&self.ffmpeg, &args)?;
         {
             let mut meta = production.meta.lock();

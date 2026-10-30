@@ -15,8 +15,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
-ss-remux = { path = "../../ss-worker/ss-remux", features = ["torrent"] }
-librqbit = { path = "../../ss-worker/vendor/librqbit" }
+ss-remux = { path = "../../crates/ss-remux" }
+librqbit = { path = "../../crates/librqbit" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -30,6 +30,9 @@ rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Fora do workspace da raiz: o worker e o CI de Linux não precisam do Tauri.
+[workspace]
 
 [profile.release]
 opt-level = 2
