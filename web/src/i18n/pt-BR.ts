@@ -418,6 +418,7 @@ export const ptBR: Record<string, string> = {
   "site.download": "Baixar o app",
   "app.updateReady": "Nova versão pronta",
   "app.restart": "Reiniciar",
+  "app.updateFailed": "Não deu para atualizar",
   "app.updateRequired": "Atualize o app",
   "app.updating": "Baixando a atualização",
   "site.downloadTitle": "Baixar o juntos",

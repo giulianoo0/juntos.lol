@@ -26,6 +26,7 @@ export function AppUpdate() {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [required, setRequired] = useState(false)
   const [restarting, setRestarting] = useState(false)
+  const [installFailed, setInstallFailed] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -55,7 +56,11 @@ export function AppUpdate() {
 
   const restart = () => {
     setRestarting(true)
-    void invokeUpdater('update_restart').catch(() => setRestarting(false))
+    void invokeUpdater('update_restart').catch((error: unknown) => {
+      console.warn('app update failed', error)
+      setRestarting(false)
+      setInstallFailed(true)
+    })
   }
 
   // Nothing of the site works on an app this old: the new version goes in as soon as it lands.
@@ -85,6 +90,13 @@ export function AppUpdate() {
     )
   }
 
+  if (installFailed) {
+    return (
+      <div className={styles.notice} role="status">
+        <span className={styles.label}>{t('app.updateFailed')}</span>
+      </div>
+    )
+  }
   if (status?.state !== 'ready') return null
   return (
     <div className={styles.notice} role="status">

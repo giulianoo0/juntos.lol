@@ -418,6 +418,7 @@ export const en: Record<string, string> = {
   "site.download": "Download the app",
   "app.updateReady": "New version ready",
   "app.restart": "Restart",
+  "app.updateFailed": "Couldn't update",
   "app.updateRequired": "Update the app",
   "app.updating": "Downloading the update",
   "site.downloadTitle": "Download juntos",

@@ -69,6 +69,18 @@ impl<P> Updates<P> {
     pub fn take(&self) -> Option<P> {
         self.pending.lock().take()
     }
+
+    /// Installs the downloaded update; Ok(false) when none was there. A
+    /// failed install leaves the status failed, not ready over nothing, so
+    /// the site stops offering the restart and the next check can run.
+    pub fn install_with(&self, install: impl FnOnce(P) -> Result<(), String>) -> Result<bool, String> {
+        let Some(payload) = self.take() else { return Ok(false) };
+        install(payload).map(|()| true).map_err(|e| {
+            let error = format!("install: {e}");
+            self.failed(&error);
+            error
+        })
+    }
 }
 
 /// The update and its downloaded bytes, waiting for the install.
@@ -138,17 +150,12 @@ pub async fn check_once(app: &tauri::AppHandle) {
     }
 }
 
-/// Installs a downloaded update; true when one was there.
-pub fn install_pending(app: &tauri::AppHandle) -> bool {
+/// Installs a downloaded update; Ok(true) when one went in.
+pub fn install_pending(app: &tauri::AppHandle) -> Result<bool, String> {
     use tauri::Manager;
-    let Some((update, bytes)) = app.state::<AppUpdates>().take() else { return false };
-    match update.install(bytes) {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::warn!(error = %e, "update install failed");
-            false
-        }
-    }
+    app.state::<AppUpdates>()
+        .install_with(|(update, bytes)| update.install(bytes).map_err(|e| e.to_string()))
+        .inspect_err(|error| tracing::warn!(%error, "update install failed"))
 }
 
 #[cfg(test)]
@@ -174,6 +181,16 @@ mod tests {
         updates.ready("0.1.1", "bytes");
         assert_eq!(updates.take(), Some("bytes"));
         assert_eq!(updates.take(), None);
+    }
+
+    #[test]
+    fn a_failed_install_says_why_and_stops_offering_the_restart() {
+        let updates = Updates::<&str>::default();
+        updates.ready("0.2.2", "bytes");
+        assert_eq!(updates.install_with(|_| Err("read-only volume".into())), Err("install: read-only volume".into()));
+        assert_eq!(updates.status(), Status::Failed { error: "install: read-only volume".into() });
+        assert!(updates.begin_check(), "the next check can fetch it again");
+        assert_eq!(updates.install_with(|_| Ok(())), Ok(false));
     }
 
     #[test]

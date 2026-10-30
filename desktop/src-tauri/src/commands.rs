@@ -252,7 +252,7 @@ pub fn update_status(updates: State<'_, crate::updates::AppUpdates>) -> crate::u
 /// The person asked: install what was downloaded and start the new version.
 #[tauri::command]
 pub fn update_restart(app: tauri::AppHandle) -> Result<(), String> {
-    if !crate::updates::install_pending(&app) {
+    if !crate::updates::install_pending(&app)? {
         return Err("no update ready".into());
     }
     app.restart()

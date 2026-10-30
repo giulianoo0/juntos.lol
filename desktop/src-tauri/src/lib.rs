@@ -46,10 +46,33 @@ fn tool(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+/// The log on disk, so a failure on someone's machine can be read later:
+/// ~/Library/Logs on macOS, the local app data elsewhere. It starts over past 5 MB.
+fn log_file() -> Option<std::fs::File> {
+    let dir = if cfg!(target_os = "macos") {
+        PathBuf::from(std::env::var_os("HOME")?).join("Library/Logs/lol.juntos.desktop")
+    } else if cfg!(windows) {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("lol.juntos.desktop").join("logs")
+    } else {
+        PathBuf::from(std::env::var_os("HOME")?).join(".local/state/lol.juntos.desktop")
+    };
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(if cfg!(debug_assertions) { "juntos-debug.log" } else { "juntos.log" });
+    let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > 5 << 20);
+    std::fs::OpenOptions::new().create(true).append(!big).write(true).truncate(big).open(path).ok()
+}
+
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+    let filter = || tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
+    match log_file() {
+        Some(file) => tracing_subscriber::fmt()
+            .with_env_filter(filter())
+            .with_ansi(false)
+            .with_writer(std::io::stdout.and(std::sync::Mutex::new(file)))
+            .init(),
+        None => tracing_subscriber::fmt().with_env_filter(filter()).init(),
+    }
     let site = site::site_origin(std::env::var("JUNTOS_URL").ok().as_deref());
 
     tauri::Builder::default()
@@ -182,7 +205,7 @@ pub fn run() {
         .run(|app, event| {
             // An update the person did not restart for goes in as the app closes.
             if let tauri::RunEvent::Exit = event {
-                updates::install_pending(app);
+                let _ = updates::install_pending(app);
             }
         });
 }

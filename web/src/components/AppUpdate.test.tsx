@@ -44,6 +44,22 @@ describe('AppUpdate', () => {
     expect(invoke).toHaveBeenCalledWith('update_restart')
   })
 
+  it('an install that fails stops offering a restart that does nothing', async () => {
+    const invoke = installApp({ state: 'ready', version: '0.2.2' })
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'app_hello') return hello
+      if (cmd === 'update_status') return { state: 'ready', version: '0.2.2' }
+      if (cmd === 'update_restart') throw new Error('install: read-only volume')
+      return null
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    render(<AppUpdate />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Reiniciar' }))
+
+    expect(await screen.findByText('Não deu para atualizar')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reiniciar' })).toBeNull()
+  })
+
   it('an app too old for the site gets the update screen and fetches the update at once', async () => {
     const invoke = installApp({ state: 'downloading', version: '0.2.0', received: 50, total: 100 }, { ...hello, compatible: false, updateRequired: true })
     render(<AppUpdate />)
