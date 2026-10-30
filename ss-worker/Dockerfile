@@ -12,10 +12,10 @@ RUN cargo build --release -p ss-worker
 
 # FFmpeg pinned by build and checksum instead of the distro's: the same 8.1
 # everywhere the remux runs, with libx264 for the 480p rendition. BtbN's
-# static GPL build needs nothing from the image but libc.
+# static GPL build needs nothing from the image but libc; a copy lives in
+# our own release, since BtbN's autobuilds do not stay up.
 FROM debian:trixie-slim AS ffmpeg
 ARG TARGETARCH
-ARG FFMPEG_BUILD=autobuild-2026-10-28-19-47
 ARG FFMPEG_VERSION=n8.1.3-25-g611cec792a
 ARG FFMPEG_SHA256_AMD64=8d02a412b0f72051bf30201a9f2c117fe557a4dc44b03c5c99fda2fbd7b00b5d
 ARG FFMPEG_SHA256_ARM64=7257ee9e82ef1e387902ba50ad98bfd2116f2de069f31221988623f56955ad6a
@@ -29,7 +29,7 @@ RUN case "${TARGETARCH:-amd64}" in \
 	esac \
 	&& name="ffmpeg-${FFMPEG_VERSION}-${platform}-gpl-8.1" \
 	&& curl -fsSL -o /tmp/ffmpeg.tar.xz \
-		"https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BUILD}/${name}.tar.xz" \
+		"https://github.com/giulianoo0/juntos.lol/releases/download/tools-ffmpeg-8.1.3/${name}.tar.xz" \
 	&& echo "${sum}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
 	&& tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
 	&& install -m 0755 "/tmp/${name}/bin/ffmpeg" "/tmp/${name}/bin/ffprobe" /usr/local/bin/
