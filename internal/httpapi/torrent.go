@@ -30,6 +30,17 @@ type TorrentAccess struct {
 	Authorizer func(roomID, memberID, capability string) bool
 }
 
+// maxTorrentBodyBytes bounds the JSON a torrent or YouTube ask may carry.
+const maxTorrentBodyBytes = 64 << 10
+
+// limitBody caps what a handler may read of the request body.
+func limitBody(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
 // RegisterTorrentRoutes mounts /api/torrents. Capacity and fleet are public; the
 // rest carries a session and the dispatch budget.
 func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access TorrentAccess) {
@@ -52,7 +63,7 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 		}
 		c.JSON(http.StatusOK, gin.H{"capacity": access.Service.Capacity(), "workers": fleet})
 	})
-	group := rg.Group("/torrents")
+	group := rg.Group("/torrents", limitBody(maxTorrentBodyBytes))
 	if access.Sessions != nil {
 		group.Use(access.Sessions.Middleware())
 	}
