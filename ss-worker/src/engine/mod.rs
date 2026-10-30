@@ -185,6 +185,27 @@ fn punch_holes(
     0
 }
 
+/// What becomes of the pieces a window left behind.
+#[derive(Debug, PartialEq, Eq)]
+enum Behind {
+    /// Held whole: the next seek behind the window reads them from disk.
+    Hold,
+    /// Left as they are, neither held nor given back.
+    Keep,
+    Release,
+}
+
+/// A file that fits whole stays whole while someone holds it. One nobody
+/// holds keeps what it has until it is reaped, or evicted for room: a
+/// lease coming back inside the grace finds it warm.
+fn behind_window(leased: bool, fits_whole: bool) -> Behind {
+    match (leased, fits_whole) {
+        (false, _) => Behind::Keep,
+        (true, true) => Behind::Hold,
+        (true, false) => Behind::Release,
+    }
+}
+
 /// Torrent-absolute byte ranges for a set of pieces, sorted and merged, so a
 /// window that gave up a thousand pieces costs a handful of syscalls.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -208,7 +229,19 @@ fn merge_piece_ranges(pieces: &[u32], piece_len: u64) -> Vec<(u64, u64)> {
 
 #[cfg(test)]
 mod release_tests {
-    use super::merge_piece_ranges;
+    use super::{behind_window, merge_piece_ranges, Behind};
+
+    #[test]
+    fn bytes_behind_the_window_go_only_under_disk_pressure_while_leased() {
+        assert_eq!(behind_window(true, true), Behind::Hold);
+        assert_eq!(behind_window(true, false), Behind::Release);
+    }
+
+    #[test]
+    fn a_torrent_nobody_holds_keeps_its_bytes_for_the_next_lease() {
+        assert_eq!(behind_window(false, true), Behind::Keep);
+        assert_eq!(behind_window(false, false), Behind::Keep);
+    }
 
     #[test]
     fn merges_runs_and_leaves_gaps_alone() {
@@ -463,12 +496,14 @@ impl Engine {
                 .sum();
             (only, total, reserve, ever)
         };
+        // Torrents nobody holds give their room back before a room in use
+        // gives up the file it is holding.
         let before = self.disk.reserved(&infohash);
         if !self.disk.reserve(&infohash, reserve_bytes) {
-            self.shed_fill(reserve_bytes);
+            self.evict_idle_until_room(reserve_bytes).await;
         }
         if !self.disk.reserve(&infohash, reserve_bytes) {
-            self.evict_idle_until_room(reserve_bytes).await;
+            self.shed_fill(reserve_bytes);
             if !self.disk.reserve(&infohash, reserve_bytes) {
                 return Err(Rejection::DiskFull);
             }
@@ -532,11 +567,9 @@ impl Engine {
         if handle.update_selected_pieces(&pieces).is_err() {
             return;
         }
-        self.release_behind_window(infohash, &handle, info, &pieces, piece_len);
-        self.disk.reserve_unchecked(
-            infohash,
-            window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN),
-        );
+        // What is on disk stays, and so does its reservation.
+        let footprint = window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN);
+        self.disk.reserve_unchecked(infohash, self.disk.reserved(infohash).max(footprint));
         tracing::info!(infohash, "last lease gone; dropped to pins");
     }
 
@@ -827,15 +860,14 @@ impl Engine {
         if cursors.is_empty() || !release || fill != Fill::Off {
             return;
         }
-        // A file that fits whole stays whole while someone holds it: the
-        // next seek behind the window reads it from disk, not the swarm.
-        // Disk pressure or the last lease leaving turns this back off.
-        if leased && self.disk.fits_replacing(infohash, info.len) {
-            let footprint = window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN);
-            self.set_fill(infohash, Fill::Holding, info.len, footprint);
-            return;
+        match behind_window(leased, self.disk.fits_replacing(infohash, info.len)) {
+            Behind::Hold => {
+                let footprint = window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN);
+                self.set_fill(infohash, Fill::Holding, info.len, footprint);
+            }
+            Behind::Keep => {}
+            Behind::Release => self.release_behind_window(infohash, &handle, info, &pieces, piece_len),
         }
-        self.release_behind_window(infohash, &handle, info, &pieces, piece_len);
     }
 
     /// The sweep's look at whether the swarm should be filling the file
