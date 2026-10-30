@@ -55,3 +55,17 @@ O hello aceita `client: "desktop"` e `features: ["localSource"]`. O hub guarda n
 
 ## Visual
 `CLAUDE.md` do repo: base lawcore (`lawcore-design-eng`), spring popover, **sem subdescrição**. Tokens de `web/src/theme.css`.
+
+## Frente D — live do YouTube com DVR, qualidade e "Ir para o vivo" (depois do merge de A, B e C)
+
+Decisão: a live sai do MoQ e vira **HLS no R2 no palco principal**, pelo pipeline de regiões e pelo Player (hls.js). MoQ fica só para tela. O produtor **espelha** os segmentos do YouTube (sem ffmpeg nem pacer): lê as playlists de cada variante, baixa cada sq novo pelo proxy e sobe por presign (`upload.rs`/`sink.rs`). CPU perto de zero.
+
+- Escada padrão 1080/720/360 + áudio (H.264, copiada do YouTube); master com CODECS/BANDWIDTH/RESOLUTION; playlist EVENT por variante, região `growing` com `durationMs=0`.
+- Timeline = ms desde o sq 0, somando EXTINF; "vivo" = `startMs+producedMs` da região que cresce, extrapolado no cliente.
+- DVR: o que já gravamos fica no R2; antes disso, backfill sob demanda da janela do YouTube (sq mais antigos) como região nova.
+- "Ir para o vivo": seek do controlador para `vivo − 3×targetDuration`, pelo gate; aparece sempre que a posição comum está >10 s atrás do vivo (pausa, volta, vivo andando). Rate travado em 1x na live.
+- Qualidade: ABR do hls.js + menu por viewer (local); trocar `currentLevel` por `nextLevel` (`Player.tsx:~1095`).
+- Estabilidade: segmento inteiro no R2 + retry do hls.js; buraco no YouTube vira `#EXT-X-GAP`; o Go guarda o último sq por variante e o produtor retoma dali (failover na frota); fim da live grava `ENDLIST` e vira VOD.
+- Onde roda: frota (proxy) por padrão; o app Tauri pode produzir com o IP de casa do host.
+
+Tarefas: (1) sonda do formato dos segmentos (TS ou fMP4), duração, alcance do DVR e alinhamento de keyframes; (2) `select_ladder` + testes com `tests/fixtures/live.json`; (3) `live/mirror.rs` com GAP e retomada; (4) sink aceita o formato + Publisher em modo live; (5) Go: live como job de mídia, timeline sem duração, sq guardado, ENDLIST; (6) hub limita seek ao vivo, rate 1x; (7) Player: config live (`liveMaxLatencyDurationCount: Infinity`), `reportEnded` não pausa, fim da timeline = vivo, botão, `nextLevel`; (8) backfill; (9) failover com teste; (10) produtor no app; (11) aposentar `LiveStage` e o ffmpeg da live.
