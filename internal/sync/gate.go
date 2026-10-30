@@ -106,6 +106,9 @@ func (r *roomConn) evaluateGate() bool {
 }
 
 func (r *roomConn) clientReady(connected *client) bool {
+	if !r.waitsFor(connected) {
+		return true
+	}
 	if _, ignored := r.ignored[connected.id]; ignored {
 		return true
 	}
@@ -215,7 +218,7 @@ func (r *roomConn) handleGatingToggle(sender *client, message Inbound) {
 // decided not to wait for them.
 func (r *roomConn) stalledMember() string {
 	for id, connected := range r.clients {
-		if _, ignored := r.ignored[id]; ignored {
+		if _, ignored := r.ignored[id]; ignored || !r.waitsFor(connected) {
 			continue
 		}
 		if connected.report.received && connected.report.runningDry() {

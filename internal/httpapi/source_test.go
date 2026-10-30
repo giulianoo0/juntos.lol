@@ -239,6 +239,136 @@ func TestClosingTheLiveLeavesTheMedia(t *testing.T) {
 	require.Equal(t, []string{"r1"}, updated)
 }
 
+func TestTheHostOpensALocalSourceFromTheApp(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	var notified, reset []string
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
+		NotifyStatus:  func(_, status string) { notified = append(notified, status) },
+		ResetPlayback: func(id string) { reset = append(reset, id) },
+	})
+
+	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Duna: Parte 2","durationMs":9960000}`)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Status          string `json:"status"`
+		MediaGeneration int    `json:"mediaGeneration"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, room.StatusLocal, resp.Status)
+	require.Equal(t, 1, resp.MediaGeneration)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, room.StatusLocal, got.Status)
+	require.True(t, got.LocalSource)
+	require.Equal(t, "Duna: Parte 2", got.FileName)
+	require.Equal(t, int64(9_960_000), got.DurationMs)
+	require.Equal(t, "m1", got.SourceMemberID)
+	require.Equal(t, []string{room.StatusLocal}, notified)
+	require.Equal(t, []string{"r1"}, reset)
+}
+
+func TestALocalSourceIsTheHostsAlone(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{
+		allowed: true, stages: map[string]bool{"m2/media": true},
+	}, SourceHooks{})
+
+	tests := []struct {
+		name string
+		body string
+		code int
+	}{
+		{name: "a granted guest", body: `{"memberId":"m2","capability":"secret-capability","kind":"local","title":"Filme"}`, code: http.StatusForbidden},
+		{name: "without a title", body: `{"memberId":"m1","capability":"secret-capability","kind":"local"}`, code: http.StatusBadRequest},
+		{name: "a negative duration", body: `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Filme","durationMs":-1}`, code: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.code, postSource(t, e, "r1", tt.body).Code)
+		})
+	}
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "first.mkv", got.FileName)
+}
+
+func postPromote(t *testing.T, e *gin.Engine, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/rooms/r1/local/promote", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(w, req)
+	return w
+}
+
+func TestPromoteHandsTheAppAClaimWithoutRestartingTheRoom(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	var notified []string
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{
+		NotifyStatus: func(_, status string) { notified = append(notified, status) },
+	})
+	require.Equal(t, http.StatusOK, postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Filme"}`).Code)
+	notified = nil
+	clock := room.PlayState{Playing: true, PositionMs: 1_800_000, Rate: 1, ServerTimeMs: 7}
+	require.NoError(t, store.SetState(t.Context(), "r1", clock))
+
+	w := postPromote(t, e, `{"memberId":"m1","capability":"secret-capability"}`)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp clientClaimResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(t, strings.HasPrefix(resp.Claim, "client:"))
+	require.True(t, strings.HasPrefix(resp.MetadataToken, "meta:"))
+	require.Equal(t, 1, resp.MediaGeneration)
+	require.Equal(t, maxClientBytes(cfg), resp.MaxBytes)
+	held, err := store.UploadID(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, resp.Claim, held)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, room.StatusUploading, got.Status)
+	require.Equal(t, 1, got.MediaGeneration)
+	state, err := store.GetState(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, clock, state)
+	require.Equal(t, []string{room.StatusUploading}, notified)
+}
+
+func TestPromoteRefusals(t *testing.T) {
+	tests := []struct {
+		name  string
+		local bool
+		body  string
+		code  int
+	}{
+		{name: "a guest", local: true, body: `{"memberId":"m2","capability":"secret-capability"}`, code: http.StatusForbidden},
+		{name: "a wrong capability", local: true, body: `{"memberId":"m1","capability":"guessed"}`, code: http.StatusForbidden},
+		{name: "a source that is not local", body: `{"memberId":"m1","capability":"secret-capability"}`, code: http.StatusConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testCfg(t)
+			store := newTestStore(t)
+			e := sourceRoom(t, cfg, store)
+			RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
+			if tt.local {
+				require.Equal(t, http.StatusOK, postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Filme"}`).Code)
+			}
+			require.Equal(t, tt.code, postPromote(t, e, tt.body).Code)
+			held, err := store.UploadID(t.Context(), "r1")
+			require.NoError(t, err)
+			require.Empty(t, held)
+		})
+	}
+}
+
 func TestChangeSourceMissingRoom(t *testing.T) {
 	cfg := testCfg(t)
 	store := newTestStore(t)

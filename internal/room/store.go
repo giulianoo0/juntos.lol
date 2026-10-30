@@ -169,6 +169,64 @@ return 1
 	}
 }
 
+// PromoteLocal hands the producer claim of a room whose source lives in the
+// host's app to that app, so it can start filling the bucket for a browser.
+// A local room becomes uploading; one already uploading or ready stays as it
+// is and its previous claim and run fence are replaced, since the app asks
+// again whenever it lost them. The generation and the clock are untouched.
+// It returns the generation, ErrNotFound for a dead room and
+// ErrUploadNotAllowed when the source is not a working local one.
+func (s *Store) PromoteLocal(ctx context.Context, roomID, claim string, now time.Time) (int, error) {
+	result, err := s.rdb.Eval(ctx, `
+local status = redis.call('HGET', KEYS[1], 'status')
+if not status then return -1 end
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires or tonumber(expires) <= tonumber(ARGV[2]) then return -1 end
+if redis.call('HGET', KEYS[1], 'local_source') ~= '1' then return -2 end
+if status ~= 'local' and status ~= 'uploading' and status ~= 'ready' then return -2 end
+if status == 'local' then redis.call('HSET', KEYS[1], 'status', 'uploading') end
+redis.call('HSET', KEYS[1], 'upload_id', ARGV[1], 'client_media_touched', ARGV[2])
+redis.call('HDEL', KEYS[1], 'producer_run', 'producer_seq', 'producer_digest')
+redis.call('SET', KEYS[2], ARGV[1])
+return tonumber(redis.call('HGET', KEYS[1], 'media_generation') or '0')
+`, []string{roomKey(roomID), uploadKey(roomID)}, claim, strconv.FormatInt(now.UnixMilli(), 10)).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("promote local source: %w", err)
+	}
+	switch result {
+	case -1:
+		return 0, ErrNotFound
+	case -2:
+		return 0, ErrUploadNotAllowed
+	}
+	return int(result), nil
+}
+
+// EnableRendition asks the room's next producer runs for one more rendition
+// of the media, such as a 480p variant for a viewer whose link cannot carry
+// the source. It stays until the source is swapped, and reports whether it
+// was new.
+func (s *Store) EnableRendition(ctx context.Context, roomID, name string) (bool, error) {
+	result, err := s.rdb.Eval(ctx, `
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires or tonumber(expires) <= tonumber(ARGV[2]) then return -1 end
+local held = redis.call('HGET', KEYS[1], 'renditions') or ''
+for name in string.gmatch(held, '[^,]+') do
+  if name == ARGV[1] then return 0 end
+end
+if held ~= '' then held = held .. ',' end
+redis.call('HSET', KEYS[1], 'renditions', held .. ARGV[1])
+return 1
+`, []string{roomKey(roomID)}, name, strconv.FormatInt(time.Now().UnixMilli(), 10)).Int64()
+	if err != nil {
+		return false, fmt.Errorf("enable rendition: %w", err)
+	}
+	if result == -1 {
+		return false, ErrNotFound
+	}
+	return result == 1, nil
+}
+
 func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
 	id, err := s.rdb.Get(ctx, uploadKey(roomID)).Result()
 	if errors.Is(err, redis.Nil) {
@@ -261,6 +319,10 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r.Name = fields["name"]
 	r.SourceMemberID = fields["source_member_id"]
 	r.SourceOrigin = fields["source_origin"]
+	r.LocalSource = fields["local_source"] == "1"
+	if v := fields["renditions"]; v != "" {
+		r.Renditions = strings.Split(v, ",")
+	}
 	// Before stages coexisted, a screen or live room kept that stage's
 	// progress in the room's own status; read back, the media is empty.
 	switch fields["source_kind"] {
@@ -406,7 +468,7 @@ func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error
 }
 
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
-	return s.mutateRoom(ctx, id, status != "error", "status", status)
+	return s.mutateRoom(ctx, id, status != StatusError, "status", status)
 }
 
 func (s *Store) SetController(ctx context.Context, id, controllerID string) error {
@@ -541,7 +603,7 @@ return redis.call('HGET', KEYS[1], 'screen_secret')
 
 // SetError marks a room as failed and stores a user-visible processing error.
 func (s *Store) SetError(ctx context.Context, id, message string) error {
-	return s.mutateRoom(ctx, id, false, "status", "error", "error_message", message)
+	return s.mutateRoom(ctx, id, false, "status", StatusError, "error_message", message)
 }
 
 // SetTracks stores the probed track lists and the bitmap-subtitle skip count.
@@ -815,11 +877,16 @@ redis.call('HSET', KEYS[1],
   'audio_tracks', 'null',
   'subtitle_tracks', 'null',
   'bitmap_subs_skipped', 0)
+if ARGV[1] == 'local' then
+  redis.call('HSET', KEYS[1], 'local_source', '1')
+else
+  redis.call('HDEL', KEYS[1], 'local_source')
+end
 redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts', 'imported_subtitle_tracks',
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token',
-  'source_origin', 'source_kind')
+  'source_origin', 'source_kind', 'renditions')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

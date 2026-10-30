@@ -18,6 +18,9 @@ const (
 	RunFailed     = "failed"
 )
 
+// Rendition480p is a 480p libx264 variant with keyframes on the source's.
+const Rendition480p = "480p"
+
 func TerminalState(state string) bool {
 	return state == RunCompleted || state == RunCancelled || state == RunFailed
 }
@@ -60,6 +63,10 @@ type Spec struct {
 	APIBase         string `json:"apiBase"`
 	RoomID          string `json:"roomId"`
 	Limits          Limits `json:"limits"`
+	// Renditions asks for variants beside the source's own, each listed in
+	// the region's master. Absent, the run makes the source alone; a worker
+	// that does not know the field ignores it.
+	Renditions []string `json:"renditions,omitempty"`
 }
 
 // Limits are the backend-signed ceilings for one run. The worker clamps

@@ -53,6 +53,8 @@ type Member struct {
 	// The account a signed-in member is, by its public number, and its avatar.
 	AccountID int64  `json:"accountId,omitempty"`
 	Avatar    string `json:"avatar,omitempty"`
+	// Client is "desktop" for a member on the app, empty for a browser.
+	Client string `json:"client,omitempty"`
 	// Unlisted: a private account. The room still knows the number for the
 	// history, but it never goes out, so a nickname can't be tied to a profile.
 	Unlisted bool `json:"-"`
@@ -84,9 +86,18 @@ type PlayState struct {
 	ServerTimeMs int64   `json:"serverTimeMs"`
 }
 
-// StatusEmpty is the media stage of a room nobody has opened anything in:
-// a room is born this way, and its screens and live play beside it.
-const StatusEmpty = "empty"
+// The media stage's status. StatusEmpty is a room nobody has opened anything
+// in: a room is born this way, and its screens and live play beside it.
+// StatusLocal is a source that lives in the host's desktop app, playing from
+// its own cache with nothing in the bucket yet.
+const (
+	StatusEmpty      = "empty"
+	StatusLocal      = "local"
+	StatusUploading  = "uploading"
+	StatusProcessing = "processing"
+	StatusReady      = "ready"
+	StatusError      = "error"
+)
 
 // The kinds of stage a room shows side by side: one media with a timeline
 // (file, torrent, YouTube video), one live, and up to MaxScreenShares
@@ -125,21 +136,28 @@ type LiveInfo struct {
 
 // Room is the aggregate stored under room:{id}.
 type Room struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name,omitempty"`
-	FileName            string         `json:"fileName"`
-	Status              string         `json:"status"`
-	MediaGeneration     int            `json:"mediaGeneration"`
-	MediaVersion        int            `json:"mediaVersion"`
-	SubsVersion         int            `json:"subsVersion"`
-	GatingEnabled       bool           `json:"gatingEnabled"`
-	DurationMs          int64          `json:"durationMs,omitempty"`
-	MediaOffsetMs       int64          `json:"mediaOffsetMs,omitempty"`
-	MediaRegions        []MediaRegion  `json:"mediaRegions,omitempty"`
-	ErrorMessage        string         `json:"errorMessage,omitempty"`
-	ControllerID        string         `json:"controllerId"`
-	SourceMemberID      string         `json:"sourceMemberId,omitempty"`
-	SourceOrigin        string         `json:"sourceOrigin,omitempty"`
+	ID              string        `json:"id"`
+	Name            string        `json:"name,omitempty"`
+	FileName        string        `json:"fileName"`
+	Status          string        `json:"status"`
+	MediaGeneration int           `json:"mediaGeneration"`
+	MediaVersion    int           `json:"mediaVersion"`
+	SubsVersion     int           `json:"subsVersion"`
+	GatingEnabled   bool          `json:"gatingEnabled"`
+	DurationMs      int64         `json:"durationMs,omitempty"`
+	MediaOffsetMs   int64         `json:"mediaOffsetMs,omitempty"`
+	MediaRegions    []MediaRegion `json:"mediaRegions,omitempty"`
+	ErrorMessage    string        `json:"errorMessage,omitempty"`
+	ControllerID    string        `json:"controllerId"`
+	SourceMemberID  string        `json:"sourceMemberId,omitempty"`
+	SourceOrigin    string        `json:"sourceOrigin,omitempty"`
+	// LocalSource: the media lives in the host's desktop app, which plays it
+	// from its own cache and uploads only while a browser needs it. It stays
+	// true through uploading and ready, until the source is swapped.
+	LocalSource bool `json:"localSource,omitempty"`
+	// Renditions the producer adds beside the source's own, such as "480p"
+	// once a viewer's link proved too thin for it.
+	Renditions          []string       `json:"renditions,omitempty"`
 	OwnerToken          string         `json:"-"`
 	AudioTracks         []TrackInfo    `json:"audioTracks"`
 	SubtitleTracks      []TrackInfo    `json:"subtitleTracks"`

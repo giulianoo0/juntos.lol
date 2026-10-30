@@ -7,7 +7,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var knownStates = []string{"uploading", "processing", "ready", "error"}
+var knownStates = []string{StatusUploading, StatusProcessing, StatusReady, StatusError}
 
 // Stats is a census of the rooms that exist right now.
 type Stats struct {

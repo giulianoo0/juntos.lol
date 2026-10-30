@@ -50,6 +50,11 @@ type Inbound struct {
 	Ticket string `json:"ticket,omitempty"`
 	// Avatar on a hello is the one a guest picked; an account's own wins.
 	Avatar string `json:"avatar,omitempty"`
+	// Client and Features on a hello say what is on the other end: "desktop"
+	// for the app, and "localSource" when it plays the room's media from its
+	// own cache. They change what the room asks of it, never what it may do.
+	Client   string   `json:"client,omitempty"`
+	Features []string `json:"features,omitempty"`
 }
 
 // decodeHello reads the first message of a socket, which must be a hello
@@ -119,6 +124,8 @@ type Outbound struct {
 	// Mic and Cam on a forceMedia: what the host just turned off for this member.
 	Mic *bool `json:"mic,omitempty"`
 	Cam *bool `json:"cam,omitempty"`
+	// Generation on a needBrowserMedia: the media the browsers are waiting for.
+	Generation int `json:"generation,omitempty"`
 	// Set on an event from outside the loop that only the host may see.
 	toController bool
 	closeAfter   bool

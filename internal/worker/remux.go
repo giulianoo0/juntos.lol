@@ -71,7 +71,7 @@ type RemuxOrchestrator struct {
 	Notify  func(roomID string)
 
 	mu      sync.Mutex
-	byRoom  map[string]*sync.Mutex
+	byRoom  map[string]*roomMutex
 	follows map[string]*followState
 	// followDebounce is how long after a dispatch a further position waits
 	// before it may replace the run; a test shortens it.
@@ -91,22 +91,39 @@ func NewRemuxOrchestrator(service *Service, store *room.Store, cfg config.Config
 		Service: service,
 		Store:   store,
 		Cfg:     cfg,
-		byRoom:  map[string]*sync.Mutex{},
+		byRoom:  map[string]*roomMutex{},
 		follows: map[string]*followState{},
 
 		followDebounce: followDebounce,
 	}
 }
 
-func (o *RemuxOrchestrator) roomLock(roomID string) *sync.Mutex {
+// roomMutex is one room's lock and how many callers hold or wait on it; the
+// last one out drops it, so a room no one is acting on costs nothing.
+type roomMutex struct {
+	sync.Mutex
+	refs int
+}
+
+// lockRoom takes the room's lock and returns what releases it.
+func (o *RemuxOrchestrator) lockRoom(roomID string) (unlock func()) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	lock, ok := o.byRoom[roomID]
 	if !ok {
-		lock = &sync.Mutex{}
+		lock = &roomMutex{}
 		o.byRoom[roomID] = lock
 	}
-	return lock
+	lock.refs++
+	o.mu.Unlock()
+	lock.Lock()
+	return func() {
+		lock.Unlock()
+		o.mu.Lock()
+		if lock.refs--; lock.refs == 0 {
+			delete(o.byRoom, roomID)
+		}
+		o.mu.Unlock()
+	}
 }
 
 func (o *RemuxOrchestrator) rdb() *redis.Client { return o.Service.Registry.rdb }
@@ -123,6 +140,15 @@ func (o *RemuxOrchestrator) saveRun(ctx context.Context, run *RemuxRun) error {
 	pipe.Expire(ctx, remuxRoomsKey(run.WorkerID), ttl)
 	_, err = pipe.Exec(ctx)
 	return err
+}
+
+// keepRun saves a run whose caller has nothing to undo if Redis refuses: the
+// record falls behind the worker, which is worth a line in the logs.
+func (o *RemuxOrchestrator) keepRun(ctx context.Context, run *RemuxRun) {
+	if err := o.saveRun(ctx, run); err != nil {
+		slog.WarnContext(ctx, "save remux run failed", "room_id", run.RoomID, "run", run.RunID,
+			"state", run.State, "error", err)
+	}
 }
 
 // LoadRun answers the room's remux record, nil when there is none.
@@ -188,7 +214,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		return nil, err
 	}
 	if !storedRoom.ExpiresAt.After(time.Now()) || storedRoom.MediaGeneration != req.MediaGeneration ||
-		storedRoom.Status != "uploading" {
+		storedRoom.Status != room.StatusUploading {
 		return nil, ErrRemuxRoomState
 	}
 	switch {
@@ -206,9 +232,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		return nil, ErrRemuxDenied
 	}
 
-	lock := o.roomLock(req.RoomID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer o.lockRoom(req.RoomID)()
 
 	if existing, err := o.LoadRun(ctx, req.RoomID); err == nil && existing != nil {
 		if existing.MediaGeneration == req.MediaGeneration && !remux.TerminalState(existing.State) {
@@ -281,7 +305,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	}
 	run.State = remux.RunAccepted
 	run.UpdatedAt = time.Now()
-	_ = o.saveRun(ctx, run)
+	o.keepRun(ctx, run)
 	return &remux.StartResponse{RunID: run.RunID,
 		MediaGeneration: run.MediaGeneration, State: run.State}, nil
 }
@@ -299,6 +323,11 @@ func (o *RemuxOrchestrator) dispatchStart(ctx context.Context, run *RemuxRun) er
 		Limits: remux.Limits{
 			PutConcurrency: 4,
 		},
+	}
+	// Read at every dispatch: a viewer's link can turn a rendition on while
+	// the room is mid-run, and the next region should already carry it.
+	if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil {
+		spec.Renditions = storedRoom.Renditions
 	}
 	job := Job{
 		Kind:     "remuxStart",
@@ -360,9 +389,7 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	lock := o.roomLock(roomID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer o.lockRoom(roomID)()
 
 	run, err := o.LoadRun(ctx, roomID)
 	if err != nil || run == nil || (remux.TerminalState(run.State) && run.State != remux.RunCompleted) {
@@ -383,9 +410,11 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	replaced.State = remux.RunStarting
 	replaced.UpdatedAt = time.Now()
 	if err := o.Store.SetProducerRun(ctx, roomID, replaced.RunID); err != nil {
+		slog.WarnContext(ctx, "remux follow fence failed", "room_id", roomID, "error", err)
 		return
 	}
 	if err := o.saveRun(ctx, &replaced); err != nil {
+		slog.WarnContext(ctx, "remux follow save failed", "room_id", roomID, "error", err)
 		return
 	}
 	if !remux.TerminalState(run.State) {
@@ -404,11 +433,11 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 		slog.Warn("remux follow dispatch failed", "room_id", roomID, "error", startErr)
 		replaced.State = remux.RunFailed
 		replaced.UpdatedAt = time.Now()
-		_ = o.saveRun(ctx, &replaced)
+		o.keepRun(ctx, &replaced)
 	} else {
 		replaced.State = remux.RunAccepted
 		replaced.UpdatedAt = time.Now()
-		_ = o.saveRun(ctx, &replaced)
+		o.keepRun(ctx, &replaced)
 	}
 }
 
@@ -418,6 +447,13 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 func (o *RemuxOrchestrator) admitFollow(roomID string, positionMs int64) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// A window that closed with nothing held is the same as no entry: the
+	// rooms that died without a cancel go here.
+	for id, held := range o.follows {
+		if held.timer == nil && time.Since(held.last) >= o.followDebounce {
+			delete(o.follows, id)
+		}
+	}
 	state, ok := o.follows[roomID]
 	if !ok {
 		state = &followState{}
@@ -487,15 +523,21 @@ func maxInt64(a, b int64) int64 {
 func (o *RemuxOrchestrator) CancelRoom(roomID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	lock := o.roomLock(roomID)
-	lock.Lock()
-	defer lock.Unlock()
+	o.mu.Lock()
+	if state := o.follows[roomID]; state != nil && state.timer != nil {
+		state.timer.Stop()
+	}
+	delete(o.follows, roomID)
+	o.mu.Unlock()
+	defer o.lockRoom(roomID)()
 	run, err := o.LoadRun(ctx, roomID)
 	if err != nil || run == nil {
 		return
 	}
 	o.dispatchCancel(run)
-	_ = o.Store.ReleaseUpload(ctx, roomID, run.Claim)
+	if err := o.Store.ReleaseUpload(ctx, roomID, run.Claim); err != nil {
+		slog.WarnContext(ctx, "release remux claim failed", "room_id", roomID, "error", err)
+	}
 	o.deleteRun(ctx, roomID)
 }
 
@@ -595,26 +637,30 @@ func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRu
 		slog.Warn("lost run redispatch failed", "room_id", lost.RoomID, "error", err)
 		replaced.State = remux.RunFailed
 		replaced.UpdatedAt = time.Now()
-		_ = o.saveRun(ctx, &replaced)
+		o.keepRun(ctx, &replaced)
 		return false
 	}
 	slog.Info("lost run redispatched", "room_id", lost.RoomID, "run", replaced.RunID,
 		"region", replaced.Region, "start_ms", replaced.StartMs, "restart", replaced.Restarts)
 	replaced.State = remux.RunAccepted
 	replaced.UpdatedAt = time.Now()
-	_ = o.saveRun(ctx, &replaced)
+	o.keepRun(ctx, &replaced)
 	return true
 }
 
 // failRoom gives the room's upload back and surfaces the failure to the host.
 func (o *RemuxOrchestrator) failRoom(ctx context.Context, run *RemuxRun) {
-	_ = o.Store.ReleaseUpload(ctx, run.RoomID, run.Claim)
-	if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == "uploading" {
-		_ = o.Store.SetError(ctx, run.RoomID, "remote remux failed")
+	if err := o.Store.ReleaseUpload(ctx, run.RoomID, run.Claim); err != nil {
+		slog.WarnContext(ctx, "release failed remux claim failed", "room_id", run.RoomID, "error", err)
+	}
+	if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == room.StatusUploading {
+		if err := o.Store.SetError(ctx, run.RoomID, "remote remux failed"); err != nil {
+			slog.ErrorContext(ctx, "mark room failed after remux failed", "room_id", run.RoomID, "error", err)
+		}
 	}
 	run.State = remux.RunFailed
 	run.UpdatedAt = time.Now()
-	_ = o.saveRun(ctx, run)
+	o.keepRun(ctx, run)
 }
 
 func findRun(runs []remux.RunReport, runID string) *remux.RunReport {
@@ -627,9 +673,7 @@ func findRun(runs []remux.RunReport, runID string) *remux.RunReport {
 }
 
 func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, report *remux.RunReport) {
-	lock := o.roomLock(run.RoomID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer o.lockRoom(run.RoomID)()
 	current, err := o.LoadRun(ctx, run.RoomID)
 	if err != nil || current == nil || current.RunID != run.RunID {
 		return
@@ -639,7 +683,7 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 	current.UpdatedAt = time.Now()
 	switch report.State {
 	case remux.RunCompleted:
-		_ = o.saveRun(ctx, current)
+		o.keepRun(ctx, current)
 		if current.StartMs == 0 {
 			if job, err := o.Service.Registry.LoadJob(ctx, current.JobID); err == nil && job != nil {
 				o.Service.release(ctx, job)
@@ -663,12 +707,10 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error,
 			"restarts", current.Restarts)
 		if current.Restarts < maxRunRestarts {
-			_ = o.saveRun(ctx, current)
+			o.keepRun(ctx, current)
 			restart := *current
 			go func() {
-				lock := o.roomLock(restart.RoomID)
-				lock.Lock()
-				defer lock.Unlock()
+				defer o.lockRoom(restart.RoomID)()
 				bg := context.Background()
 				latest, err := o.LoadRun(bg, restart.RoomID)
 				if err != nil || latest == nil || latest.RunID != restart.RunID {
@@ -682,7 +724,7 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 		}
 		o.failRoom(ctx, current)
 	default:
-		_ = o.saveRun(ctx, current)
+		o.keepRun(ctx, current)
 		_ = o.Store.TouchClientClaim(ctx, run.RoomID)
 		if job, err := o.Service.Registry.LoadJob(ctx, run.JobID); err == nil && job != nil {
 			job.LastSeenAt = time.Now()

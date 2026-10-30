@@ -64,13 +64,8 @@ func loadLiveStageRoom(c *gin.Context, store *room.Store) (*room.Room, bool) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
 		return nil, false
 	}
-	storedRoom, err := store.Get(c.Request.Context(), roomID)
-	if errors.Is(err, room.ErrNotFound) || err == nil && !storedRoom.ExpiresAt.After(time.Now()) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
-		return nil, false
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	storedRoom, ok := loadLiveRoom(c, store, roomID)
+	if !ok {
 		return nil, false
 	}
 	return storedRoom, true
@@ -129,7 +124,9 @@ func startLive(store *room.Store, cfg config.Config, authorizer stageAuthorizer,
 			if err != nil {
 				code := liveStartCode(err)
 				live.Status, live.Error = "error", code
-				_ = store.SetLive(ctx, storedRoom.ID, live)
+				if err := store.SetLive(ctx, storedRoom.ID, live); err != nil {
+					slog.ErrorContext(ctx, "record failed live", "room_id", storedRoom.ID, "error", err)
+				}
 				if hooks.NotifyRoomUpdated != nil {
 					hooks.NotifyRoomUpdated(storedRoom.ID)
 				}

@@ -399,3 +399,134 @@ func TestImportedSubtitlesRideAfterTheExtractedOnesAndSwapClearsThem(t *testing.
 	require.NoError(t, err)
 	require.Empty(t, r.SubtitleTracks)
 }
+
+func TestALocalSourceIsMarkedUntilTheNextSwap(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{ID: "abc", Status: StatusEmpty, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+
+	_, _, err := s.SwapSource(t.Context(), "abc", "m1", "Filme", StatusLocal, now)
+	require.NoError(t, err)
+	r, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, StatusLocal, r.Status)
+	require.True(t, r.LocalSource)
+	require.True(t, r.HasMedia())
+
+	_, _, err = s.SwapSource(t.Context(), "abc", "m1", "other.mkv", StatusUploading, now)
+	require.NoError(t, err)
+	r, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.False(t, r.LocalSource)
+}
+
+func TestARenditionStaysOnUntilTheSourceIsSwapped(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{ID: "abc", Status: StatusReady, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+
+	added, err := s.EnableRendition(t.Context(), "abc", "480p")
+	require.NoError(t, err)
+	require.True(t, added)
+	added, err = s.EnableRendition(t.Context(), "abc", "480p")
+	require.NoError(t, err)
+	require.False(t, added, "the same rendition twice")
+	r, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"480p"}, r.Renditions)
+
+	_, _, err = s.SwapSource(t.Context(), "abc", "m1", "other.mkv", StatusUploading, now)
+	require.NoError(t, err)
+	r, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Empty(t, r.Renditions)
+	_, err = s.EnableRendition(t.Context(), "gone", "480p")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+// newLocalRoom is a room whose source lives in the host's app, with a clock
+// already running.
+func newLocalRoom(t *testing.T) (*Store, int) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{ID: "abc", Status: StatusEmpty, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+	_, generation, err := s.SwapSource(t.Context(), "abc", "m1", "Filme", StatusLocal, now)
+	require.NoError(t, err)
+	require.NoError(t, s.SetState(t.Context(), "abc", PlayState{Playing: true, PositionMs: 600_000, Rate: 1, ServerTimeMs: 1}))
+	return s, generation
+}
+
+func TestPromoteLocalStartsTheUploadWithoutTouchingTheGenerationOrTheClock(t *testing.T) {
+	s, generation := newLocalRoom(t)
+
+	got, err := s.PromoteLocal(t.Context(), "abc", "client:aaa", time.Now())
+
+	require.NoError(t, err)
+	require.Equal(t, generation, got)
+	r, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, StatusUploading, r.Status)
+	require.Equal(t, generation, r.MediaGeneration)
+	require.True(t, r.LocalSource)
+	held, err := s.UploadID(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, "client:aaa", held)
+	state, err := s.GetState(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, PlayState{Playing: true, PositionMs: 600_000, Rate: 1, ServerTimeMs: 1}, state)
+}
+
+// The app may lose its claim (a restart, a reconnect) and ask again; the new
+// claim fences the old producer out and the status never goes backwards.
+func TestPromoteLocalAgainHandsANewClaimAndResetsTheRun(t *testing.T) {
+	s, generation := newLocalRoom(t)
+	_, err := s.PromoteLocal(t.Context(), "abc", "client:aaa", time.Now())
+	require.NoError(t, err)
+	require.NoError(t, s.SetProducerRun(t.Context(), "abc", "run_1"))
+	require.NoError(t, s.SetStatus(t.Context(), "abc", StatusReady))
+
+	_, err = s.PromoteLocal(t.Context(), "abc", "client:bbb", time.Now())
+
+	require.NoError(t, err)
+	r, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, StatusReady, r.Status)
+	held, err := s.UploadID(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, "client:bbb", held)
+	_, err = s.CommitPublish(t.Context(), "abc", PublishCommit{Claim: "client:aaa", Generation: generation})
+	require.ErrorIs(t, err, ErrCommitClaim)
+	_, err = s.CommitPublish(t.Context(), "abc", PublishCommit{Claim: "client:bbb", Generation: generation, RunID: "run_2"})
+	require.NoError(t, err, "the old run's fence outlived the promote")
+}
+
+func TestPromoteLocalRefusesARoomWhoseSourceIsNotLocal(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, s *Store)
+		want  error
+	}{
+		{"an upload from the browser", func(t *testing.T, s *Store) {
+			_, _, err := s.SwapSource(t.Context(), "abc", "m1", "x.mkv", StatusUploading, time.Now())
+			require.NoError(t, err)
+		}, ErrUploadNotAllowed},
+		{"a local source that failed", func(t *testing.T, s *Store) {
+			require.NoError(t, s.SetError(t.Context(), "abc", "boom"))
+		}, ErrUploadNotAllowed},
+		{"a room that is gone", func(t *testing.T, s *Store) {
+			require.NoError(t, s.Delete(t.Context(), "abc"))
+		}, ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := newLocalRoom(t)
+			tt.setup(t, s)
+			_, err := s.PromoteLocal(t.Context(), "abc", "client:aaa", time.Now())
+			require.ErrorIs(t, err, tt.want)
+		})
+	}
+}

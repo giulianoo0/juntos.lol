@@ -3,8 +3,11 @@ package sync
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/giulianoo0/ss/internal/config"
 )
 
 func TestDeviceClass(t *testing.T) {
@@ -40,4 +43,51 @@ func TestReportsWithoutHealthKeepTheLastReading(t *testing.T) {
 	require.Equal(t, int64(4000), telemetry.mediaKbps)
 	require.Equal(t, int64(5000), telemetry.bandwidthAvg())
 	require.Equal(t, int64(10), telemetry.droppedPermille())
+}
+
+func TestAThinLinkAsksTheRoomForALighterRendition(t *testing.T) {
+	thin := Inbound{Type: "ready", PositionMs: 1_000, BufferAheadMs: 4_000, BandwidthKbps: 3_500, MediaKbps: 3_000}
+	tests := []struct {
+		name    string
+		app     bool
+		reports []Inbound
+		asked   bool
+	}{
+		{name: "bandwidth under 1.3 times the media", reports: []Inbound{thin, thin, thin}, asked: true},
+		{name: "a single thin reading", reports: []Inbound{thin}},
+		{name: "plenty of bandwidth", reports: []Inbound{
+			{Type: "ready", BandwidthKbps: 9_000, MediaKbps: 3_000},
+			{Type: "ready", BandwidthKbps: 9_000, MediaKbps: 3_000},
+			{Type: "ready", BandwidthKbps: 9_000, MediaKbps: 3_000},
+		}},
+		{name: "stalls that keep coming", reports: []Inbound{
+			{Type: "ready", Stalled: true}, {Type: "ready"}, {Type: "ready", Stalled: true},
+		}, asked: true},
+		{name: "the app playing its own cache", app: true, reports: []Inbound{thin, thin, thin}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub, _, server := newHubTestServer(t, config.Config{})
+			asked := make(chan string, 4)
+			hub.OnThinLink(func(roomID string) { asked <- roomID })
+			viewer := dialHubWS(t, server)
+			if tt.app {
+				helloApp(t, viewer, "viewer")
+			} else {
+				helloHubClient(t, viewer, "viewer", 1)
+			}
+
+			for _, report := range append(tt.reports, tt.reports...) {
+				require.NoError(t, viewer.WriteJSON(report))
+			}
+			requireNoEvent(t, viewer, 50*time.Millisecond)
+
+			if !tt.asked {
+				require.Empty(t, asked)
+				return
+			}
+			require.Equal(t, "r1", <-asked)
+			require.Empty(t, asked, "asked more than once")
+		})
+	}
 }

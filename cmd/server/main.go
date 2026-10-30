@@ -11,7 +11,6 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,6 +21,7 @@ import (
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/objectstore"
+	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/usage"
@@ -96,15 +96,10 @@ func main() {
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
 		Usage:     counter,
 	}
-	var swarmMu sync.Mutex
-	lastSwarm := map[string]worker.SwarmStats{}
+	swarms := newSwarmReports()
 	torrents.OnLive = httpapi.LiveReporter(store, hub.NotifyRoomUpdated)
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
-		swarmMu.Lock()
-		same := lastSwarm[roomID] == stats
-		lastSwarm[roomID] = stats
-		swarmMu.Unlock()
-		if same {
+		if !swarms.changed(roomID, stats) {
 			return
 		}
 		swarmCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -122,8 +117,22 @@ func main() {
 	hub.OnRoomReclaimed(func(roomID string) {
 		remuxOrch.CancelRoom(roomID)
 		torrents.CancelRoom(roomID)
+		swarms.forget(roomID)
 	})
 	hub.OnPosition(remuxOrch.Follow)
+	hub.OnThinLink(func(roomID string) {
+		thinCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		added, err := store.EnableRendition(thinCtx, roomID, remux.Rendition480p)
+		if err != nil {
+			slog.Error("enable 480p rendition failed", "room_id", roomID, "error", err)
+			return
+		}
+		if added {
+			slog.Info("480p rendition on for the next runs", "room_id", roomID)
+			hub.NotifyRoomUpdated(roomID)
+		}
+	})
 	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
 		torrents.Charge(workerID, hb)
 		torrents.ObserveLives(workerID, hb)
@@ -136,6 +145,7 @@ func main() {
 		CancelMedia: func(roomID string) {
 			remuxOrch.CancelRoom(roomID)
 			torrents.CancelRoomMedia(roomID)
+			swarms.forget(roomID)
 		},
 		CancelLive: torrents.CancelRoomLive,
 	}

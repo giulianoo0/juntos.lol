@@ -126,13 +126,12 @@ func claimClientMedia(store *room.Store, cfg config.Config) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		secret := make([]byte, 16)
-		if _, err := rand.Read(secret); err != nil {
+		claim, err := mintSecret("client:")
+		if err != nil {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
-		claim := "client:" + hex.EncodeToString(secret)
-		err := store.ReserveUpload(c.Request.Context(), roomID, claim, time.Now())
+		err = store.ReserveUpload(c.Request.Context(), roomID, claim, time.Now())
 		switch {
 		case errors.Is(err, room.ErrUploadReserved):
 			c.JSON(http.StatusConflict, gin.H{"error": "upload_reserved"})
@@ -141,23 +140,40 @@ func claimClientMedia(store *room.Store, cfg config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusConflict, gin.H{"error": "room_not_uploading"})
 			return
 		}
-		metaSecret := make([]byte, 16)
-		if _, err := rand.Read(metaSecret); err != nil {
-			c.Status(http.StatusInternalServerError)
+		response, ok := claimResponse(c, store, cfg, roomID, claim, storedRoom.MediaGeneration)
+		if !ok {
 			return
 		}
-		metadataToken := "meta:" + hex.EncodeToString(metaSecret)
-		if err := store.SetMetadataToken(c.Request.Context(), roomID, metadataToken); err != nil {
-			slog.WarnContext(c.Request.Context(), "store metadata token failed", "room_id", roomID, "error", err)
-			metadataToken = ""
-		}
-		c.JSON(http.StatusOK, clientClaimResponse{
-			Claim:           claim,
-			MediaGeneration: storedRoom.MediaGeneration,
-			MaxBytes:        maxClientBytes(cfg),
-			MetadataToken:   metadataToken,
-		})
+		c.JSON(http.StatusOK, response)
 	}
+}
+
+// claimResponse mints the metadata token that rides with a fresh claim and
+// shapes what its producer is told. It answers the failure itself.
+func claimResponse(c *gin.Context, store *room.Store, cfg config.Config, roomID, claim string, generation int) (clientClaimResponse, bool) {
+	metadataToken, err := mintSecret("meta:")
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return clientClaimResponse{}, false
+	}
+	if err := store.SetMetadataToken(c.Request.Context(), roomID, metadataToken); err != nil {
+		slog.WarnContext(c.Request.Context(), "store metadata token failed", "room_id", roomID, "error", err)
+		metadataToken = ""
+	}
+	return clientClaimResponse{
+		Claim:           claim,
+		MediaGeneration: generation,
+		MaxBytes:        maxClientBytes(cfg),
+		MetadataToken:   metadataToken,
+	}, true
+}
+
+func mintSecret(prefix string) (string, error) {
+	secret := make([]byte, 16)
+	if _, err := rand.Read(secret); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(secret), nil
 }
 
 type presignRequest struct {
@@ -422,15 +438,15 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 				masterReady = true
 			}
 		}
-		if playable && masterReady && storedRoom.Status != "ready" {
-			if err := store.SetStatus(ctx, roomID, "ready"); err == nil {
+		if playable && masterReady && storedRoom.Status != room.StatusReady {
+			if err := store.SetStatus(ctx, roomID, room.StatusReady); err == nil {
 				becameReady = true
 				if hooks.NotifyStatus != nil {
-					hooks.NotifyStatus(roomID, "ready")
+					hooks.NotifyStatus(roomID, room.StatusReady)
 				}
 			}
 		}
-		roomReady := becameReady || storedRoom.Status == "ready"
+		roomReady := becameReady || storedRoom.Status == room.StatusReady
 		if req.Complete {
 			if err := store.StoreCompleteReceipt(ctx, roomID, req.Claim,
 				room.CompleteReceipt{Ready: roomReady}, time.Hour); err != nil {

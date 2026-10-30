@@ -87,6 +87,12 @@ func RegisterYoutubeRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 		group.Use(access.Sessions.Middleware())
 	}
 	start := []gin.HandlerFunc{}
+	if !cfg.YoutubeFleetEnabled {
+		// The site hides the option; this answers whoever asks anyway.
+		start = append(start, func(c *gin.Context) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "app_only"})
+		})
+	}
 	if access.Quota != nil {
 		start = append(start, access.Quota.Dispatch())
 	}

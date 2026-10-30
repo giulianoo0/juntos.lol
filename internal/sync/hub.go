@@ -54,6 +54,8 @@ type Hub struct {
 
 	onPosition func(roomID string, positionMs int64)
 
+	onThinLink func(roomID string)
+
 	onStageClose func(roomID, kind string)
 
 	usage *usage.Counter
@@ -91,6 +93,17 @@ type roomConn struct {
 	playing          bool
 	progressMu       stdsync.Mutex
 	lastProgressAt   time.Time
+	// The newest position not yet handed to onPosition, and whether a
+	// goroutine is handing them over: one at a time, newest last.
+	positionMu      stdsync.Mutex
+	pendingPosition *int64
+	handingOver     bool
+	// The media stage as last read, and the generation the host was asked to
+	// put up for browsers, 0 when nothing is asked.
+	media        roomMedia
+	browserAsked int
+	// A viewer's link already asked for a lighter rendition of this media.
+	thinAsked bool
 
 	nextMember    int
 	nextRequest   int
@@ -149,6 +162,13 @@ func (h *Hub) SetUsage(counter *usage.Counter) {
 
 func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
 	h.onPosition = fn
+}
+
+// OnThinLink registers what to do the first time, per media, a browser's
+// link proves too thin for it: turning on a lighter rendition. Set once at
+// startup; it runs off the room's goroutine.
+func (h *Hub) OnThinLink(fn func(roomID string)) {
+	h.onThinLink = fn
 }
 
 func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
@@ -277,7 +297,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		nickname = identity.Nickname
 	}
 
-	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
+	roomConnection := h.getOrCreateRoom(storedRoom)
 	if roomConnection == nil {
 		writeHandshakeError(conn, "server_stopping")
 		return
@@ -289,11 +309,13 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	client := &client{
-		conn:      conn,
-		room:      roomConnection,
-		send:      make(chan Outbound, 64),
-		telemetry: syncTelemetry{device: deviceClass(c.Request.UserAgent())},
-		identity:  identity,
+		conn:        conn,
+		room:        roomConnection,
+		send:        make(chan Outbound, 64),
+		telemetry:   syncTelemetry{device: deviceClass(c.Request.UserAgent())},
+		identity:    identity,
+		localSource: playsLocally(hello),
+		kind:        clientKind(hello),
 	}
 	result := make(chan string, 1)
 	request := joinRequest{
@@ -401,7 +423,8 @@ func (h *Hub) notify(roomID string, event Outbound) {
 	}
 }
 
-func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bool) *roomConn {
+func (h *Hub) getOrCreateRoom(stored *room.Room) *roomConn {
+	roomID := stored.ID
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -413,9 +436,10 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bo
 	connection := &roomConn{
 		id:           roomID,
 		hub:          h,
-		controllerID: controllerID,
-		ownerToken:   ownerToken,
-		gating:       gating,
+		controllerID: stored.ControllerID,
+		ownerToken:   stored.OwnerToken,
+		gating:       stored.GatingEnabled,
+		media:        mediaOf(stored),
 		nextMember:   1,
 		clients:      make(map[string]*client),
 		detached:     make(map[string]*detachedSeat),
@@ -513,13 +537,20 @@ func (r *roomConn) run() {
 				r.dropGate()
 			}
 			if event.mediaChanged {
+				r.forgetLinks()
 				ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 				r.mediaChanged(ctx)
 				cancel()
 			}
 			r.deliver(event)
-			if r.dropped.Swap(false) {
+			dropped := r.dropped.Swap(false)
+			if dropped {
 				r.broadcast(Outbound{Type: "roomUpdated"})
+			}
+			if dropped || event.Type == "roomStatus" || event.mediaChanged {
+				ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+				r.refreshMedia(ctx)
+				cancel()
 			}
 		case <-gateExpired:
 			r.releaseGate()
@@ -559,7 +590,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		return
 	}
 	request.client.capability = base64.RawURLEncoding.EncodeToString(capabilityBytes)
-	request.client.member = withIdentity(room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now()},
+	request.client.member = withIdentity(room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now(), Client: request.client.kind},
 		request.client.identity)
 	request.client.telemetry.joinedAt = time.Now()
 
@@ -573,7 +604,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	state, err := r.hub.store.GetState(ctx, r.id)
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket state failed", "room_id", r.id, "error", err)
-		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+		r.undoJoin(ctx, memberID)
 		request.result <- "internal_error"
 		return
 	}
@@ -583,7 +614,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	history, err := r.hub.store.Messages(ctx, r.id)
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket chat failed", "room_id", r.id, "error", err)
-		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+		r.undoJoin(ctx, memberID)
 		request.result <- "internal_error"
 		return
 	}
@@ -596,7 +627,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if r.controllerID == "" || !controllerLive || claimsOwnership {
 		if err := r.hub.store.SetController(ctx, r.id, memberID); err != nil {
 			slog.ErrorContext(ctx, "set initial websocket controller failed", "room_id", r.id, "error", err)
-			_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+			r.undoJoin(ctx, memberID)
 			request.result <- "internal_error"
 			return
 		}
@@ -630,8 +661,17 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if r.controllerID == memberID {
 		r.replayStageRequests()
 	}
+	r.syncBrowserMedia(request.client)
 	r.joined(request.client, claimsOwnership)
 	request.result <- ""
+}
+
+// undoJoin takes back the member a failed join already stored. If that fails
+// too, the room lists a ghost until it ends, so it is logged.
+func (r *roomConn) undoJoin(ctx context.Context, memberID string) {
+	if err := r.hub.store.RemoveMember(ctx, r.id, memberID); err != nil {
+		slog.ErrorContext(ctx, "undo websocket member failed", "room_id", r.id, "member_id", memberID, "error", err)
+	}
 }
 
 // handleSource records which browser holds the room's source. Only the one
@@ -686,6 +726,7 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.controllerID = target.id
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 		r.replayStageRequests()
+		r.syncBrowserMedia(target)
 	case "kick":
 		r.dismiss(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
 	}
@@ -803,6 +844,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	next.member = previous.member
 	next.report = previous.report
 	next.telemetry = previous.telemetry
+	next.link = previous.link
 	next.lastTitleRequest = previous.lastTitleRequest
 	next.identity = previous.identity
 	next.watch = previous.watch
@@ -812,8 +854,9 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
 	renamed := false
-	if request.nickname != next.member.Nickname {
+	if request.nickname != next.member.Nickname || next.kind != next.member.Client {
 		next.member.Nickname = request.nickname
+		next.member.Client = next.kind
 		if err := r.hub.store.AddMember(ctx, r.id, next.member); err != nil {
 			slog.ErrorContext(ctx, "rename resumed websocket member failed", "room_id", r.id, "member_id", next.id, "error", err)
 		}
@@ -860,6 +903,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	if r.gate != nil {
 		r.broadcastWaiting()
 	}
+	r.syncBrowserMedia(next)
 	request.result <- ""
 }
 
@@ -909,6 +953,11 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 			r.replayStageRequests()
 		}
 	}
+	var heir *client
+	if promoted {
+		heir = r.clients[r.controllerID]
+	}
+	r.syncBrowserMedia(heir)
 	if r.gate != nil {
 		if len(r.clients) == 0 {
 			r.dropGate()
@@ -1053,7 +1102,7 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 		return
 	}
 	if r.hub.onPosition != nil && message.Type != "rate" {
-		go r.hub.onPosition(r.id, message.PositionMs)
+		r.handPosition(message.PositionMs)
 	}
 	state, err := r.hub.store.GetState(ctx, r.id)
 	if err != nil {
@@ -1116,6 +1165,34 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	}
 }
 
+// handPosition passes a controller's position to onPosition off the room's
+// goroutine, in order: while one is being handled the newest waits, and the
+// ones it replaced are dropped, since only where the room is now matters.
+func (r *roomConn) handPosition(positionMs int64) {
+	r.positionMu.Lock()
+	r.pendingPosition = &positionMs
+	if r.handingOver {
+		r.positionMu.Unlock()
+		return
+	}
+	r.handingOver = true
+	r.positionMu.Unlock()
+	go func() {
+		for {
+			r.positionMu.Lock()
+			next := r.pendingPosition
+			r.pendingPosition = nil
+			if next == nil {
+				r.handingOver = false
+				r.positionMu.Unlock()
+				return
+			}
+			r.positionMu.Unlock()
+			r.hub.onPosition(r.id, *next)
+		}
+	}()
+}
+
 func (r *roomConn) members() []room.Member {
 	members := make([]room.Member, 0, len(r.clients)+len(r.detached))
 	for _, connected := range r.clients {
@@ -1173,14 +1250,16 @@ const (
 // reclaiming it destroys nothing. Status is not enough on its own: the room
 // flips to ready while the source is still arriving.
 func unfinishedWork(r *room.Room, now time.Time) string {
-	if r.Status == "error" || r.ErrorMessage != "" {
+	// A local source is the host's app, gone with everyone else: nothing
+	// here keeps producing it.
+	if r.Status == room.StatusError || r.ErrorMessage != "" || r.LocalSource {
 		return ""
 	}
 	if now.Sub(r.CreatedAt) > preparingGrace {
 		return ""
 	}
 	switch {
-	case r.Status == "uploading" || r.Status == "processing":
+	case r.Status == room.StatusUploading || r.Status == room.StatusProcessing:
 		return "upload in progress"
 	case r.Preparation.SourceBytes > 0 && r.Preparation.ReceivedBytes < r.Preparation.SourceBytes:
 		return "source still arriving"

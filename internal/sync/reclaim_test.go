@@ -30,6 +30,13 @@ func TestUnfinishedWork(t *testing.T) {
 			Status: "ready", CreatedAt: now.Add(-time.Minute),
 			Preparation: room.Preparation{SourceBytes: 1000, ReceivedBytes: 1000},
 		}, false},
+		// A local source lives in the app, which left with everyone else.
+		{"releases a room whose source is in the host's app", room.Room{
+			Status: room.StatusLocal, LocalSource: true, CreatedAt: now.Add(-time.Minute),
+		}, false},
+		{"releases a local source halfway up the bucket", room.Room{
+			Status: room.StatusUploading, LocalSource: true, CreatedAt: now.Add(-time.Minute),
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
