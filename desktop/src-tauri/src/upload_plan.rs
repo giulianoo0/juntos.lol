@@ -85,6 +85,21 @@ impl Planner {
 
     /// What `next` would hand out, without taking it: what to sign ahead.
     pub fn upcoming(&mut self, local: &[LocalRegion], playhead_ms: u64, max: usize) -> Vec<Item> {
+        self.plan(local, playhead_ms, max, false)
+    }
+
+    /// In-flight objects a seek left behind: none of the first `slots` the
+    /// plan wants now. They go back in the queue; the caller drops their PUTs.
+    pub fn displaced(&mut self, local: &[LocalRegion], playhead_ms: u64, slots: usize) -> Vec<String> {
+        let front: HashSet<String> = self.plan(local, playhead_ms, slots, true).into_iter().map(|item| item.remote).collect();
+        let behind: Vec<String> = self.inflight.iter().filter(|name| !front.contains(*name)).cloned().collect();
+        for name in &behind {
+            self.inflight.remove(name);
+        }
+        behind
+    }
+
+    fn plan(&mut self, local: &[LocalRegion], playhead_ms: u64, max: usize, with_inflight: bool) -> Vec<Item> {
         let mut order: Vec<(usize, usize)> = Vec::new();
         let mut rest: Vec<(usize, usize)> = Vec::new();
         let anchor = self.anchor(local, playhead_ms);
@@ -109,12 +124,12 @@ impl Planner {
         for slots in [&order, &past, &rest] {
             if let Some(&(remote, _)) = slots.first() {
                 for item in self.inits(local, remote) {
-                    self.offer(item, &mut out, &mut seen, max);
+                    self.offer(item, &mut out, &mut seen, max, with_inflight);
                 }
             }
             for &(remote, k) in slots {
                 for item in self.segments(local, remote, k) {
-                    self.offer(item, &mut out, &mut seen, max);
+                    self.offer(item, &mut out, &mut seen, max, with_inflight);
                 }
             }
         }
@@ -234,8 +249,8 @@ impl Planner {
             .collect()
     }
 
-    fn offer(&self, item: Item, out: &mut Vec<Item>, seen: &mut HashSet<String>, max: usize) {
-        if out.len() >= max || self.uploaded.contains(&item.remote) || self.inflight.contains(&item.remote) {
+    fn offer(&self, item: Item, out: &mut Vec<Item>, seen: &mut HashSet<String>, max: usize, with_inflight: bool) {
+        if out.len() >= max || self.uploaded.contains(&item.remote) || (!with_inflight && self.inflight.contains(&item.remote)) {
             return;
         }
         if seen.insert(item.remote.clone()) {
@@ -372,6 +387,35 @@ mod tests {
         assert!(first.iter().all(|i| !second.contains(i)));
         planner.failed(&first[0].remote);
         assert_eq!(planner.next(&local, 0, 1)[0], first[0]);
+    }
+
+    #[test]
+    fn a_long_seek_displaces_what_is_in_flight_and_puts_it_back_in_the_queue() {
+        let local = [region(0, 0, 100, true)];
+        let mut planner = Planner::new();
+        let first = planner.next(&local, 0, 4);
+        finish(&mut planner, &first);
+        let flying = planner.next(&local, 0, 4);
+        let mut displaced = planner.displaced(&local, 300_000, 4);
+        displaced.sort();
+        assert_eq!(displaced, ["cs_0_1.m4s", "cs_0_2.m4s", "cs_1_1.m4s", "cs_1_2.m4s"]);
+        assert_eq!(names(&planner.next(&local, 300_000, 4)), ["r1_cinit_0.mp4", "r1_cinit_1.mp4", "r1_cs_0_0.m4s", "r1_cs_1_0.m4s"]);
+        let rest = planner.next(&local, 300_000, 1_000);
+        assert!(flying.iter().all(|item| rest.contains(item)));
+    }
+
+    #[test]
+    fn a_seek_displaces_only_what_it_left_behind() {
+        let local = [region(0, 0, 100, true)];
+        let mut planner = Planner::new();
+        let first = planner.next(&local, 0, 4);
+        finish(&mut planner, &first);
+        planner.next(&local, 0, 4);
+        assert!(planner.displaced(&local, 4_100, 4).is_empty());
+        let mut displaced = planner.displaced(&local, 8_100, 4);
+        displaced.sort();
+        assert_eq!(displaced, ["cs_0_1.m4s", "cs_1_1.m4s"]);
+        assert_eq!(names(&planner.next(&local, 8_100, 2)), ["cs_0_3.m4s", "cs_1_3.m4s"]);
     }
 
     #[test]

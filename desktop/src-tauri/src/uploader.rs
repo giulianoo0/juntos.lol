@@ -12,7 +12,8 @@ use serde_json::{json, Value};
 use ss_remux::sink::ClosedObject;
 use ss_remux::upload::{presign, put_with_retry, PresignedObject};
 use tokio::sync::Notify;
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, JoinError, JoinSet};
+use tokio::time::Instant;
 
 use crate::hls::{self, MasterInfo};
 use crate::local::{Producer, END_SLACK_MS};
@@ -79,8 +80,8 @@ pub fn round_body(target: &Target, round: Round) -> Value {
 }
 
 /// PUTs at once. The uploader gets an object only when one of them frees,
-/// picked then for the room's position: a seek reorders what goes next
-/// without dropping what is already on the way.
+/// picked then for the room's position. A seek drops the PUTs it left
+/// behind, so what the room now needs has the whole uplink.
 const PUTS: usize = 4;
 /// Objects signed in one request, the ones about to go and those after them.
 const SIGN_AHEAD: usize = 16;
@@ -157,12 +158,16 @@ impl Upload {
         let meta = producer.meta(key).context("unknown source")?;
         let dir = producer.hls_dir(key);
         let mut planner = Planner::new();
-        let mut signed: HashMap<String, (PresignedObject, tokio::time::Instant)> = HashMap::new();
+        let mut signed: HashMap<String, (PresignedObject, Instant)> = HashMap::new();
         let mut puts: JoinSet<anyhow::Result<ClosedObject>> = JoinSet::new();
+        // What each PUT on the way carries, to drop it and keep its URL.
+        let mut flying: HashMap<String, (AbortHandle, PresignedObject, Instant)> = HashMap::new();
+        let mut finished: Option<Result<anyhow::Result<ClosedObject>, JoinError>> = None;
+        let mut followed = self.playhead.load(Ordering::Relaxed);
         let mut confirm: Vec<String> = Vec::new();
         let mut seq = 0u64;
         let mut bytes = 0u64;
-        let mut last_round = tokio::time::Instant::now() - ROUND_EVERY;
+        let mut last_round = Instant::now() - ROUND_EVERY;
         // Regions the server has heard of: a new one (a seek's) is published
         // as soon as its first object is up, not at the next round.
         let mut announced = HashSet::new();
@@ -170,8 +175,9 @@ impl Upload {
             if self.stopped() {
                 return Ok(());
             }
-            while let Some(done) = puts.try_join_next() {
-                let object = done.context("upload task")??;
+            while let Some(done) = finished.take().or_else(|| puts.try_join_next()) {
+                let Some(object) = landed(done)? else { continue };
+                flying.remove(&object.name);
                 planner.done(&object.name);
                 bytes += object.size;
                 self.sent.fetch_add(1, Ordering::Relaxed);
@@ -179,12 +185,22 @@ impl Upload {
             }
             let local = producer.local_regions(key);
             let playhead = self.playhead.load(Ordering::Relaxed);
-            if puts.len() < PUTS {
+            if playhead != followed {
+                followed = playhead;
+                for name in planner.displaced(&local, playhead, PUTS) {
+                    if let Some((put, sign, at)) = flying.remove(&name) {
+                        put.abort();
+                        signed.insert(name, (sign, at));
+                    }
+                }
+            }
+            // A dropped PUT leaves the set only once reaped; its slot is free now.
+            if flying.len() < PUTS {
                 signed.retain(|_, (_, at)| at.elapsed() < SIGNED_FOR);
                 // Chosen now, for where the room is now; signed ahead, so a
                 // free slot never waits on the server.
                 let items: Vec<ClosedObject> = planner
-                    .next(&local, playhead, PUTS - puts.len())
+                    .next(&local, playhead, PUTS - flying.len())
                     .into_iter()
                     .filter_map(|item| {
                         let path = dir.join(&item.local);
@@ -212,7 +228,7 @@ impl Upload {
                     }
                     match presign(&client, &target.api_base, &target.room_id, &target.claim, &batch).await {
                         Ok(objects) => {
-                            let now = tokio::time::Instant::now();
+                            let now = Instant::now();
                             signed.extend(objects.into_iter().map(|o| (o.name.clone(), (o, now))));
                         }
                         Err(e) if REVOKED.iter().any(|code| e.to_string().contains(code)) => return Err(e),
@@ -220,21 +236,25 @@ impl Upload {
                     }
                 }
                 for object in items {
-                    let Some((sign, _)) = signed.remove(&object.name) else {
+                    let Some((sign, at)) = signed.remove(&object.name) else {
                         planner.failed(&object.name);
                         continue;
                     };
                     let client = client.clone();
-                    puts.spawn(async move {
-                        put_with_retry(&client, &sign.url, &sign.headers, &object).await?;
+                    let name = object.name.clone();
+                    let url = sign.url.clone();
+                    let headers = sign.headers.clone();
+                    let put = puts.spawn(async move {
+                        put_with_retry(&client, &url, &headers, &object).await?;
                         Ok(object)
                     });
+                    flying.insert(name, (put, sign, at));
                 }
             }
             let regions = planner.regions(&local);
             let fresh = regions.iter().any(|r| r.produced_ms > 0 && !announced.contains(&r.n));
             if (last_round.elapsed() >= ROUND_EVERY || fresh) && (!confirm.is_empty() || seq == 0) {
-                last_round = tokio::time::Instant::now();
+                last_round = Instant::now();
                 let produced: u64 = regions.iter().map(|r| r.produced_ms).sum();
                 let master = MasterInfo {
                     audio_langs: meta.audio_langs.clone(),
@@ -260,17 +280,19 @@ impl Upload {
             }
             tokio::select! {
                 // A finished PUT frees a slot for the next object right away.
-                Some(done) = puts.join_next(), if !puts.is_empty() => {
-                    let object = done.context("upload task")??;
-                    planner.done(&object.name);
-                    bytes += object.size;
-                    self.sent.fetch_add(1, Ordering::Relaxed);
-                    confirm.push(object.name);
-                }
+                Some(done) = puts.join_next(), if !puts.is_empty() => finished = Some(done),
                 _ = self.wake.notified() => {}
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
             }
         }
+    }
+}
+
+/// The object a finished PUT sent; none for one a seek dropped.
+fn landed(done: Result<anyhow::Result<ClosedObject>, JoinError>) -> anyhow::Result<Option<ClosedObject>> {
+    match done {
+        Err(e) if e.is_cancelled() => Ok(None),
+        done => Ok(Some(done.context("upload task")??)),
     }
 }
 
@@ -358,6 +380,19 @@ mod tests {
         let body = round_body(&target(), Round { seq: 3, confirm: &[], playlists, regions: &regions, duration_ms: 600_000, master: &master });
         assert!(body["playlists"]["r1_master.m3u8"].as_str().unwrap().ends_with("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr1_client_stream_2.m3u8\n"));
         assert!(!body["playlists"]["r0_master.m3u8"].as_str().unwrap().contains("854x480"));
+    }
+
+    #[tokio::test]
+    async fn a_put_a_seek_dropped_is_no_error_and_sends_nothing() {
+        let mut puts: JoinSet<anyhow::Result<ClosedObject>> = JoinSet::new();
+        let put = puts.spawn(async {
+            std::future::pending::<()>().await;
+            unreachable!()
+        });
+        put.abort();
+        assert!(landed(puts.join_next().await.unwrap()).unwrap().is_none());
+        puts.spawn(async { anyhow::bail!("PUT failed") });
+        assert!(landed(puts.join_next().await.unwrap()).is_err());
     }
 
     #[test]
