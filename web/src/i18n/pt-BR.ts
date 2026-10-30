@@ -446,6 +446,8 @@ export const ptBR: Record<string, string> = {
   "account.logout": "Sair",
   "account.yours": "Sua conta",
   "account.notFound": "Ninguém com esse número",
+  "account.privateAccount": "Conta privada",
+  "account.askFriend": "Pedir amizade",
   "account.loadFailed": "Não deu para carregar",
   "account.retry": "Tentar de novo",
   "account.discordVisibility": "Quem vê o Discord",

@@ -181,7 +181,7 @@ function OwnAccount({ me }: { me: Me }) {
 
 function OtherAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
   const t = useT()
-  const [profile, setProfile] = useState<Profile | null | undefined>(undefined)
+  const [profile, setProfile] = useState<Profile | null | 'private' | undefined>(undefined)
   const [history, setHistory] = useState<HistoryEntry[] | null | undefined>(undefined)
   const [failed, setFailed] = useState(false)
 
@@ -201,6 +201,7 @@ function OtherAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
   if (failed) return <Empty title={t('account.loadFailed')} action={<Pill tone="soft" size="md" onClick={() => { void load() }}>{t('account.retry')}</Pill>} />
   if (profile === undefined) return <AccountSkeleton />
   if (profile === null) return <MissingAccount signedIn={signedIn} />
+  if (profile === 'private') return <PrivateAccount id={id} signedIn={signedIn} />
   return (
     <div className={styles.layout}>
       <IdentityCard account={profile} stats={profile.stats} discord={profile.discord} />
@@ -654,6 +655,36 @@ function MissingAccount({ signedIn }: { signedIn: boolean }) {
         <PillLink tone="soft" size="lg" href="/">{t('lost.home')}</PillLink>
       ) : (
         <PillLink tone="brand" size="lg" icon={<DiscordGlyph size={18} />} href={discordLoginUrl('/conta')}>{t('lost.createAccount')}</PillLink>
+      )}
+    />
+  )
+}
+
+/** An account that shows itself to no one: it is there, and a friend request is the way in. */
+function PrivateAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
+  const t = useT()
+  const { toast } = useToast()
+  const [asked, setAsked] = useState(false)
+
+  const ask = async () => {
+    setAsked(true)
+    try {
+      const state = await requestFriend(id)
+      toast(t(state === 'friends' ? 'account.nowFriends' : 'account.requested'))
+    } catch (failure) {
+      setAsked(false)
+      toast(t(errorText[(failure as Error).message] ?? 'account.saveFailed'))
+    }
+  }
+
+  return (
+    <LostPage
+      title={t('account.privateAccount')}
+      seed={`private-${id}`}
+      action={signedIn ? (
+        <Pill tone="brand" size="lg" icon={<Plus size={16} />} disabled={asked} onClick={() => { void ask() }}>{t('account.askFriend')}</Pill>
+      ) : (
+        <PillLink tone="brand" size="lg" icon={<DiscordGlyph size={18} />} href={discordLoginUrl(profilePath(id))}>{t('landing.signIn')}</PillLink>
       )}
     />
   )
