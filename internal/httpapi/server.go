@@ -193,6 +193,9 @@ func registerFrontend(r *gin.Engine, webDir string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		// Asked again on every visit: kept by heuristic, a shell from an
+		// older build reopens pointing at chunks the new one no longer has.
+		c.Header("Cache-Control", "no-cache")
 		c.File(filepath.Join(webDir, "index.html"))
 	})
 }
