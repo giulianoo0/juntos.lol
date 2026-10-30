@@ -109,6 +109,28 @@ func TestAQuietRoomClosedForGoodTellsItsMembersAndLetsTheirSocketsGo(t *testing.
 	}, time.Second, 10*time.Millisecond, "the member's read loop outlived its room")
 }
 
+// The expiry sweeper deletes a room people may still be in: they hear it is
+// gone instead of watching a player whose playlists all turn 404.
+func TestARoomRemovedElsewhereTellsItsMembersItIsGone(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{})
+	var reclaimed []string
+	hub.OnRoomReclaimed(func(id string) { reclaimed = append(reclaimed, id) })
+	member := dialHubWS(t, server)
+	helloHubClient(t, member, "host", 1)
+	require.NoError(t, store.Delete(t.Context(), "r1"))
+
+	hub.RoomRemoved("r1")
+
+	var farewell Outbound
+	for farewell.Type != "error" {
+		farewell = readHubEvent(t, member)
+	}
+	require.Equal(t, "room_gone", farewell.ErrCode)
+	var closed Outbound
+	require.Error(t, member.ReadJSON(&closed))
+	require.Equal(t, []string{"r1"}, reclaimed, "the work the room started elsewhere goes with it")
+}
+
 func shrinkIdleClock(t *testing.T) {
 	previousAsk, previousClose, previousTick := idleAsk, idleClose, idleTick
 	idleAsk, idleClose, idleTick = 20*time.Millisecond, 40*time.Millisecond, 10*time.Millisecond

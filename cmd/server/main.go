@@ -62,9 +62,9 @@ func main() {
 	publisher := media.NewPublisher(store, bucket, cfg.MediaPublicURL)
 
 	ctx := context.Background()
-	go room.StartSweeper(ctx, store, cfg.DataDir, bucket, time.Minute,
-		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	hub := syncapi.NewHub(store, cfg, bucket)
+	go room.StartSweeper(ctx, store, cfg.DataDir, bucket, time.Minute,
+		time.Duration(cfg.UploadIdleMinutes)*time.Minute, hub.RoomRemoved)
 	defer hub.Close()
 	accounts := account.NewStore(pool)
 	hub.SetAccounts(httpapi.HubAccounts(accounts))

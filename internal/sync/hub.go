@@ -382,6 +382,29 @@ func (h *Hub) ResetPlayback(roomID string) {
 	}
 }
 
+// RoomRemoved is the room deleted elsewhere, its time run out, while people
+// may still be in it: the work it started ends, and they hear it is gone
+// instead of reconnecting to it. Like a reset, it is never dropped.
+func (h *Hub) RoomRemoved(roomID string) {
+	if h.onReclaimed != nil {
+		h.onReclaimed(roomID)
+	}
+	h.roomClosed(roomID)
+	h.mu.Lock()
+	connection := h.rooms[roomID]
+	h.mu.Unlock()
+	if connection == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
+	defer cancel()
+	select {
+	case connection.updates <- Outbound{Type: "error", ErrCode: "room_gone", closeAfter: true, endsRoom: true}:
+	case <-connection.done:
+	case <-ctx.Done():
+	}
+}
+
 // NotifyRoomUpdated tells clients to refresh room metadata without changing
 // media readiness. Subtitle extraction uses this path.
 func (h *Hub) NotifyRoomUpdated(roomID string) {
@@ -546,6 +569,10 @@ func (r *roomConn) run() {
 		case event := <-r.inbound:
 			r.handleInbound(event)
 		case event := <-r.updates:
+			if event.endsRoom {
+				r.broadcast(event)
+				return
+			}
 			if event.Type == "state" && event.State != nil {
 				r.playing = event.State.Playing
 				r.dropGate()
