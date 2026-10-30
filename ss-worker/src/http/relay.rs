@@ -22,6 +22,16 @@ impl Relay {
     }
 }
 
+/// The upstream URL for a relayed path. The path arrives percent-decoded,
+/// and a dot segment in it would resolve out of the upstream's /relay/.
+fn relay_url(upstream: &str, path: &str, query: Option<&str>) -> Option<String> {
+    if path.split(['/', '\\']).any(|segment| segment == "." || segment == "..") {
+        return None;
+    }
+    let query = query.map(|q| format!("?{q}")).unwrap_or_default();
+    Some(format!("{upstream}/relay/{path}{query}"))
+}
+
 const FORWARDED_REQUEST_HEADERS: &[&str] = &["range", "content-type", "origin", "accept"];
 
 pub async fn any(
@@ -35,8 +45,9 @@ pub async fn any(
     let Some(relay) = &state.relay else {
         return (StatusCode::NOT_FOUND, "no relay here").into_response();
     };
-    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
-    let url = format!("{}/relay/{}{}", relay.upstream, path, query);
+    let Some(url) = relay_url(&relay.upstream, &path, uri.query()) else {
+        return (StatusCode::BAD_REQUEST, "bad relay path").into_response();
+    };
     let mut request = relay.client.request(method, &url);
     for name in FORWARDED_REQUEST_HEADERS {
         if let Some(value) = headers.get(*name) {
@@ -66,4 +77,18 @@ pub async fn any(
     response
         .body(Body::from_stream(upstream.bytes_stream()))
         .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "relay body").into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relay_url;
+
+    #[test]
+    fn a_relayed_path_stays_under_the_upstream_relay() {
+        assert_eq!(relay_url("http://app", "w1/v1/f/t", Some("prio=head")).as_deref(), Some("http://app/relay/w1/v1/f/t?prio=head"));
+        assert_eq!(relay_url("http://app", "../api/rooms", None), None);
+        assert_eq!(relay_url("http://app", "w1/../../api", None), None);
+        assert_eq!(relay_url("http://app", "w1/./v1", None), None);
+        assert_eq!(relay_url("http://app", "w1\\..\\api", None), None);
+    }
 }
