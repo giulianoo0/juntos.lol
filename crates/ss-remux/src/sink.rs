@@ -246,7 +246,7 @@ impl Sink {
         if size == 0 {
             bail!("empty object");
         }
-        tracing::info!(name, size, "media object closed");
+        tracing::debug!(name, size, "media object closed");
         Ok(ClosedObject {
             name: name.to_string(),
             path: self.dir.join(name),

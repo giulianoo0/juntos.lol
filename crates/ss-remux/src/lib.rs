@@ -349,6 +349,7 @@ impl Remux {
 
     async fn execute(self: &Arc<Self>, input: RunInput, spec: &Spec, entry: &Arc<RunEntry>) -> anyhow::Result<()> {
         let _slot = self.slots.clone().acquire_owned().await?;
+        let began = std::time::Instant::now();
         let bridge = self.bridge.get_or_try_init(|| Bridge::start()).await.context("bridge start")?.clone();
 
         // One byte source per FFmpeg input, the video first; and the plan,
@@ -704,6 +705,18 @@ impl Remux {
                 tracing::warn!(run = %spec.run_id, "subtitle pass outlived the run; dropped");
             }
         }
+        let (objects, bytes) = publisher.totals();
+        tracing::info!(
+            run = %spec.run_id,
+            room = %spec.room_id,
+            region = spec.region,
+            start_ms = offset_ms,
+            produced_ms = entry.status.lock().produced_ms,
+            objects,
+            mib = bytes / (1024 * 1024),
+            secs = began.elapsed().as_secs(),
+            "remux run done",
+        );
         cleanup(&bridge);
         run_sink.destroy().await;
         Ok(())

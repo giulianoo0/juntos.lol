@@ -163,6 +163,11 @@ impl Publisher {
         self.pending.push(object);
     }
 
+    /// Objects the bucket confirmed, and the bytes uploaded.
+    pub fn totals(&self) -> (usize, u64) {
+        (self.confirmed.len(), self.uploaded_bytes)
+    }
+
     pub fn drained(&self) -> bool {
         self.pending.is_empty()
     }

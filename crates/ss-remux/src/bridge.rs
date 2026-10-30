@@ -108,7 +108,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
     };
     let ranged = headers.get(header::RANGE).is_some();
     let total = end - start + 1;
-    tracing::info!(reader = %target.reader, start, end, "remux input request");
+    tracing::debug!(reader = %target.reader, start, end, "remux input request");
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(4);
     let chunk = target.source.chunk_size();
     const STRIDE: u64 = 16 * 1024 * 1024;
@@ -141,7 +141,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
             let mut reader = match opened {
                 Ok(r) => {
                     if sent == 0 {
-                        tracing::info!(reader = %target.reader, position, "remux input open ok");
+                        tracing::debug!(reader = %target.reader, position, "remux input open ok");
                     }
                     r
                 }
@@ -174,7 +174,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                         sent += n as u64;
                         if logged == 0 || sent - logged >= 64 * 1024 * 1024 {
                             logged = sent;
-                            tracing::info!(reader = %target.reader, start, sent, "remux input flowing");
+                            tracing::debug!(reader = %target.reader, start, sent, "remux input flowing");
                         }
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(180),
@@ -198,7 +198,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                 }
             }
         }
-        tracing::info!(reader = %target.reader, sent, "remux input range served");
+        tracing::debug!(reader = %target.reader, sent, "remux input range served");
     };
     // A reader stuck on the swarm must not hold its slot, and the window
     // with it, once FFmpeg has gone.
@@ -246,17 +246,17 @@ where
     ) -> std::task::Poll<Option<<Self as tokio_stream::Stream>::Item>> {
         if !self.polled {
             self.polled = true;
-            tracing::info!(tag = %self.tag, "remux input body first poll");
+            tracing::debug!(tag = %self.tag, "remux input body first poll");
         }
         let poll = std::pin::Pin::new(&mut self.inner).poll_next(cx);
         if let std::task::Poll::Ready(Some(Ok(chunk))) = &poll {
             if self.yielded == 0 {
-                tracing::info!(tag = %self.tag, len = chunk.len(), "remux input body first chunk to hyper");
+                tracing::debug!(tag = %self.tag, len = chunk.len(), "remux input body first chunk to hyper");
             }
             self.yielded += chunk.len() as u64;
         }
         if let std::task::Poll::Ready(None) = &poll {
-            tracing::info!(tag = %self.tag, yielded = self.yielded, "remux input body done");
+            tracing::debug!(tag = %self.tag, yielded = self.yielded, "remux input body done");
         }
         poll
     }
@@ -267,7 +267,7 @@ async fn write_output(
     Path((cap, name)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    tracing::info!(name = %name, "remux output request");
+    tracing::debug!(name = %name, "remux output request");
     let Some(sink) = state.outputs.lock().get(&cap).cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };
