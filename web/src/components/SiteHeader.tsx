@@ -1,13 +1,12 @@
 import { useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { AvatarFace } from '../account/AvatarFace'
 import { discordLoginUrl, profilePath, useMe } from '../account'
 import { NotificationBell } from '../account/NotificationBell'
 import { useT } from '../i18n/useT'
-import { HeroWordmark } from '../pages/home/Wordmark'
+import { TravellingWordmark } from '../pages/home/Wordmark'
 import { arrive } from '../ui/arrive'
 import { DiscordGlyph } from '../ui/DiscordGlyph'
-import { MorphLink } from '../ui/MorphLink'
 import { Skeleton } from '../ui/Shimmer'
 import { GithubLink } from '../ui/GithubLink'
 import { ThemeToggle } from '../ui/ThemeToggle'
@@ -28,18 +27,17 @@ export function SiteHeader({ logo = true, you = true }: {
   return (
     <header className={styles.header}>
       {logo ? (
-        <MorphLink
+        <Link
           className={styles.brand}
           to="/"
-          state={{ morph: true }}
           aria-label="juntos.lol"
           onPointerEnter={() => setShine(true)}
           onPointerLeave={() => setShine(false)}
           onFocus={() => setShine(true)}
           onBlur={() => setShine(false)}
         >
-          <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} sweep={shine} />
-        </MorphLink>
+          <TravellingWordmark className={styles.mark} sweepClassName={styles.sweep} sweep={shine} />
+        </Link>
       ) : <span />}
       <div className={styles.you}>
         <GithubLink />
@@ -48,10 +46,10 @@ export function SiteHeader({ logo = true, you = true }: {
           <>
             <NotificationBell />
             {you ? (
-              <MorphLink className={`${styles.me} ${arrive}`} to={profilePath(me.id)} aria-label={`${me.nickname} #${me.id}`}>
+              <Link className={`${styles.me} ${arrive}`} to={profilePath(me.id)} aria-label={`${me.nickname} #${me.id}`}>
                 <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
                 <span className={styles.number}>#{me.id}</span>
-              </MorphLink>
+              </Link>
             ) : null}
           </>
         ) : !you ? null : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (

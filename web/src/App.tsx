@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { NotFoundPage } from './components/LostPage'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { Route, Routes, UNSAFE_createBrowserHistory as createBrowserHistory, unstable_HistoryRouter as HistoryRouter } from 'react-router-dom'
+import { deferPops } from './backForward'
 import { CodecSupportNotice } from './components/CodecSupport'
 import { RoomHost } from './components/RoomHost'
 import type { CreateRoomInput } from './pages/Home'
@@ -18,9 +19,11 @@ async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
   return { roomID: room.roomID }
 }
 
+const history = deferPops(createBrowserHistory({ v5Compat: true }))
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <HistoryRouter history={history}>
       <CodecSupportNotice />
       <Suspense fallback={null}>
         <Routes>
@@ -35,6 +38,6 @@ export default function App() {
         </Routes>
         <RoomHost />
       </Suspense>
-    </BrowserRouter>
+    </HistoryRouter>
   )
 }

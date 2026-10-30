@@ -1,4 +1,4 @@
-import { memo, useId } from 'react'
+import { memo, useId, useRef, ViewTransition, type Ref } from 'react'
 import { useMediaQuery } from '../../ui/useMediaQuery'
 
 /* The old juntos lettering, one stroke per letter; the play arrow is the "." */
@@ -44,20 +44,19 @@ export function SmallWordmark({ className }: { className?: string }) {
  * The big lettering with the Dia shimmer of the maintenance page: a band of
  * color sweeping left to right through the letters. Reduced motion: still.
  */
-export const HeroWordmark = memo(function HeroWordmark({ className, sweepClassName, morphed = false, sweep = true }: {
+export const HeroWordmark = memo(function HeroWordmark({ className, sweepClassName, sweep = true, ref }: {
   className?: string
-  /** Arrived through the logo's morph: skips its own entrance. */
-  morphed?: boolean
   /** On the colour band (the header's fade-in on hover). */
   sweepClassName?: string
   /** Whether the band runs; a header's logo runs it only while hovered. */
   sweep?: boolean
+  ref?: Ref<SVGSVGElement>
 }) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const reduced = useMediaQuery('(prefers-reduced-motion: reduce)')
   const band = sweep && !reduced
   return (
-    <svg viewBox={VIEW} className={className} data-morphed={morphed || undefined} role="img" aria-label="juntos.lol">
+    <svg ref={ref} viewBox={VIEW} className={className} role="img" aria-label="juntos.lol">
       <defs>
         <mask id={`${id}-mask`} maskUnits="userSpaceOnUse" x="-8" y="-80" width="440" height="108">
           <Letters ink="#fff" />
@@ -85,3 +84,21 @@ export const HeroWordmark = memo(function HeroWordmark({ className, sweepClassNa
     </svg>
   )
 })
+
+/**
+ * The logo that travels: the landing's lettering and every header's carry
+ * the same name, so any navigation between them (a link, back, forward)
+ * morphs one into the other on the spring. Arriving by the morph, the
+ * lettering skips its own entrance, which would play on top of it.
+ */
+export function TravellingWordmark(props: { className?: string; sweepClassName?: string; sweep?: boolean }) {
+  const svg = useRef<SVGSVGElement>(null)
+  const settle = () => {
+    for (const animation of svg.current?.getAnimations() ?? []) animation.finish()
+  }
+  return (
+    <ViewTransition name="juntos-logo" default="none" share="auto" onShare={settle}>
+      <HeroWordmark ref={svg} {...props} />
+    </ViewTransition>
+  )
+}

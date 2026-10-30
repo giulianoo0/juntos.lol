@@ -4,7 +4,7 @@ import { usePublicConfig } from '../publicConfig'
 import { HumanError, useHumanCheck, useHumanPrecheck } from '../human'
 import { Spinner } from '../ui/Spinner'
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { discordLoginUrl, useMe } from '../account'
 import { useT } from '../i18n/useT'
 import { Mascot } from '../mascot'
@@ -19,7 +19,7 @@ import { SpringPopover } from '../ui/SpringPopover'
 import { Couch } from './home/Couch'
 import { TurningTitle } from './home/TurningTitle'
 import { SiteHeader } from '../components/SiteHeader'
-import { HeroWordmark, SmallWordmark } from './home/Wordmark'
+import { SmallWordmark, TravellingWordmark } from './home/Wordmark'
 import styles from './Home.module.css'
 
 export interface CreateRoomInput {
@@ -47,7 +47,6 @@ const SOURCES = [
 export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => Promise<{ roomID: string }> }) {
   const t = useT()
   const navigate = useNavigate()
-  const location = useLocation()
   const { me, loading } = useMe()
   const config = usePublicConfig()
   useHumanPrecheck()
@@ -110,7 +109,7 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
 
       <main className={styles.main}>
         <section className={styles.hero}>
-          <HeroWordmark className={styles.heroMark} morphed={Boolean((location.state as { morph?: boolean } | null)?.morph)} />
+          <TravellingWordmark className={styles.heroMark} />
           <TurningTitle
             className={styles.title}
             before={t('landing.titleBefore')}
