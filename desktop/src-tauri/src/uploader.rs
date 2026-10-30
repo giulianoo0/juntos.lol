@@ -41,8 +41,12 @@ pub struct Round<'a> {
 /// room's offset; the round is complete once region 0 holds the whole film.
 pub fn round_body(target: &Target, round: Round) -> Value {
     let mut playlists = round.playlists;
+    // The 480p variant sits after every audio, as ss-remux numbers it.
+    let low_index = 1 + round.master.audio_langs.len();
     for region in round.regions {
-        playlists.insert(format!("r{}_master.m3u8", region.n), hls::master(&region_prefix(region.n), round.master));
+        let prefix = region_prefix(region.n);
+        let low = playlists.contains_key(&hls::playlist_name(&prefix, low_index)).then_some(low_index);
+        playlists.insert(format!("r{}_master.m3u8", region.n), hls::master(&prefix, round.master, low));
     }
     let first = round.regions.iter().min_by_key(|r| r.n);
     if let Some(first) = first {
@@ -288,6 +292,20 @@ mod tests {
         assert!(body["playlists"]["master.m3u8"].as_str().unwrap().ends_with("\nclient_stream_0.m3u8\n"));
         assert_eq!(body["timeline"]["offsetMs"], 0);
         assert_eq!(body["complete"], true);
+    }
+
+    #[test]
+    fn the_480p_variant_is_listed_only_where_its_playlist_goes_up() {
+        let regions = [
+            RegionReport { n: 0, start_ms: 0, produced_ms: 60_000, growing: false },
+            RegionReport { n: 1, start_ms: 40_000, produced_ms: 12_000, growing: true },
+        ];
+        let mut playlists = BTreeMap::new();
+        playlists.insert("r1_client_stream_2.m3u8".to_string(), "#EXTM3U\n".to_string());
+        let master = info();
+        let body = round_body(&target(), Round { seq: 3, confirm: &[], playlists, regions: &regions, duration_ms: 600_000, master: &master });
+        assert!(body["playlists"]["r1_master.m3u8"].as_str().unwrap().ends_with("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr1_client_stream_2.m3u8\n"));
+        assert!(!body["playlists"]["r0_master.m3u8"].as_str().unwrap().contains("854x480"));
     }
 
     #[test]

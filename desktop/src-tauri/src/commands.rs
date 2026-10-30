@@ -131,6 +131,12 @@ pub fn local_regions(state: State<'_, AppState>, key: String) -> Vec<RegionState
     state.producer.regions(&key)
 }
 
+/// The room wants (or no longer wants) the 480p variant for browser guests.
+#[tauri::command]
+pub async fn local_low(state: State<'_, AppState>, key: String, on: bool, position_ms: u64) -> Result<(), String> {
+    state.producer.want_low(&key, on, position_ms).await.map_err(err)
+}
+
 /// The room's position moved: a new region where none holds it, and the
 /// upload's queue reordered around it.
 #[tauri::command]

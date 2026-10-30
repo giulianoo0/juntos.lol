@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDesktopForTests } from '../platform'
 import { remuxHandleFor } from '../upload'
-import { attachLocalRoom, browserMediaIdle, localMediaFor, needBrowserMedia, refreshLocalMedia, resetLocalRoomsForTests } from './localRoom'
+import { attachLocalRoom, browserMediaIdle, localMediaFor, needBrowserMedia, refreshLocalMedia, resetLocalRoomsForTests, setLocalRenditions } from './localRoom'
 
 const regions = [{ n: 0, startMs: 0, producedMs: 8000, growing: true }]
 const meta = { key: 't-abc-0', title: 'Filme', durationMs: 600000, audioLangs: ['eng'], videoCodecs: null, regions: [] }
@@ -63,6 +63,20 @@ describe('a room played from the desktop cache', () => {
   it('a room this app does not produce ignores the event', async () => {
     await needBrowserMedia('OTHER', { memberId: 'm1', capability: 'cap' })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('asks the app for 480p once the room wants it, from the playhead, and only on a change', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    remuxHandleFor('ROOM1')?.follow(42_000)
+    await setLocalRenditions('ROOM1', undefined)
+    expect(invoke).not.toHaveBeenCalledWith('local_low', expect.anything())
+    await setLocalRenditions('ROOM1', ['480p'])
+    await setLocalRenditions('ROOM1', ['480p'])
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'local_low')).toEqual([
+      ['local_low', { key: 't-abc-0', on: true, positionMs: 42_000 }],
+    ])
+    await setLocalRenditions('ROOM1', [])
+    expect(invoke).toHaveBeenLastCalledWith('local_low', { key: 't-abc-0', on: false, positionMs: 42_000 })
   })
 
   it('stops the upload when the last browser guest leaves', async () => {

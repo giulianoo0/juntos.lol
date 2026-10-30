@@ -9,6 +9,7 @@ const COMMANDS: &[&str] = &[
     "local_prepare",
     "local_regions",
     "local_follow",
+    "local_low",
     "local_stop",
     "upload_start",
     "upload_stop",

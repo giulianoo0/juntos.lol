@@ -16,7 +16,7 @@ import { displayCaptureAvailable, screenShareSupported } from '../screenshare'
 import { ScreenStage, screenStartedNotice, useScreenShareNotices } from '../screen/ScreenStage'
 import { useScreenShare } from '../screen/useScreenShare'
 import { JlocalPicker } from '../screen/JlocalPicker'
-import { useLocalRoomMedia } from '../desktop/localRoom'
+import { setLocalRenditions, useLocalRoomMedia } from '../desktop/localRoom'
 import { openDownloadApp } from '../components/DownloadApp'
 import { isDesktop } from '../platform'
 import { localStatus, playableRoom } from '../desktop/localView'
@@ -484,6 +484,11 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const localMedia = useLocalRoomMedia(room.id)
   const mediaStatus = localStatus(sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status, localMedia, liveRoom.mediaGeneration)
   const played = useMemo(() => playableRoom(liveRoom, localMedia), [liveRoom, localMedia])
+  const renditions = liveRoom.renditions?.join(',') ?? ''
+  const producesLocally = localMedia !== null
+  useEffect(() => {
+    if (producesLocally) void setLocalRenditions(room.id, renditions ? renditions.split(',') : [])
+  }, [producesLocally, renditions, room.id])
   usePresenceNotices(sync.presence, t)
   // A reaction floats over a tile; it does not ring like a message.
   const chimeMessages = useMemo(() => sync.messages.filter((message) => !isReaction(message.text)), [sync.messages])

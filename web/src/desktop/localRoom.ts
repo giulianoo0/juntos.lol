@@ -38,6 +38,7 @@ interface Attached {
   media: LocalMedia
   positionMs: number
   poll: ReturnType<typeof setInterval>
+  low: boolean
 }
 
 const POLL_MS = 1000
@@ -71,6 +72,7 @@ export async function attachLocalRoom(roomId: string, generation: number, source
     media: { root: `${app.mediaRoot}/${meta.key}`, generation, regions: [] },
     positionMs: 0,
     poll: setInterval(() => { void refreshLocalMedia(roomId) }, POLL_MS),
+    low: false,
   }
   rooms.set(roomId, attached)
   const handle = {
@@ -144,6 +146,20 @@ export async function needBrowserMedia(roomId: string, auth: ControllerAuth): Pr
   } catch (error) {
     console.warn('local upload did not start', error)
   }
+}
+
+/**
+ * The room's renditions (`renditions` in the room JSON): with `480p`, the
+ * app encodes the low variant by hardware from the playhead on.
+ */
+export async function setLocalRenditions(roomId: string, renditions: string[] | undefined): Promise<void> {
+  const attached = rooms.get(roomId)
+  if (!attached) return
+  const on = renditions?.includes('480p') ?? false
+  if (on === attached.low) return
+  attached.low = on
+  const app = await desktop()
+  await app?.invoke('local_low', { key: attached.key, on, positionMs: attached.positionMs }).catch(() => undefined)
 }
 
 /** The last browser guest left: what is in the bucket stays, nothing more goes up. */

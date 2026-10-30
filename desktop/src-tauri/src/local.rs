@@ -25,6 +25,8 @@ pub struct RegionState {
     pub start_ms: u64,
     pub produced_ms: u64,
     pub growing: bool,
+    /// The region also writes the 480p variant.
+    pub low: bool,
 }
 
 /// How far ahead of what it wrote a growing region counts as holding a
@@ -33,8 +35,9 @@ pub const AHEAD_MS: u64 = 30_000;
 pub const BEHIND_MS: u64 = 1_000;
 
 /// Whether some region holds `position_ms`, the way the web player decides it.
-pub fn covered(regions: &[RegionState], position_ms: u64) -> bool {
-    regions.iter().any(|r| {
+/// With `need_low`, a region without the 480p variant does not count.
+pub fn covered(regions: &[RegionState], position_ms: u64, need_low: bool) -> bool {
+    regions.iter().filter(|r| r.low || !need_low).any(|r| {
         let end = r.start_ms + r.produced_ms + if r.growing { AHEAD_MS } else { 0 };
         position_ms + BEHIND_MS >= r.start_ms && position_ms <= end
     })
@@ -65,6 +68,8 @@ pub struct Meta {
 pub struct RegionStart {
     pub n: u64,
     pub start_ms: u64,
+    #[serde(default)]
+    pub low: bool,
 }
 
 struct Running {
@@ -80,6 +85,13 @@ struct Production {
     meta: Mutex<Meta>,
     running: Mutex<Option<Running>>,
     used: Mutex<SystemTime>,
+    /// A browser guest needs 480p: new regions encode it too.
+    low: Mutex<bool>,
+}
+
+/// The 480p encoder: the GPU's on a Mac, x264 elsewhere.
+fn low_encoder() -> plan::Encoder {
+    if cfg!(target_os = "macos") { plan::Encoder::VideoToolbox } else { plan::Encoder::X264 }
 }
 
 /// Every source this machine prepared, by cache key.
@@ -161,6 +173,7 @@ impl Producer {
             meta: Mutex::new(meta.clone()),
             running: Mutex::new(None),
             used: Mutex::new(SystemTime::now()),
+            low: Mutex::new(false),
         });
         self.entries.lock().insert(key.to_string(), production);
         self.evict();
@@ -173,10 +186,22 @@ impl Producer {
     pub async fn follow(self: &Arc<Self>, key: &str, position_ms: u64) -> anyhow::Result<()> {
         let Some(production) = self.entries.lock().get(key).cloned() else { bail!("unknown source") };
         *production.used.lock() = SystemTime::now();
-        if covered(&self.regions(key), position_ms) {
+        let need_low = *production.low.lock();
+        if covered(&self.regions(key), position_ms, need_low) {
             return Ok(());
         }
         self.start_region(key, &production, position_ms).await
+    }
+
+    /// The room asked for 480p (or stopped): from `position_ms` on, the
+    /// regions carry it. Turning it off keeps what was already written.
+    pub async fn want_low(self: &Arc<Self>, key: &str, on: bool, position_ms: u64) -> anyhow::Result<()> {
+        let Some(production) = self.entries.lock().get(key).cloned() else { bail!("unknown source") };
+        let changed = std::mem::replace(&mut *production.low.lock(), on) != on;
+        if changed && on {
+            return self.follow(key, position_ms).await;
+        }
+        Ok(())
     }
 
     async fn start_region(self: &Arc<Self>, key: &str, production: &Arc<Production>, position_ms: u64) -> anyhow::Result<()> {
@@ -210,11 +235,13 @@ impl Producer {
         }
         let prefix = upload_plan::region_prefix(n);
         let base = production.dir.to_string_lossy().into_owned();
-        let args = plan::ffmpeg_args(&urls, &base, &prefix, &production.plan, start_seconds, None, None);
+        let low = *production.low.lock();
+        let encoder = low.then(low_encoder);
+        let args = plan::ffmpeg_args(&urls, &base, &prefix, &production.plan, start_seconds, None, encoder);
         let process = process::spawn(&self.ffmpeg, &args)?;
         {
             let mut meta = production.meta.lock();
-            meta.regions.push(RegionStart { n, start_ms });
+            meta.regions.push(RegionStart { n, start_ms, low });
             let _ = std::fs::write(self.root.join(key).join("meta.json"), serde_json::to_vec(&*meta)?);
         }
         *production.running.lock() = Some(Running { n, process, caps });
@@ -274,6 +301,7 @@ impl Producer {
                     start_ms: start.start_ms,
                     produced_ms: video.duration_ms(),
                     growing: growing == Some(start.n),
+                    low: start.low,
                 }
             })
             .collect()
@@ -282,14 +310,18 @@ impl Producer {
     /// The source's regions with every variant, for the upload plan.
     pub fn local_regions(&self, key: &str) -> Vec<upload_plan::LocalRegion> {
         let Some(production) = self.entries.lock().get(key).cloned() else { return Vec::new() };
-        let variants = 1 + production.plan.audios.len();
+        let full = 1 + production.plan.audios.len();
         let starts = production.meta.lock().regions.clone();
         starts
             .iter()
-            .map(|start| upload_plan::LocalRegion {
-                n: start.n,
-                start_ms: start.start_ms,
-                variants: (0..variants).map(|v| read_variant(&production.dir, start.n, v)).collect(),
+            .map(|start| {
+                // The 480p variant is numbered right after the audios.
+                let variants = full + usize::from(start.low);
+                upload_plan::LocalRegion {
+                    n: start.n,
+                    start_ms: start.start_ms,
+                    variants: (0..variants).map(|v| read_variant(&production.dir, start.n, v)).collect(),
+                }
             })
             .collect()
     }
@@ -364,28 +396,37 @@ mod tests {
     use super::*;
 
     fn region(n: u64, start_ms: u64, produced_ms: u64, growing: bool) -> RegionState {
-        RegionState { n, start_ms, produced_ms, growing }
+        RegionState { n, start_ms, produced_ms, growing, low: false }
     }
 
     #[test]
     fn nothing_covers_an_empty_cache() {
-        assert!(!covered(&[], 0));
+        assert!(!covered(&[], 0, false));
     }
 
     #[test]
     fn a_sealed_region_covers_what_it_wrote() {
         let regions = [region(0, 0, 60_000, false)];
-        assert!(covered(&regions, 0));
-        assert!(covered(&regions, 60_000));
-        assert!(!covered(&regions, 60_001));
+        assert!(covered(&regions, 0, false));
+        assert!(covered(&regions, 60_000, false));
+        assert!(!covered(&regions, 60_001, false));
     }
 
     #[test]
     fn a_growing_region_covers_the_window_ahead() {
         let regions = [region(1, 100_000, 10_000, true)];
-        assert!(covered(&regions, 99_000));
-        assert!(!covered(&regions, 98_999));
-        assert!(covered(&regions, 140_000));
-        assert!(!covered(&regions, 140_001));
+        assert!(covered(&regions, 99_000, false));
+        assert!(!covered(&regions, 98_999, false));
+        assert!(covered(&regions, 140_000, false));
+        assert!(!covered(&regions, 140_001, false));
+    }
+
+    #[test]
+    fn once_480p_is_wanted_only_a_region_with_it_covers() {
+        let mut regions = vec![region(0, 0, 600_000, true)];
+        assert!(covered(&regions, 300_000, false));
+        assert!(!covered(&regions, 300_000, true));
+        regions.push(RegionState { low: true, ..region(1, 299_000, 2_000, true) });
+        assert!(covered(&regions, 300_000, true));
     }
 }
