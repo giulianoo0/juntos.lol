@@ -12,7 +12,8 @@ use serde_json::{json, Value};
 use ss_remux::sink::ClosedObject;
 use ss_remux::upload::{presign, put_with_retry, PresignedObject};
 use tokio::sync::Notify;
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, JoinError, JoinSet};
+use tokio::time::Instant;
 
 use crate::hls::{self, MasterInfo};
 use crate::local::{Producer, END_SLACK_MS};
@@ -79,14 +80,22 @@ pub fn round_body(target: &Target, round: Round) -> Value {
 }
 
 /// PUTs at once. The uploader gets an object only when one of them frees,
-/// picked then for the room's position: a seek reorders what goes next
-/// without dropping what is already on the way.
+/// picked then for the room's position. A seek drops the PUTs it left
+/// behind, so what the room now needs has the whole uplink.
 const PUTS: usize = 4;
 /// Objects signed in one request, the ones about to go and those after them.
 const SIGN_AHEAD: usize = 16;
 /// The server signs for 15 minutes; a URL is used well inside that.
 const SIGNED_FOR: Duration = Duration::from_secs(10 * 60);
 const ROUND_EVERY: Duration = Duration::from_secs(2);
+/// What the room's gate waits to have buffered past the position
+/// (GateReadyBufferMs), with some slack.
+const READY_AHEAD_MS: u64 = 3_500;
+/// How far past what a region holds the playhead may sit and still be
+/// that region's to fill: the next couple of segments.
+const REACH_MS: u64 = 10_000;
+/// Objects a held region lets pile up before the rounds go on without it.
+const HELD_CONFIRMS: usize = 32;
 const REVOKED: &[&str] = &["claim_mismatch", "stale_generation", "stale_run", "room_not_found"];
 
 /// One room's upload from the cache. Stops on `stop`, on a revoked claim,
@@ -144,6 +153,7 @@ impl Upload {
 
     async fn run(&self, producer: &Producer, key: &str, target: &Target) -> anyhow::Result<()> {
         let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build()?;
+        let given = self.playhead.load(Ordering::Relaxed);
         let fence = client
             .post(format!("{}/api/rooms/{}/client-media/run", target.api_base, target.room_id))
             .json(&json!({ "claim": target.claim, "runId": target.run_id }))
@@ -153,25 +163,35 @@ impl Upload {
         if !fence.status().is_success() {
             bail!("run fence refused: {}", fence.status());
         }
+        // The page knows the position of the room's last change, not where
+        // it played on to since; a seek in the meantime is newer still.
+        if let Some(position) = fenced_position(&fence.text().await.unwrap_or_default()) {
+            let _ = self.playhead.compare_exchange(given, position, Ordering::Relaxed, Ordering::Relaxed);
+        }
 
         let meta = producer.meta(key).context("unknown source")?;
         let dir = producer.hls_dir(key);
         let mut planner = Planner::new();
-        let mut signed: HashMap<String, (PresignedObject, tokio::time::Instant)> = HashMap::new();
+        let mut signed: HashMap<String, (PresignedObject, Instant)> = HashMap::new();
         let mut puts: JoinSet<anyhow::Result<ClosedObject>> = JoinSet::new();
+        // What each PUT on the way carries, to drop it and keep its URL.
+        let mut flying: HashMap<String, (AbortHandle, PresignedObject, Instant)> = HashMap::new();
+        let mut finished: Option<Result<anyhow::Result<ClosedObject>, JoinError>> = None;
+        let mut followed = self.playhead.load(Ordering::Relaxed);
         let mut confirm: Vec<String> = Vec::new();
         let mut seq = 0u64;
         let mut bytes = 0u64;
-        let mut last_round = tokio::time::Instant::now() - ROUND_EVERY;
+        let mut last_round = Instant::now() - ROUND_EVERY;
         // Regions the server has heard of: a new one (a seek's) is published
-        // as soon as its first object is up, not at the next round.
+        // as soon as it can be played, not at the next round.
         let mut announced = HashSet::new();
         loop {
             if self.stopped() {
                 return Ok(());
             }
-            while let Some(done) = puts.try_join_next() {
-                let object = done.context("upload task")??;
+            while let Some(done) = finished.take().or_else(|| puts.try_join_next()) {
+                let Some(object) = landed(done)? else { continue };
+                flying.remove(&object.name);
                 planner.done(&object.name);
                 bytes += object.size;
                 self.sent.fetch_add(1, Ordering::Relaxed);
@@ -179,12 +199,22 @@ impl Upload {
             }
             let local = producer.local_regions(key);
             let playhead = self.playhead.load(Ordering::Relaxed);
-            if puts.len() < PUTS {
+            if playhead != followed {
+                followed = playhead;
+                for name in planner.displaced(&local, playhead, PUTS) {
+                    if let Some((put, sign, at)) = flying.remove(&name) {
+                        put.abort();
+                        signed.insert(name, (sign, at));
+                    }
+                }
+            }
+            // A dropped PUT leaves the set only once reaped; its slot is free now.
+            if flying.len() < PUTS {
                 signed.retain(|_, (_, at)| at.elapsed() < SIGNED_FOR);
                 // Chosen now, for where the room is now; signed ahead, so a
                 // free slot never waits on the server.
                 let items: Vec<ClosedObject> = planner
-                    .next(&local, playhead, PUTS - puts.len())
+                    .next(&local, playhead, PUTS - flying.len())
                     .into_iter()
                     .filter_map(|item| {
                         let path = dir.join(&item.local);
@@ -212,7 +242,7 @@ impl Upload {
                     }
                     match presign(&client, &target.api_base, &target.room_id, &target.claim, &batch).await {
                         Ok(objects) => {
-                            let now = tokio::time::Instant::now();
+                            let now = Instant::now();
                             signed.extend(objects.into_iter().map(|o| (o.name.clone(), (o, now))));
                         }
                         Err(e) if REVOKED.iter().any(|code| e.to_string().contains(code)) => return Err(e),
@@ -220,21 +250,29 @@ impl Upload {
                     }
                 }
                 for object in items {
-                    let Some((sign, _)) = signed.remove(&object.name) else {
+                    let Some((sign, at)) = signed.remove(&object.name) else {
                         planner.failed(&object.name);
                         continue;
                     };
                     let client = client.clone();
-                    puts.spawn(async move {
-                        put_with_retry(&client, &sign.url, &sign.headers, &object).await?;
+                    let name = object.name.clone();
+                    let url = sign.url.clone();
+                    let headers = sign.headers.clone();
+                    let put = puts.spawn(async move {
+                        put_with_retry(&client, &url, &headers, &object).await?;
                         Ok(object)
                     });
+                    flying.insert(name, (put, sign, at));
                 }
             }
-            let regions = planner.regions(&local);
+            let mut regions = planner.regions(&local);
+            let hold = held(&regions, &announced, playhead);
+            regions.retain(|r| Some(r.n) != hold);
             let fresh = regions.iter().any(|r| r.produced_ms > 0 && !announced.contains(&r.n));
-            if (last_round.elapsed() >= ROUND_EVERY || fresh) && (!confirm.is_empty() || seq == 0) {
-                last_round = tokio::time::Instant::now();
+            // While the playhead's region fills, a round would only hold up the one announcing it.
+            let due = last_round.elapsed() >= ROUND_EVERY && (hold.is_none() || confirm.len() >= HELD_CONFIRMS);
+            if (due || fresh) && (!confirm.is_empty() || seq == 0) {
+                last_round = Instant::now();
                 let produced: u64 = regions.iter().map(|r| r.produced_ms).sum();
                 let master = MasterInfo {
                     audio_langs: meta.audio_langs.clone(),
@@ -260,17 +298,37 @@ impl Upload {
             }
             tokio::select! {
                 // A finished PUT frees a slot for the next object right away.
-                Some(done) = puts.join_next(), if !puts.is_empty() => {
-                    let object = done.context("upload task")??;
-                    planner.done(&object.name);
-                    bytes += object.size;
-                    self.sent.fetch_add(1, Ordering::Relaxed);
-                    confirm.push(object.name);
-                }
+                Some(done) = puts.join_next(), if !puts.is_empty() => finished = Some(done),
                 _ = self.wake.notified() => {}
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
             }
         }
+    }
+}
+
+/// The region the rounds keep from the room for now: the newest one at the
+/// playhead, not announced yet, until it holds what the gate waits for. Seen
+/// with one segment, the rest would reach the guest only at its next
+/// playlist reload.
+pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64) -> Option<u64> {
+    let region = regions
+        .iter()
+        .filter(|r| r.start_ms <= playhead_ms && playhead_ms <= r.start_ms + r.produced_ms + REACH_MS)
+        .max_by_key(|r| r.start_ms)?;
+    let ready = !region.growing || region.start_ms + region.produced_ms >= playhead_ms + READY_AHEAD_MS;
+    (!ready && !announced.contains(&region.n)).then_some(region.n)
+}
+
+/// Where the run fence says the room is; an older server answers nothing.
+fn fenced_position(body: &str) -> Option<u64> {
+    serde_json::from_str::<Value>(body).ok()?.get("positionMs")?.as_u64()
+}
+
+/// The object a finished PUT sent; none for one a seek dropped.
+fn landed(done: Result<anyhow::Result<ClosedObject>, JoinError>) -> anyhow::Result<Option<ClosedObject>> {
+    match done {
+        Err(e) if e.is_cancelled() => Ok(None),
+        done => Ok(Some(done.context("upload task")??)),
     }
 }
 
@@ -358,6 +416,54 @@ mod tests {
         let body = round_body(&target(), Round { seq: 3, confirm: &[], playlists, regions: &regions, duration_ms: 600_000, master: &master });
         assert!(body["playlists"]["r1_master.m3u8"].as_str().unwrap().ends_with("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr1_client_stream_2.m3u8\n"));
         assert!(!body["playlists"]["r0_master.m3u8"].as_str().unwrap().contains("854x480"));
+    }
+
+    fn report(n: u64, start_ms: u64, produced_ms: u64, growing: bool) -> RegionReport {
+        RegionReport { n, start_ms, produced_ms, growing }
+    }
+
+    #[test]
+    fn a_seek_region_is_held_until_it_covers_what_the_gate_waits_for() {
+        let announced = HashSet::from([0]);
+        let one = [report(0, 0, 320_000, true), report(1, 598_083, 4_000, true)];
+        assert_eq!(held(&one, &announced, 600_000), Some(1));
+        let two = [report(0, 0, 320_000, true), report(1, 598_083, 8_000, true)];
+        assert_eq!(held(&two, &announced, 600_000), None);
+    }
+
+    #[test]
+    fn an_announced_region_or_one_at_its_end_is_never_held() {
+        let regions = [report(0, 0, 320_000, true), report(1, 598_083, 4_000, true)];
+        assert_eq!(held(&regions, &HashSet::from([0, 1]), 600_000), None);
+        let ended = [report(0, 0, 320_000, true), report(1, 884_000, 4_000, false)];
+        assert_eq!(held(&ended, &HashSet::from([0]), 886_000), None);
+    }
+
+    #[test]
+    fn a_region_far_from_the_playhead_is_not_held() {
+        let regions = [report(0, 0, 4_000, true)];
+        assert_eq!(held(&regions, &HashSet::new(), 600_000), None);
+        assert_eq!(held(&regions, &HashSet::new(), 2_000), Some(0));
+    }
+
+    #[test]
+    fn the_run_fence_tells_where_the_room_is_when_the_server_knows() {
+        assert_eq!(fenced_position(r#"{"positionMs":12000}"#), Some(12_000));
+        assert_eq!(fenced_position(""), None);
+        assert_eq!(fenced_position(r#"{"positionMs":-5}"#), None);
+    }
+
+    #[tokio::test]
+    async fn a_put_a_seek_dropped_is_no_error_and_sends_nothing() {
+        let mut puts: JoinSet<anyhow::Result<ClosedObject>> = JoinSet::new();
+        let put = puts.spawn(async {
+            std::future::pending::<()>().await;
+            unreachable!()
+        });
+        put.abort();
+        assert!(landed(puts.join_next().await.unwrap()).unwrap().is_none());
+        puts.spawn(async { anyhow::bail!("PUT failed") });
+        assert!(landed(puts.join_next().await.unwrap()).is_err());
     }
 
     #[test]
