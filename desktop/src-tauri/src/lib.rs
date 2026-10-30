@@ -4,6 +4,7 @@ pub mod hls;
 pub mod local;
 pub mod serve;
 pub mod site;
+pub mod tools;
 pub mod torrent;
 pub mod upload_plan;
 pub mod uploader;
@@ -76,7 +77,15 @@ pub fn run() {
         ])
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
-            let tools = Tools { ffmpeg: tool("ffmpeg"), ffprobe: tool("ffprobe"), ytdlp: tool("yt-dlp") };
+            let bundled_ytdlp = tool("yt-dlp");
+            let ytdlp = if std::path::Path::new(&bundled_ytdlp).is_absolute() {
+                tools::writable_copy(std::path::Path::new(&bundled_ytdlp), &data_dir.join("bin"))
+                    .map(|copy| copy.to_string_lossy().into_owned())
+                    .unwrap_or(bundled_ytdlp)
+            } else {
+                bundled_ytdlp
+            };
+            let tools = Tools { ffmpeg: tool("ffmpeg"), ffprobe: tool("ffprobe"), ytdlp };
             app.manage(AppState::new(site.clone(), data_dir, tools));
 
             // The IPC answers the site's origin and nothing else.
