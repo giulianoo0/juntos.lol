@@ -90,6 +90,8 @@ pub struct MasterInfo {
     pub audio_langs: Vec<String>,
     pub video_codecs: Option<String>,
     pub bandwidth: u64,
+    /// The 480p variant's size, when the source's is known.
+    pub low_resolution: Option<(u32, u32)>,
 }
 
 /// The 480p variant's peak, as the fleet's publisher declares it.
@@ -120,8 +122,9 @@ pub fn master(prefix: &str, info: &MasterInfo, low: Option<usize>) -> String {
     ));
     if let Some(index) = low {
         let audio_codec = if info.audio_langs.is_empty() { "" } else { ",mp4a.40.2" };
+        let resolution = info.low_resolution.map(|(w, h)| format!(",RESOLUTION={w}x{h}")).unwrap_or_default();
         out.push_str(&format!(
-            "#EXT-X-STREAM-INF:BANDWIDTH={LOW_BANDWIDTH},RESOLUTION=854x480,CODECS=\"avc1.4d401f{audio_codec}\"{audio}\n{}\n",
+            "#EXT-X-STREAM-INF:BANDWIDTH={LOW_BANDWIDTH}{resolution},CODECS=\"avc1.4d401f{audio_codec}\"{audio}\n{}\n",
             playlist_name(prefix, index),
         ));
     }
@@ -134,7 +137,7 @@ mod tests {
 
     #[test]
     fn master_names_the_region_variants() {
-        let info = MasterInfo { audio_langs: vec!["jpn".into(), "eng".into()], video_codecs: None, bandwidth: 0 };
+        let info = MasterInfo { audio_langs: vec!["jpn".into(), "eng".into()], video_codecs: None, bandwidth: 0, low_resolution: None };
         let m = master("r2_", &info, None);
         assert!(m.starts_with("#EXTM3U\n#EXT-X-VERSION:7\n"));
         assert!(m.contains("LANGUAGE=\"jpn\",DEFAULT=YES,AUTOSELECT=YES,URI=\"r2_client_stream_1.m3u8\""));
@@ -144,9 +147,9 @@ mod tests {
 
     #[test]
     fn master_declares_codecs_only_when_known() {
-        let info = MasterInfo { audio_langs: vec!["eng".into()], video_codecs: Some("av01.0.08M.10".into()), bandwidth: 5_000_000 };
+        let info = MasterInfo { audio_langs: vec!["eng".into()], video_codecs: Some("av01.0.08M.10".into()), bandwidth: 5_000_000, low_resolution: None };
         assert!(master("", &info, None).contains("BANDWIDTH=5000000,CODECS=\"av01.0.08M.10,mp4a.40.2\",AUDIO=\"aud\""));
-        let silent = MasterInfo { audio_langs: vec![], video_codecs: None, bandwidth: 0 };
+        let silent = MasterInfo { audio_langs: vec![], video_codecs: None, bandwidth: 0, low_resolution: None };
         let m = master("", &silent, None);
         assert!(!m.contains("EXT-X-MEDIA"));
         assert!(m.ends_with("#EXT-X-STREAM-INF:BANDWIDTH=2000000\nclient_stream_0.m3u8\n"));
@@ -154,10 +157,10 @@ mod tests {
 
     #[test]
     fn master_lists_the_480p_variant_when_the_region_has_it() {
-        let info = MasterInfo { audio_langs: vec!["jpn".into(), "eng".into()], video_codecs: None, bandwidth: 0 };
+        let info = MasterInfo { audio_langs: vec!["jpn".into(), "eng".into()], video_codecs: None, bandwidth: 0, low_resolution: Some((1152, 480)) };
         let m = master("r2_", &info, Some(3));
         assert!(m.ends_with(
-            "#EXT-X-STREAM-INF:BANDWIDTH=1700000,RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr2_client_stream_3.m3u8\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=1700000,RESOLUTION=1152x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr2_client_stream_3.m3u8\n"
         ));
         assert!(m.contains("BANDWIDTH=2000000,AUDIO=\"aud\"\nr2_client_stream_0.m3u8\n"), "the full variant stays first");
     }

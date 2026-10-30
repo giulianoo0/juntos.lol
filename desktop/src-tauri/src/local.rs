@@ -59,6 +59,9 @@ pub struct Meta {
     pub duration_ms: u64,
     pub audio_langs: Vec<String>,
     pub video_codecs: Option<String>,
+    /// The 480p variant's size, for the masters the upload writes.
+    #[serde(default)]
+    pub low_resolution: Option<(u32, u32)>,
     #[serde(default)]
     pub regions: Vec<RegionStart>,
 }
@@ -185,6 +188,7 @@ impl Producer {
             duration_ms: plan.duration_ms,
             audio_langs: plan.audios.iter().map(|a| a.language.clone()).collect(),
             video_codecs: plan.video_codecs.clone(),
+            low_resolution: plan::low_resolution(&plan),
             regions: stored.map(|m| m.regions).unwrap_or_default(),
         };
         let production = Production::new(dir, sources, plan, meta.clone());
@@ -435,7 +439,7 @@ mod tests {
         let dir = root.join("cache/k/hls");
         std::fs::create_dir_all(&dir).unwrap();
         let plan = plan::plan_streams(PROBE).unwrap();
-        let meta = Meta { key: "k".into(), title: "Filme".into(), duration_ms: plan.duration_ms, audio_langs: vec![], video_codecs: None, regions: vec![] };
+        let meta = Meta { key: "k".into(), title: "Filme".into(), duration_ms: plan.duration_ms, audio_langs: vec![], video_codecs: None, low_resolution: None, regions: vec![] };
         producer.entries.lock().insert("k".into(), Production::new(dir, vec![Arc::new(Empty)], plan, meta));
         producer
     }

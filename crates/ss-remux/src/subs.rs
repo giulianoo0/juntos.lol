@@ -439,6 +439,7 @@ mod tests {
         SourcePlan {
             video_codec: "h264".into(),
             video_codecs: None,
+            video_size: None,
             audios: vec![],
             duration_ms: 1_000_000,
             chapters: vec![],

@@ -200,6 +200,7 @@ impl Upload {
                     audio_langs: meta.audio_langs.clone(),
                     video_codecs: meta.video_codecs.clone(),
                     bandwidth: if produced > 0 { bytes * 8 * 1000 / produced } else { 0 },
+                    low_resolution: meta.low_resolution,
                 };
                 seq += 1;
                 let body = round_body(
@@ -255,7 +256,7 @@ mod tests {
     }
 
     fn info() -> MasterInfo {
-        MasterInfo { audio_langs: vec!["eng".into()], video_codecs: None, bandwidth: 0 }
+        MasterInfo { audio_langs: vec!["eng".into()], video_codecs: None, bandwidth: 0, low_resolution: None }
     }
 
     #[test]
@@ -300,7 +301,7 @@ mod tests {
         ];
         let mut playlists = BTreeMap::new();
         playlists.insert("r1_client_stream_2.m3u8".to_string(), "#EXTM3U\n".to_string());
-        let master = info();
+        let master = MasterInfo { low_resolution: Some((854, 480)), ..info() };
         let body = round_body(&target(), Round { seq: 3, confirm: &[], playlists, regions: &regions, duration_ms: 600_000, master: &master });
         assert!(body["playlists"]["r1_master.m3u8"].as_str().unwrap().ends_with("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr1_client_stream_2.m3u8\n"));
         assert!(!body["playlists"]["r0_master.m3u8"].as_str().unwrap().contains("854x480"));

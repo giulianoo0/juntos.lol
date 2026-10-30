@@ -467,7 +467,7 @@ impl Remux {
         let end_seconds = (spec.end_ms > 0).then(|| spec.end_ms as f64 / 1000.0);
         let low = start.low(spec.wants_480p().then_some(self.cfg.rendition_encoder));
         if low.is_some() {
-            publisher = publisher.with_low_variant(plan::low_variant(&source));
+            publisher = publisher.with_low_variant(plan::low_variant(&source), plan::low_resolution(&source));
         }
         let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start, end_seconds, low);
 

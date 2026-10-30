@@ -468,6 +468,7 @@ pub fn plan_for(selection: &Selection) -> SourcePlan {
     SourcePlan {
         video_codec: video_codec.into(),
         video_codecs,
+        video_size: selection.video.width.zip(selection.video.height),
         audios,
         duration_ms: selection.duration_ms,
         subtitles: Vec::new(),

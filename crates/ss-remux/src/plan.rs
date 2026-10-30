@@ -65,6 +65,10 @@ struct ProbeStream {
     #[serde(default)]
     pix_fmt: Option<String>,
     #[serde(default)]
+    width: Option<u32>,
+    #[serde(default)]
+    height: Option<u32>,
+    #[serde(default)]
     channels: Option<u32>,
     #[serde(default)]
     tags: Option<ProbeTags>,
@@ -160,6 +164,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     let chapters = plan_chapters(&doc.chapters);
     let mut video_codec = None;
     let mut video_codecs = None;
+    let mut video_size = None;
     let mut audios = Vec::new();
     let mut audio_index = 0usize;
     let mut subtitles = Vec::new();
@@ -185,6 +190,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
                             stream.pix_fmt.as_deref(),
                         );
                         video_codec = Some(codec);
+                        video_size = stream.width.zip(stream.height).filter(|&(w, h)| w > 0 && h > 0);
                     }
                     other => bail!("video codec {other:?} has no matrix entry"),
                 }
@@ -252,7 +258,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     if duration_ms == 0 {
         bail!("source reports no usable duration");
     }
-    Ok(SourcePlan { video_codec, video_codecs, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
+    Ok(SourcePlan { video_codec, video_codecs, video_size, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
         chapters,
     })
 }
@@ -287,6 +293,15 @@ pub fn low_variant(plan: &SourcePlan) -> usize {
     1 + plan.audios.len()
 }
 
+/// The 480p variant's size, as `scale=-2:'min(480,ih)'` gives it: the
+/// source's height up to 480, and the width that keeps the aspect, even.
+pub fn low_resolution(plan: &SourcePlan) -> Option<(u32, u32)> {
+    let (width, height) = plan.video_size?;
+    let out_height = height.min(480);
+    let half = (u64::from(out_height) * u64::from(width) + u64::from(height)) / (2 * u64::from(height));
+    Some(((half * 2) as u32, out_height))
+}
+
 /// The second video output, encoded down to 480p. Its keyframes are the
 /// source's, so both variants cut their segments at the same instants and
 /// the player can switch between them.
@@ -296,7 +311,6 @@ fn low_rendition_args(encoder: Encoder) -> Vec<String> {
         Encoder::X264 => args.extend([
             "-c:v:1".into(), "libx264".into(),
             "-preset:v:1".into(), "superfast".into(),
-            "-level:v:1".into(), "3.1".into(),
             // A scene cut of its own would cut a segment the full variant lacks.
             "-sc_threshold:v:1".into(), "0".into(),
         ]),
@@ -305,7 +319,9 @@ fn low_rendition_args(encoder: Encoder) -> Vec<String> {
     args.extend([
         "-filter:v:1".into(), "scale=-2:'min(480,ih)'".into(),
         "-pix_fmt:v:1".into(), "yuv420p".into(),
+        // Main 3.1 plays on any phone; past it some decoders refuse the variant.
         "-profile:v:1".into(), "main".into(),
+        "-level:v:1".into(), "3.1".into(),
         "-b:v:1".into(), LOW_VIDEO_BITRATE.into(),
         "-maxrate:v:1".into(), LOW_VIDEO_MAXRATE.into(),
         "-bufsize:v:1".into(), LOW_VIDEO_BUFSIZE.into(),
@@ -646,6 +662,35 @@ mod tests {
         assert_eq!(joined.matches("-map 0:v:0").count(), 1);
         assert!(!joined.contains("v:1"));
         assert!(!joined.contains("copypriorss"));
+    }
+
+    fn sized(width: u32, height: u32) -> SourcePlan {
+        let probe = PROBE.replace(
+            r#"{"codec_type":"video","codec_name":"h264"}"#,
+            &format!(r#"{{"codec_type":"video","codec_name":"h264","width":{width},"height":{height}}}"#),
+        );
+        plan_streams(&probe).unwrap()
+    }
+
+    // The size FFmpeg's scale=-2:'min(480,ih)' gives the 480p variant.
+    #[test]
+    fn the_480p_size_keeps_the_source_aspect() {
+        assert_eq!(sized(1920, 1080).video_size, Some((1920, 1080)));
+        assert_eq!(low_resolution(&sized(1920, 1080)), Some((854, 480)));
+        assert_eq!(low_resolution(&sized(1920, 800)), Some((1152, 480)));
+        assert_eq!(low_resolution(&sized(1440, 1080)), Some((640, 480)));
+        assert_eq!(low_resolution(&sized(640, 360)), Some((640, 360)), "never scaled up");
+        assert_eq!(low_resolution(&plan_streams(PROBE).unwrap()), None, "no size probed");
+    }
+
+    #[test]
+    fn the_480p_variant_is_main_at_level_3_1_on_either_encoder() {
+        let plan = plan_streams(PROBE).unwrap();
+        for encoder in [Encoder::X264, Encoder::VideoToolbox] {
+            let joined = args_with(&plan, Some(encoder));
+            assert!(joined.contains("-profile:v:1 main"), "{joined}");
+            assert_eq!(joined.matches("-level:v:1 3.1").count(), 1, "{joined}");
+        }
     }
 
     #[test]
