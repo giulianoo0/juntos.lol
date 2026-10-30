@@ -93,7 +93,8 @@ services:
   # nginx to forward /.well-known/acme-challenge/ to.
   worker:
     build:
-      context: ./ss-worker
+      context: .
+      dockerfile: ss-worker/Dockerfile
     restart: unless-stopped
     # Torrent logs are chatty and the default json-file driver never rotates:
     # left alone it fills the host's disk from outside the worker's own quota.
@@ -140,7 +141,8 @@ services:
   # read-only, with the subscribe token. nginx forwards /moq-bridge to it.
   moq-bridge:
     build:
-      context: ./ss-worker
+      context: .
+      dockerfile: ss-worker/Dockerfile
     entrypoint: ["ss-moq-bridge"]
     restart: unless-stopped
     logging:

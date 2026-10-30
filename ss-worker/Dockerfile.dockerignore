@@ -1,2 +1,8 @@
-target/
-ss-remux/target/
+# The worker image builds from the repository root; only the Cargo
+# workspace goes into its context.
+*
+!Cargo.toml
+!Cargo.lock
+!crates
+!ss-worker
+**/target
