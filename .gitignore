@@ -32,9 +32,8 @@ docker-compose.override.yml
 # Worktrees do agente
 /.worktrees/
 
-# ss-worker build output
-/ss-worker/target/
-ss-worker/ss-remux/Cargo.lock
+# Build do workspace Cargo (o .cargo-target é compartilhado entre worktrees)
+/target/
+/.cargo-target/
 web/dev/*.png
-/ss-worker/ss-remux/target/
 dump.rdb
