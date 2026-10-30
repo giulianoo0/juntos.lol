@@ -96,9 +96,10 @@
   color: var(--status-danger-ink);
 }
 
-/* Only the app opens it: dimmed, still picked to say how to get it. */
+/* Only the app opens it: dimmed (still readable, it is picked to say how
+   to get it), the lock alone in the faint ink. */
 .row[data-locked] {
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 
 .lock {

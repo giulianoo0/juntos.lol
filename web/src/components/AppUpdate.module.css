@@ -4,13 +4,13 @@
   position: fixed;
   top: var(--space-4);
   left: 50%;
-  z-index: 60;
+  z-index: var(--layer-float);
   display: flex;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--overlay);
   box-shadow: var(--shadow-float);
   color: var(--text);
@@ -28,7 +28,7 @@
 @keyframes pop {
   from {
     opacity: 0;
-    filter: blur(6px);
+    filter: blur(var(--blur-md));
     transform: translateX(-50%) scale(0);
   }
   to {
@@ -42,7 +42,7 @@
 .screen {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: calc(var(--layer-over-dialog) + 1);
   display: grid;
   place-content: center;
   justify-items: center;
@@ -55,14 +55,14 @@
   margin: 0;
   font-size: var(--text-2xl);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.02em;
+  letter-spacing: var(--tracking-snug);
 }
 
 .track {
-  width: min(280px, 70vw);
-  height: 6px;
+  width: min(calc(var(--space-8) * 12), 70vw);
+  height: var(--space-2);
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--surface-2);
 }
 
@@ -76,7 +76,7 @@
 
 .fill[data-indeterminate] {
   width: 30%;
-  animation: slide 1.2s var(--ease-in-out) infinite;
+  animation: slide calc(var(--duration-spring-pop) * 2) var(--ease-in-out) infinite;
 }
 
 @keyframes slide {
@@ -84,7 +84,21 @@
   to { transform: translateX(340%); }
 }
 
+@keyframes fade {
+  from { opacity: 0; }
+}
+
+@keyframes breathe {
+  from { opacity: 0.35; }
+}
+
+/* Reduced motion: the notice only fades in, and the waiting bar fills the
+   track and breathes instead of sliding. */
 @media (prefers-reduced-motion: reduce) {
-  .notice { animation: none; }
-  .fill[data-indeterminate] { animation: none; }
+  .notice { animation: fade var(--duration-fast) var(--ease-out) both; }
+
+  .fill[data-indeterminate] {
+    width: 100%;
+    animation: breathe calc(var(--duration-spring-pop) * 2) var(--ease-in-out) infinite alternate;
+  }
 }

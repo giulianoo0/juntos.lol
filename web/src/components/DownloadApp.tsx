@@ -136,7 +136,7 @@ export function DownloadAppHost() {
                 {face}
               </a>
             ) : (
-              <Tip key={id} label={t('site.downloadSoon')} render={<span className={styles.platform} aria-disabled="true" />}>
+              <Tip key={id} label={t('site.downloadSoon')} render={<span className={styles.platform} aria-disabled="true" tabIndex={0} />}>
                 {face}
               </Tip>
             )

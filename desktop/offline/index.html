@@ -15,9 +15,22 @@
     --line: rgb(0 0 0 / 8%);
     --primary: oklch(0.55 0.17 258);
     --brand: #ff7a45;
-    --radius: 0.625rem;
+    --radius-full: 999px;
+    --space-3: 0.5rem;
+    --space-4: 0.75rem;
+    --space-5: 1rem;
+    --space-6: 1.25rem;
+    --text-base: 0.875rem;
+    --text-xl: 1.25rem;
+    --tracking-snug: -0.015em;
+    --hover: color-mix(in oklab, var(--text) 5%, var(--surface));
+    --blur-md: 8px;
     --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-hover: ease;
+    --duration-press: 140ms;
+    --duration-fast: 160ms;
+    --duration-base: 220ms;
     --ease-spring-pop: linear(0, 0.058, 0.191, 0.352, 0.513, 0.656, 0.774, 0.865, 0.932, 0.977, 1.005,
       1.021, 1.027, 1.028, 1.026, 1.022, 1.017, 1.013, 1.009, 1.006, 1.003, 1.001, 1, 1, 1);
     --duration-spring-pop: 600ms;
@@ -47,17 +60,17 @@
     user-select: none;
     cursor: default;
   }
-  main { display: grid; justify-items: center; gap: 20px; }
+  main { display: grid; justify-items: center; gap: var(--space-6); }
   .mark { width: 44px; height: auto; color: var(--text); }
   .mark .tip { fill: var(--brand); stroke: var(--brand); }
   body[data-state="probing"] .mark { animation: breathe 1.6s var(--ease-out) infinite alternate; }
   .offline {
     display: grid;
     justify-items: center;
-    gap: 18px;
+    gap: var(--space-5);
     opacity: 0;
     transform: scale(0.96);
-    filter: blur(6px);
+    filter: blur(var(--blur-md));
     pointer-events: none;
   }
   body[data-state="offline"] .offline {
@@ -65,24 +78,29 @@
     transform: none;
     filter: none;
     pointer-events: auto;
-    transition: opacity 240ms var(--ease-out), filter 240ms var(--ease-out),
+    transition: opacity var(--duration-base) var(--ease-out), filter var(--duration-base) var(--ease-out),
       transform var(--duration-spring-pop) var(--ease-spring-pop);
   }
-  h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  h1 { margin: 0; font-size: var(--text-xl); font-weight: 600; letter-spacing: var(--tracking-snug); }
   button {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 9px 16px;
+    gap: var(--space-3);
+    min-height: 2.25rem;
+    padding: 0 var(--space-5);
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     background: var(--surface);
     color: var(--text);
     font: inherit;
-    font-size: 14px;
+    font-size: var(--text-base);
     font-weight: 500;
     cursor: pointer;
-    transition: transform 160ms var(--ease-out), background 160ms var(--ease-out);
+    transition: background-color var(--duration-fast) var(--ease-hover),
+      transform var(--duration-press) var(--ease-out);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover { background: var(--hover); }
   }
   button:active { transform: scale(var(--press-scale)); }
   button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -91,7 +109,9 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes breathe { from { opacity: 0.55; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
-    body[data-state="offline"] .offline { transition: opacity 160ms linear; transform: none; filter: none; }
+    :root { --press-scale: 1; }
+    .offline { transform: none; filter: none; }
+    body[data-state="offline"] .offline { transition: opacity var(--duration-fast) var(--ease-out); }
     body[data-state="probing"] .mark, button[aria-busy="true"] svg { animation: none; }
   }
 </style>
