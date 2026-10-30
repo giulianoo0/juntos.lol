@@ -1,1 +1,163 @@
-<!doctype html><html><body></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Juntos</title>
+<style>
+  /* The site's tokens (web/src/styles/tokens.css), the few this page reads. */
+  :root {
+    color-scheme: light;
+    --frame-ground: #ededee;
+    --surface: #ffffff;
+    --text: #111111;
+    --text-muted: #5f5f63;
+    --line: rgb(0 0 0 / 8%);
+    --primary: oklch(0.55 0.17 258);
+    --brand: #ff7a45;
+    --radius: 0.625rem;
+    --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-spring-pop: linear(0, 0.058, 0.191, 0.352, 0.513, 0.656, 0.774, 0.865, 0.932, 0.977, 1.005,
+      1.021, 1.027, 1.028, 1.026, 1.022, 1.017, 1.013, 1.009, 1.006, 1.003, 1.001, 1, 1, 1);
+    --duration-spring-pop: 600ms;
+    --press-scale: 0.97;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --frame-ground: #0f0f0f;
+      --surface: #1b1b1a;
+      --text: #ededed;
+      --text-muted: #9b9b9b;
+      --line: rgb(255 255 255 / 7%);
+      --primary: oklch(0.664 0.147 257);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid;
+    place-items: center;
+    background: var(--frame-ground);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  main { display: grid; justify-items: center; gap: 20px; }
+  .mark { width: 44px; height: auto; color: var(--text); }
+  .mark .tip { fill: var(--brand); stroke: var(--brand); }
+  body[data-state="probing"] .mark { animation: breathe 1.6s var(--ease-out) infinite alternate; }
+  .offline {
+    display: grid;
+    justify-items: center;
+    gap: 18px;
+    opacity: 0;
+    transform: scale(0.96);
+    filter: blur(6px);
+    pointer-events: none;
+  }
+  body[data-state="offline"] .offline {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    pointer-events: auto;
+    transition: opacity 240ms var(--ease-out), filter 240ms var(--ease-out),
+      transform var(--duration-spring-pop) var(--ease-spring-pop);
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 16px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 160ms var(--ease-out), background 160ms var(--ease-out);
+  }
+  button:active { transform: scale(var(--press-scale)); }
+  button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  button svg { width: 15px; height: 15px; color: var(--text-muted); }
+  button[aria-busy="true"] svg { animation: spin 900ms linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes breathe { from { opacity: 0.55; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    body[data-state="offline"] .offline { transition: opacity 160ms linear; transform: none; filter: none; }
+    body[data-state="probing"] .mark, button[aria-busy="true"] svg { animation: none; }
+  }
+</style>
+</head>
+<body data-state="probing">
+<main>
+  <svg class="mark" viewBox="150 40 220 424" aria-label="juntos.lol" role="img">
+    <g transform="translate(-6,6)">
+      <path d="M 300 176 L 300 306 A 96 96 0 0 1 204 402" fill="none" stroke="currentColor" stroke-width="78" stroke-linecap="round"/>
+      <path class="tip" d="M 282 58 L 324 81 L 282 104 Z" stroke-width="16" stroke-linejoin="round"/>
+    </g>
+  </svg>
+  <div class="offline" aria-live="polite">
+    <h1 id="title">Sem conexão</h1>
+    <button id="retry" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+      </svg>
+      <span id="retry-label">Tentar de novo</span>
+    </button>
+  </div>
+</main>
+<script>
+  // The window opens here and goes to the site the moment it answers; with
+  // no network it waits on this page and leaves by itself when it comes back.
+  const site = window.__JUNTOS_SITE__ || 'https://juntos.lol/'
+  const english = !/^pt/i.test(navigator.language || '')
+  if (english) {
+    document.documentElement.lang = 'en'
+    document.getElementById('title').textContent = 'No connection'
+    document.getElementById('retry-label').textContent = 'Try again'
+  }
+  const retry = document.getElementById('retry')
+  let probing = false
+
+  async function reachable() {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 4000)
+    try {
+      await fetch(new URL('api/config', site), { mode: 'no-cors', cache: 'no-store', signal: controller.signal })
+      return true
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async function probe() {
+    if (probing) return
+    probing = true
+    retry.setAttribute('aria-busy', 'true')
+    const up = await reachable()
+    probing = false
+    retry.removeAttribute('aria-busy')
+    if (up) {
+      location.replace(site)
+      return
+    }
+    document.body.dataset.state = 'offline'
+  }
+
+  retry.addEventListener('click', probe)
+  window.addEventListener('online', probe)
+  setInterval(() => { if (document.body.dataset.state === 'offline') probe() }, 3000)
+  probe()
+</script>
+</body>
+</html>

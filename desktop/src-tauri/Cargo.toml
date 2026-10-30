@@ -31,10 +31,6 @@ rand = "0.8"
 [dev-dependencies]
 tempfile = "3"
 
-[features]
-# 480p por hardware: a segunda variante só sai com esta flag ligada.
-hw480 = []
-
 [profile.release]
 opt-level = 2
 lto = "thin"

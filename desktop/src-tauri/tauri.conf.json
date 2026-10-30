@@ -16,12 +16,27 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg", "nsis", "appimage"],
+    "createUpdaterArtifacts": true,
+    "category": "Entertainment",
+    "copyright": "juntos.lol",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzRTQzNzE2MzBCN0M0NDEKUldSQnhMY3dGamZrSTU0eVNzWHNzNWNxUXNiODgzeHdnV1lJUEI1RFNXWS94MWlYaVgxOVlQRnEK",
+      "endpoints": [
+        "https://github.com/giulianoo0/juntos.lol/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

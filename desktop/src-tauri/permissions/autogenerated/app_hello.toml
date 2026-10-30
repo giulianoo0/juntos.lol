@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-hello"
+description = "Enables the app_hello command without any pre-configured scope."
+commands.allow = ["app_hello"]
+
+[[permission]]
+identifier = "deny-app-hello"
+description = "Denies the app_hello command without any pre-configured scope."
+commands.deny = ["app_hello"]
