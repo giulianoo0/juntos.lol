@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { CodecSupportNotice } from './components/CodecSupport'
 import { RoomHost } from './components/RoomHost'
 import { DownloadAppHost } from './components/DownloadApp'
+import { AppUpdate } from './components/AppUpdate'
 import type { CreateRoomInput } from './pages/Home'
 
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })))
@@ -36,6 +37,7 @@ export default function App() {
         </Routes>
         <RoomHost />
         <DownloadAppHost />
+        <AppUpdate />
       </Suspense>
     </BrowserRouter>
   )

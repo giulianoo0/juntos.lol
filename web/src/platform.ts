@@ -7,6 +7,8 @@
 
 /** Must match PROTOCOL_VERSION in desktop/src-tauri/src/site.rs. */
 export const DESKTOP_PROTOCOL = 1
+/** The oldest app protocol this site still talks to; an older app must update. */
+export const DESKTOP_MIN_PROTOCOL = 1
 
 export interface DesktopApp {
   version: string
@@ -19,6 +21,7 @@ interface Hello {
   protocolVersion: number
   version: string
   compatible: boolean
+  updateRequired?: boolean
   mediaRoot: string
 }
 
@@ -32,6 +35,7 @@ function bridge(): Invoke | null {
 
 let handshake: Promise<DesktopApp | null> | null = null
 let refused = false
+let required = false
 
 /** Whether the app carries this page (before the hello settles, it is assumed to). */
 export function isDesktop(): boolean {
@@ -45,9 +49,10 @@ export function desktop(): Promise<DesktopApp | null> {
   if (!invoke) return Promise.resolve(null)
   handshake = (async () => {
     try {
-      const hello = await invoke('app_hello', { protocolVersion: DESKTOP_PROTOCOL }) as Hello
+      const hello = await invoke('app_hello', { protocolVersion: DESKTOP_PROTOCOL, minProtocolVersion: DESKTOP_MIN_PROTOCOL }) as Hello
       if (!hello?.compatible) {
         refused = true
+        required = hello?.updateRequired === true
         return null
       }
       return {
@@ -64,7 +69,24 @@ export function desktop(): Promise<DesktopApp | null> {
   return handshake
 }
 
+/** Whether the app carrying the page is too old for this site: its update is not optional. */
+export async function appUpdateRequired(): Promise<boolean> {
+  await desktop()
+  return required
+}
+
+/**
+ * The app's own update commands, which answer an app of any protocol: an
+ * app too old for the site still has to be able to update.
+ */
+export async function invokeUpdater<T>(cmd: 'update_status' | 'update_restart' | 'update_now'): Promise<T | null> {
+  const invoke = bridge()
+  if (!invoke) return null
+  return await invoke(cmd) as T
+}
+
 export function resetDesktopForTests(): void {
   handshake = null
   refused = false
+  required = false
 }

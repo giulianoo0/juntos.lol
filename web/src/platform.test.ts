@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DESKTOP_PROTOCOL, desktop, isDesktop, resetDesktopForTests } from './platform'
+import { DESKTOP_MIN_PROTOCOL, DESKTOP_PROTOCOL, appUpdateRequired, desktop, isDesktop, resetDesktopForTests } from './platform'
 
 type Internals = { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -32,13 +32,21 @@ describe('platform', () => {
     expect(await app?.invoke('torrent_stats', { id: 'x' })).toBe('pong')
     await desktop()
     expect(invoke.mock.calls.filter(([cmd]) => cmd === 'app_hello')).toHaveLength(1)
-    expect(invoke).toHaveBeenCalledWith('app_hello', { protocolVersion: DESKTOP_PROTOCOL })
+    expect(invoke).toHaveBeenCalledWith('app_hello', expect.objectContaining({ protocolVersion: DESKTOP_PROTOCOL }))
   })
 
-  it('treats an app on another protocol as absent', async () => {
-    installApp(async () => ({ ...compatible, compatible: false, features: [] }))
+  it('tells the app the oldest protocol this site still talks to', async () => {
+    const invoke = installApp(async () => compatible)
+    await desktop()
+    expect(invoke).toHaveBeenCalledWith('app_hello', { protocolVersion: DESKTOP_PROTOCOL, minProtocolVersion: DESKTOP_MIN_PROTOCOL })
+    expect(await appUpdateRequired()).toBe(false)
+  })
+
+  it('treats an app too old for the site as absent, and asks for its update', async () => {
+    installApp(async () => ({ ...compatible, compatible: false, updateRequired: true, features: [] }))
     expect(await desktop()).toBeNull()
     expect(isDesktop()).toBe(false)
+    expect(await appUpdateRequired()).toBe(true)
   })
 
   it('treats an app that refuses the hello as absent', async () => {
