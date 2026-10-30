@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock } from '../model'
 import { profilePath } from '../../account'
+import { openDownloadApp } from '../../components/DownloadApp'
 import { Segmented } from '../../ui/Segmented'
 import { useTheme, type Theme } from '../../ui/theme'
 import { REACTIONS, splitReactions } from '../reactions'
@@ -34,6 +35,7 @@ function fakePeople(count: number): Person[] {
     hostCamOff: false,
     avatar: AVATARS[index],
     accountId: ACCOUNTS[index],
+    app: index === 1 || index === 3,
   }))
 }
 
@@ -160,6 +162,7 @@ export function DevRoom() {
     knocks,
     ...splitReactions(chat),
     sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
+    appOnly: params.get('app') === '1' ? [] : ['youtube'],
     levelOf: fakeLevel,
     actions: {
       setMic: (on) => update(selfId, { mic: on, hostMuted: false }),
@@ -204,6 +207,7 @@ export function DevRoom() {
       setAccess: (mode) => setJoinMode(mode),
       closeStage: (stage) => setStages((list) => list.filter((item) => item.id !== stage.id)),
       openProfile: (accountId) => navigate(profilePath(accountId)),
+      getApp: openDownloadApp,
     },
     slots: {
       renderVideo: (memberId) => {
@@ -215,7 +219,7 @@ export function DevRoom() {
     },
     // `update` and the setters are stable enough for a dev page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, chat])
+  }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, chat, params])
 
   const others = people.filter((person) => person.id !== selfId)
   const [entryAvatar, setEntryAvatar] = useState(params.get('avatar') ?? 'fox.bowtie')
