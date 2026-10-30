@@ -261,6 +261,7 @@ export const ptBR: Record<string, string> = {
   'room.denied': 'O host não deixou você entrar',
   'room.badPassword': 'Senha errada',
   'room.rateLimited': 'Calma, muitas ações seguidas',
+  'room.producerLeft': 'O host saiu antes de enviar o resto do vídeo',
   'room.tooManyAttempts': 'Muitas tentativas. Espere um pouco',
   'stage.kind.media': 'Mídia',
   'stage.kind.live': 'Live',

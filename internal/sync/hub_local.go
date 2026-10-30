@@ -107,3 +107,72 @@ func (r *roomConn) syncBrowserMedia(greet *client) {
 		r.send(producer, Outbound{Type: "needBrowserMedia", Generation: r.browserAsked})
 	}
 }
+
+// producedEdgeSlackMs is how far short of the edge of the uploaded media a
+// viewer may run dry and still be at it: the room's clock and the viewer's
+// player are never exactly together.
+const producedEdgeSlackMs int64 = 3000
+
+// pauseAtProducedEdge stops the room where its media ends for good: the app
+// that produced it left before uploading the rest, so a viewer running dry at
+// the edge of what is in the bucket would wait for nothing. It reports
+// whether it paused.
+func (r *roomConn) pauseAtProducedEdge(ctx context.Context, now int64) bool {
+	if !r.media.local || r.clients[r.media.producer] != nil || !r.anyRunningDry() {
+		return false
+	}
+	state, err := r.hub.store.GetState(ctx, r.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "load state for the produced edge failed", "room_id", r.id, "error", err)
+		return false
+	}
+	if !state.Playing {
+		return false
+	}
+	stored, err := r.hub.store.Get(ctx, r.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "load regions for the produced edge failed", "room_id", r.id, "error", err)
+		return false
+	}
+	positionMs := ExpectedPositionMs(state, now)
+	edge := producedEdge(stored.MediaRegions, positionMs)
+	if positionMs < edge-producedEdgeSlackMs {
+		return false
+	}
+	state.Playing = false
+	state.PositionMs = min(positionMs, edge)
+	state.ServerTimeMs = now
+	if err := r.hub.store.SetState(ctx, r.id, state); err != nil {
+		slog.ErrorContext(ctx, "persist the produced edge failed", "room_id", r.id, "error", err)
+		return false
+	}
+	slog.InfoContext(ctx, "room paused where the producer left off", "room_id", r.id, "position_ms", state.PositionMs)
+	r.playing = false
+	r.broadcast(Outbound{Type: "state", State: &state})
+	r.broadcast(Outbound{Type: "error", ErrCode: "producer_left"})
+	return true
+}
+
+func (r *roomConn) anyRunningDry() bool {
+	for _, connected := range r.clients {
+		if connected.report.received && connected.report.runningDry() {
+			return true
+		}
+	}
+	return false
+}
+
+// producedEdge is where the media that holds a position ends: the end of the
+// latest region starting at or before it, or the position itself when none
+// does.
+func producedEdge(regions []room.MediaRegion, positionMs int64) int64 {
+	edge := positionMs
+	var start int64 = -1
+	for _, region := range regions {
+		if region.StartMs <= positionMs && region.StartMs > start {
+			start = region.StartMs
+			edge = region.StartMs + region.ProducedMs
+		}
+	}
+	return edge
+}

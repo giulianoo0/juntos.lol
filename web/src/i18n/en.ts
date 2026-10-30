@@ -261,6 +261,7 @@ export const en: Record<string, string> = {
   'room.denied': 'The host did not let you in',
   'room.badPassword': 'Wrong password',
   'room.rateLimited': 'Slow down, too many actions in a row',
+  'room.producerLeft': 'The host left before uploading the rest of the video',
   'room.tooManyAttempts': 'Too many attempts. Wait a bit',
   'stage.kind.media': 'Media',
   'stage.kind.live': 'Live',

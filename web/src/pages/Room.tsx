@@ -394,6 +394,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     if (!sync.errorSeq) return
     if (sync.lastError === 'not_controller') toast(t('room.notController'))
     else if (sync.lastError === 'rate_limited') toast(t('room.rateLimited'))
+    else if (sync.lastError === 'producer_left') toast(t('room.producerLeft'))
   }, [sync.errorSeq, sync.lastError, t, toast])
   if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
     mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0

@@ -234,3 +234,62 @@ func TestABrowserCountsForTheGateOnceTheMediaIsUp(t *testing.T) {
 	}
 	require.False(t, byMember["m2"].Ready, "a browser with media to load was skipped")
 }
+
+// The app that produced the media left with part of it never uploaded: a
+// guest running dry at the edge of what is in the bucket would wait for
+// nothing, so the room pauses there and says why.
+func TestTheRoomPausesAtTheUploadedEdgeOnceTheProducerLeft(t *testing.T) {
+	hub, store, server, _ := localRoom(t)
+	require.NoError(t, store.SetStatus(t.Context(), "r1", room.StatusReady))
+	require.NoError(t, store.SetMediaRegions(t.Context(), "r1", []room.MediaRegion{
+		{N: 0, StartMs: 0, ProducedMs: 796_000, Growing: true},
+		{N: 1, StartMs: 1_307_000, ProducedMs: 123_000, Growing: true},
+	}))
+	hub.NotifyStatus("r1", room.StatusReady)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.NoError(t, store.SetState(t.Context(), "r1", room.PlayState{
+		Playing: true, PositionMs: 1_431_000, Rate: 1, ServerTimeMs: time.Now().UnixMilli(),
+	}))
+	require.NoError(t, host.Close())
+	members := nextOf(t, guest, "members")
+	for len(members.Members) != 1 {
+		members = nextOf(t, guest, "members")
+	}
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 1_430_000, Stalled: true}))
+
+	paused := nextOf(t, guest, "state")
+	require.False(t, paused.State.Playing)
+	require.Equal(t, int64(1_430_000), paused.State.PositionMs)
+	require.Equal(t, "producer_left", nextOf(t, guest, "error").ErrCode)
+}
+
+// While the producer is in, a guest at the edge waits for the upload as usual.
+func TestAGuestAtTheEdgeWaitsWhileTheProducerIsIn(t *testing.T) {
+	hub, store, server, _ := localRoom(t)
+	require.NoError(t, store.SetStatus(t.Context(), "r1", room.StatusReady))
+	require.NoError(t, store.SetMediaRegions(t.Context(), "r1", []room.MediaRegion{
+		{N: 0, StartMs: 0, ProducedMs: 60_000, Growing: true},
+	}))
+	hub.NotifyStatus("r1", room.StatusReady)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.NoError(t, store.SetState(t.Context(), "r1", room.PlayState{
+		Playing: true, PositionMs: 60_000, Rate: 1, ServerTimeMs: time.Now().UnixMilli(),
+	}))
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 60_000, Stalled: true}))
+
+	for {
+		event := readHubEvent(t, guest)
+		require.NotEqual(t, "error", event.Type)
+		if event.Type == "waiting" {
+			return
+		}
+	}
+}

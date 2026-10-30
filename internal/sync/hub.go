@@ -1000,7 +1000,9 @@ func (r *roomConn) handleInbound(event clientInbound) {
 			}
 			return
 		}
-		r.gateOnStall(readyCtx, now)
+		if !r.pauseAtProducedEdge(readyCtx, now) {
+			r.gateOnStall(readyCtx, now)
+		}
 	case "gating":
 		r.handleGatingToggle(event.client, message)
 	case "subtitles":
