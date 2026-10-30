@@ -671,6 +671,8 @@ async function remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, met
       output,
       audio: { codec: 'aac' },
       ...(Object.keys(trim).length > 0 ? { trim } : {}),
+      // A cold seek copies from the first keyframe inside the region rather than re-encoding to its exact start.
+      copy: { boundaryPolicy: 'shrink' },
     })
     if (!current.isValid) {
       throw new Error('client remux plan rejected by conversion: '
