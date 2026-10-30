@@ -10,6 +10,9 @@
   color: var(--text); background: var(--frame-ground); font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
+/* The desktop app's window buttons sit over the page's top corner (see AppChrome). */
+html[data-app-chrome="mac"] { --chrome-start: 6.25rem; }
+html[data-app-chrome="windows"] { --chrome-end: 8.625rem; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--frame-ground); }
 button, input, select, textarea { font: inherit; color: inherit; }
 /* Zero specificity: a component's own class always wins over these. */

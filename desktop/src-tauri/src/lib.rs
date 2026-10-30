@@ -20,6 +20,15 @@ use commands::{AppState, Tools};
 use site::Navigation;
 
 /// The permission of each command build.rs declares from commands.txt.
+/// What the drawn title bar needs: drag, double-click to zoom, and the buttons.
+const WINDOW_PERMISSIONS: &[&str] = &[
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+];
+
 fn site_permissions() -> impl Iterator<Item = String> {
     include_str!("../commands.txt").lines().filter(|line| !line.is_empty()).map(|name| format!("allow-{}", name.replace('_', "-")))
 }
@@ -84,14 +93,30 @@ pub fn run() {
 
             // The IPC answers the site's origin and nothing else.
             let mut capability = CapabilityBuilder::new("site").remote(format!("{}*", site.as_str())).window("main");
-            for permission in site_permissions() {
+            for permission in site_permissions().chain(WINDOW_PERMISSIONS.iter().map(|p| p.to_string())) {
                 capability = capability.permission(permission);
             }
             app.add_capability(capability)?;
+            // The offline page, served by the app itself, moves and closes the window too.
+            let mut offline = CapabilityBuilder::new("offline").window("main");
+            for permission in WINDOW_PERMISSIONS {
+                offline = offline.permission(*permission);
+            }
+            app.add_capability(offline)?;
 
             let handle = app.handle().clone();
             let held_site = site.clone();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()));
+            // The site draws the title bar: the traffic lights sit in its header
+            // on macOS, and it draws the window buttons on Windows.
+            #[cfg(target_os = "macos")]
+            let window = window
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(20.0, 32.0));
+            #[cfg(windows)]
+            let window = window.decorations(false);
+            window
                 .title("Juntos")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(720.0, 520.0)

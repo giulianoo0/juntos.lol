@@ -78,7 +78,13 @@ pub fn hello(site_min: u32, version: &str, windows: bool) -> Hello {
         version: version.to_string(),
         compatible,
         update_required: !compatible,
-        features: if compatible { vec!["localSource"] } else { Vec::new() },
+        features: if !compatible {
+            Vec::new()
+        } else if cfg!(any(target_os = "macos", windows)) {
+            vec!["localSource", "titleBar"]
+        } else {
+            vec!["localSource"]
+        },
         // WebView2 maps custom schemes to http://<scheme>.localhost.
         media_root: if windows { "http://juntos-media.localhost".into() } else { "juntos-media://localhost".into() },
     }
@@ -93,7 +99,8 @@ mod tests {
         let ok = hello(PROTOCOL_VERSION, "0.1.0", false);
         assert!(ok.compatible);
         assert!(!ok.update_required);
-        assert_eq!(ok.features, ["localSource"]);
+        assert_eq!(ok.features[0], "localSource");
+        assert_eq!(ok.features.contains(&"titleBar"), cfg!(any(target_os = "macos", windows)));
         assert_eq!(ok.media_root, "juntos-media://localhost");
         assert!(hello(PROTOCOL_VERSION - 1, "0.1.0", false).compatible);
     }

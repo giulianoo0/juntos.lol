@@ -14,6 +14,8 @@ export interface DesktopApp {
   version: string
   /** Where the cache is served to this page: `<mediaRoot>/<key>/hls/<name>`. */
   mediaRoot: string
+  /** What this app does beyond the protocol, such as `titleBar`: the page draws the window's title bar. */
+  features: string[]
   invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
 }
 
@@ -22,6 +24,7 @@ interface Hello {
   version: string
   compatible: boolean
   updateRequired?: boolean
+  features?: string[]
   mediaRoot: string
 }
 
@@ -58,6 +61,7 @@ export function desktop(): Promise<DesktopApp | null> {
       return {
         version: hello.version,
         mediaRoot: hello.mediaRoot,
+        features: hello.features ?? [],
         invoke: <T,>(cmd: string, args?: Record<string, unknown>) => invoke(cmd, args) as Promise<T>,
       }
     } catch (error) {
@@ -83,6 +87,16 @@ export async function invokeUpdater<T>(cmd: 'update_status' | 'update_restart' |
   const invoke = bridge()
   if (!invoke) return null
   return await invoke(cmd) as T
+}
+
+/** Whose window buttons the page draws: the app's own title bar is gone on macOS and Windows. */
+export type AppChrome = 'mac' | 'windows'
+
+export function appChrome(app: DesktopApp | null, userAgent = navigator.userAgent): AppChrome | null {
+  if (!app?.features.includes('titleBar')) return null
+  if (/Windows/.test(userAgent)) return 'windows'
+  if (/Macintosh|Mac OS X/.test(userAgent)) return 'mac'
+  return null
 }
 
 export function resetDesktopForTests(): void {

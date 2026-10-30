@@ -107,6 +107,13 @@
   button svg { width: 15px; height: 15px; color: var(--text-muted); }
   button[aria-busy="true"] svg { animation: spin 900ms linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* The window has no title bar of its own: this strip moves it, and on
+     Windows the page draws the buttons the system would. */
+  .titlebar { position: fixed; inset: 0 0 auto 0; height: 2rem; display: flex; justify-content: flex-end; }
+  .titlebar button { width: 2.875rem; height: 2rem; padding: 0; display: grid; place-items: center; border: 0; border-radius: 0; background: transparent; color: var(--text-muted); box-shadow: none; }
+  .titlebar button:hover { background: color-mix(in oklab, var(--text) 10%, transparent); color: var(--text); }
+  .titlebar button.close:hover { background: #c42b1c; color: #fff; }
+  .titlebar svg { width: 1rem; height: 1rem; }
   @keyframes breathe { from { opacity: 0.55; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
     :root { --press-scale: 1; }
@@ -117,6 +124,7 @@
 </style>
 </head>
 <body data-state="probing">
+<div class="titlebar" data-tauri-drag-region></div>
 <main>
   <svg class="mark" viewBox="150 40 220 424" aria-label="juntos.lol" role="img">
     <g transform="translate(-6,6)">
@@ -143,6 +151,21 @@
     document.documentElement.lang = 'en'
     document.getElementById('title').textContent = 'No connection'
     document.getElementById('retry-label').textContent = 'Try again'
+  }
+  if (/Windows/.test(navigator.userAgent)) {
+    const bar = document.querySelector('.titlebar')
+    const glyphs = { minimize: '<path d="M5 12h14"/>', toggle_maximize: '<rect x="6" y="6" width="12" height="12"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>' }
+    const names = english ? { minimize: 'Minimize', toggle_maximize: 'Maximize', close: 'Close' } : { minimize: 'Minimizar', toggle_maximize: 'Maximizar', close: 'Fechar' }
+    for (const cmd of ['minimize', 'toggle_maximize', 'close']) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = cmd === 'close' ? 'close' : ''
+      button.setAttribute('aria-label', names[cmd])
+      button.title = names[cmd]
+      button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" aria-hidden="true">${glyphs[cmd]}</svg>`
+      button.addEventListener('click', () => window.__TAURI_INTERNALS__?.invoke(`plugin:window|${cmd}`, { label: 'main' }))
+      bar.append(button)
+    }
   }
   const retry = document.getElementById('retry')
   let probing = false

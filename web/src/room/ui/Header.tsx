@@ -88,7 +88,7 @@ export function Header({ onPeople, waiting }: {
   const now = useNow(1000)
   const [shine, setShine] = useState(false)
   return (
-    <header className={styles.header}>
+    <header className={styles.header} data-tauri-drag-region>
       <div className={styles.start}>
         <span className={styles.live} aria-hidden="true" />
         <h1 className={styles.name}>{vm.name}</h1>

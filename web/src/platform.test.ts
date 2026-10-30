@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DESKTOP_MIN_PROTOCOL, DESKTOP_PROTOCOL, appUpdateRequired, desktop, isDesktop, resetDesktopForTests } from './platform'
+import { DESKTOP_MIN_PROTOCOL, DESKTOP_PROTOCOL, appChrome, appUpdateRequired, desktop, isDesktop, resetDesktopForTests } from './platform'
 
 type Internals = { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
 
@@ -52,5 +52,18 @@ describe('platform', () => {
   it('treats an app that refuses the hello as absent', async () => {
     installApp(async () => { throw new Error('not allowed') })
     expect(await desktop()).toBeNull()
+  })
+
+  it('draws the window buttons only for an app that hands the title bar to the page', async () => {
+    const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15'
+    const windows = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/130.0'
+    installApp(async () => ({ ...compatible, features: ['localSource', 'titleBar'] }))
+    const app = await desktop()
+    expect(appChrome(app, mac)).toBe('mac')
+    expect(appChrome(app, windows)).toBe('windows')
+    expect(appChrome(app, 'Mozilla/5.0 (X11; Linux x86_64)')).toBeNull()
+    installApp(async () => compatible)
+    expect(appChrome(await desktop(), mac)).toBeNull()
+    expect(appChrome(null, mac)).toBeNull()
   })
 })

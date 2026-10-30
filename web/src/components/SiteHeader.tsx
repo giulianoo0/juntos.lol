@@ -26,7 +26,7 @@ export function SiteHeader({ logo = true, you = true }: {
   const location = useLocation()
   const [shine, setShine] = useState(false)
   return (
-    <header className={styles.header}>
+    <header className={styles.header} data-tauri-drag-region>
       {logo ? (
         <Link
           className={styles.brand}

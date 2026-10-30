@@ -5,6 +5,8 @@
   gap: var(--space-5);
   height: 3.75rem;
   padding: 0 var(--space-6);
+  /* Clear of the app's window buttons, where the page draws them. */
+  padding-inline: max(var(--space-6), var(--chrome-start, 0px)) max(var(--space-6), var(--chrome-end, 0px));
   flex: none;
 }
 

@@ -1,0 +1,44 @@
+/* The strip along the very top that moves the window wherever a page has
+   no header of its own; headers drag too, beside it. */
+.drag {
+  position: fixed;
+  inset: 0 var(--chrome-end, 0px) auto 0;
+  z-index: 60;
+  height: 0.75rem;
+}
+
+/* Windows' own buttons, flush in the corner as the system draws them. */
+.buttons {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+}
+
+.button {
+  display: grid;
+  place-items: center;
+  width: 2.875rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.button:hover {
+  background: color-mix(in oklab, var(--text) 10%, transparent);
+  color: var(--text);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--primary));
+  outline-offset: -2px;
+}
+
+.close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
