@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,6 +54,26 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Claims and OAuth codes travel in query strings; the access log keeps only
+// the path.
+func TestServerAccessLogLeavesQueryStringsOut(t *testing.T) {
+	var logged bytes.Buffer
+	previous := gin.DefaultWriter
+	gin.DefaultWriter = &logged
+	t.Cleanup(func() { gin.DefaultWriter = previous })
+	server := NewServer(testCfg(t), newTestStore(t), nil)
+
+	for _, target := range []string{
+		"/api/rooms/abc12345/client-media?claim=client:s3cret-claim",
+		"/api/auth/discord/callback?code=s3cret-code&state=s3cret-state",
+	} {
+		server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, target, nil))
+	}
+
+	require.Contains(t, logged.String(), "/api/rooms/abc12345/client-media")
+	require.NotContains(t, logged.String(), "s3cret")
 }
 
 func newServerWithWebDir(t *testing.T, webDir string) http.Handler {

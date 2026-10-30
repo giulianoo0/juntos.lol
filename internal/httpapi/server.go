@@ -71,7 +71,9 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	for _, apply := range opts {
 		apply(&options)
 	}
-	r := gin.Default()
+	r := gin.New()
+	// Query strings carry claims and OAuth codes: the access log keeps the path.
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipQueryString: true}), gin.Recovery())
 	if err := r.SetTrustedProxies(nil); err != nil {
 		panic("configure trusted proxies: " + err.Error())
 	}
