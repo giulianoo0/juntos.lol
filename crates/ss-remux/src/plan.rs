@@ -88,6 +88,8 @@ const BITMAP_SUBTITLE_CODECS: &[&str] = &["hdmv_pgs_subtitle", "dvd_subtitle", "
 const MAX_AUDIO_CHANNELS: u32 = 8;
 
 const AAC_BITRATE: u32 = 160_000;
+/// Bytes and microseconds FFmpeg may read off an input before muxing.
+const PROBE_SIZE: &str = "2000000";
 
 /// None means the track is dropped from the output — a codec outside the
 /// matrix or a layout we don't take never costs the whole file, since a
@@ -283,7 +285,10 @@ pub fn ffmpeg_args(
     if let Some(end) = end_seconds {
         args.extend(["-to".into(), format!("{end:.3}")]);
     }
+    // ffprobe already read the streams; a short probe spares the torrent a
+    // read of several megabytes before the first segment.
     for input in inputs {
+        args.extend(["-probesize".into(), PROBE_SIZE.into(), "-analyzeduration".into(), PROBE_SIZE.into()]);
         args.extend(["-protocol_whitelist".into(), "http,tcp".into(), "-i".into(), input.clone()]);
     }
     args.extend(["-map".into(), "0:v:0".into(), "-c:v".into(), "copy".into()]);
@@ -298,6 +303,10 @@ pub fn ffmpeg_args(
             AudioAction::ConvertAac => args.extend([
                 format!("-c:a:{out_index}"),
                 "aac".into(),
+                // The default coder is most of a remux's cost; at 160 kb/s
+                // stereo the fast one is indistinguishable.
+                format!("-aac_coder:a:{out_index}"),
+                "fast".into(),
                 format!("-b:a:{out_index}"),
                 AAC_BITRATE.to_string(),
                 format!("-filter:a:{out_index}"),
@@ -471,8 +480,26 @@ mod tests {
         assert!(joined.ends_with("r2_client_stream_%v.m3u8"));
         assert!(joined.contains("v:0,agroup:aud a:0,agroup:aud,language:eng,default:yes a:1,agroup:aud,language:por"));
         assert!(joined.contains("-c:a:0 copy"));
-        assert!(joined.contains("-c:a:1 aac -b:a:1 160000"));
+        assert!(joined.contains("-b:a:1 160000"));
         assert!(joined.contains("-hls_segment_options movflags=+frag_discont"));
+    }
+
+    #[test]
+    fn converted_audio_uses_the_fast_aac_coder() {
+        let plan = plan_streams(PROBE).unwrap();
+        let joined = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "", &plan, 0.0, None).join(" ");
+        assert!(joined.contains("-c:a:1 aac -aac_coder:a:1 fast"));
+        assert!(!joined.contains("-aac_coder:a:0"), "a copied track has no coder");
+    }
+
+    #[test]
+    fn every_input_is_opened_with_a_short_probe() {
+        let plan = plan_streams(PROBE).unwrap();
+        let inputs: Vec<String> = ["v", "a"].iter().map(|s| format!("http://127.0.0.1:9/in/{s}")).collect();
+        let joined = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, 0.0, None).join(" ");
+        for input in &inputs {
+            assert!(joined.contains(&format!("-probesize 2000000 -analyzeduration 2000000 -protocol_whitelist http,tcp -i {input}")));
+        }
     }
 
     #[test]
