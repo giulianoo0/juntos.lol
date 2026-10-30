@@ -14,7 +14,7 @@ use rand::RngCore;
 use crate::range::parse_range;
 use crate::source::ByteSource;
 
-use super::sink::{object_kind, ObjectKind, Sink};
+use super::sink::{object_kind, ObjectKind, Sink, Storing};
 
 /// The loopback bridge: FFmpeg's whole world. One listener on 127.0.0.1,
 /// an ephemeral port, and per-run random capabilities on both sides —
@@ -108,12 +108,13 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
     };
     let ranged = headers.get(header::RANGE).is_some();
     let total = end - start + 1;
-    tracing::info!(reader = %target.reader, start, end, "remux input request");
+    tracing::debug!(reader = %target.reader, start, end, "remux input request");
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(4);
     let chunk = target.source.chunk_size();
     const STRIDE: u64 = 16 * 1024 * 1024;
     let trace_tag = format!("{} start={start}", target.reader);
-    tokio::spawn(async move {
+    let hung_up = tx.clone();
+    let pump = async move {
         let mut position = start;
         let mut sent: u64 = 0;
         let mut logged: u64 = 0;
@@ -140,7 +141,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
             let mut reader = match opened {
                 Ok(r) => {
                     if sent == 0 {
-                        tracing::info!(reader = %target.reader, position, "remux input open ok");
+                        tracing::debug!(reader = %target.reader, position, "remux input open ok");
                     }
                     r
                 }
@@ -173,7 +174,7 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                         sent += n as u64;
                         if logged == 0 || sent - logged >= 64 * 1024 * 1024 {
                             logged = sent;
-                            tracing::info!(reader = %target.reader, start, sent, "remux input flowing");
+                            tracing::debug!(reader = %target.reader, start, sent, "remux input flowing");
                         }
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(180),
@@ -197,7 +198,15 @@ async fn read_input(State(state): State<BridgeState>, Path(cap): Path<String>, h
                 }
             }
         }
-        tracing::info!(reader = %target.reader, sent, "remux input range served");
+        tracing::debug!(reader = %target.reader, sent, "remux input range served");
+    };
+    // A reader stuck on the swarm must not hold its slot, and the window
+    // with it, once FFmpeg has gone.
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = hung_up.closed() => {}
+            _ = pump => {}
+        }
     });
     let body = Body::from_stream(Traced {
         inner: tokio_stream::wrappers::ReceiverStream::new(rx),
@@ -237,17 +246,17 @@ where
     ) -> std::task::Poll<Option<<Self as tokio_stream::Stream>::Item>> {
         if !self.polled {
             self.polled = true;
-            tracing::info!(tag = %self.tag, "remux input body first poll");
+            tracing::debug!(tag = %self.tag, "remux input body first poll");
         }
         let poll = std::pin::Pin::new(&mut self.inner).poll_next(cx);
         if let std::task::Poll::Ready(Some(Ok(chunk))) = &poll {
             if self.yielded == 0 {
-                tracing::info!(tag = %self.tag, len = chunk.len(), "remux input body first chunk to hyper");
+                tracing::debug!(tag = %self.tag, len = chunk.len(), "remux input body first chunk to hyper");
             }
             self.yielded += chunk.len() as u64;
         }
         if let std::task::Poll::Ready(None) = &poll {
-            tracing::info!(tag = %self.tag, yielded = self.yielded, "remux input body done");
+            tracing::debug!(tag = %self.tag, yielded = self.yielded, "remux input body done");
         }
         poll
     }
@@ -258,7 +267,7 @@ async fn write_output(
     Path((cap, name)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    tracing::info!(name = %name, "remux output request");
+    tracing::debug!(name = %name, "remux output request");
     let Some(sink) = state.outputs.lock().get(&cap).cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -269,6 +278,17 @@ async fn write_output(
         return StatusCode::FORBIDDEN.into_response();
     };
     let body = request.into_body();
+    // FFmpeg closes each connection right after its body, and hyper drops
+    // the handler of a closed connection: the store runs on its own task,
+    // and the drain waits for it.
+    let storing = sink.storing();
+    match tokio::spawn(store_output(sink, name, kind, body, storing)).await {
+        Ok(response) => response,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn store_output(sink: Arc<Sink>, name: String, kind: ObjectKind, body: Body, _storing: Storing) -> Response {
     match kind {
         ObjectKind::Manifest => {
             let bytes = match axum::body::to_bytes(body, 512 * 1024).await {
@@ -290,5 +310,62 @@ async fn write_output(
                 StatusCode::CONFLICT.into_response()
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::source::SourceReader;
+
+    /// A source that never delivers, and says when its reader is let go.
+    struct Stuck(Arc<AtomicBool>);
+
+    struct StuckReader(Arc<AtomicBool>);
+
+    impl Drop for StuckReader {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl ByteSource for Stuck {
+        fn size(&self) -> u64 {
+            1 << 20
+        }
+        async fn open(&self, _reader: &str, _position: u64) -> anyhow::Result<Box<dyn SourceReader>> {
+            Ok(Box::new(StuckReader(self.0.clone())))
+        }
+    }
+
+    #[async_trait]
+    impl SourceReader for StuckReader {
+        async fn read(&mut self, _buf: &mut [u8]) -> anyhow::Result<usize> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reader_is_let_go_as_soon_as_ffmpeg_hangs_up() {
+        let bridge = Bridge::start().await.unwrap();
+        let released = Arc::new(AtomicBool::new(false));
+        let (url, _) = bridge.register_input(InputTarget { source: Arc::new(Stuck(released.clone())), reader: "remux:t:0".into() });
+        let response = reqwest::get(&url).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!released.load(Ordering::SeqCst));
+        drop(response);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !released.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the reader outlived the connection");
     }
 }

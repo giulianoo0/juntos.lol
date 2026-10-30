@@ -121,7 +121,9 @@ pub fn extractor_args(input_url: &str, dir: &Path, plan: &SourcePlan, start_ms: 
     if start_ms > 0 && seek_ms > 0 {
         args.extend(["-ss".into(), format!("{:.3}", seek_ms as f64 / 1000.0)]);
     }
-    args.extend(["-copyts".into(), "-protocol_whitelist".into(), "http,tcp".into(), "-i".into(), input_url.into()]);
+    args.push("-copyts".into());
+    args.extend(crate::plan::INPUT_GUARD.iter().map(|s| s.to_string()));
+    args.extend(["-i".into(), input_url.into()]);
     let to: Vec<String> = if end_ms > 0 {
         vec!["-to".into(), format!("{:.3}", (end_ms + TAIL_MS) as f64 / 1000.0)]
     } else {
@@ -285,10 +287,9 @@ impl Extractor {
         let output = tokio::time::timeout(
             Duration::from_secs(120),
             tokio::process::Command::new(&self.ffmpeg_path)
-                .args([
-                    "-nostdin", "-v", "error", "-dump_attachment:t", "", "-protocol_whitelist", "http,tcp",
-                    "-i", &self.input_url, "-t", "0", "-f", "null", "/dev/null",
-                ])
+                .args(["-nostdin", "-v", "error", "-dump_attachment:t", ""])
+                .args(crate::plan::INPUT_GUARD)
+                .args(["-i", &self.input_url, "-t", "0", "-f", "null", "/dev/null"])
                 .current_dir(&fonts_dir)
                 .env_clear()
                 .envs(ss_media::tools::tool_env())

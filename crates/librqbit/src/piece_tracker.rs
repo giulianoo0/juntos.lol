@@ -361,7 +361,8 @@ impl PieceTracker {
         file_infos: &FileInfos,
         new_only_files: &HashSet<usize>,
     ) -> anyhow::Result<crate::chunk_tracker::HaveNeededSelected> {
-        self.chunks.update_only_files(file_infos, new_only_files)
+        let inflight: HashSet<usize> = self.inflight.keys().map(|p| p.get_usize()).collect();
+        self.chunks.update_only_files_except(file_infos, new_only_files, |i| inflight.contains(&i))
     }
 
     /// ss patch: select pieces directly, for a streaming reader that only
@@ -370,7 +371,8 @@ impl PieceTracker {
         &mut self,
         selected: crate::type_aliases::BF,
     ) -> anyhow::Result<crate::chunk_tracker::HaveNeededSelected> {
-        self.chunks.update_selected_pieces(selected)
+        let inflight: HashSet<usize> = self.inflight.keys().map(|p| p.get_usize()).collect();
+        self.chunks.update_selected_pieces_except(selected, |i| inflight.contains(&i))
     }
 
     /// ss patch: give up pieces the window has left behind, so their storage
@@ -886,5 +888,37 @@ mod tests {
             }
             _ => panic!("Expected Stolen, got {:?}", result),
         }
+    }
+
+    #[test]
+    fn a_piece_in_flight_is_not_queued_again_when_the_window_returns_to_it() {
+        let mut tracker = PieceTracker::new(make_test_chunk_tracker(3));
+        let file_infos = make_test_file_infos(3);
+        let file_priorities = make_default_file_priorities(&file_infos);
+        let mut acquire = |tracker: &mut PieceTracker| {
+            tracker.acquire_piece(AcquireRequest {
+                peer: peer(1),
+                peer_avg_time: None,
+                priority_pieces: std::iter::empty(),
+                file_priorities: &file_priorities,
+                file_infos: &file_infos,
+                peer_has_piece: |p| p.get() == 1,
+                can_steal: |_| true,
+            })
+        };
+        let selection = |on: &[usize]| {
+            let mut bf = BF::from_boxed_slice(vec![0u8; 1].into_boxed_slice());
+            for &i in on {
+                bf.set(i, true);
+            }
+            bf
+        };
+
+        assert!(matches!(acquire(&mut tracker), AcquireResult::Reserved(p) if p.get() == 1));
+        tracker.update_selected_pieces(selection(&[0, 2])).unwrap();
+        tracker.update_selected_pieces(selection(&[0, 1, 2])).unwrap();
+
+        let again = acquire(&mut tracker);
+        assert!(matches!(again, AcquireResult::NoneAvailable), "piece 1 handed out twice: {again:?}");
     }
 }

@@ -88,7 +88,23 @@ pub struct Sink {
     closed_tx: Mutex<Option<mpsc::UnboundedSender<ClosedObject>>>,
     cancelled: AtomicBool,
     serial: std::sync::atomic::AtomicU64,
+    stores: Arc<Mutex<(usize, std::time::Instant)>>,
 }
+
+/// One output body being stored; the sink is not settled while it lives.
+pub struct Storing(Arc<Mutex<(usize, std::time::Instant)>>);
+
+impl Drop for Storing {
+    fn drop(&mut self) {
+        let mut held = self.0.lock();
+        held.0 -= 1;
+        held.1 = std::time::Instant::now();
+    }
+}
+
+/// How long the outputs stay quiet before an exited FFmpeg counts as
+/// delivered: its last connections may still be in the accept queue.
+const SETTLE_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl Sink {
     pub fn new(dir: PathBuf, spool_bytes: u64, object_cap: u64) -> anyhow::Result<(Arc<Self>, mpsc::UnboundedReceiver<ClosedObject>)> {
@@ -105,6 +121,7 @@ impl Sink {
                 closed_tx: Mutex::new(Some(tx)),
                 cancelled: AtomicBool::new(false),
                 serial: std::sync::atomic::AtomicU64::new(0),
+                stores: Arc::new(Mutex::new((0, std::time::Instant::now()))),
             }),
             rx,
         ))
@@ -119,6 +136,21 @@ impl Sink {
     /// Nothing else will be produced: the uploader drains what exists and ends.
     pub fn close_producer(&self) {
         self.closed_tx.lock().take();
+    }
+
+    pub fn storing(&self) -> Storing {
+        let mut held = self.stores.lock();
+        held.0 += 1;
+        held.1 = std::time::Instant::now();
+        Storing(self.stores.clone())
+    }
+
+    /// No body is being stored and none arrived for a beat: what FFmpeg
+    /// sent before it exited is in, the last segments and the playlists
+    /// that end them included.
+    pub fn settled(&self) -> bool {
+        let (open, last) = *self.stores.lock();
+        open == 0 && last.elapsed() >= SETTLE_QUIET
     }
 
     pub fn cancelled(&self) -> bool {
@@ -214,7 +246,7 @@ impl Sink {
         if size == 0 {
             bail!("empty object");
         }
-        tracing::info!(name, size, "media object closed");
+        tracing::debug!(name, size, "media object closed");
         Ok(ClosedObject {
             name: name.to_string(),
             path: self.dir.join(name),

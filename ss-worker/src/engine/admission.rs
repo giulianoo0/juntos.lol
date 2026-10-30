@@ -11,6 +11,7 @@ pub enum Rejection {
     DiskFull,
     NoMetadata,
     NotVideo,
+    TooManyFiles,
     NoSuchFile,
     Unknown,
     Internal(anyhow::Error),
@@ -25,6 +26,7 @@ impl Rejection {
             Rejection::DiskFull => "disk_full",
             Rejection::NoMetadata => "no_metadata",
             Rejection::NotVideo => "not_video",
+            Rejection::TooManyFiles => "too_many_files",
             Rejection::NoSuchFile => "no_such_file",
             Rejection::Unknown => "unknown_torrent",
             Rejection::Internal(_) => "internal",
@@ -104,16 +106,31 @@ pub fn is_sidecar(name: &str, size: u64) -> bool {
 /// Passes when the torrent's bytes are overwhelmingly video, with sidecar
 /// subtitles and small extras tolerated.
 pub fn screen_video_only(info: &librqbit::ValidatedTorrentMetaV1Info<librqbit::ByteBufOwned>) -> Result<(), Rejection> {
-    let mut video = 0u64;
-    let mut total = 0u64;
-    for file in info.iter_file_details() {
-        if file.attrs().padding {
-            continue;
+    let files: Vec<(String, u64)> = info
+        .iter_file_details()
+        .filter(|file| !file.attrs().padding)
+        .map(|file| (file.filename.to_string(), file.len))
+        .collect();
+    screen_files(files.iter().map(|(name, len)| (name.as_str(), *len)))
+}
+
+/// The lease result lists every file, and the server drops a control link
+/// whose frame passes 4 MiB: a torrent of tens of thousands of files would
+/// cut the link of every room on this worker.
+const MAX_FILES: usize = 2_000;
+const MAX_LISTING_BYTES: usize = 1024 * 1024;
+
+fn screen_files<'a>(files: impl IntoIterator<Item = (&'a str, u64)>) -> Result<(), Rejection> {
+    let (mut video, mut total, mut count, mut listing) = (0u64, 0u64, 0usize, 0usize);
+    for (name, len) in files {
+        count += 1;
+        listing += name.len();
+        if count > MAX_FILES || listing > MAX_LISTING_BYTES {
+            return Err(Rejection::TooManyFiles);
         }
-        let name = file.filename.to_string();
-        total += file.len;
-        if is_video(&name) {
-            video += file.len;
+        total += len;
+        if is_video(name) {
+            video += len;
         }
     }
     if video == 0 || video * 10 < total * 8 {
@@ -144,4 +161,24 @@ pub fn lease_info(handle: &Handle) -> anyhow::Result<LeaseInfo> {
         name: handle.name().unwrap_or_else(|| "torrent".into()),
         files,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_video_torrent_passes() {
+        assert!(screen_files([("Film.mkv", 4_000_000_000u64), ("Film.srt", 80_000)]).is_ok());
+        assert!(matches!(screen_files([("notes.txt", 10u64)]), Err(Rejection::NotVideo)));
+    }
+
+    #[test]
+    fn a_listing_too_big_for_the_control_link_is_refused() {
+        let many: Vec<(String, u64)> = (0..5_000).map(|i| (format!("ep{i}.mkv"), 1_000_000)).collect();
+        assert!(matches!(screen_files(many.iter().map(|(n, s)| (n.as_str(), *s))), Err(Rejection::TooManyFiles)));
+        let long = "x".repeat(200_000) + ".mkv";
+        let wide: Vec<(&str, u64)> = (0..10).map(|_| (long.as_str(), 1_000_000)).collect();
+        assert!(matches!(screen_files(wide), Err(Rejection::TooManyFiles)));
+    }
 }

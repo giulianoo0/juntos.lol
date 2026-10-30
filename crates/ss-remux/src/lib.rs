@@ -10,6 +10,8 @@ pub mod sink;
 pub mod subs;
 pub mod upload;
 pub mod youtube;
+#[cfg(test)]
+mod run_tests;
 #[cfg(feature = "live")]
 pub mod live;
 
@@ -327,15 +329,7 @@ impl Remux {
         }
         let (probe_url, probe_cap) =
             bridge.register_input(InputTarget { source: source.clone(), reader: format!("remux-key:{}", spec.run_id) });
-        let target = spec.start_ms as f64 / 1000.0;
-        let key_args: Vec<String> = [
-            "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
-            "-show_entries", "frame=pts_time", "-print_format", "json",
-            "-read_intervals", &format!("{target:.3}%+#1"), &probe_url,
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let key_args = plan::keyframe_args(&probe_url, spec.start_ms as f64 / 1000.0);
         let output = process::run_capture(&self.cfg.ffprobe_path, &key_args, Duration::from_secs(120)).await;
         bridge.revoke(&probe_cap, "");
         plan::first_frame_pts(&output.ok()?)
@@ -347,6 +341,7 @@ impl Remux {
 
     async fn execute(self: &Arc<Self>, input: RunInput, spec: &Spec, entry: &Arc<RunEntry>) -> anyhow::Result<()> {
         let _slot = self.slots.clone().acquire_owned().await?;
+        let began = std::time::Instant::now();
         let bridge = self.bridge.get_or_try_init(|| Bridge::start()).await.context("bridge start")?.clone();
 
         // One byte source per FFmpeg input, the video first; and the plan,
@@ -357,11 +352,7 @@ impl Remux {
                 RunInput::Container(bytes) => {
                     let (probe_url, probe_cap) =
                         bridge.register_input(InputTarget { source: bytes.clone(), reader: format!("remux-probe:{}", spec.run_id) });
-                    let probe_args: Vec<String> =
-                        ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", &probe_url]
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect();
+                    let probe_args = plan::probe_args(&probe_url);
                     let (probed, keyframe) = tokio::join!(
                         process::run_capture(&self.cfg.ffprobe_path, &probe_args, Duration::from_secs(120)),
                         self.keyframe_before(&bridge, &bytes, spec),
@@ -529,6 +520,22 @@ impl Remux {
                 if let Some(status) = process_done? {
                     break 'attempts Some((status, stderr_tail.clone()));
                 }
+                // The uploader only ends early by failing; waiting on it would
+                // freeze the region until the spool's stall gives up.
+                if upload_task.is_finished() {
+                    let failed = match (&mut upload_task).await {
+                        Ok(Ok(())) => anyhow::anyhow!("uploads ended before the run"),
+                        Ok(Err(e)) => e,
+                        Err(e) => e.into(),
+                    };
+                    let mut process = entry.process.lock().take();
+                    if let Some(process) = process.as_mut() {
+                        process.kill().await;
+                    }
+                    cleanup(&bridge);
+                    run_sink.destroy().await;
+                    return Err(failed);
+                }
                 // Until the region shows its first frames, a finished upload
                 // is published at once (the rest of its batch a beat later)
                 // instead of on the next tick: that is the seek's wait.
@@ -609,14 +616,28 @@ impl Remux {
             }
         }
         entry.status.lock().state = state::DRAINING;
-        run_sink.close_producer();
         // ffmpeg can finish long before the uploads do (many small audio
         // segments, ~600 ms a PUT): keep confirming what landed, so the
-        // region grows with the uploads instead of all at the end.
+        // region grows with the uploads instead of all at the end. The
+        // producer closes once the bodies ffmpeg left behind are stored;
+        // one waiting on spool the rounds free must not hold it forever.
+        const SETTLE_LIMIT: Duration = Duration::from_secs(30);
+        let settle_by = tokio::time::Instant::now() + SETTLE_LIMIT;
+        let mut settle = tokio::time::interval(Duration::from_millis(50));
+        let mut producing = true;
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         let uploads = loop {
             tokio::select! {
                 result = &mut upload_task => break result,
+                _ = settle.tick(), if producing => {
+                    if run_sink.settled() || tokio::time::Instant::now() >= settle_by {
+                        if !run_sink.settled() {
+                            tracing::warn!(run = %spec.run_id, "remux outputs still storing after ffmpeg exited");
+                        }
+                        run_sink.close_producer();
+                        producing = false;
+                    }
+                }
                 _ = ticker.tick() => {
                     if Self::cancelled(entry) {
                         upload_task.abort();
@@ -672,6 +693,18 @@ impl Remux {
                 tracing::warn!(run = %spec.run_id, "subtitle pass outlived the run; dropped");
             }
         }
+        let (objects, bytes) = publisher.totals();
+        tracing::info!(
+            run = %spec.run_id,
+            room = %spec.room_id,
+            region = spec.region,
+            start_ms = offset_ms,
+            produced_ms = entry.status.lock().produced_ms,
+            objects,
+            mib = bytes / (1024 * 1024),
+            secs = began.elapsed().as_secs(),
+            "remux run done",
+        );
         cleanup(&bridge);
         run_sink.destroy().await;
         Ok(())

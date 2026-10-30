@@ -358,12 +358,21 @@ impl ChunkTracker {
         file_infos: &FileInfos,
         new_only_files: &HashSet<usize>,
     ) -> anyhow::Result<HaveNeededSelected> {
+        self.update_only_files_except(file_infos, new_only_files, |_| false)
+    }
+
+    pub fn update_only_files_except(
+        &mut self,
+        file_infos: &FileInfos,
+        new_only_files: &HashSet<usize>,
+        in_flight: impl Fn(usize) -> bool,
+    ) -> anyhow::Result<HaveNeededSelected> {
         let selected = compute_selected_pieces(
             &self.lengths,
             |idx| new_only_files.contains(&idx),
             file_infos,
         );
-        self.update_selected_pieces(selected)
+        self.update_selected_pieces_except(selected, in_flight)
     }
 
     /// Selects an arbitrary set of pieces, rather than deriving the set from
@@ -375,6 +384,19 @@ impl ChunkTracker {
     pub fn update_selected_pieces(
         &mut self,
         selected: BF,
+    ) -> anyhow::Result<HaveNeededSelected> {
+        self.update_selected_pieces_except(selected, |_| false)
+    }
+
+    /// ss patch: `in_flight` names the pieces a peer is fetching right now.
+    /// One that left the window and came back while still in flight is not
+    /// queued again: requeueing it wiped its chunk progress and handed it to
+    /// a second peer, or to the same one, which then requested every chunk
+    /// twice.
+    pub fn update_selected_pieces_except(
+        &mut self,
+        selected: BF,
+        in_flight: impl Fn(usize) -> bool,
     ) -> anyhow::Result<HaveNeededSelected> {
         if selected.len() != self.selected.len() {
             anyhow::bail!(
@@ -393,7 +415,7 @@ impl ChunkTracker {
             for idx in self
                 .selected
                 .iter_ones()
-                .filter(|idx| !prev_selected[*idx] && !self.have.as_slice()[*idx])
+                .filter(|idx| !prev_selected[*idx] && !self.have.as_slice()[*idx] && !in_flight(*idx))
             {
                 b.set(idx, true);
             }
