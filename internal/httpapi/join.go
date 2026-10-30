@@ -111,9 +111,6 @@ func previewRoom(store *room.Store) gin.HandlerFunc {
 	}
 }
 
-// requestIP is the client address to rate-limit on. Behind the edge the
-// server sees the edge, so the address the edge vouches for wins; directly,
-// the socket's own, since anyone can write that header.
 // requestIP is the client's address. Behind Cloudflare that is the edge's
 // CF-Connecting-IP, but only on a request Cloudflare brought: the origin
 // answers anyone who finds it, and they write the header themselves.

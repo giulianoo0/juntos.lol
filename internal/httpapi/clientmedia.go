@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"log/slog"
@@ -765,7 +766,7 @@ func authorizeClaimValue(c *gin.Context, store *room.Store, roomID, claim string
 		return nil, false
 	}
 	held, err := store.UploadID(c.Request.Context(), roomID)
-	if err != nil || held == "" || held != claim {
+	if err != nil || held == "" || subtle.ConstantTimeCompare([]byte(held), []byte(claim)) != 1 {
 		c.JSON(http.StatusForbidden, gin.H{"error": "claim_mismatch"})
 		return nil, false
 	}
