@@ -2,19 +2,20 @@ import { useSyncExternalStore } from 'react'
 import { setJLocalAppMuted, setJLocalAudioMode, type JLocalAudioMode } from './audio'
 
 /**
- * Which sounds a companion share carries: the whole mix, nothing, or the mix
- * minus the apps the person switched off. The choice outlives one share (it
- * is kept in storage) and is pushed to the app whenever it changes, since the
- * app keeps no memory of it across restarts.
+ * Which sounds a companion or desktop-app share carries: the whole mix,
+ * nothing, or the mix minus the apps the person switched off. The choice
+ * outlives one share (it is kept in storage) and is pushed to jlocal whenever
+ * it changes, since jlocal keeps no memory of it across restarts. Discord
+ * starts off: the call would come back to everyone in it as an echo.
  */
 export interface SoundChoice {
   enabled: boolean
-  /** App ids (`/audio/apps`) left out of the mix while `enabled`. */
+  /** App ids (jlocal's `/audio/apps`, the app's `audio_apps`) left out of the mix while `enabled`. */
   muted: readonly string[]
 }
 
 const STORAGE_KEY = 'ss.jlocal-sound.v1'
-const DEFAULT_CHOICE: SoundChoice = { enabled: true, muted: [] }
+const DEFAULT_CHOICE: SoundChoice = { enabled: true, muted: ['discord'] }
 
 let current: SoundChoice = load()
 const listeners = new Set<() => void>()

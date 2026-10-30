@@ -37,6 +37,7 @@ function bridge(): Invoke | null {
 }
 
 let handshake: Promise<DesktopApp | null> | null = null
+let settled: DesktopApp | null = null
 let refused = false
 let required = false
 
@@ -58,12 +59,13 @@ export function desktop(): Promise<DesktopApp | null> {
         required = hello?.updateRequired === true
         return null
       }
-      return {
+      settled = {
         version: hello.version,
         mediaRoot: hello.mediaRoot,
         features: hello.features ?? [],
         invoke: <T,>(cmd: string, args?: Record<string, unknown>) => invoke(cmd, args) as Promise<T>,
       }
+      return settled
     } catch (error) {
       console.warn('desktop app hello failed', error)
       refused = true
@@ -71,6 +73,14 @@ export function desktop(): Promise<DesktopApp | null> {
     }
   })()
   return handshake
+}
+
+/**
+ * The app as its hello left it, for a decision that cannot wait on a
+ * promise (inside a click); null in a browser and until the hello settles.
+ */
+export function settledDesktop(): DesktopApp | null {
+  return settled
 }
 
 /** Whether the app carrying the page is too old for this site: its update is not optional. */
@@ -101,6 +111,7 @@ export function appChrome(app: DesktopApp | null, userAgent = navigator.userAgen
 
 export function resetDesktopForTests(): void {
   handshake = null
+  settled = null
   refused = false
   required = false
 }
