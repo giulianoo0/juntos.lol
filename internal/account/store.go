@@ -523,7 +523,7 @@ type RoomInvite struct {
 }
 
 func (s *Store) AddInvite(ctx context.Context, to int64, invite RoomInvite) error {
-	if _, err := s.pool.Exec(ctx, "DELETE FROM room_invites WHERE expires_at < now()"); err != nil {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM room_invites WHERE expires_at < $1", invite.At); err != nil {
 		return err
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO room_invites (to_id, from_id, room_id, at, expires_at)
