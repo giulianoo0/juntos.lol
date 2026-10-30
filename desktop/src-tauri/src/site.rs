@@ -23,6 +23,9 @@ pub fn site_origin(env: Option<&str>) -> Url {
 
 /// Hosts of Discord's OAuth pages, which the site's sign-in walks through.
 const SIGN_IN_HOSTS: &[&str] = &["discord.com", "www.discord.com"];
+/// Frames the site embeds: macOS asks about a frame's navigation as it asks
+/// about the window's, so the human check would otherwise open in the browser.
+const FRAME_HOSTS: &[&str] = &["challenges.cloudflare.com"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Navigation {
@@ -37,7 +40,7 @@ pub enum Navigation {
 /// The window holds the site, the bundled offline page and Discord's sign-in;
 /// any other web page opens in the browser.
 pub fn navigation(target: &Url, site: &Url) -> Navigation {
-    if target.as_str() == "about:blank" {
+    if target.as_str() == "about:blank" || target.as_str() == "about:srcdoc" {
         return Navigation::Allow;
     }
     match target.scheme() {
@@ -48,7 +51,7 @@ pub fn navigation(target: &Url, site: &Url) -> Navigation {
     if target.origin() == site.origin() || target.host_str() == Some("tauri.localhost") {
         return Navigation::Allow;
     }
-    if target.scheme() == "https" && target.host_str().is_some_and(|host| SIGN_IN_HOSTS.contains(&host)) {
+    if target.scheme() == "https" && target.host_str().is_some_and(|host| SIGN_IN_HOSTS.contains(&host) || FRAME_HOSTS.contains(&host)) {
         return Navigation::Allow;
     }
     Navigation::External
@@ -141,6 +144,15 @@ mod tests {
         assert_eq!(at("http://juntos.lol/"), Navigation::External);
         assert_eq!(at("file:///etc/passwd"), Navigation::Block);
         assert_eq!(at("javascript:alert(1)"), Navigation::Block);
+    }
+
+    #[test]
+    fn the_human_check_loads_in_its_frame() {
+        let site = site_origin(None);
+        let at = |s: &str| navigation(&Url::parse(s).unwrap(), &site);
+        assert_eq!(at("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/abc"), Navigation::Allow);
+        assert_eq!(at("about:srcdoc"), Navigation::Allow);
+        assert_eq!(at("http://challenges.cloudflare.com/"), Navigation::External);
     }
 
     #[test]

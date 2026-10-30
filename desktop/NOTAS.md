@@ -1,1 +1,1 @@
-Juntos no computador: torrent e YouTube tocam do seu PC, e o app se atualiza sozinho.
+Correção: a verificação "não sou robô" agora carrega dentro do app, então dá para criar sala e entrar.
