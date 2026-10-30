@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod hls;
 pub mod site;
+pub mod upload_plan;
 
 pub fn run() {
     tauri::Builder::default()
