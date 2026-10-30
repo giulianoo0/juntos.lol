@@ -4369,6 +4369,7 @@ name = "ss-remux"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum 0.7.9",
  "bytes",
  "futures",

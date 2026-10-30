@@ -32,4 +32,5 @@ url = { version = "2", optional = true }
 live = ["dep:moq-net", "dep:moq-native", "dep:moq-mux", "dep:url"]
 
 [dev-dependencies]
+async-trait = "0.1"
 tokio = { version = "1", features = ["full", "test-util"] }

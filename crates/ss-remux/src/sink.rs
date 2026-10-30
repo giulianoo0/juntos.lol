@@ -88,7 +88,24 @@ pub struct Sink {
     closed_tx: Mutex<Option<mpsc::UnboundedSender<ClosedObject>>>,
     cancelled: AtomicBool,
     serial: std::sync::atomic::AtomicU64,
+    stores: Arc<Mutex<(usize, std::time::Instant)>>,
 }
+
+/// One output body being stored; the sink is not settled while it lives.
+pub struct Storing(Arc<Mutex<(usize, std::time::Instant)>>);
+
+impl Drop for Storing {
+    fn drop(&mut self) {
+        let mut held = self.0.lock();
+        held.0 -= 1;
+        held.1 = std::time::Instant::now();
+    }
+}
+
+/// How long the outputs stay quiet before an exited FFmpeg counts as
+/// delivered: its last connections may still be in the accept queue.
+const SETTLE_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
+const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Sink {
     pub fn new(dir: PathBuf, spool_bytes: u64, object_cap: u64) -> anyhow::Result<(Arc<Self>, mpsc::UnboundedReceiver<ClosedObject>)> {
@@ -105,6 +122,7 @@ impl Sink {
                 closed_tx: Mutex::new(Some(tx)),
                 cancelled: AtomicBool::new(false),
                 serial: std::sync::atomic::AtomicU64::new(0),
+                stores: Arc::new(Mutex::new((0, std::time::Instant::now()))),
             }),
             rx,
         ))
@@ -119,6 +137,30 @@ impl Sink {
     /// Nothing else will be produced: the uploader drains what exists and ends.
     pub fn close_producer(&self) {
         self.closed_tx.lock().take();
+    }
+
+    pub fn storing(&self) -> Storing {
+        let mut held = self.stores.lock();
+        held.0 += 1;
+        held.1 = std::time::Instant::now();
+        Storing(self.stores.clone())
+    }
+
+    /// Waits out the bodies FFmpeg sent before it exited, so the last
+    /// segments and the playlists that end them are in before the drain.
+    pub async fn settle(&self) {
+        let deadline = std::time::Instant::now() + SETTLE_LIMIT;
+        loop {
+            let (open, last) = *self.stores.lock();
+            if open == 0 && last.elapsed() >= SETTLE_QUIET {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!(open, "remux outputs still storing after ffmpeg exited");
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
     }
 
     pub fn cancelled(&self) -> bool {

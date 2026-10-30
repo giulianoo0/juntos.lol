@@ -10,6 +10,8 @@ pub mod sink;
 pub mod subs;
 pub mod upload;
 pub mod youtube;
+#[cfg(test)]
+mod run_tests;
 #[cfg(feature = "live")]
 pub mod live;
 
@@ -609,6 +611,7 @@ impl Remux {
             }
         }
         entry.status.lock().state = state::DRAINING;
+        run_sink.settle().await;
         run_sink.close_producer();
         // ffmpeg can finish long before the uploads do (many small audio
         // segments, ~600 ms a PUT): keep confirming what landed, so the

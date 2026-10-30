@@ -14,7 +14,7 @@ use rand::RngCore;
 use crate::range::parse_range;
 use crate::source::ByteSource;
 
-use super::sink::{object_kind, ObjectKind, Sink};
+use super::sink::{object_kind, ObjectKind, Sink, Storing};
 
 /// The loopback bridge: FFmpeg's whole world. One listener on 127.0.0.1,
 /// an ephemeral port, and per-run random capabilities on both sides —
@@ -269,6 +269,17 @@ async fn write_output(
         return StatusCode::FORBIDDEN.into_response();
     };
     let body = request.into_body();
+    // FFmpeg closes each connection right after its body, and hyper drops
+    // the handler of a closed connection: the store runs on its own task,
+    // and the drain waits for it.
+    let storing = sink.storing();
+    match tokio::spawn(store_output(sink, name, kind, body, storing)).await {
+        Ok(response) => response,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn store_output(sink: Arc<Sink>, name: String, kind: ObjectKind, body: Body, _storing: Storing) -> Response {
     match kind {
         ObjectKind::Manifest => {
             let bytes = match axum::body::to_bytes(body, 512 * 1024).await {

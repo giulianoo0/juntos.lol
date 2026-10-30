@@ -468,8 +468,11 @@ pub fn ffmpeg_args(
         var_map.join(" "),
         "-method".into(),
         "PUT".into(),
+        // A persistent connection never reads its responses, so FFmpeg's exit
+        // resets it and the kernel throws away the trailer still queued on
+        // it: the last segments and the playlist that ends them.
         "-http_persistent".into(),
-        "1".into(),
+        "0".into(),
         format!("{sink_base}/{prefix}client_stream_%v.m3u8"),
     ]);
     args
