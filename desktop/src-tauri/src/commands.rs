@@ -101,7 +101,7 @@ pub async fn youtube_resolve(state: State<'_, AppState>, url: String) -> Result<
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PrepareSource {
     Torrent { id: String, index: usize, title: String },
     Youtube { url: String, video_id: String, title: String },
@@ -229,4 +229,16 @@ pub fn update_restart(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn update_now(app: tauri::AppHandle) -> Result<(), String> {
     crate::updates::check_once(&app).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_youtube_source_reads_as_the_site_sends_it() {
+        let source: PrepareSource =
+            serde_json::from_str(r#"{"kind":"youtube","url":"https://youtu.be/x","videoId":"x","title":"Filme"}"#).unwrap();
+        assert!(matches!(source, PrepareSource::Youtube { video_id, .. } if video_id == "x"));
+    }
 }
