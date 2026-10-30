@@ -324,6 +324,11 @@ func (o *RemuxOrchestrator) dispatchStart(ctx context.Context, run *RemuxRun) er
 			PutConcurrency: 4,
 		},
 	}
+	// Read at every dispatch: a viewer's link can turn a rendition on while
+	// the room is mid-run, and the next region should already carry it.
+	if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil {
+		spec.Renditions = storedRoom.Renditions
+	}
 	job := Job{
 		Kind:     "remuxStart",
 		JobID:    "rx_" + randomID(6),

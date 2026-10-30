@@ -152,7 +152,10 @@ type Room struct {
 	// LocalSource: the media lives in the host's desktop app, which plays it
 	// from its own cache and uploads only while a browser needs it. It stays
 	// true through uploading and ready, until the source is swapped.
-	LocalSource         bool           `json:"localSource,omitempty"`
+	LocalSource bool `json:"localSource,omitempty"`
+	// Renditions the producer adds beside the source's own, such as "480p"
+	// once a viewer's link proved too thin for it.
+	Renditions          []string       `json:"renditions,omitempty"`
 	OwnerToken          string         `json:"-"`
 	AudioTracks         []TrackInfo    `json:"audioTracks"`
 	SubtitleTracks      []TrackInfo    `json:"subtitleTracks"`

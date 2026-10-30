@@ -421,6 +421,31 @@ func TestALocalSourceIsMarkedUntilTheNextSwap(t *testing.T) {
 	require.False(t, r.LocalSource)
 }
 
+func TestARenditionStaysOnUntilTheSourceIsSwapped(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewStore(redis.NewClient(&redis.Options{Addr: mr.Addr()}), time.Hour)
+	now := time.Now()
+	require.NoError(t, s.Create(t.Context(), &Room{ID: "abc", Status: StatusReady, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}))
+
+	added, err := s.EnableRendition(t.Context(), "abc", "480p")
+	require.NoError(t, err)
+	require.True(t, added)
+	added, err = s.EnableRendition(t.Context(), "abc", "480p")
+	require.NoError(t, err)
+	require.False(t, added, "the same rendition twice")
+	r, err := s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"480p"}, r.Renditions)
+
+	_, _, err = s.SwapSource(t.Context(), "abc", "m1", "other.mkv", StatusUploading, now)
+	require.NoError(t, err)
+	r, err = s.Get(t.Context(), "abc")
+	require.NoError(t, err)
+	require.Empty(t, r.Renditions)
+	_, err = s.EnableRendition(t.Context(), "gone", "480p")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 // newLocalRoom is a room whose source lives in the host's app, with a clock
 // already running.
 func newLocalRoom(t *testing.T) (*Store, int) {

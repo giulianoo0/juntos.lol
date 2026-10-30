@@ -206,6 +206,18 @@ func TestFollowReplacesTheRunAtAnUncoveredPosition(t *testing.T) {
 	require.Equal(t, start.Remux.RunID, rig.run(t).RunID)
 }
 
+func TestRunsAfterARenditionIsOnAskForIt(t *testing.T) {
+	rig := newRemuxRig(t)
+	rig.regions(t, room.MediaRegion{N: 0, StartMs: 0, ProducedMs: 120_000, Growing: true})
+	_, err := rig.store.EnableRendition(context.Background(), "r1", remux.Rendition480p)
+	require.NoError(t, err)
+
+	rig.o.Follow("r1", 1_000_000)
+
+	rig.next(t)
+	require.Equal(t, []string{remux.Rendition480p}, rig.next(t).Remux.Renditions)
+}
+
 func TestFollowInsideTheDebounceLandsWhereTheRoomEndedUp(t *testing.T) {
 	rig := newRemuxRig(t)
 	rig.o.followDebounce = 80 * time.Millisecond

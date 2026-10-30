@@ -202,6 +202,31 @@ return tonumber(redis.call('HGET', KEYS[1], 'media_generation') or '0')
 	return int(result), nil
 }
 
+// EnableRendition asks the room's next producer runs for one more rendition
+// of the media, such as a 480p variant for a viewer whose link cannot carry
+// the source. It stays until the source is swapped, and reports whether it
+// was new.
+func (s *Store) EnableRendition(ctx context.Context, roomID, name string) (bool, error) {
+	result, err := s.rdb.Eval(ctx, `
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires or tonumber(expires) <= tonumber(ARGV[2]) then return -1 end
+local held = redis.call('HGET', KEYS[1], 'renditions') or ''
+for name in string.gmatch(held, '[^,]+') do
+  if name == ARGV[1] then return 0 end
+end
+if held ~= '' then held = held .. ',' end
+redis.call('HSET', KEYS[1], 'renditions', held .. ARGV[1])
+return 1
+`, []string{roomKey(roomID)}, name, strconv.FormatInt(time.Now().UnixMilli(), 10)).Int64()
+	if err != nil {
+		return false, fmt.Errorf("enable rendition: %w", err)
+	}
+	if result == -1 {
+		return false, ErrNotFound
+	}
+	return result == 1, nil
+}
+
 func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
 	id, err := s.rdb.Get(ctx, uploadKey(roomID)).Result()
 	if errors.Is(err, redis.Nil) {
@@ -295,6 +320,9 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r.SourceMemberID = fields["source_member_id"]
 	r.SourceOrigin = fields["source_origin"]
 	r.LocalSource = fields["local_source"] == "1"
+	if v := fields["renditions"]; v != "" {
+		r.Renditions = strings.Split(v, ",")
+	}
 	// Before stages coexisted, a screen or live room kept that stage's
 	// progress in the room's own status; read back, the media is empty.
 	switch fields["source_kind"] {
@@ -858,7 +886,7 @@ redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapte
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token',
-  'source_origin', 'source_kind')
+  'source_origin', 'source_kind', 'renditions')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])
