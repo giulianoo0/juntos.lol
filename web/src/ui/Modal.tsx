@@ -11,7 +11,7 @@ import styles from './Modal.module.css'
 export function Modal({ open, onOpenChange, title, closeLabel, wide = false, children }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  title: string
+  title: ReactNode
   closeLabel: string
   wide?: boolean
   children: ReactNode

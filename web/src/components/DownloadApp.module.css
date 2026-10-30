@@ -63,3 +63,50 @@
 .platform[aria-disabled]:active {
   transform: none;
 }
+
+.perks {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.perks li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+
+.perkIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--control-height);
+  height: var(--control-height);
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--brand) 14%, transparent);
+  color: var(--brand);
+}
+
+.optional {
+  margin: var(--space-5) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* The version lands with one pass of the DiaShimmer, then rests in ink. */
+.version.version {
+  animation-iteration-count: 1;
+  animation-duration: 1.4s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .version.version {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

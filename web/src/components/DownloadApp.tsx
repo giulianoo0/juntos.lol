@@ -1,11 +1,12 @@
-import { Download } from 'lucide-react'
+import { Cpu, Download, Zap } from 'lucide-react'
 import { useEffect, useState, type ComponentType } from 'react'
 import { useT } from '../i18n/useT'
 import { GITHUB_URL } from '../ui/GithubGlyph'
 import { Modal } from '../ui/Modal'
 import { AppleGlyph, LinuxGlyph, WindowsGlyph } from '../ui/PlatformGlyphs'
-import { Loading, Skeleton } from '../ui/Shimmer'
+import { DiaText, Loading, Skeleton } from '../ui/Shimmer'
 import { Tip } from '../ui/Tip'
+import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import toggle from '../ui/ThemeToggle.module.css'
 import { latestDesktopRelease, type DesktopRelease, type Platform } from './desktopRelease'
 import styles from './DownloadApp.module.css'
@@ -78,9 +79,14 @@ export function DownloadApp() {
       <Modal
         open={open}
         onOpenChange={setOpen}
-        title={version ? `${t('site.downloadTitle')} ${version}` : t('site.downloadTitle')}
+        title={version ? <>{t('site.downloadTitle')} <DiaText className={styles.version}>{version}</DiaText></> : t('site.downloadTitle')}
         closeLabel={t('account.close')}
       >
+        <ul className={styles.perks}>
+          <li><span className={styles.perkIcon}><Zap size={18} aria-hidden="true" /></span>{t('site.perkTorrent')}</li>
+          <li><span className={styles.perkIcon}><YoutubeGlyph size={18} /></span>{t('site.perkYoutube')}</li>
+          <li><span className={styles.perkIcon}><Cpu size={18} aria-hidden="true" /></span>{t('site.perkLocal')}</li>
+        </ul>
         {release.status === 'loading' ? (
           <Loading label={t('site.downloadLoading')} className={styles.grid}>
             {platforms.map(({ id }) => <Skeleton key={id} width="100%" height="auto" className={styles.skeleton} />)}
@@ -107,6 +113,7 @@ export function DownloadApp() {
             })}
           </div>
         )}
+        <p className={styles.optional}>{t('site.downloadOptional')}</p>
       </Modal>
     </>
   )
