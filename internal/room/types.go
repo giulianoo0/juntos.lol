@@ -149,6 +149,10 @@ type Room struct {
 	ControllerID        string         `json:"controllerId"`
 	SourceMemberID      string         `json:"sourceMemberId,omitempty"`
 	SourceOrigin        string         `json:"sourceOrigin,omitempty"`
+	// LocalSource: the media lives in the host's desktop app, which plays it
+	// from its own cache and uploads only while a browser needs it. It stays
+	// true through uploading and ready, until the source is swapped.
+	LocalSource bool `json:"localSource,omitempty"`
 	OwnerToken          string         `json:"-"`
 	AudioTracks         []TrackInfo    `json:"audioTracks"`
 	SubtitleTracks      []TrackInfo    `json:"subtitleTracks"`
