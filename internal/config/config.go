@@ -55,6 +55,10 @@ type Config struct {
 	WorkerRelayBase        string
 
 	RemoteRemuxAPIBase string
+	// YoutubeFleetEnabled lets a browser start a YouTube link on the fleet;
+	// off, YouTube starts only from the desktop app. YOUTUBE_FLEET_ENABLED,
+	// on unless "false" or "0".
+	YoutubeFleetEnabled bool
 
 	PluginFetchProxy string
 
@@ -202,6 +206,11 @@ func Load() (Config, error) {
 	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
 	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
 	cfg.RemoteRemuxAPIBase = strings.TrimSuffix(os.Getenv("REMOTE_REMUX_API_BASE"), "/")
+	switch os.Getenv("YOUTUBE_FLEET_ENABLED") {
+	case "false", "0":
+	default:
+		cfg.YoutubeFleetEnabled = true
+	}
 	cfg.PluginFetchProxy = strings.TrimSpace(os.Getenv("PLUGIN_FETCH_PROXY"))
 	if cfg.PluginFetchProxy != "" {
 		u, err := url.Parse(cfg.PluginFetchProxy)

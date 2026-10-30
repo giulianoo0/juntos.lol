@@ -1,6 +1,17 @@
 package httpapi
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+
+	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/worker"
+)
 
 func TestYoutubeVideoID(t *testing.T) {
 	good := map[string]string{
@@ -32,6 +43,23 @@ func TestYoutubeVideoID(t *testing.T) {
 	if got := CanonicalYoutubeURL("aqz-KE-bpKQ"); got != "https://www.youtube.com/watch?v=aqz-KE-bpKQ" {
 		t.Errorf("canonical: %s", got)
 	}
+}
+
+// With the fleet off, a YouTube link starts only from the desktop app.
+func TestYoutubeOffTheFleetIsTheAppsAlone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	e := gin.New()
+	RegisterYoutubeRoutes(e.Group("/api"), config.Config{YoutubeFleetEnabled: false},
+		TorrentAccess{Service: &worker.Service{}})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/youtube",
+		strings.NewReader(`{"url":"https://youtu.be/aqz-KE-bpKQ"}`))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "app_only")
 }
 
 func TestValidRunID(t *testing.T) {

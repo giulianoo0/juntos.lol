@@ -27,6 +27,22 @@ func TestLoadReadsObjectStoreEndpointOverride(t *testing.T) {
 	require.True(t, cfg.R2Insecure)
 }
 
+func TestYoutubeOnTheFleetIsOnUnlessTurnedOff(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{{"", true}, {"true", true}, {"1", true}, {"false", false}, {"0", false}}
+	for _, tt := range tests {
+		t.Run("YOUTUBE_FLEET_ENABLED="+tt.value, func(t *testing.T) {
+			setMediaEnv(t)
+			t.Setenv("YOUTUBE_FLEET_ENABLED", tt.value)
+			cfg, err := Load()
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.YoutubeFleetEnabled)
+		})
+	}
+}
+
 func TestLoadDefaults(t *testing.T) {
 	setMediaEnv(t)
 	t.Setenv("REDIS_URL", "")
