@@ -29,9 +29,14 @@ fn playlist_segments(body: &str) -> Vec<(String, f64)> {
 /// The region spans what the bucket confirmed, never what the muxer wrote:
 /// the contiguous confirmed prefix, at its shortest across the variants.
 pub fn confirmed_span_ms(manifests: &HashMap<String, String>, confirmed: &HashSet<String>) -> u64 {
+    confirmed_span_ms_without(manifests, confirmed, None)
+}
+
+/// Like `confirmed_span_ms`, leaving one playlist out of the count.
+pub fn confirmed_span_ms_without(manifests: &HashMap<String, String>, confirmed: &HashSet<String>, skip: Option<&str>) -> u64 {
     let mut span: Option<f64> = None;
     for (name, body) in manifests {
-        if name.ends_with("master.m3u8") {
+        if name.ends_with("master.m3u8") || Some(name.as_str()) == skip {
             continue;
         }
         let mut seconds = 0.0;
@@ -162,8 +167,11 @@ impl Publisher {
         self.pending.is_empty()
     }
 
+    /// The 480p encode trails the copy and is cut to what is confirmed
+    /// anyway; the region grows with the copy and the audio.
     pub fn produced_ms(&self, sink: &Sink) -> u64 {
-        confirmed_span_ms(&sink.manifests(), &self.confirmed)
+        let low = self.low_variant.map(|n| format!("{}client_stream_{n}.m3u8", self.prefix));
+        confirmed_span_ms_without(&sink.manifests(), &self.confirmed, low.as_deref())
     }
 
     /// One committed round. Confirmed objects leave the spool; unconfirmed
@@ -369,6 +377,18 @@ mod master_tests {
         let m = publisher(vec!["eng".into()], 2).with_low_variant(2, None).synthesize_master(20_000, true);
         assert!(m.contains("client_stream_2.m3u8"));
         assert!(!m.contains("RESOLUTION"));
+    }
+
+    #[test]
+    fn a_480p_variant_behind_the_copy_does_not_hold_the_region_back() {
+        let p = publisher(vec!["eng".into()], 0).with_low_variant(2, None);
+        let (sink, _) = Sink::new(crate::run_tests::scratch("low-span"), 1 << 20, 1 << 20).unwrap();
+        sink.store_manifest("client_stream_0.m3u8", "#EXTINF:4.0,\ncs_0_0.m4s\n".into()).unwrap();
+        sink.store_manifest("client_stream_1.m3u8", "#EXTINF:4.0,\ncs_1_0.m4s\n".into()).unwrap();
+        sink.store_manifest("client_stream_2.m3u8", "#EXTINF:4.0,\ncs_2_0.m4s\n".into()).unwrap();
+        let mut p = p;
+        p.confirmed.extend(["cs_0_0.m4s".to_string(), "cs_1_0.m4s".to_string()]);
+        assert_eq!(p.produced_ms(&sink), 4_000);
     }
 
     #[test]
