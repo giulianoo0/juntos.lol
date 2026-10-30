@@ -68,23 +68,32 @@ async fn room(posts: Arc<Mutex<Vec<serde_json::Value>>>) -> String {
     base
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore]
-async fn a_containers_subtitles_reach_the_room() {
-    let dir = tempfile::tempdir().unwrap();
-    let srt = dir.path().join("pt.srt");
-    std::fs::write(&srt, "1\n00:00:01,000 --> 00:00:03,000\nOlá, coração – 字幕\n\n2\n00:00:20,000 --> 00:00:22,000\nFim da cena\n").unwrap();
-    let mkv = dir.path().join("filme.mkv");
+fn movie(dir: &std::path::Path, seconds: u32, cues: &str) -> PathBuf {
+    let srt = dir.join("pt.srt");
+    std::fs::write(&srt, cues).unwrap();
+    let mkv = dir.join("filme.mkv");
     let made = Command::new("ffmpeg")
-        .args(["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24", "-f", "lavfi", "-i", "sine=frequency=440"])
+        .args(["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10", "-f", "lavfi", "-i", "sine=frequency=440"])
         .arg("-i")
         .arg(&srt)
-        .args(["-t", "30", "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "libx264", "-g", "48", "-c:a", "aac", "-c:s", "ass", "-metadata:s:s:0", "language=por", "-metadata:s:s:0", "title=Português"])
+        .args(["-t", &seconds.to_string(), "-map", "0:v", "-map", "1:a", "-map", "2:s", "-c:v", "libx264", "-preset", "ultrafast", "-g", "20"])
+        .args(["-c:a", "aac", "-c:s", "ass", "-metadata:s:s:0", "language=por", "-metadata:s:s:0", "title=Português"])
         .arg(&mkv)
         .status()
         .unwrap();
     assert!(made.success());
+    mkv
+}
 
+fn has(posts: &Mutex<Vec<serde_json::Value>>, text: &str) -> bool {
+    posts.lock().unwrap().iter().any(|p| p["tracks"][0]["vtt"].as_str().is_some_and(|vtt| vtt.contains(text)))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_containers_subtitles_reach_the_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let mkv = movie(dir.path(), 30, "1\n00:00:01,000 --> 00:00:03,000\nOlá, coração – 字幕\n\n2\n00:00:20,000 --> 00:00:22,000\nFim da cena\n");
     let posts = Arc::new(Mutex::new(Vec::new()));
     let base = room(posts.clone()).await;
     let producer = Producer::new(dir.path().join("cache"), "ffmpeg".into(), "ffprobe".into(), 1 << 30);
@@ -116,3 +125,36 @@ async fn a_containers_subtitles_reach_the_room() {
     assert!(vtt.contains("Fim da cena"), "{vtt}");
     assert!(track["ass"].as_str().unwrap().contains("[Script Info]"));
 }
+
+/// The room jumps far into a file: the subtitles there come from a pass that
+/// starts at the jump, like the worker's runs, not from one crawling up to it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_seek_brings_the_subtitles_where_the_room_went() {
+    let dir = tempfile::tempdir().unwrap();
+    let mkv = movie(dir.path(), 600, "1\n00:00:01,000 --> 00:00:03,000\nComeço\n\n2\n00:09:00,000 --> 00:09:02,000\nLá no fim – 終わり\n");
+    let posts = Arc::new(Mutex::new(Vec::new()));
+    let base = room(posts.clone()).await;
+    let producer = Producer::new(dir.path().join("cache"), "ffmpeg".into(), "ffprobe".into(), 1 << 30);
+    let size = std::fs::metadata(&mkv).unwrap().len();
+    producer.prepare("k", "Filme", Input::Container(Arc::new(File(mkv, size)))).await.unwrap();
+    let auth = ss_remux::subs::PublishAuth::Producer { member_id: "m1".into(), capability: "cap".into() };
+    producer.subtitles("k", base, "r1".into(), 2, auth).await.unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !has(&posts, "Começo") {
+        assert!(Instant::now() < deadline, "the first cue never went out");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let jumped = Instant::now();
+    producer.follow("k", 530_000).await.unwrap();
+    while !has(&posts, "Lá no fim – 終わり") {
+        assert!(jumped.elapsed() < Duration::from_secs(6), "the cue after the seek waited on more than the pass from the seek");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    println!("cue past the seek out {} ms after it", jumped.elapsed().as_millis());
+    let last = posts.lock().unwrap().last().cloned().unwrap();
+    let vtt = last["tracks"][0]["vtt"].as_str().unwrap().to_string();
+    assert!(vtt.contains("Começo"), "what the first pass found was dropped: {vtt}");
+}
+

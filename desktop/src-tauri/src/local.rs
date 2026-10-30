@@ -107,11 +107,38 @@ impl Drop for Revoke {
     }
 }
 
-/// The subtitle pass for one room's source: one per room and generation.
-struct Subtitles {
+/// The room a source's subtitles go to, and as whom.
+#[derive(Clone)]
+struct SubtitleTarget {
+    api_base: String,
     room_id: String,
     generation: u64,
-    task: tokio::task::JoinHandle<()>,
+    auth: subs::PublishAuth,
+}
+
+/// What publishes a source's subtitles to its room: the page's once, or a
+/// pass over the container from the region the room plays, replaced by
+/// the next region the way the worker's runs replace each other.
+struct Subtitles {
+    target: SubtitleTarget,
+    task: Option<tokio::task::JoinHandle<()>>,
+    /// Where the running pass started, and when: it reads at most
+    /// SUBTITLE_READRATE times the clock from a little before there.
+    from: Option<(u64, std::time::Instant)>,
+}
+
+/// The extractor's `-readrate`.
+const SUBTITLE_READRATE: u64 = 8;
+/// How far before its start a pass reads (the extractor's lead).
+const SUBTITLE_LEAD_MS: u64 = 15_000;
+
+impl Subtitles {
+    /// Whether the running pass will reach `position_ms` soon on its own.
+    fn reaches(&self, position_ms: u64) -> bool {
+        let Some((start_ms, at)) = self.from else { return false };
+        let read_ms = start_ms.saturating_sub(SUBTITLE_LEAD_MS) + at.elapsed().as_millis() as u64 * SUBTITLE_READRATE;
+        position_ms + SUBTITLE_LEAD_MS >= start_ms && position_ms <= read_ms + AHEAD_MS
+    }
 }
 
 struct Production {
@@ -249,6 +276,13 @@ impl Producer {
         let need_low = *production.low.lock();
         let duration_ms = production.meta.lock().duration_ms;
         if covered(&self.regions(key), position_ms, need_low, duration_ms) {
+            // The picture is there already, but the subtitles follow the
+            // room too: a jump the running pass will not reach soon starts
+            // one where the room went.
+            let behind = production.subtitles.lock().as_ref().is_some_and(|s| s.from.is_some() && !s.reaches(position_ms));
+            if behind {
+                self.subtitle_pass(key, &production, position_ms).await;
+            }
             return Ok(());
         }
         self.start_region(key, &production, position_ms).await
@@ -308,6 +342,7 @@ impl Producer {
         }
         *production.running.lock() = Some(Running { n, process, caps });
         tracing::info!(key, n, start_ms, "local region started");
+        self.subtitle_pass(key, production, start_ms).await;
 
         let watched = production.clone();
         let bridge_held = bridge.clone();
@@ -398,8 +433,8 @@ impl Producer {
 
     pub async fn stop(&self, key: &str) {
         let production = self.entries.lock().get(key).cloned();
-        if let Some(subtitles) = production.as_ref().and_then(|p| p.subtitles.lock().take()) {
-            subtitles.task.abort();
+        if let Some(task) = production.as_ref().and_then(|p| p.subtitles.lock().take()).and_then(|s| s.task) {
+            task.abort();
         }
         if let (Some(production), Ok(bridge)) = (production, self.bridge().await) {
             self.stop_running(&production, &bridge).await;
@@ -407,9 +442,9 @@ impl Producer {
     }
 
     /// Publishes the source's subtitles to the room, where every member reads
-    /// them: the container's own tracks, pulled once the first frames are
-    /// out so the pass does not hold the picture back, or the page's. Once
-    /// per room and generation; a new one replaces the pass before it.
+    /// them: the page's, or the container's own tracks from the region the
+    /// room plays now and from every region it starts after. Once per room
+    /// and generation.
     pub async fn subtitles(
         self: &Arc<Self>,
         key: &str,
@@ -419,65 +454,94 @@ impl Producer {
         auth: subs::PublishAuth,
     ) -> anyhow::Result<()> {
         let Some(production) = self.entries.lock().get(key).cloned() else { bail!("unknown source") };
-        let bridge = self.bridge().await?;
-        let mut held = production.subtitles.lock();
-        if held.as_ref().is_some_and(|s| s.room_id == room_id && s.generation == generation) {
+        let target = SubtitleTarget { api_base, room_id, generation, auth };
+        {
+            let mut held = production.subtitles.lock();
+            if held.as_ref().is_some_and(|s| s.target.room_id == target.room_id && s.target.generation == generation) {
+                return Ok(());
+            }
+            if let Some(task) = held.take().and_then(|s| s.task) {
+                task.abort();
+            }
+            *held = Some(Subtitles { target: target.clone(), task: None, from: None });
+        }
+        if let Some(page) = &production.page_subtitles {
+            if page.picks.is_empty() {
+                return Ok(());
+            }
+            let publisher = youtube::subs::Publisher {
+                client: page.client.clone(),
+                api: self.client.clone(),
+                api_base: target.api_base,
+                room_id: target.room_id,
+                run_id: format!("local_{key}"),
+                media_generation: generation,
+                auth: target.auth,
+            };
+            let picks = page.picks.clone();
+            let task = tokio::spawn(async move {
+                if let Err(e) = publisher.run(picks).await {
+                    tracing::warn!(error = %e, "page subtitles not published");
+                }
+            });
+            if let Some(held) = production.subtitles.lock().as_mut() {
+                held.task = Some(task);
+                held.from = Some((0, std::time::Instant::now()));
+            }
             return Ok(());
         }
-        if let Some(previous) = held.take() {
-            previous.task.abort();
+        let playing = production.running.lock().as_ref().map(|r| r.n);
+        let start_ms = production.meta.lock().regions.iter().rev().find(|r| Some(r.n) == playing).map(|r| r.start_ms).unwrap_or(0);
+        self.subtitle_pass(key, &production, start_ms).await;
+        Ok(())
+    }
+
+    /// Starts the container's subtitle pass at a region's start (the
+    /// extractor reads from a little before it), replacing the one before.
+    /// What earlier passes found stays: the room's tracks are merged.
+    async fn subtitle_pass(self: &Arc<Self>, key: &str, production: &Arc<Production>, start_ms: u64) {
+        if production.plan.subtitles.is_empty() || production.page_subtitles.is_some() {
+            return;
         }
-        let this = self.clone();
-        let source = production.clone();
-        let (room, key) = (room_id.clone(), key.to_string());
+        let Ok(bridge) = self.bridge().await else { return };
+        let Some(target) = production.subtitles.lock().as_ref().map(|s| s.target.clone()) else { return };
+        let (room_id, generation) = (target.room_id.clone(), target.generation);
+        let dir = self.root.join(key).join("subs").join(format!("from_{start_ms}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (input_url, cap) = bridge.register_input(InputTarget { source: production.sources[0].clone(), reader: format!("subs:{key}:{start_ms}") });
+        let input = Revoke(bridge.clone(), cap);
+        let run_id = format!("local_{key}_{start_ms}");
+        let extractor = subs::Extractor {
+            ffmpeg_path: self.ffmpeg.clone(),
+            client: self.client.clone(),
+            api_base: target.api_base,
+            room_id: target.room_id.clone(),
+            run_id: run_id.clone(),
+            media_generation: target.generation,
+            auth: target.auth,
+            input_url,
+            dir,
+            state: subs::room_state(&self.subtitle_rooms, &target.room_id, target.generation, &production.plan),
+        };
+        let plan = production.plan.clone();
         let task = tokio::spawn(async move {
-            let run_id = format!("local_{key}");
-            if let Some(page) = &source.page_subtitles {
-                if page.picks.is_empty() {
-                    return;
-                }
-                let publisher = youtube::subs::Publisher {
-                    client: page.client.clone(),
-                    api: this.client.clone(),
-                    api_base,
-                    room_id: room,
-                    run_id: run_id.clone(),
-                    media_generation: generation,
-                    auth,
-                };
-                if let Err(e) = publisher.run(page.picks.clone()).await {
-                    tracing::warn!(run = %run_id, error = %e, "page subtitles not published");
-                }
-                return;
-            }
-            if source.plan.subtitles.is_empty() {
-                return;
-            }
-            while !this.regions(&key).iter().any(|r| r.produced_ms > 0) {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            let dir = this.root.join(&key).join("subs");
-            let _ = tokio::fs::remove_dir_all(&dir).await;
-            let (input_url, cap) = bridge.register_input(InputTarget { source: source.sources[0].clone(), reader: format!("subs:{key}") });
-            let _input = Revoke(bridge.clone(), cap);
-            let extractor = subs::Extractor {
-                ffmpeg_path: this.ffmpeg.clone(),
-                client: this.client.clone(),
-                api_base,
-                room_id: room.clone(),
-                run_id: run_id.clone(),
-                media_generation: generation,
-                auth,
-                input_url,
-                dir,
-                state: subs::room_state(&this.subtitle_rooms, &room, generation, &source.plan),
-            };
-            if let Err(e) = extractor.run(&source.plan, 0, 0).await {
+            let _input = input;
+            if let Err(e) = extractor.run(&plan, start_ms, 0).await {
                 tracing::warn!(run = %run_id, error = %e, "subtitle pass failed");
             }
         });
-        *held = Some(Subtitles { room_id, generation, task });
-        Ok(())
+        tracing::info!(key, start_ms, "subtitle pass started");
+        let mut held = production.subtitles.lock();
+        match held.as_mut() {
+            // The room may have moved on while this pass was set up.
+            Some(subtitles) if subtitles.target.room_id == room_id && subtitles.target.generation == generation => {
+                if let Some(previous) = subtitles.task.replace(task) {
+                    previous.abort();
+                }
+                subtitles.from = Some((start_ms, std::time::Instant::now()));
+            }
+            _ => task.abort(),
+        }
     }
 
     fn evict(&self) {

@@ -155,6 +155,14 @@ pub async fn local_stop(state: State<'_, AppState>, key: String) -> Result<(), S
     Ok(())
 }
 
+/// What the end-to-end script reports, in a debug build's log; nothing otherwise.
+#[tauri::command]
+pub fn e2e_log(line: String) {
+    if cfg!(debug_assertions) {
+        tracing::info!(target: "e2e", "{}", line.chars().take(2000).collect::<String>());
+    }
+}
+
 /// Publishes the prepared source's subtitles to the room this app produces.
 #[tauri::command]
 pub async fn local_subtitles(

@@ -74,6 +74,7 @@ pub fn run() {
             commands::local_stop,
             commands::upload_start,
             commands::local_subtitles,
+            commands::e2e_log,
             commands::upload_stop,
             commands::upload_status,
             commands::update_status,
@@ -94,7 +95,16 @@ pub fn run() {
         ])
         .manage(screen::ScreenState::default())
         .setup(move |app| {
+            // An end-to-end run (debug builds only) keeps out of the way of the
+            // app in daily use on the same machine: its own data, a private
+            // web store, and no focus taken.
+            let e2e = cfg!(debug_assertions) && std::env::var_os("JUNTOS_E2E_SCRIPT").is_some();
             let data_dir = app.path().app_data_dir()?;
+            let data_dir = if e2e { data_dir.join("e2e") } else { data_dir };
+            #[cfg(target_os = "macos")]
+            if e2e {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             let bundled_ytdlp = tool("yt-dlp");
             let ytdlp = if std::path::Path::new(&bundled_ytdlp).is_absolute() {
                 tools::writable_copy(std::path::Path::new(&bundled_ytdlp), &data_dir.join("bin"))
@@ -131,11 +141,20 @@ pub fn run() {
                 .traffic_light_position(tauri::LogicalPosition::new(20.0, 32.0));
             #[cfg(windows)]
             let window = window.decorations(false);
+            #[allow(unused_mut)]
+            let mut init = format!("window.__JUNTOS_SITE__ = {};", serde_json::to_string(site.as_str())?);
+            // Debug builds only: a script the end-to-end tests drive the page with.
+            #[cfg(debug_assertions)]
+            if let Some(extra) = std::env::var("JUNTOS_E2E_SCRIPT").ok().and_then(|path| std::fs::read_to_string(path).ok()) {
+                init.push('\n');
+                init.push_str(&extra);
+            }
+            let window = if e2e { window.incognito(true).focused(false) } else { window };
             window
                 .title("Juntos")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(720.0, 520.0)
-                .initialization_script(format!("window.__JUNTOS_SITE__ = {};", serde_json::to_string(site.as_str())?))
+                .initialization_script(init)
                 .on_page_load(|_, payload| {
                     if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                         tracing::info!(url = %payload.url(), "page loaded");
