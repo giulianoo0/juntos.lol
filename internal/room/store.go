@@ -468,7 +468,7 @@ func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error
 }
 
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
-	return s.mutateRoom(ctx, id, status != "error", "status", status)
+	return s.mutateRoom(ctx, id, status != StatusError, "status", status)
 }
 
 func (s *Store) SetController(ctx context.Context, id, controllerID string) error {
@@ -603,7 +603,7 @@ return redis.call('HGET', KEYS[1], 'screen_secret')
 
 // SetError marks a room as failed and stores a user-visible processing error.
 func (s *Store) SetError(ctx context.Context, id, message string) error {
-	return s.mutateRoom(ctx, id, false, "status", "error", "error_message", message)
+	return s.mutateRoom(ctx, id, false, "status", StatusError, "error_message", message)
 }
 
 // SetTracks stores the probed track lists and the bitmap-subtitle skip count.

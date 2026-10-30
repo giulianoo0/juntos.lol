@@ -438,15 +438,15 @@ func publishClientMedia(store *room.Store, cfg config.Config, bucket ClientMedia
 				masterReady = true
 			}
 		}
-		if playable && masterReady && storedRoom.Status != "ready" {
-			if err := store.SetStatus(ctx, roomID, "ready"); err == nil {
+		if playable && masterReady && storedRoom.Status != room.StatusReady {
+			if err := store.SetStatus(ctx, roomID, room.StatusReady); err == nil {
 				becameReady = true
 				if hooks.NotifyStatus != nil {
-					hooks.NotifyStatus(roomID, "ready")
+					hooks.NotifyStatus(roomID, room.StatusReady)
 				}
 			}
 		}
-		roomReady := becameReady || storedRoom.Status == "ready"
+		roomReady := becameReady || storedRoom.Status == room.StatusReady
 		if req.Complete {
 			if err := store.StoreCompleteReceipt(ctx, roomID, req.Claim,
 				room.CompleteReceipt{Ready: roomReady}, time.Hour); err != nil {
