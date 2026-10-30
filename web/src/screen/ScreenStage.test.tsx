@@ -199,7 +199,7 @@ describe('through the desktop app', () => {
     expect(within(bar).getByRole('button', { name: en['room.screenStop'] })).toBeInTheDocument()
     fireEvent.click(sound)
     fireEvent.click(await screen.findByRole('switch', { name: 'Google Chrome' }))
-    expect(appAudio.setMuted).toHaveBeenLastCalledWith(['discord', 'chrome'])
+    expect(appAudio.setMuted).toHaveBeenLastCalledWith(expect.objectContaining({ muted: ['chrome'], unmuted: [] }))
   })
 
   it('switching the source reopens the app picker to swap on the same share', async () => {

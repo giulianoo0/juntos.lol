@@ -60,10 +60,11 @@ describe('AppScreenPicker', () => {
   it('a switch takes the app out of the sound and back', async () => {
     await renderPicker()
     fireEvent.click(screen.getByRole('switch', { name: 'Google Chrome' }))
-    expect(getSoundChoice().muted).toEqual(['discord', 'chrome'])
+    expect(getSoundChoice().muted).toEqual(['chrome'])
     expect(screen.getByRole('switch', { name: 'Google Chrome' })).toHaveAttribute('aria-checked', 'false')
     fireEvent.click(screen.getByRole('switch', { name: 'Discord' }))
-    expect(getSoundChoice().muted).toEqual(['chrome'])
+    expect(getSoundChoice().unmuted).toEqual(['discord'])
+    expect(screen.getByRole('switch', { name: 'Discord' })).toHaveAttribute('aria-checked', 'true')
   })
 
   it('silences everything at once, and brings everything back', async () => {
@@ -72,7 +73,7 @@ describe('AppScreenPicker', () => {
     expect(getSoundChoice().enabled).toBe(false)
     expect(screen.getAllByRole('switch').every((element) => element.getAttribute('aria-checked') === 'false')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Ligar tudo' }))
-    expect(getSoundChoice()).toEqual({ enabled: true, muted: [] })
+    expect(getSoundChoice()).toEqual({ enabled: true, muted: [], unmuted: ['discord'] })
   })
 
   it('an app switched on while everything is silent brings only that app back', async () => {
@@ -88,7 +89,7 @@ describe('AppScreenPicker', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Janelas' }))
     fireEvent.click(await screen.findByRole('radio', { name: /YouTube/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Compartilhar' }))
-    expect(onPick).toHaveBeenCalledWith({ target: { kind: 'window', id: 'w1' }, quality: '1080p60', audio: true, muted: ['discord'] })
+    expect(onPick).toHaveBeenCalledWith({ target: { kind: 'window', id: 'w1' }, quality: '1080p60', audio: true })
   })
 
   it('keeps the thumbnails and the app list fresh while open', async () => {

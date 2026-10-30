@@ -1,3 +1,4 @@
+import type { SoundRule } from '../desktop/screen'
 import { screenQuality } from '../screenshare'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { startH264Feed, systemAudioTrack, type H264Feed, type H264FeedOptions, type SystemAudio } from '../jlocal/h264Feed'
@@ -6,7 +7,7 @@ import { appAudioTrack, appCanCapture, startAppFeed, type AppFeed } from '../des
 import type { JlocalPick } from './useScreenShare'
 
 /** A share's soundtrack; one that can drop apps live takes the new list here. */
-export type OriginSound = SystemAudio & { setMuted?(muted: readonly string[]): void }
+export type OriginSound = SystemAudio & { setMuted?(rule: SoundRule): void }
 
 /**
  * Where an already-encoded share comes from: the jlocal companion over
@@ -54,7 +55,7 @@ const appOrigin: EncodedOrigin = {
     await (feed as AppFeed).retarget(feedOptions(pick))
     return feed
   },
-  sound: () => appAudioTrack(getSoundChoice().muted),
+  sound: () => appAudioTrack(getSoundChoice()),
 }
 
 /** The app wins when it captures itself: it is the page's own host, jlocal a guest. */

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Check, Volume2, VolumeX } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { fetchJLocalSoundApps, type JLocalAudioApp } from '../jlocal/audio'
-import { setAppMuted, setSoundEnabled, useSoundChoice } from '../jlocal/soundChoice'
+import { isMuted, setAppMuted, setSoundEnabled, useSoundChoice } from '../jlocal/soundChoice'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { Loading, Skeleton } from '../ui/Shimmer'
 import { soundSummary, useAppSoundApps } from './appShare'
@@ -52,7 +52,7 @@ function CompanionSoundMenu({ t }: { t: Translator }) {
   const load = () => {
     void fetchJLocalSoundApps().then((found) => setApps(found))
   }
-  const excluded = choice.enabled ? choice.muted.length : 0
+  const excluded = choice.enabled ? apps?.filter((app) => isMuted(choice, app.id)).length ?? choice.muted.length : 0
   const summary = !choice.enabled ? t('jlocal.soundNone')
     : excluded > 0 ? t('jlocal.soundSome').replace('{n}', String(excluded))
     : t('jlocal.soundAll')
@@ -83,7 +83,7 @@ function CompanionSoundMenu({ t }: { t: Translator }) {
               )
                 : apps.length === 0 ? <span className="sound-menu-hint">{t('jlocal.soundNoApps')}</span>
                 : apps.map((app) => {
-                  const on = !choice.muted.includes(app.id)
+                  const on = !isMuted(choice, app.id)
                   return (
                     <button key={app.id} type="button" role="menuitemcheckbox" aria-checked={on} onClick={() => setAppMuted(app.id, on)}>
                       {app.name}

@@ -1,7 +1,7 @@
 import { Volume2 } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import type { AppAudioApp } from '../desktop/screen'
-import { setAppMuted, setSoundChoice, setSoundEnabled, useSoundChoice } from '../jlocal/soundChoice'
+import { setAppMuted, setSoundChoice, setSoundEnabled, startsMuted, useSoundChoice } from '../jlocal/soundChoice'
 import { Loading, Skeleton } from '../ui/Shimmer'
 import { allSilent, isAppOn } from './appShare'
 import styles from './AppSound.module.css'
@@ -19,7 +19,9 @@ export function MuteAllButton({ apps, t }: { apps: AppAudioApp[] | null; t: Tran
     <button
       type="button"
       className={styles.bulk}
-      onClick={() => (silent ? setSoundChoice({ enabled: true, muted: [] }) : setSoundEnabled(false))}
+      onClick={() => (silent
+        ? setSoundChoice({ enabled: true, muted: [], unmuted: (apps ?? []).map((app) => app.id).filter(startsMuted) })
+        : setSoundEnabled(false))}
     >
       {t(silent ? 'appScreen.unmuteAll' : 'appScreen.muteAll')}
     </button>
@@ -34,7 +36,7 @@ export function AppSoundSwitches({ apps, t }: { apps: AppAudioApp[] | null; t: T
     if (!choice.enabled) {
       const others = new Set([...choice.muted, ...(apps ?? []).map((app) => app.id)])
       others.delete(id)
-      setSoundChoice({ enabled: true, muted: [...others] })
+      setSoundChoice({ enabled: true, muted: [...others], unmuted: startsMuted(id) ? [...choice.unmuted, id] : choice.unmuted })
       return
     }
     setAppMuted(id, isAppOn(choice, id))

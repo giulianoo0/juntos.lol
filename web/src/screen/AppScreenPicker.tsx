@@ -20,7 +20,7 @@ import styles from './AppScreenPicker.module.css'
  * can hold it in its morphing card or in a dialog.
  */
 
-export type AppPick = JlocalPick & { muted: string[] }
+export type AppPick = JlocalPick
 
 type Tab = 'displays' | 'windows'
 
@@ -110,7 +110,7 @@ export function AppScreenPicker({ onPick, onExit, busy = false, error = null, mo
 
   const share = () => {
     if (!canShare || selected === null) return
-    onPick({ target: { kind, id: selected }, quality, audio: choice.enabled, muted: [...choice.muted] })
+    onPick({ target: { kind, id: selected }, quality, audio: choice.enabled })
   }
 
   return (

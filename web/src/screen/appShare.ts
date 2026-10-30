@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Translator } from '../i18n/useT'
 import { appAudioApps, type AppAudioApp } from '../desktop/screen'
-import type { SoundChoice } from '../jlocal/soundChoice'
+import { isMuted, type SoundChoice } from '../jlocal/soundChoice'
 import { loadScreenQuality, SCREEN_QUALITIES, type ScreenQualityId } from '../screenshare'
 
 /** The list of sounding apps follows the machine at this pace while someone looks at it. */
@@ -32,7 +32,7 @@ export function useAppSoundApps(active: boolean): AppAudioApp[] | null {
   return apps
 }
 
-export const isAppOn = (choice: SoundChoice, id: string) => choice.enabled && !choice.muted.includes(id)
+export const isAppOn = (choice: SoundChoice, id: string) => choice.enabled && !isMuted(choice, id)
 
 /** Whether nothing listed is going out, so the bulk button turns everything back on. */
 export function allSilent(choice: SoundChoice, apps: AppAudioApp[] | null): boolean {

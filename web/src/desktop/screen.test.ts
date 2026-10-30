@@ -194,11 +194,11 @@ describe('app audio', () => {
   it('sends the new mute list live without restarting audio', async () => {
     stubAudio()
     const app = installApp(() => null)
-    const audio = appAudioTrack(['discord'])
+    const audio = appAudioTrack({ muted: ['spotify'], unmuted: [] })
     expect(audio).not.toBeNull()
-    await vi.waitFor(() => expect(app.invoke).toHaveBeenCalledWith('audio_start', expect.objectContaining({ muted: ['discord'] })))
-    audio!.setMuted(['discord', 'spotify'])
-    await vi.waitFor(() => expect(app.invoke).toHaveBeenCalledWith('audio_set', { muted: ['discord', 'spotify'] }))
+    await vi.waitFor(() => expect(app.invoke).toHaveBeenCalledWith('audio_start', expect.objectContaining({ muted: ['spotify'], unmuted: [] })))
+    audio!.setMuted({ muted: ['spotify', 'chrome'], unmuted: ['discordptb'] })
+    await vi.waitFor(() => expect(app.invoke).toHaveBeenCalledWith('audio_set', { muted: ['spotify', 'chrome'], unmuted: ['discordptb'] }))
     expect(app.invoke.mock.calls.filter(([cmd]) => cmd === 'audio_start')).toHaveLength(1)
     expect(app.invoke.mock.calls.some(([cmd]) => cmd === 'audio_stop')).toBe(false)
     audio!.stop()
@@ -209,7 +209,7 @@ describe('app audio', () => {
     const { started } = stubAudio()
     let channel: unknown
     const app = installApp((cmd, args) => { if (cmd === 'audio_start') channel = args.pcm; return null })
-    const audio = appAudioTrack([])
+    const audio = appAudioTrack({ muted: [], unmuted: [] })
     await vi.waitFor(() => expect(channel).toBeDefined())
     // Two 10 ms blocks of s16le stereo make one 20 ms buffer.
     app.send(channel, new Uint8Array(1_920))

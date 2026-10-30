@@ -190,14 +190,22 @@ export async function startAppFeed(options: H264FeedOptions): Promise<AppFeed> {
   return feed
 }
 
-export interface AppAudio extends SystemAudio {
-  /** The apps left out from now on; the sound keeps flowing while the app swaps them. */
-  setMuted(muted: readonly string[]): void
+/** The apps left out, and the Discords let in anyway (the app keeps every other one out). */
+export interface SoundRule {
+  muted: readonly string[]
+  unmuted: readonly string[]
 }
 
+export interface AppAudio extends SystemAudio {
+  /** The apps left out from now on; the sound keeps flowing while the app swaps them. */
+  setMuted(rule: SoundRule): void
+}
+
+const ruleArgs = (rule: SoundRule) => ({ muted: [...rule.muted], unmuted: [...rule.unmuted] })
+
 /** The app's mix of every sounding app but the muted ones, as a track. */
-export function appAudioTrack(muted: readonly string[]): AppAudio | null {
-  let latest = [...muted]
+export function appAudioTrack(rule: SoundRule): AppAudio | null {
+  let latest = ruleArgs(rule)
   let started: Promise<DesktopApp | null> | null = null
   const audio = pcmTrack((push, signal) => {
     started = (async () => {
@@ -205,7 +213,7 @@ export function appAudioTrack(muted: readonly string[]): AppAudio | null {
       if (!bridge || signal.aborted) return null
       const { Channel } = await import('@tauri-apps/api/core')
       const pcm = new Channel<ArrayBuffer>((message) => push(bytes(message)))
-      await bridge.invoke('audio_start', { muted: latest, pcm })
+      await bridge.invoke('audio_start', { ...latest, pcm })
       return bridge
     })().catch(() => null)
   })
@@ -213,8 +221,8 @@ export function appAudioTrack(muted: readonly string[]): AppAudio | null {
   return {
     track: audio.track,
     setMuted(next) {
-      latest = [...next]
-      void started?.then((bridge) => bridge?.invoke('audio_set', { muted: latest })).catch(() => undefined)
+      latest = ruleArgs(next)
+      void started?.then((bridge) => bridge?.invoke('audio_set', latest)).catch(() => undefined)
     },
     stop() {
       audio.stop()

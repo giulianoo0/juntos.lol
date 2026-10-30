@@ -426,7 +426,7 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
         companion.audio = null
         return
       }
-      if (companion.audio) { companion.audio.setMuted?.(choice.muted); return }
+      if (companion.audio) { companion.audio.setMuted?.(choice); return }
       companion.audio = companion.origin.sound()
       publisher.setAudio(companion.audio?.track)
     })
