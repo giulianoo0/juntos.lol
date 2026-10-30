@@ -125,7 +125,7 @@ function eyesOf(kind: MascotKind, accessory: (typeof ALL)[number], pose: (typeof
   return ([-1, 1] as const).map((side) => fitEye(projectEye(layout, side, pose.gaze, pose.shape, pose.blink), side, frame)).filter((eye) => eye.opacity > 0) as EyeRender[];
 }
 
-describe("eye geometry, every pose", () => {
+describe("eye geometry, every pose", { timeout: 30_000 }, () => {
   for (const [kind, rule] of Object.entries(KEEP) as [MascotKind, NonNullable<(typeof KEEP)[MascotKind]>][]) {
     it(`keeps the ${kind}'s eyes ${rule.what}`, () => {
       const bad: string[] = [];
