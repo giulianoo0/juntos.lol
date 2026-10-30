@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Juntos</title>
+<style>
+  /* The site's tokens (web/src/styles/tokens.css), the few this pill reads. */
+  :root {
+    color-scheme: light;
+    --overlay: #ffffff;
+    --text: #111111;
+    --line: rgb(0 0 0 / 8%);
+    --primary: oklch(0.55 0.17 258);
+    --brand: #ff7a45;
+    --status-success: oklch(0.62 0.15 150);
+    --switch-off: rgb(0 0 0 / 14%);
+    --radius-full: 999px;
+    --text-sm: 0.84375rem;
+    --weight-semibold: 600;
+    --tracking-snug: -0.015em;
+    --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --shadow-float: 0 1px 2px oklch(0 0 0 / 0.04), 0 16px 40px -18px oklch(0 0 0 / 0.14), 0 0 0 1px var(--line);
+    --ease-spring-pop: linear(0, 0.058, 0.191, 0.352, 0.513, 0.656, 0.774, 0.865, 0.932, 0.977, 1.005,
+      1.021, 1.027, 1.028, 1.026, 1.022, 1.017, 1.013, 1.009, 1.006, 1.003, 1.001, 1, 1, 1);
+    --ease-spring-settle: linear(0, 0.073, 0.222, 0.382, 0.527, 0.648, 0.742, 0.814, 0.868, 0.907, 0.935,
+      0.955, 0.969, 0.978, 0.985, 0.99, 1);
+    --duration-spring-pop: 600ms;
+    --duration-spring-settle: 360ms;
+    --blur-md: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --overlay: #282828;
+      --text: #ededed;
+      --line: rgb(255 255 255 / 7%);
+      --primary: oklch(0.664 0.147 257);
+      --switch-off: rgb(255 255 255 / 18%);
+      --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 44px -20px rgb(0 0 0 / 0.7), 0 0 0 1px var(--line);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body {
+    display: grid;
+    place-items: start center;
+    padding: 6px 24px 28px;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  /* Born from the Settings window above it, like every popover in the room. */
+  .pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 48px;
+    padding: 0 8px 0 6px;
+    border-radius: var(--radius-full);
+    background: var(--overlay);
+    color: var(--text);
+    box-shadow: var(--shadow-float);
+    transform-origin: 50% 0;
+    animation: pop var(--duration-spring-pop) var(--ease-spring-pop) both;
+  }
+  body[data-state="leaving"] .pill {
+    animation: settle var(--duration-spring-settle) var(--ease-spring-settle) both;
+  }
+  @keyframes pop {
+    from { transform: scale(0); opacity: 0; filter: blur(var(--blur-md)); }
+    to { transform: none; opacity: 1; filter: none; }
+  }
+  @keyframes settle {
+    from { transform: none; opacity: 1; filter: none; }
+    to { transform: scale(0.6); opacity: 0; filter: blur(var(--blur-md)); }
+  }
+  .point {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-full);
+    background: color-mix(in oklab, var(--primary) 14%, transparent);
+    color: var(--primary);
+  }
+  .point svg { width: 18px; height: 18px; animation: nudge 1.4s var(--ease-spring-settle) infinite; }
+  @keyframes nudge { 0%, 100% { transform: translateY(1px); } 50% { transform: translateY(-3px); } }
+  .mark { width: 14px; height: auto; color: var(--text); }
+  .mark .tip { fill: var(--brand); stroke: var(--brand); }
+  .label {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-snug);
+    white-space: nowrap;
+  }
+  /* A tiny copy of the switch in the list, turning on over and over. */
+  .switch {
+    position: relative;
+    width: 30px;
+    height: 18px;
+    margin-left: 2px;
+    border-radius: var(--radius-full);
+    background: var(--switch-off);
+    animation: track 2.4s var(--ease-spring-settle) infinite;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-full);
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+    animation: knob 2.4s var(--ease-spring-pop) infinite;
+  }
+  @keyframes track { 0%, 35% { background: var(--switch-off); } 50%, 90% { background: var(--primary); } 100% { background: var(--switch-off); } }
+  @keyframes knob { 0%, 35% { transform: none; } 50%, 90% { transform: translateX(12px); } 100% { transform: none; } }
+  .done { display: none; color: var(--status-success); }
+  .done svg { width: 22px; height: 22px; }
+  body[data-state="done"] .waiting, body[data-state="leaving"] .waiting { display: none; }
+  body[data-state="done"] .done, body[data-state="leaving"] .done { display: grid; place-items: center; width: 36px; height: 36px; }
+  @media (prefers-reduced-motion: reduce) {
+    .pill, body[data-state="leaving"] .pill { animation-duration: 1ms; }
+    .point svg, .switch, .switch::after { animation: none; }
+    .switch { background: var(--primary); }
+    .switch::after { transform: translateX(12px); }
+  }
+</style>
+</head>
+<body data-state="waiting">
+<div class="pill" role="status" aria-live="polite">
+  <span class="point waiting" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+  </span>
+  <span class="done" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></svg>
+  </span>
+  <svg class="mark" viewBox="150 40 220 424" aria-hidden="true">
+    <g transform="translate(-6,6)">
+      <path d="M 300 176 L 300 306 A 96 96 0 0 1 204 402" fill="none" stroke="currentColor" stroke-width="78" stroke-linecap="round"/>
+      <path class="tip" d="M 282 58 L 324 81 L 282 104 Z" stroke-width="16" stroke-linejoin="round"/>
+    </g>
+  </svg>
+  <span class="label" id="label">Ligue o Juntos</span>
+  <span class="switch waiting" aria-hidden="true"></span>
+</div>
+<script>
+  // The app calls `granted()` once Screen Recording is on, then closes the window.
+  const english = !/^pt/i.test(navigator.language || '')
+  const label = document.getElementById('label')
+  if (english) {
+    document.documentElement.lang = 'en'
+    label.textContent = 'Turn on Juntos'
+  }
+  window.granted = () => {
+    document.body.dataset.state = 'done'
+    label.textContent = english ? 'All set' : 'Pronto'
+    setTimeout(() => { document.body.dataset.state = 'leaving' }, 900)
+  }
+</script>
+</body>
+</html>

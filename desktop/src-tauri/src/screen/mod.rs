@@ -11,6 +11,8 @@ pub mod mix;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod pill;
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]
@@ -275,6 +277,26 @@ pub async fn screen_quality(state: tauri::State<'_, ScreenState>, quality: Quali
     {
         let _ = (state, quality);
         unsupported()
+    }
+}
+
+/// Whether the OS lets the app see the screen; only macOS asks.
+#[tauri::command]
+pub fn screen_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    return pill::permitted();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+#[tauri::command]
+pub async fn screen_permission_guide(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return pill::guide(&app);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(())
     }
 }
 

@@ -183,7 +183,7 @@ fn proc_of(pid: u32) -> Proc {
     Proc { pid, parent: if owner != pid { owner } else { 0 }, id: app_id(&exe), name }
 }
 
-fn running(pid: u32) -> Option<Retained<NSRunningApplication>> {
+pub(super) fn running(pid: u32) -> Option<Retained<NSRunningApplication>> {
     NSRunningApplication::runningApplicationWithProcessIdentifier(pid as libc::pid_t)
 }
 

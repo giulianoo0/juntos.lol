@@ -88,6 +88,8 @@ pub fn run() {
             screen::audio_start,
             screen::audio_set,
             screen::audio_stop,
+            screen::screen_permission,
+            screen::screen_permission_guide,
         ])
         .manage(screen::ScreenState::default())
         .setup(move |app| {
@@ -173,7 +175,7 @@ mod tests {
     #[test]
     fn the_site_is_granted_each_command_the_build_declares() {
         let granted: Vec<String> = site_permissions().collect();
-        assert_eq!(granted.len(), 26);
+        assert_eq!(granted.len(), 28);
         assert_eq!(granted[0], "allow-app-hello");
         assert!(granted.contains(&"allow-local-prepare".to_string()));
         assert!(granted.contains(&"allow-screen-start".to_string()));

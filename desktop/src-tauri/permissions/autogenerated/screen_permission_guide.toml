@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-screen-permission-guide"
+description = "Enables the screen_permission_guide command without any pre-configured scope."
+commands.allow = ["screen_permission_guide"]
+
+[[permission]]
+identifier = "deny-screen-permission-guide"
+description = "Denies the screen_permission_guide command without any pre-configured scope."
+commands.deny = ["screen_permission_guide"]

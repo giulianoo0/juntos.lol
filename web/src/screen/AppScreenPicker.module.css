@@ -147,6 +147,20 @@
   text-align: center;
 }
 
+.permission {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--space-4);
+  min-height: 14rem;
+}
+
+.permission p {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+
 .quality {
   display: flex;
   align-items: center;

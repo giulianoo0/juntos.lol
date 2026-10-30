@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { translate, type Translator } from '../i18n/useT'
 import { getSoundChoice, resetSoundChoiceForTests } from '../jlocal/soundChoice'
-import { appAudioApps, appThumbnail } from '../desktop/screen'
+import { appAudioApps, appScreenPermitted, appSources, appThumbnail, guideAppScreenPermission } from '../desktop/screen'
 import { AppScreenPicker } from './AppScreenPicker'
 
 const DISCORD_ICON = 'data:image/png;base64,ZGlzY29yZA=='
@@ -14,6 +14,8 @@ vi.mock('../desktop/screen', () => ({
     windows: [{ id: 'w1', title: 'YouTube', app: 'Google Chrome', icon: CHROME_ICON }],
   })),
   appThumbnail: vi.fn(async () => 'data:image/jpeg;base64,dGh1bWI='),
+  appScreenPermitted: vi.fn(async () => true),
+  guideAppScreenPermission: vi.fn(async () => undefined),
   appAudioApps: vi.fn(async () => [
     { id: 'chrome', name: 'Google Chrome', icon: CHROME_ICON },
     { id: 'discord', name: 'Discord', icon: DISCORD_ICON },
@@ -44,6 +46,18 @@ async function renderPicker(props: Partial<Parameters<typeof AppScreenPicker>[0]
 }
 
 describe('AppScreenPicker', () => {
+  it('without Screen Recording it sends the person to Settings and lists the screens once it is on', async () => {
+    vi.mocked(appScreenPermitted).mockResolvedValueOnce(false).mockResolvedValueOnce(false)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    render(<AppScreenPicker onPick={vi.fn()} onExit={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Abrir Ajustes' }))
+    expect(guideAppScreenPermission).toHaveBeenCalledTimes(1)
+    expect(appSources).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_500) })
+    expect(await screen.findByRole('radio', { name: /Tela 1/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Abrir Ajustes' })).toBeNull()
+  })
+
   it('shows windows with the real app icon and the sound panel beside them', async () => {
     await renderPicker()
     expect(screen.getByRole('radio', { name: 'Telas' })).toHaveAttribute('aria-checked', 'true')

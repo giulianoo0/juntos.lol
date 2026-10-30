@@ -328,6 +328,8 @@ export const en: Record<string, string> = {
   'appScreen.cancel': 'Cancel',
   'appScreen.share': 'Share',
   'appScreen.switch': 'Switch',
+  'appScreen.permissionTitle': 'Allow Screen Recording',
+  'appScreen.permissionOpen': 'Open Settings',
   'appScreen.failed': 'The app could not start capturing.',
   'appScreen.permission': 'Allow “Screen Recording” for Juntos in Settings › Privacy & Security and try again.',
   "avatar.kind": "Creature",

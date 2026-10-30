@@ -328,6 +328,8 @@ export const ptBR: Record<string, string> = {
   'appScreen.cancel': 'Cancelar',
   'appScreen.share': 'Compartilhar',
   'appScreen.switch': 'Trocar',
+  'appScreen.permissionTitle': 'Libere a Gravação de Tela',
+  'appScreen.permissionOpen': 'Abrir Ajustes',
   'appScreen.failed': 'O app não conseguiu começar a captura.',
   'appScreen.permission': 'Libere “Gravação de Tela” para o Juntos em Ajustes › Privacidade e Segurança e tente de novo.',
   "avatar.kind": "Bicho",

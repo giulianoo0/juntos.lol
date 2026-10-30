@@ -24,3 +24,5 @@ screen_stop
 audio_start
 audio_set
 audio_stop
+screen_permission
+screen_permission_guide

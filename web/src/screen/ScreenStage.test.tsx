@@ -46,6 +46,7 @@ vi.mock('../desktop/screen', async (importOriginal) => ({
   })),
   appAudioTrack: vi.fn(() => appAudio),
   appSources: vi.fn(async () => ({ displays: [{ id: 'd1', name: 'Display 1', width: 2560, height: 1440 }], windows: [] })),
+  appScreenPermitted: vi.fn(async () => true),
   appThumbnail: vi.fn(async () => null),
   appAudioApps: vi.fn(async () => [
     { id: 'chrome', name: 'Google Chrome', icon: '' },
@@ -184,7 +185,7 @@ describe('through the desktop app', () => {
     fireEvent.click(screen.getByRole('button', { name: en['room.screenStart'] }))
     const dialog = await screen.findByRole('dialog', { name: en['appScreen.title'] })
     await within(dialog).findByRole('switch', { name: 'Discord' })
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'Display 1' }))
+    fireEvent.click(await within(dialog).findByRole('radio', { name: 'Display 1' }))
     fireEvent.click(within(dialog).getByRole('button', { name: en['appScreen.share'] }))
     await waitFor(() => expect(startAppFeed).toHaveBeenCalled())
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

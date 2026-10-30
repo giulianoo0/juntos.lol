@@ -47,6 +47,20 @@ function bytes(message: unknown): Uint8Array {
   return Array.isArray(message) ? Uint8Array.from(message as number[]) : new Uint8Array(0)
 }
 
+/** Whether the OS lets the app see the screen; an app too old to say is taken at its word later. */
+export async function appScreenPermitted(): Promise<boolean> {
+  try {
+    return (await (await app()).invoke<unknown>('screen_permission')) !== false
+  } catch {
+    return true
+  }
+}
+
+/** Opens the OS's Screen Recording settings, with the app's pill pointing at the switch. */
+export async function guideAppScreenPermission(): Promise<void> {
+  await (await app()).invoke('screen_permission_guide')
+}
+
 /** What can be shared right now. Never throws: an app that cannot list shows an empty picker. */
 export async function appSources(): Promise<AppSources> {
   try {

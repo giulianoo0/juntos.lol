@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { Check, Gauge, MonitorUp, Replace } from 'lucide-react'
+import { Check, Gauge, MonitorUp, Replace, Settings } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import { appSources, appThumbnail, type AppSources } from '../desktop/screen'
+import { appScreenPermitted, appSources, appThumbnail, guideAppScreenPermission, type AppSources } from '../desktop/screen'
 import { useSoundChoice } from '../jlocal/soundChoice'
 import { screenQuality, type ScreenQualityId } from '../screenshare'
 import { Button } from '../ui/Button'
@@ -27,6 +27,8 @@ type Tab = 'displays' | 'windows'
 const THUMB_WIDTH = 480
 /** Thumbnails follow the machine at this pace while the picker is open. */
 const REFRESH_MS = 2_000
+/** How often a picker waiting on Screen Recording asks again. */
+const PERMISSION_MS = 1_000
 
 interface Card {
   id: string
@@ -64,6 +66,20 @@ function useThumbnails(tab: Tab, cards: Card[] | null): Record<string, string> {
   return thumbs
 }
 
+/** null while asking; false keeps asking every second until the OS says yes. */
+function useScreenPermission(): boolean | null {
+  const [permitted, setPermitted] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (permitted) return
+    let cancelled = false
+    const ask = () => { void appScreenPermitted().then((yes) => { if (!cancelled) setPermitted(yes) }) }
+    if (permitted === null) ask()
+    const timer = window.setInterval(ask, PERMISSION_MS)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [permitted])
+  return permitted
+}
+
 export function AppScreenPicker({ onPick, onExit, busy = false, error = null, mode = 'start', t }: {
   onPick: (pick: AppPick) => void
   onExit: () => void
@@ -82,7 +98,10 @@ export function AppScreenPicker({ onPick, onExit, busy = false, error = null, mo
   const panelRef = useRef<HTMLDivElement>(null)
   const soundTitle = useId()
 
+  const permitted = useScreenPermission()
+
   useEffect(() => {
+    if (!permitted) return
     let cancelled = false
     void appSources().then((found) => {
       if (cancelled) return
@@ -90,7 +109,7 @@ export function AppScreenPicker({ onPick, onExit, busy = false, error = null, mo
       setPicked({ displays: found.displays[0]?.id ?? null, windows: found.windows[0]?.id ?? null })
     })
     return () => { cancelled = true }
-  }, [])
+  }, [permitted])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -124,7 +143,15 @@ export function AppScreenPicker({ onPick, onExit, busy = false, error = null, mo
           options={[{ value: 'displays', label: t('jlocal.tabDisplays') }, { value: 'windows', label: t('jlocal.tabWindows') }]}
         />
         <div className={styles.scroll}>
-          {cards === null ? (
+          {permitted === false ? (
+            <div className={styles.permission}>
+              <p>{t('appScreen.permissionTitle')}</p>
+              <Button variant="primary" onClick={() => { void guideAppScreenPermission().catch(() => undefined) }}>
+                <Settings size={15} aria-hidden="true" />
+                {t('appScreen.permissionOpen')}
+              </Button>
+            </div>
+          ) : cards === null ? (
             <Loading label={t('status.loading')} className={styles.grid}>
               {[0, 1].map((index) => (
                 <span key={index} className={styles.card}>
