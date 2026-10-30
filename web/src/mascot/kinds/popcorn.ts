@@ -20,5 +20,6 @@ export const popcorn: KindArt = {
     { d: "M17.5 63.4 H82.5 Q84 63.4 83.6 65 L83 68.4 H17 L16.4 65 Q16 63.4 17.5 63.4 Z", fill: "#c92d2d" },
   ],
   hat: -6,
+  socket: { box: [30, 33, 49, 61.5] },
   fit: { top: 24.5, chin: 91.75, temple: 15.25, side: 16, neck: 23.5, helmet: [58, 43.1] },
 };

@@ -19,5 +19,6 @@ export const bee: KindArt = {
     { d: ellipse(28, 63, 4, 2.6), fill: "inner", opacity: 0.7 },
     { d: ellipse(72, 63, 4, 2.6), fill: "inner", opacity: 0.7 },
   ],
+  socket: { box: [31, 39, 49.2, 69] },
   fit: { helmet: [47, 41.3] },
 };

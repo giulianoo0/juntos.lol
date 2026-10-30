@@ -17,5 +17,6 @@ export const onigiri: KindArt = {
   ],
   hat: -6,
   hatScale: 0.82,
+  socket: { box: [32, 40, 49, 67] },
   fit: { top: 20, chin: 88.75, temple: 21.75, side: 18.5, neck: 15.5, helmet: [60.25, 40.5], hair: [1, 5] },
 };

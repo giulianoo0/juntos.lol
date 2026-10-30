@@ -109,8 +109,10 @@ describe("eyes and accessories, every pose", () => {
   }
 
   it("fits the frames to the head: the brim rides the hat, the cups the sides, the scarf and the bow tie the chin", () => {
-    const { hat, hatScale } = KINDS.mushroom;
-    expect(eyeFrameFor("beanie", KINDS.mushroom)!.left.y0).toBeCloseTo(HAT_BRIM + (EYE_FRAMES.beanie!.left.y0 - HAT_BRIM) * hatScale! + hat!, 6);
+    const brim = (kind: "ghost" | "mushroom") => HAT_BRIM + (EYE_FRAMES.beanie!.left.y0 - HAT_BRIM) * (KINDS[kind].hatScale ?? 1) + (KINDS[kind].hat ?? 0);
+    expect(eyeFrameFor("beanie", KINDS.ghost)!.left.y0).toBeCloseTo(brim("ghost"), 6);
+    // Under the mushroom's own cap the socket is lower than the shrunk hat's brim and wins.
+    expect(eyeFrameFor("beanie", KINDS.mushroom)!.left.y0).toBeCloseTo(Math.max(brim("mushroom"), KINDS.mushroom.socket!.box[1]), 6);
     const [left, right] = headphonesFor(KINDS.cactus).cups;
     expect(eyeFrameFor("headphones", KINDS.cactus)!.left.x0).toBeGreaterThan(left.x + left.width);
     expect(eyeFrameFor("headphones", KINDS.cactus)!.right.x1).toBeLessThan(right.x);

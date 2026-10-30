@@ -1,4 +1,4 @@
-import { EYE_DARK, EYE_WHITE, GREEN_TIE, circle, type KindArt } from "../kind";
+import { EYE_DARK, GREEN_TIE, circle, type KindArt } from "../kind";
 
 const DISCS = `${circle(38.5, 54, 13)} ${circle(61.5, 54, 13)}`;
 
@@ -23,7 +23,7 @@ export const owl: KindArt = {
   ],
   eyeClip: DISCS,
   socket: { box: [30, 45.5, 47, 62.5] },
-  iris: { size: 15, fill: EYE_DARK, pupil: 0.54, shut: true, glint: EYE_WHITE },
+  iris: { size: 15, fill: EYE_DARK, pupil: 0.54, shut: true },
   front: [{ d: "M46.6 65.4 Q50 64 53.4 65.4 L50.8 71.6 Q50 72.8 49.2 71.6 Z", fill: "accent" }],
   fit: { helmet: [51.5, 36.4] },
 };

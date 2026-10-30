@@ -57,8 +57,11 @@ export function irisOf(eye: EyeRender, gaze: Gaze, pupil: number, shut = false):
   const k = shut ? 1 - (1 - pupil) * open : pupil * open;
   const width = eye.width * k;
   const height = Math.min(eye.height, width);
-  const x = eye.x + ((eye.width - width) / 2) * 0.8 * clamp(gaze.yaw / 0.7);
-  const y = eye.y - ((eye.height - height) / 2) * 0.8 * clamp(gaze.pitch / 0.5);
+  // A diagonal look moves the pupil along a circle, not into the eye's corner.
+  const lean = [clamp(gaze.yaw / 0.7), clamp(gaze.pitch / 0.5)] as const;
+  const reach = Math.max(1, Math.hypot(...lean));
+  const x = eye.x + ((eye.width - width) / 2) * 0.8 * (lean[0] / reach);
+  const y = eye.y - ((eye.height - height) / 2) * 0.8 * (lean[1] / reach);
   const r = Math.min(width, height);
   return { x, y, width, height, rx: r / 2, glint: [x + width * 0.22, y - height * 0.22, r * 0.2], open };
 }
