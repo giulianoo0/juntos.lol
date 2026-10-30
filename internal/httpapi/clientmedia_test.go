@@ -514,3 +514,30 @@ func TestClientMediaPublishAnswersAStaleSeqWithConflict(t *testing.T) {
 		`{"claim":"`+claim+`","runId":"run1","seq":1,"confirm":["cs_1_1.m4s"],"playlists":{"client_stream_1.m3u8":`+strconvQuote(short)+`}}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 }
+
+func TestClientMediaRunFenceSaysWhereTheRoomIs(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	e := clientMediaEngine(t, store, objectstore.NewFake(), ClientMediaHooks{})
+	claim := claimRoom(t, e, "r1")
+	fence := func() int64 {
+		w := postJSON(t, e, "/api/rooms/r1/client-media/run", `{"claim":"`+claim+`","runId":"run_1"}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp struct {
+			PositionMs int64 `json:"positionMs"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp.PositionMs
+	}
+
+	require.NoError(t, store.SetState(t.Context(), "r1", room.PlayState{PositionMs: 40_000, Rate: 1}))
+	require.Equal(t, int64(40_000), fence())
+
+	now := time.Now().UnixMilli()
+	require.NoError(t, store.SetState(t.Context(), "r1", room.PlayState{Playing: true, PositionMs: 10_000, Rate: 1, ServerTimeMs: now - 2_000}))
+	require.InDelta(t, 12_000, fence(), 500)
+
+	w := postJSON(t, e, "/api/rooms/r1/client-media/run", `{"claim":"client:deadbeef","runId":"run_2"}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.NotContains(t, w.Body.String(), "positionMs")
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/room"
+	syncapi "github.com/giulianoo0/ss/internal/sync"
 )
 
 const (
@@ -71,7 +72,8 @@ type clientRunRequest struct {
 // setClientMediaRun moves the room's run fence for a producer the claim
 // holder orchestrates from outside the fleet (the companion app): every
 // region is its own run, and the fence must name the newest one before it
-// publishes, or the commit refuses it as stale.
+// publishes, or the commit refuses it as stale. It answers where the room is
+// now, so the run starts there and not where the producer last heard of it.
 func setClientMediaRun(store *room.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roomID := c.Param("id")
@@ -92,7 +94,12 @@ func setClientMediaRun(store *room.Store) gin.HandlerFunc {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
-		c.Status(http.StatusNoContent)
+		state, err := store.GetState(c.Request.Context(), roomID)
+		if err != nil {
+			c.Status(http.StatusNoContent)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"positionMs": syncapi.ExpectedPositionMs(state, time.Now().UnixMilli())})
 	}
 }
 
