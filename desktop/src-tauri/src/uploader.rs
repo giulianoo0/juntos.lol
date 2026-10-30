@@ -89,8 +89,9 @@ const SIGN_AHEAD: usize = 16;
 const SIGNED_FOR: Duration = Duration::from_secs(10 * 60);
 const ROUND_EVERY: Duration = Duration::from_secs(2);
 /// What the room's gate waits to have buffered past the position
-/// (GateReadyBufferMs), with some slack.
-const READY_AHEAD_MS: u64 = 3_500;
+/// (GateReadyBufferMs) and no more: a wider margin can cross into the next
+/// segment, and that one is seconds of uplink.
+const READY_AHEAD_MS: u64 = 3_100;
 /// How far past what a region holds the playhead may sit and still be
 /// that region's to fill: the next couple of segments.
 const REACH_MS: u64 = 10_000;
@@ -429,6 +430,14 @@ mod tests {
         assert_eq!(held(&one, &announced, 600_000), Some(1));
         let two = [report(0, 0, 320_000, true), report(1, 598_083, 8_000, true)];
         assert_eq!(held(&two, &announced, 600_000), None);
+    }
+
+    #[test]
+    fn a_seek_region_goes_out_with_the_gate_covered_without_waiting_on_the_next_segment() {
+        // Sintel at 820 s: the keyframe sits at 812.8 s and its 10.4 s
+        // segment already holds the gate's 3 s; the next one is 2.4 MB.
+        let regions = [report(0, 0, 320_000, true), report(2, 812_792, 10_416, true)];
+        assert_eq!(held(&regions, &HashSet::from([0]), 820_000), None);
     }
 
     #[test]
