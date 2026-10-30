@@ -2,6 +2,7 @@ package sync
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -45,6 +46,42 @@ func TestReportsWithoutHealthKeepTheLastReading(t *testing.T) {
 	require.Equal(t, int64(10), telemetry.droppedPermille())
 }
 
+// A rendition that could not be turned on is asked for again on the next
+// thin reading, not given up on for the rest of the media.
+func TestAThinLinkAsksAgainWhenTheRenditionDidNotTurnOn(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{})
+	asked := make(chan string, 8)
+	failing := true
+	hub.OnThinLink(func(roomID string) error {
+		asked <- roomID
+		if failing {
+			failing = false
+			return errors.New("redis down")
+		}
+		return nil
+	})
+	viewer := dialHubWS(t, server)
+	helloHubClient(t, viewer, "viewer", 1)
+	thin := Inbound{Type: "ready", PositionMs: 1_000, BufferAheadMs: 4_000, BandwidthKbps: 3_500, MediaKbps: 3_000}
+
+	for range 3 {
+		require.NoError(t, viewer.WriteJSON(thin))
+	}
+	require.Equal(t, "r1", <-asked)
+	requireNoEvent(t, viewer, 50*time.Millisecond)
+	for range 3 {
+		require.NoError(t, viewer.WriteJSON(thin))
+	}
+	requireNoEvent(t, viewer, 50*time.Millisecond)
+
+	select {
+	case <-asked:
+	case <-time.After(time.Second):
+		t.Fatal("the failed rendition was never asked for again")
+	}
+	require.Empty(t, asked, "asked again after it turned on")
+}
+
 func TestAThinLinkAsksTheRoomForALighterRendition(t *testing.T) {
 	thin := Inbound{Type: "ready", PositionMs: 1_000, BufferAheadMs: 4_000, BandwidthKbps: 3_500, MediaKbps: 3_000}
 	tests := []struct {
@@ -74,7 +111,7 @@ func TestAThinLinkAsksTheRoomForALighterRendition(t *testing.T) {
 				hub, _, server, _ = localRoom(t)
 			}
 			asked := make(chan string, 4)
-			hub.OnThinLink(func(roomID string) { asked <- roomID })
+			hub.OnThinLink(func(roomID string) error { asked <- roomID; return nil })
 			viewer := dialHubWS(t, server)
 			if tt.app {
 				helloApp(t, viewer, "viewer")

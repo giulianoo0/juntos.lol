@@ -54,7 +54,7 @@ type Hub struct {
 
 	onPosition func(roomID string, positionMs int64)
 
-	onThinLink func(roomID string)
+	onThinLink func(roomID string) error
 
 	onStageClose func(roomID, kind string)
 
@@ -102,8 +102,9 @@ type roomConn struct {
 	// put up for browsers, 0 when nothing is asked.
 	media        roomMedia
 	browserAsked int
-	// A viewer's link already asked for a lighter rendition of this media.
-	thinAsked bool
+	// A viewer's link already asked for a lighter rendition of this media,
+	// or is asking now; a failed ask clears it from off the room's goroutine.
+	thinAsked atomic.Bool
 
 	nextMember    int
 	nextRequest   int
@@ -164,10 +165,11 @@ func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
 	h.onPosition = fn
 }
 
-// OnThinLink registers what to do the first time, per media, a browser's
-// link proves too thin for it: turning on a lighter rendition. Set once at
-// startup; it runs off the room's goroutine.
-func (h *Hub) OnThinLink(fn func(roomID string)) {
+// OnThinLink registers what to do the first time, per media, a viewer's
+// link proves too thin for it: turning on a lighter rendition. An error asks
+// again on the next thin reading. Set once at startup; it runs off the
+// room's goroutine.
+func (h *Hub) OnThinLink(fn func(roomID string) error) {
 	h.onThinLink = fn
 }
 

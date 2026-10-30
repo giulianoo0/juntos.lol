@@ -120,18 +120,19 @@ func main() {
 		swarms.forget(roomID)
 	})
 	hub.OnPosition(remuxOrch.Follow)
-	hub.OnThinLink(func(roomID string) {
+	hub.OnThinLink(func(roomID string) error {
 		thinCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		added, err := store.EnableRendition(thinCtx, roomID, remux.Rendition480p)
 		if err != nil {
 			slog.Error("enable 480p rendition failed", "room_id", roomID, "error", err)
-			return
+			return err
 		}
 		if added {
 			slog.Info("480p rendition on for the next runs", "room_id", roomID)
 			hub.NotifyRoomUpdated(roomID)
 		}
+		return nil
 	})
 	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
 		torrents.Charge(workerID, hb)
