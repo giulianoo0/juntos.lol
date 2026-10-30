@@ -72,8 +72,8 @@ fn err(error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-pub fn app_hello(app: tauri::AppHandle, protocol_version: u32) -> site::Hello {
-    site::hello(protocol_version, &app.package_info().version.to_string(), cfg!(windows))
+pub fn app_hello(app: tauri::AppHandle, protocol_version: u32, min_protocol_version: Option<u32>) -> site::Hello {
+    site::hello(min_protocol_version.unwrap_or(protocol_version), &app.package_info().version.to_string(), cfg!(windows))
 }
 
 #[tauri::command]
@@ -202,4 +202,25 @@ pub fn upload_status(state: State<'_, AppState>, room_id: String) -> UploadStatu
         Some((_, upload)) => UploadStatus { active: !upload.stopped(), sent: upload.sent(), error: upload.error() },
         None => UploadStatus { active: false, sent: 0, error: None },
     }
+}
+
+#[tauri::command]
+pub fn update_status(updates: State<'_, crate::updates::AppUpdates>) -> crate::updates::Status {
+    updates.status()
+}
+
+/// The person asked: install what was downloaded and start the new version.
+#[tauri::command]
+pub fn update_restart(app: tauri::AppHandle) -> Result<(), String> {
+    if !crate::updates::install_pending(&app) {
+        return Err("no update ready".into());
+    }
+    app.restart()
+}
+
+/// The site needs a newer app: check right away instead of waiting for the timer.
+#[tauri::command]
+pub async fn update_now(app: tauri::AppHandle) -> Result<(), String> {
+    crate::updates::check_once(&app).await;
+    Ok(())
 }

@@ -61,16 +61,20 @@ pub struct Hello {
     pub protocol_version: u32,
     pub version: String,
     pub compatible: bool,
+    /// The site needs a newer app: the update is not optional.
+    pub update_required: bool,
     pub features: Vec<&'static str>,
     pub media_root: String,
 }
 
-pub fn hello(site_protocol: u32, version: &str, windows: bool) -> Hello {
-    let compatible = site_protocol == PROTOCOL_VERSION;
+/// `site_min` is the oldest protocol the site still talks to.
+pub fn hello(site_min: u32, version: &str, windows: bool) -> Hello {
+    let compatible = site_min <= PROTOCOL_VERSION;
     Hello {
         protocol_version: PROTOCOL_VERSION,
         version: version.to_string(),
         compatible,
+        update_required: !compatible,
         features: if compatible { vec!["localSource"] } else { Vec::new() },
         // WebView2 maps custom schemes to http://<scheme>.localhost.
         media_root: if windows { "http://juntos-media.localhost".into() } else { "juntos-media://localhost".into() },
@@ -82,13 +86,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hello_is_compatible_only_on_the_same_protocol() {
+    fn hello_serves_any_site_that_accepts_this_protocol() {
         let ok = hello(PROTOCOL_VERSION, "0.1.0", false);
         assert!(ok.compatible);
+        assert!(!ok.update_required);
         assert_eq!(ok.features, ["localSource"]);
         assert_eq!(ok.media_root, "juntos-media://localhost");
+        assert!(hello(PROTOCOL_VERSION - 1, "0.1.0", false).compatible);
+    }
+
+    #[test]
+    fn a_site_past_this_protocol_requires_the_update() {
         let old = hello(PROTOCOL_VERSION + 1, "0.1.0", false);
         assert!(!old.compatible);
+        assert!(old.update_required);
         assert!(old.features.is_empty());
     }
 

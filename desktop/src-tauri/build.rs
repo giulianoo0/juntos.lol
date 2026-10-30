@@ -13,6 +13,9 @@ const COMMANDS: &[&str] = &[
     "upload_start",
     "upload_stop",
     "upload_status",
+    "update_status",
+    "update_restart",
+    "update_now",
 ];
 
 fn main() {

@@ -6,6 +6,7 @@ pub mod serve;
 pub mod site;
 pub mod tools;
 pub mod torrent;
+pub mod updates;
 pub mod upload_plan;
 pub mod uploader;
 
@@ -14,7 +15,6 @@ use std::path::PathBuf;
 use tauri::ipc::CapabilityBuilder;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_updater::UpdaterExt;
 
 use commands::{AppState, Tools};
 use site::Navigation;
@@ -32,6 +32,9 @@ const COMMANDS: &[&str] = &[
     "upload-start",
     "upload-stop",
     "upload-status",
+    "update-status",
+    "update-restart",
+    "update-now",
 ];
 
 /// A bundled sidecar sits beside the app's executable; in dev the one on
@@ -74,6 +77,9 @@ pub fn run() {
             commands::upload_start,
             commands::upload_stop,
             commands::upload_status,
+            commands::update_status,
+            commands::update_restart,
+            commands::update_now,
         ])
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
@@ -117,24 +123,18 @@ pub fn run() {
                 })
                 .build()?;
 
-            if !cfg!(debug_assertions) {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let Ok(updater) = handle.updater() else { return };
-                    match updater.check().await {
-                        // Lands on disk now and runs from the next launch.
-                        Ok(Some(update)) => {
-                            if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-                                tracing::warn!(error = %e, "update install failed");
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => tracing::warn!(error = %e, "update check failed"),
-                    }
-                });
+            app.manage(updates::AppUpdates::default());
+            if !cfg!(debug_assertions) || std::env::var("JUNTOS_UPDATE_URL").is_ok() {
+                updates::spawn_checks(app.handle().clone());
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("tauri");
+        .build(tauri::generate_context!())
+        .expect("tauri")
+        .run(|app, event| {
+            // An update the person did not restart for goes in as the app closes.
+            if let tauri::RunEvent::Exit = event {
+                updates::install_pending(app);
+            }
+        });
 }
