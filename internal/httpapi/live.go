@@ -129,7 +129,9 @@ func startLive(store *room.Store, cfg config.Config, authorizer stageAuthorizer,
 			if err != nil {
 				code := liveStartCode(err)
 				live.Status, live.Error = "error", code
-				_ = store.SetLive(ctx, storedRoom.ID, live)
+				if err := store.SetLive(ctx, storedRoom.ID, live); err != nil {
+					slog.ErrorContext(ctx, "record failed live", "room_id", storedRoom.ID, "error", err)
+				}
 				if hooks.NotifyRoomUpdated != nil {
 					hooks.NotifyRoomUpdated(storedRoom.ID)
 				}

@@ -573,7 +573,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	state, err := r.hub.store.GetState(ctx, r.id)
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket state failed", "room_id", r.id, "error", err)
-		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+		r.undoJoin(ctx, memberID)
 		request.result <- "internal_error"
 		return
 	}
@@ -583,7 +583,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	history, err := r.hub.store.Messages(ctx, r.id)
 	if err != nil {
 		slog.ErrorContext(ctx, "load websocket chat failed", "room_id", r.id, "error", err)
-		_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+		r.undoJoin(ctx, memberID)
 		request.result <- "internal_error"
 		return
 	}
@@ -596,7 +596,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if r.controllerID == "" || !controllerLive || claimsOwnership {
 		if err := r.hub.store.SetController(ctx, r.id, memberID); err != nil {
 			slog.ErrorContext(ctx, "set initial websocket controller failed", "room_id", r.id, "error", err)
-			_ = r.hub.store.RemoveMember(ctx, r.id, memberID)
+			r.undoJoin(ctx, memberID)
 			request.result <- "internal_error"
 			return
 		}
@@ -632,6 +632,14 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	}
 	r.joined(request.client, claimsOwnership)
 	request.result <- ""
+}
+
+// undoJoin takes back the member a failed join already stored. If that fails
+// too, the room lists a ghost until it ends, so it is logged.
+func (r *roomConn) undoJoin(ctx context.Context, memberID string) {
+	if err := r.hub.store.RemoveMember(ctx, r.id, memberID); err != nil {
+		slog.ErrorContext(ctx, "undo websocket member failed", "room_id", r.id, "member_id", memberID, "error", err)
+	}
 }
 
 // handleSource records which browser holds the room's source. Only the one

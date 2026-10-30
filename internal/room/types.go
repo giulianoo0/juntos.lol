@@ -84,9 +84,18 @@ type PlayState struct {
 	ServerTimeMs int64   `json:"serverTimeMs"`
 }
 
-// StatusEmpty is the media stage of a room nobody has opened anything in:
-// a room is born this way, and its screens and live play beside it.
-const StatusEmpty = "empty"
+// The media stage's status. StatusEmpty is a room nobody has opened anything
+// in: a room is born this way, and its screens and live play beside it.
+// StatusLocal is a source that lives in the host's desktop app, playing from
+// its own cache with nothing in the bucket yet.
+const (
+	StatusEmpty      = "empty"
+	StatusLocal      = "local"
+	StatusUploading  = "uploading"
+	StatusProcessing = "processing"
+	StatusReady      = "ready"
+	StatusError      = "error"
+)
 
 // The kinds of stage a room shows side by side: one media with a timeline
 // (file, torrent, YouTube video), one live, and up to MaxScreenShares
