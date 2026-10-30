@@ -68,6 +68,10 @@ impl Torrents {
         .await
         .context("torrent metadata timed out")??;
         let handle = response.into_handle().context("no torrent handle")?;
+        // A torrent still checking its pieces refuses a file selection.
+        tokio::time::timeout(ADD_TIMEOUT, handle.wait_until_initialized())
+            .await
+            .context("torrent initialization timed out")??;
         let id = handle.info_hash().as_string();
         let files = {
             let guard = handle.metadata.load();
