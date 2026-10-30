@@ -11,7 +11,7 @@ const person = (id: string, name: string, extra: Partial<Person> = {}): Person =
 function model(overrides: Partial<RoomViewModel> = {}): RoomViewModel {
   const actions = Object.fromEntries([
     'setMic', 'setCam', 'share', 'react', 'sendChat', 'leave', 'copyLink', 'spotlight', 'answerRequest',
-    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'makeHost', 'setAccess', 'closeStage', 'openProfile',
+    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'makeHost', 'setAccess', 'closeStage', 'openProfile', 'getApp',
   ].map((name) => [name, vi.fn()])) as unknown as RoomActions
   return {
     name: 'Sessão de sexta',
@@ -79,6 +79,23 @@ describe('RoomView', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Torrent' }))
     expect(vm.actions.share).toHaveBeenCalledWith('torrent')
     expect(await screen.findByText('picker do torrent')).toBeInTheDocument()
+  })
+
+  it('shows a source only the app can open locked, and offers the app instead of opening it', async () => {
+    const vm = model({ sources: ['torrent', 'youtube'], appOnly: ['youtube'] })
+    render(<RoomView vm={vm} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Compartilhar' }))
+    const youtube = await screen.findByRole('menuitem', { name: 'YouTube' })
+    expect(youtube).toHaveAttribute('data-locked')
+    fireEvent.click(youtube)
+    expect(vm.actions.getApp).toHaveBeenCalledTimes(1)
+    expect(vm.actions.share).not.toHaveBeenCalled()
+  })
+
+  it('marks who is using the app beside the name, with no line under it', () => {
+    const { container } = render(<RoomView vm={model({ requests: [], people: [person('giu', 'Giu', { app: true }), person('ana', 'Ana')] })} />)
+    expect(container.querySelector('[data-member="giu"] [data-app]')).not.toBeNull()
+    expect(container.querySelector('[data-member="ana"] [data-app]')).toBeNull()
   })
 
   it('sends what was typed, trimmed, and empties the composer', () => {

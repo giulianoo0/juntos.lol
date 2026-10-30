@@ -31,6 +31,8 @@ export interface Member {
   /** The account a signed-in member is, by its number, and its avatar. */
   accountId?: number
   avatar?: string
+  /** `desktop` for the app; absent for a browser. */
+  client?: string
 }
 
 export interface ChatMessage {
@@ -177,4 +179,8 @@ export interface RoomInfo {
   mediaBaseUrl?: string
   /** A locked room's playlists ask for it. */
   mediaKey?: string
+  /** The host's desktop app produces the media; the bucket gets it only for browser guests. */
+  localSource?: boolean
+  /** Extra variants the server asked of the producer (`480p` for a slow browser guest). */
+  renditions?: string[]
 }

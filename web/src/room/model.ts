@@ -26,6 +26,8 @@ export interface Person {
   accountId?: number
   /** Their mascot (`fox.bowtie`); absent draws a default one from the id. */
   avatar?: string
+  /** In the desktop app rather than a browser. */
+  app?: boolean
 }
 
 export type StageKind = 'media' | 'live' | 'screen'
@@ -105,6 +107,8 @@ export interface RoomActions {
   closeStage: (stage: Stage) => void
   /** Someone's account page; the call waits in the corner meanwhile. */
   openProfile: (accountId: number) => void
+  /** The desktop app's download, for a source only the app opens. */
+  getApp?: () => void
 }
 
 export interface RoomSlots {
@@ -139,6 +143,8 @@ export interface RoomViewModel {
   reactions: Reaction[]
   /** Sources the share menu offers here (the screen needs a desktop browser). */
   sources: ShareSource[]
+  /** Of those, the ones only the desktop app opens: shown locked here. */
+  appOnly?: ShareSource[]
   /** 0..1, how loud someone's voice is now; read on the mascot's frame. */
   levelOf?: (memberId: string) => number
   actions: RoomActions

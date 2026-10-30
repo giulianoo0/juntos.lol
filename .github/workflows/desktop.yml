@@ -1,0 +1,90 @@
+name: desktop
+
+# Windows e Linux saem daqui; o Mac é montado e assinado localmente
+# (desktop/scripts/make-release.sh + publish-mac.sh). Disparo: tag desktop-vX.Y.Z.
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag da release (desktop-vX.Y.Z)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            bundle: nsis
+            built: nsis/*-setup.exe
+            asset: Juntos-setup.exe
+          - os: ubuntu-22.04
+            platform: linux
+            bundle: appimage
+            built: appimage/*.AppImage
+            asset: Juntos.AppImage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Dependências do Linux
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: ./scripts/fetch-sidecars.sh ${{ matrix.platform }}
+      - run: npm ci
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.conf.json
+      - name: Nomes estáveis
+        run: |
+          mkdir -p build/out
+          src=$(ls src-tauri/target/release/bundle/${{ matrix.built }} | head -1)
+          cp "$src" "build/out/${{ matrix.asset }}"
+          cp "$src.sig" "build/out/${{ matrix.asset }}.sig"
+      - name: Release
+        run: |
+          version="${TAG#desktop-v}"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Juntos $version" --notes-file NOTAS.md --latest || true
+          gh release upload "$TAG" --clobber build/out/*
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/release-manifest.mjs "${{ github.repository }}" "$TAG"
+      - run: gh release edit "$TAG" --repo "${{ github.repository }}" --latest

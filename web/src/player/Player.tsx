@@ -45,6 +45,8 @@ import { useToast } from '../ui/toastContext'
 
 interface PlayerProps {
   room: RoomInfo
+  /** Where the HLS is read from instead of the room's bucket: the desktop app's cache. */
+  mediaRoot?: string
   isController: boolean
   /** This viewer's seat, which a host import is authorized by. */
   memberId?: string
@@ -166,7 +168,7 @@ function subtitleSource(room: SubtitleBucket, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, memberId = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
+export function Player({ room, mediaRoot: localRoot, isController, memberId = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
   const { toast } = useToast()
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement | null>(null)
@@ -342,7 +344,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
     const video = videoRef.current
     if (!video) return
     const generation = room.mediaGeneration
-    const root = mediaRoot(room.id, room.mediaKey)
+    const root = localRoot ?? mediaRoot(room.id, room.mediaKey)
     const source = `${root}/hls/${masterName}?g=${generation}&v=${mediaReload}`
     const bundle = fetchBundle(root, masterName)
     void bundle.then(prefetchInitSegments)
@@ -537,7 +539,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [room.id, room.mediaGeneration, mediaReload, mediaOffsetSec, masterName, videoRef, rebuildSeq])
+  }, [room.id, room.mediaGeneration, mediaReload, mediaOffsetSec, masterName, videoRef, rebuildSeq, localRoot])
 
   useEffect(() => { resumeAfterReloadRef.current = false }, [room.mediaGeneration])
 

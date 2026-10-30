@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-youtube-resolve"
+description = "Enables the youtube_resolve command without any pre-configured scope."
+commands.allow = ["youtube_resolve"]
+
+[[permission]]
+identifier = "deny-youtube-resolve"
+description = "Denies the youtube_resolve command without any pre-configured scope."
+commands.deny = ["youtube_resolve"]

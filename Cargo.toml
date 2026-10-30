@@ -6,11 +6,11 @@ members = [
     "crates/ss-youtube",
     "crates/ss-remux",
     "ss-worker",
-    # "desktop/src-tauri",
 ]
 # The fork is a dependency, not ours to test: its own suite needs fixtures it
-# does not ship.
-exclude = ["crates/librqbit"]
+# does not ship. The desktop app is its own workspace, so the worker image and
+# the Linux CI never need Tauri's system libraries.
+exclude = ["crates/librqbit", "desktop/src-tauri"]
 
 [profile.release]
 opt-level = 2

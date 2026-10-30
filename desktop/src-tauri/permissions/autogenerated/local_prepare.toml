@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-prepare"
+description = "Enables the local_prepare command without any pre-configured scope."
+commands.allow = ["local_prepare"]
+
+[[permission]]
+identifier = "deny-local-prepare"
+description = "Denies the local_prepare command without any pre-configured scope."
+commands.deny = ["local_prepare"]

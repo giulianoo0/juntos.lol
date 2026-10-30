@@ -26,7 +26,7 @@ export interface YoutubeSession {
   url: string
   videoId: string
   summary: YoutubeSummary
-  backend: 'fleet' | 'jlocal'
+  backend: 'fleet' | 'jlocal' | 'desktop'
   /** The fleet job behind the session, when the fleet resolved it. */
   jobId?: string
   destroy: () => void
@@ -46,7 +46,7 @@ export interface YoutubeStart {
 
 /** One way of turning a link into a room. */
 export interface YoutubeBackend {
-  readonly name: 'fleet' | 'jlocal'
+  readonly name: 'fleet' | 'jlocal' | 'desktop'
   capacity(): Promise<YoutubeCapacity>
   resolve(url: string): Promise<YoutubeSession>
   /** Resolves null on an accepted handoff, or with the reason it was refused. */

@@ -1,0 +1,90 @@
+/* The ready notice: a small glass pill that pops from the top edge with the
+   spring popover's physics, out of the way of the dock and the player. */
+.notice {
+  position: fixed;
+  top: var(--space-4);
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--overlay);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  transform: translateX(-50%);
+  transform-origin: top center;
+  animation: pop var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateX(-50%) scale(0);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+/* The required update: the site's ground, the words, the bar. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-6);
+  background: var(--frame-ground);
+  color: var(--text);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+}
+
+.track {
+  width: min(280px, 70vw);
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+
+.fill[data-indeterminate] {
+  width: 30%;
+  animation: slide 1.2s var(--ease-in-out) infinite;
+}
+
+@keyframes slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice { animation: none; }
+  .fill[data-indeterminate] { animation: none; }
+}

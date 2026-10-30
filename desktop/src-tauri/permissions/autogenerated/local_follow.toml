@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-follow"
+description = "Enables the local_follow command without any pre-configured scope."
+commands.allow = ["local_follow"]
+
+[[permission]]
+identifier = "deny-local-follow"
+description = "Denies the local_follow command without any pre-configured scope."
+commands.deny = ["local_follow"]

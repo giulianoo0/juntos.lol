@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NoWorkersError, TorrentRejectedError, WorkersBusyError, openTorrent } from './torrent'
+import { resetDesktopForTests } from './platform'
 
 const MAGNET = 'magnet:?xt=urn:btih:' + 'ab'.repeat(20) + '&dn=Show&tr=udp%3A%2F%2Ft.example%3A1337'
 
@@ -115,5 +116,28 @@ describe('openTorrent', () => {
     expect(error).toBeInstanceOf(TorrentRejectedError)
     expect((error as TorrentRejectedError).code).toBe('not_video')
     expect(calls.some((call) => call.init?.method === 'DELETE')).toBe(true)
+  })
+})
+
+describe('openTorrent inside the desktop app', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    resetDesktopForTests()
+  })
+
+  it('opens the magnet in the app and never asks the fleet', async () => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }
+      if (cmd === 'torrent_open') return { id: 'ab'.repeat(20), name: 'Show', files: [{ index: 0, path: 'Show.mkv', size: 10 }] }
+      return null
+    })
+    ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = { invoke }
+    resetDesktopForTests()
+    const fleet = vi.fn(async () => { throw new Error('the fleet was asked') })
+    vi.stubGlobal('fetch', fleet)
+    const session = await openTorrent(MAGNET)
+    expect(session.backend).toBe('desktop')
+    expect(fleet).not.toHaveBeenCalled()
   })
 })
