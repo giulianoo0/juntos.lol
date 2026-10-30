@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -18,7 +18,7 @@ use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass};
 use objc2_app_kit::{NSApplicationActivationPolicy, NSBitmapImageFileType, NSBitmapImageRep, NSImageCompressionFactor, NSRunningApplication};
 use objc2_core_audio_types::{kAudioFormatFlagIsFloat, kAudioFormatLinearPCM, AudioBuffer, AudioBufferList};
 use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::{CGDisplayCopyDisplayMode, CGDisplayMode, CGImage, CGMainDisplayID};
+use objc2_core_graphics::{CGDisplayCopyDisplayMode, CGDisplayMode, CGImage, CGMainDisplayID, CGWindowListCopyWindowInfo, CGWindowListOption};
 use objc2_core_media::{
     kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264, CMAudioFormatDescriptionGetStreamBasicDescription, CMBlockBuffer,
     CMFormatDescription, CMSampleBuffer, CMTime, CMVideoFormatDescriptionGetH264ParameterSetAtIndex,
@@ -47,9 +47,17 @@ const BLOCK: usize = BLOCK_FRAMES * CHANNELS;
 /// Keyframe at least this often, so a late viewer waits little.
 const KEYFRAME_EVERY: Duration = Duration::from_secs(2);
 const RESCAN: Duration = Duration::from_secs(2);
+/// How often a shared window is looked up to see that it still exists.
+const WINDOW_CHECK: Duration = Duration::from_millis(500);
+/// A forced keyframe that has not come out by then is asked for again.
+const KEYFRAME_WAIT: Duration = Duration::from_millis(500);
 const ICON_SIZE: u32 = 64;
 
 pub fn sources() -> Result<Sources, String> {
+    autoreleasepool(|_| list_sources())
+}
+
+fn list_sources() -> Result<Sources, String> {
     let content = shareable(true)?;
     let main = CGMainDisplayID();
     let mut displays = unsafe { content.displays() }.to_vec();
@@ -84,6 +92,10 @@ pub fn sources() -> Result<Sources, String> {
 }
 
 pub fn thumbnail(target: &Target, width: u32) -> Result<String, String> {
+    autoreleasepool(|_| take_thumbnail(target, width))
+}
+
+fn take_thumbnail(target: &Target, width: u32) -> Result<String, String> {
     if AnyClass::get(c"SCScreenshotManager").is_none() {
         return Err("unsupported: thumbnails need macOS 14".into());
     }
@@ -116,6 +128,10 @@ pub fn thumbnail(target: &Target, width: u32) -> Result<String, String> {
 }
 
 pub fn audio_apps() -> Result<Vec<AudioApp>, String> {
+    autoreleasepool(|_| list_audio_apps())
+}
+
+fn list_audio_apps() -> Result<Vec<AudioApp>, String> {
     let content = shareable(false)?;
     let procs: Vec<Proc> = unsafe { content.applications() }.iter().map(|app| proc_of(unsafe { app.processID() } as u32)).collect();
     // Apps with a Dock icon of their own; a helper's sound is its app's.
@@ -135,8 +151,6 @@ pub fn audio_apps() -> Result<Vec<AudioApp>, String> {
         })
         .collect())
 }
-
-// ---- processes, names and icons
 
 extern "C" {
     // libSystem: the app a helper (an Electron renderer, a WebKit process)
@@ -159,8 +173,9 @@ fn exe_path(pid: u32) -> Option<String> {
     (len > 0).then(|| String::from_utf8_lossy(&buf[..len as usize]).into_owned())
 }
 
-/// A process under its app's id: a helper's parent is the app it works for,
-/// so muting Discord mutes the renderer that actually plays the call.
+/// A process under the id of the app responsible for it, so a helper reads
+/// as its app. The sound filter can only leave out apps ScreenCaptureKit
+/// lists, and leans on it to count a helper's sound as its app's.
 fn proc_of(pid: u32) -> Proc {
     let owner = responsible(pid);
     let exe = exe_path(owner).unwrap_or_default();
@@ -213,8 +228,6 @@ fn display_pixels(display: &SCDisplay) -> (u32, u32) {
         unsafe { (display.width() as u32, display.height() as u32) }
     }
 }
-
-// ---- ScreenCaptureKit
 
 /// An object made on one thread and handed to another; these are immutable
 /// once made.
@@ -377,7 +390,6 @@ impl AudioOutput {
     }
 }
 
-// ---- video
 
 struct Capture {
     stream: Retained<SCStream>,
@@ -386,6 +398,8 @@ struct Capture {
     _queue: DispatchRetained<DispatchQueue>,
     latest: Arc<Mutex<Option<Picture>>>,
     closed: Arc<AtomicBool>,
+    window: Option<u32>,
+    checked: Instant,
 }
 
 impl Drop for Capture {
@@ -423,8 +437,22 @@ impl Capture {
                 .addStreamOutput_type_sampleHandlerQueue_error(ProtocolObject::from_ref(&*video), SCStreamOutputType::Screen, Some(&queue))
                 .map_err(|e| format!("capture_failed: {}", e.localizedDescription()))?;
             start_stream(&stream)?;
-            Ok(Capture { stream, _output: video, _watch: watch, _queue: queue, latest, closed })
+            let window = matches!(target.kind, TargetKind::Window).then(|| target.id.parse().ok()).flatten();
+            Ok(Capture { stream, _output: video, _watch: watch, _queue: queue, latest, closed, window, checked: Instant::now() })
         }
+    }
+
+    /// A closed window often just stops sending pictures, without the delegate hearing of it, so it is also looked up.
+    fn ended(&mut self) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return true;
+        }
+        let Some(id) = self.window else { return false };
+        if self.checked.elapsed() < WINDOW_CHECK {
+            return false;
+        }
+        self.checked = Instant::now();
+        CGWindowListCopyWindowInfo(CGWindowListOption::OptionIncludingWindow, id).is_none_or(|list| list.count() == 0)
     }
 }
 
@@ -433,6 +461,9 @@ type Handler = RcBlock<dyn Fn(i32, VTEncodeInfoFlags, *mut CMSampleBuffer)>;
 struct Encoder {
     session: CFRetained<VTCompressionSession>,
     handler: Handler,
+    /// Pictures the encoder failed or dropped after taking them, in a row.
+    failed: Arc<AtomicU32>,
+    keyframe_out: Arc<AtomicBool>,
     width: u32,
     height: u32,
     fps: u32,
@@ -492,15 +523,24 @@ impl Encoder {
                 return Err(format!("capture_failed: encoder not ready ({status})"));
             }
         }
-        let handler: Handler = RcBlock::new(move |status: i32, _flags: VTEncodeInfoFlags, sample: *mut CMSampleBuffer| {
-            if status != 0 {
+        let failed = Arc::new(AtomicU32::new(0));
+        let keyframe_out = Arc::new(AtomicBool::new(false));
+        let (failed_in, keyframe_in) = (failed.clone(), keyframe_out.clone());
+        let handler: Handler = RcBlock::new(move |status: i32, flags: VTEncodeInfoFlags, sample: *mut CMSampleBuffer| {
+            let out = (status == 0 && !flags.contains(VTEncodeInfoFlags::FrameDropped))
+                .then(|| unsafe { sample.as_ref().and_then(|s| access_unit(s)) })
+                .flatten();
+            let Some((pts, keyframe, data)) = out else {
+                failed_in.fetch_add(1, Ordering::AcqRel);
                 return;
+            };
+            failed_in.store(0, Ordering::Release);
+            if keyframe {
+                keyframe_in.store(true, Ordering::Release);
             }
-            if let Some((pts, keyframe, data)) = unsafe { sample.as_ref().and_then(|s| access_unit(s)) } {
-                sink(frame(pts, if keyframe { KEYFRAME } else { 0 }, &data));
-            }
+            sink(frame(pts, if keyframe { KEYFRAME } else { 0 }, &data));
         });
-        Ok(Encoder { session, handler, width, height, fps })
+        Ok(Encoder { session, handler, failed, keyframe_out, width, height, fps })
     }
 
     fn encode(&self, picture: &CVImageBuffer, pts_us: u64, keyframe: bool) -> i32 {
@@ -588,6 +628,9 @@ impl Pipeline {
     /// a picture went in.
     fn step(&mut self, pts: u64, keyframe: bool) -> Result<bool, String> {
         let Some(picture) = self.capture.latest.lock().as_ref().map(|p| p.0.clone()) else { return Ok(false) };
+        if self.encoder.failed.load(Ordering::Acquire) > self.encoder.fps {
+            return Err("the encoder lost a second of pictures".into());
+        }
         match self.encoder.encode(&picture, pts, keyframe) {
             0 => {
                 self.failures = 0;
@@ -680,6 +723,7 @@ fn run_video(mut target: Target, mut quality: Quality, sink: Sink, rx: mpsc::Rec
     let mut tick = 0u64;
     let mut force_key = true;
     let mut last_key = clock;
+    let mut asked_key: Option<Instant> = None;
     loop {
         let (next_target, next_quality, reply) = match rx.try_recv() {
             Ok(Cmd::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
@@ -697,7 +741,7 @@ fn run_video(mut target: Target, mut quality: Quality, sink: Sink, rx: mpsc::Rec
             let _ = reply.send(result);
         }
         let pts = clock.elapsed().as_micros() as u64;
-        if pipeline.capture.closed.load(Ordering::Acquire) {
+        if pipeline.capture.ended() {
             tracing::info!("shared source closed");
             sink(frame(pts, ENDED, &[]));
             break;
@@ -705,10 +749,17 @@ fn run_video(mut target: Target, mut quality: Quality, sink: Sink, rx: mpsc::Rec
         if last_key.elapsed() >= KEYFRAME_EVERY {
             force_key = true;
         }
+        // The encoder may drop the very picture a keyframe was asked on.
+        if pipeline.encoder.keyframe_out.swap(false, Ordering::AcqRel) {
+            asked_key = None;
+        } else if asked_key.is_some_and(|at| at.elapsed() >= KEYFRAME_WAIT) {
+            force_key = true;
+        }
         match autoreleasepool(|_| pipeline.step(pts, force_key)) {
             Ok(true) => {
                 if force_key {
                     last_key = Instant::now();
+                    asked_key = Some(last_key);
                 }
                 force_key = false;
             }
@@ -730,8 +781,6 @@ fn run_video(mut target: Target, mut quality: Quality, sink: Sink, rx: mpsc::Rec
         }
     }
 }
-
-// ---- sound
 
 /// One sample buffer from ScreenCaptureKit as s16 stereo, whatever the
 /// layout; anything but the 48 kHz float that was asked for is dropped.
@@ -870,6 +919,8 @@ impl Drop for Audio {
 struct Sound {
     stream: Retained<SCStream>,
     _output: Retained<AudioOutput>,
+    _watch: Retained<Watch>,
+    closed: Arc<AtomicBool>,
     _queue: DispatchRetained<DispatchQueue>,
     pids: Vec<u32>,
 }
@@ -885,6 +936,8 @@ impl Sound {
         let content = shareable(false)?;
         let (filter, pids) = sound_filter(&content, muted)?;
         let output = AudioOutput::new(pending);
+        let closed = Arc::new(AtomicBool::new(false));
+        let watch = Watch::new(closed.clone());
         let queue = DispatchQueue::new("lol.juntos.screen.audio", None);
         unsafe {
             let config = SCStreamConfiguration::new();
@@ -896,12 +949,12 @@ impl Sound {
             config.setWidth(2);
             config.setHeight(2);
             config.setMinimumFrameInterval(CMTime::new(1, 1));
-            let stream = SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None);
+            let stream = SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, Some(ProtocolObject::from_ref(&*watch)));
             stream
                 .addStreamOutput_type_sampleHandlerQueue_error(ProtocolObject::from_ref(&*output), SCStreamOutputType::Audio, Some(&queue))
                 .map_err(|e| format!("audio_failed: {}", e.localizedDescription()))?;
             start_stream(&stream)?;
-            Ok(Sound { stream, _output: output, _queue: queue, pids })
+            Ok(Sound { stream, _output: output, _watch: watch, closed, _queue: queue, pids })
         }
     }
 
@@ -927,20 +980,40 @@ fn run_audio(muted: Arc<Mutex<Muted>>, dirty: Arc<AtomicBool>, stop: Arc<AtomicB
     let opened = Sound::open(&muted.lock(), pending.clone());
     let _ = ready.send(opened.as_ref().map(|_| ()).map_err(|e| e.clone()));
     let Ok(mut sound) = opened else { return };
-    let mut pcm = Pcm::default();
+    // The 10 ms blocks have a thread of their own, so a slow lookup of the
+    // running apps below never holds the sound back.
+    let pump = {
+        let (pending, stop) = (pending.clone(), stop.clone());
+        std::thread::spawn(move || pump_audio(pending, stop, sink))
+    };
     let mut last_scan = Instant::now();
-    let period = Duration::from_millis(10);
-    let mut next = Instant::now();
     while !stop.load(Ordering::Acquire) {
+        // The menu bar's Stop, or the display going away, ends the stream; silence covers until it is back.
+        if sound.closed.load(Ordering::Acquire) && last_scan.elapsed() >= RESCAN {
+            last_scan = Instant::now();
+            match autoreleasepool(|_| Sound::open(&muted.lock().clone(), pending.clone())) {
+                Ok(next) => sound = next,
+                Err(e) => tracing::debug!(error = %e, "sound reopen failed"),
+            }
         // An app opened later, or a restarted Discord, is a process the
         // filter has not seen yet.
-        if dirty.swap(false, Ordering::AcqRel) || last_scan.elapsed() >= RESCAN {
+        } else if dirty.swap(false, Ordering::AcqRel) || last_scan.elapsed() >= RESCAN {
             last_scan = Instant::now();
             let muted = muted.lock().clone();
             if let Err(e) = autoreleasepool(|_| sound.refilter(&muted)) {
                 tracing::debug!(error = %e, "sound rescan failed");
             }
         }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = pump.join();
+}
+
+fn pump_audio(pending: Arc<Mutex<Vec<i16>>>, stop: Arc<AtomicBool>, sink: Sink) {
+    let mut pcm = Pcm::default();
+    let period = Duration::from_millis(10);
+    let mut next = Instant::now();
+    while !stop.load(Ordering::Acquire) {
         let incoming = std::mem::take(&mut *pending.lock());
         for block in pcm.tick(&incoming) {
             sink(block);
