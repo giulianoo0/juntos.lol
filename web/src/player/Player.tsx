@@ -1171,7 +1171,9 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     if (regions && !regions.some((r) => regionHolds(r, at))) return
     resumeAtMsRef.current = null
     send('play', { positionMs: at, rate: videoRef.current?.playbackRate ?? 1 })
-  }, [bufferGate, coldWait, duration, regions, room.mediaVersion, send, videoRef])
+    // The room parking at the target is a change too: a seek into what is
+    // already buffered moves nothing else this waits on.
+  }, [bufferGate, coldWait, duration, regions, room.mediaVersion, send, syncState, videoRef])
   useEffect(() => {
     if (bufferGate) return
     if (viewerTrace.open()) {

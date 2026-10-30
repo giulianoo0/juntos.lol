@@ -1093,6 +1093,34 @@ describe('scrubbing', () => {
     expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 1_220_000 }))
   })
 
+  it('a seek into what is already buffered plays the room again once the server has it parked', () => {
+    const send = vi.fn()
+    const videoRef = createRef<HTMLVideoElement>()
+    const playing = { playing: true, positionMs: 100_000, rate: 1, serverTimeMs: Date.now() }
+    const { container, rerender } = render(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t} syncState={playing} serverOffsetMs={0} />,
+    )
+    const video = videoRef.current!
+    Object.defineProperty(video, 'duration', { configurable: true, value: 1440 })
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 1, start: () => 0, end: () => 400 } })
+    fireEvent.durationChange(video)
+    video.currentTime = 100
+    fireEvent.progress(video)
+    fireEvent.timeUpdate(video)
+    const scrubber = container.querySelector('input[aria-label="Seek"]')! as HTMLInputElement
+    fireEvent.change(scrubber, { target: { value: '150' } })
+    expect(send).toHaveBeenCalledWith('pause', expect.objectContaining({ positionMs: 150_000 }))
+    video.currentTime = 150
+    fireEvent.timeUpdate(video)
+
+    rerender(
+      <Player room={longRoom} isController videoRef={videoRef} send={send} t={t}
+        syncState={{ ...playing, playing: false, positionMs: 150_000, serverTimeMs: Date.now() }} serverOffsetMs={0} />,
+    )
+
+    expect(send).toHaveBeenCalledWith('play', expect.objectContaining({ positionMs: 150_000 }))
+  })
+
   it('lets the controller seek again while a cold seek is still being prepared', () => {
     const send = vi.fn()
     const videoRef = createRef<HTMLVideoElement>()
