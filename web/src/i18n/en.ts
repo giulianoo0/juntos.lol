@@ -398,6 +398,8 @@ export const en: Record<string, string> = {
   "site.github": "Code on GitHub",
   "site.download": "Download the app",
   "site.downloadTitle": "Download juntos",
+  "site.downloadLoading": "Looking for the newest version",
+  "site.downloadSoon": "Coming soon",
   "landing.addDiscord": "Add to Discord",
   "landing.sources": "Anything turns into a session.",
   "landing.screen": "Screen",

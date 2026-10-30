@@ -398,6 +398,8 @@ export const ptBR: Record<string, string> = {
   "site.github": "Código no GitHub",
   "site.download": "Baixar o app",
   "site.downloadTitle": "Baixar o juntos",
+  "site.downloadLoading": "Procurando a versão mais nova",
+  "site.downloadSoon": "Em breve",
   "landing.addDiscord": "Adicionar ao Discord",
   "landing.sources": "Qualquer coisa vira sessão.",
   "landing.screen": "Tela",

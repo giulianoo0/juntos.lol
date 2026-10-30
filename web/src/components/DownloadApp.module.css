@@ -33,6 +33,10 @@
   .platform[data-mine]:hover {
     background: var(--brand-hover);
   }
+
+  .platform[aria-disabled]:hover {
+    background: var(--button-secondary-bg);
+  }
 }
 
 .platform:active {
@@ -42,4 +46,20 @@
 .platform:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.skeleton {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: var(--radius-2xl);
+}
+
+.platform[aria-disabled] {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.55;
+}
+
+.platform[aria-disabled]:active {
+  transform: none;
 }
