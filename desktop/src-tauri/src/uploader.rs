@@ -162,6 +162,12 @@ impl Upload {
         if !fence.status().is_success() {
             bail!("run fence refused: {}", fence.status());
         }
+        // The page knows the position of the room's last change, not where
+        // it played on to since; a seek in the meantime is newer still.
+        let given = self.playhead.load(Ordering::Relaxed);
+        if let Some(position) = fenced_position(&fence.text().await.unwrap_or_default()) {
+            let _ = self.playhead.compare_exchange(given, position, Ordering::Relaxed, Ordering::Relaxed);
+        }
 
         let meta = producer.meta(key).context("unknown source")?;
         let dir = producer.hls_dir(key);
@@ -313,6 +319,11 @@ pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64
     (!ready && !announced.contains(&region.n)).then_some(region.n)
 }
 
+/// Where the run fence says the room is; an older server answers nothing.
+fn fenced_position(body: &str) -> Option<u64> {
+    serde_json::from_str::<Value>(body).ok()?.get("positionMs")?.as_u64()
+}
+
 /// The object a finished PUT sent; none for one a seek dropped.
 fn landed(done: Result<anyhow::Result<ClosedObject>, JoinError>) -> anyhow::Result<Option<ClosedObject>> {
     match done {
@@ -433,6 +444,13 @@ mod tests {
         let regions = [report(0, 0, 4_000, true)];
         assert_eq!(held(&regions, &HashSet::new(), 600_000), None);
         assert_eq!(held(&regions, &HashSet::new(), 2_000), Some(0));
+    }
+
+    #[test]
+    fn the_run_fence_tells_where_the_room_is_when_the_server_knows() {
+        assert_eq!(fenced_position(r#"{"positionMs":12000}"#), Some(12_000));
+        assert_eq!(fenced_position(""), None);
+        assert_eq!(fenced_position(r#"{"positionMs":-5}"#), None);
     }
 
     #[tokio::test]
