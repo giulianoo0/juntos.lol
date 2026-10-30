@@ -2,6 +2,7 @@ pub mod cache;
 pub mod commands;
 pub mod hls;
 pub mod local;
+pub mod screen;
 pub mod serve;
 pub mod site;
 pub mod tools;
@@ -77,7 +78,18 @@ pub fn run() {
             commands::update_status,
             commands::update_restart,
             commands::update_now,
+            screen::screen_sources,
+            screen::screen_thumbnail,
+            screen::audio_apps,
+            screen::screen_start,
+            screen::screen_switch,
+            screen::screen_quality,
+            screen::screen_stop,
+            screen::audio_start,
+            screen::audio_set,
+            screen::audio_stop,
         ])
+        .manage(screen::ScreenState::default())
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
             let bundled_ytdlp = tool("yt-dlp");
@@ -161,9 +173,10 @@ mod tests {
     #[test]
     fn the_site_is_granted_each_command_the_build_declares() {
         let granted: Vec<String> = site_permissions().collect();
-        assert_eq!(granted.len(), 16);
+        assert_eq!(granted.len(), 26);
         assert_eq!(granted[0], "allow-app-hello");
         assert!(granted.contains(&"allow-local-prepare".to_string()));
+        assert!(granted.contains(&"allow-screen-start".to_string()));
         assert!(granted.iter().all(|p| !p.contains('_')));
     }
 }

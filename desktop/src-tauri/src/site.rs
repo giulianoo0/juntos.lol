@@ -81,7 +81,7 @@ pub fn hello(site_min: u32, version: &str, windows: bool) -> Hello {
         features: if !compatible {
             Vec::new()
         } else if cfg!(any(target_os = "macos", windows)) {
-            vec!["localSource", "titleBar"]
+            vec!["localSource", "titleBar", "screenCapture"]
         } else {
             vec!["localSource"]
         },
@@ -101,6 +101,7 @@ mod tests {
         assert!(!ok.update_required);
         assert_eq!(ok.features[0], "localSource");
         assert_eq!(ok.features.contains(&"titleBar"), cfg!(any(target_os = "macos", windows)));
+        assert_eq!(ok.features.contains(&"screenCapture"), cfg!(any(target_os = "macos", windows)));
         assert_eq!(ok.media_root, "juntos-media://localhost");
         assert!(hello(PROTOCOL_VERSION - 1, "0.1.0", false).compatible);
     }

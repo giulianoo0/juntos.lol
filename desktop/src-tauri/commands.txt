@@ -14,3 +14,13 @@ upload_status
 update_status
 update_restart
 update_now
+screen_sources
+screen_thumbnail
+audio_apps
+screen_start
+screen_switch
+screen_quality
+screen_stop
+audio_start
+audio_set
+audio_stop

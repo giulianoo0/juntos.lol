@@ -404,9 +404,11 @@ mod tests {
         RegionState { n, start_ms, produced_ms, growing, low: false }
     }
 
+    #[cfg(unix)]
     struct Empty;
 
     #[async_trait::async_trait]
+    #[cfg(unix)]
     impl ByteSource for Empty {
         fn size(&self) -> u64 {
             0
@@ -416,10 +418,12 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     const PROBE: &str = r#"{"format":{"duration":"3600"},"streams":[{"codec_type":"video","codec_name":"h264"},{"codec_type":"audio","codec_name":"aac","channels":2}]}"#;
 
     /// A stand-in for ffprobe that counts its calls next to itself, takes a
     /// moment, and prints `out` (or fails without it).
+    #[cfg(unix)]
     fn fake_ffprobe(dir: &Path, out: Option<&str>) -> String {
         use std::os::unix::fs::PermissionsExt;
         let path = dir.join("ffprobe.sh");
@@ -429,11 +433,13 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
+    #[cfg(unix)]
     fn calls(dir: &Path) -> usize {
         std::fs::read_to_string(dir.join("calls")).map(|s| s.lines().count()).unwrap_or(0)
     }
 
     /// A producer whose FFmpeg exits at once, with source `k` already known.
+    #[cfg(unix)]
     fn producer_with_source(root: &Path, ffprobe: String) -> Arc<Producer> {
         let producer = Producer::new(root.join("cache"), "true".into(), ffprobe, u64::MAX);
         let dir = root.join("cache/k/hls");
@@ -444,10 +450,12 @@ mod tests {
         producer
     }
 
+    #[cfg(unix)]
     fn region_numbers(producer: &Producer) -> Vec<u64> {
         producer.meta("k").unwrap().regions.iter().map(|r| r.n).collect()
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn regions_started_at_once_get_numbers_of_their_own() {
         let root = tempfile::tempdir().unwrap();
@@ -462,6 +470,7 @@ mod tests {
         assert_eq!(numbers, vec![0, 1]);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_region_whose_keyframe_probe_failed_has_no_480p() {
         let root = tempfile::tempdir().unwrap();
@@ -474,6 +483,7 @@ mod tests {
         assert!(!regions[0].low);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn preparing_a_source_twice_at_once_reads_it_once() {
         let root = tempfile::tempdir().unwrap();
