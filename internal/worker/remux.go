@@ -71,7 +71,7 @@ type RemuxOrchestrator struct {
 	Notify  func(roomID string)
 
 	mu      sync.Mutex
-	byRoom  map[string]*sync.Mutex
+	byRoom  map[string]*roomMutex
 	follows map[string]*followState
 	// followDebounce is how long after a dispatch a further position waits
 	// before it may replace the run; a test shortens it.
@@ -91,22 +91,39 @@ func NewRemuxOrchestrator(service *Service, store *room.Store, cfg config.Config
 		Service: service,
 		Store:   store,
 		Cfg:     cfg,
-		byRoom:  map[string]*sync.Mutex{},
+		byRoom:  map[string]*roomMutex{},
 		follows: map[string]*followState{},
 
 		followDebounce: followDebounce,
 	}
 }
 
-func (o *RemuxOrchestrator) roomLock(roomID string) *sync.Mutex {
+// roomMutex is one room's lock and how many callers hold or wait on it; the
+// last one out drops it, so a room no one is acting on costs nothing.
+type roomMutex struct {
+	sync.Mutex
+	refs int
+}
+
+// lockRoom takes the room's lock and returns what releases it.
+func (o *RemuxOrchestrator) lockRoom(roomID string) (unlock func()) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	lock, ok := o.byRoom[roomID]
 	if !ok {
-		lock = &sync.Mutex{}
+		lock = &roomMutex{}
 		o.byRoom[roomID] = lock
 	}
-	return lock
+	lock.refs++
+	o.mu.Unlock()
+	lock.Lock()
+	return func() {
+		lock.Unlock()
+		o.mu.Lock()
+		if lock.refs--; lock.refs == 0 {
+			delete(o.byRoom, roomID)
+		}
+		o.mu.Unlock()
+	}
 }
 
 func (o *RemuxOrchestrator) rdb() *redis.Client { return o.Service.Registry.rdb }
@@ -206,9 +223,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		return nil, ErrRemuxDenied
 	}
 
-	lock := o.roomLock(req.RoomID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer o.lockRoom(req.RoomID)()
 
 	if existing, err := o.LoadRun(ctx, req.RoomID); err == nil && existing != nil {
 		if existing.MediaGeneration == req.MediaGeneration && !remux.TerminalState(existing.State) {
@@ -360,9 +375,7 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	lock := o.roomLock(roomID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer o.lockRoom(roomID)()
 
 	run, err := o.LoadRun(ctx, roomID)
 	if err != nil || run == nil || (remux.TerminalState(run.State) && run.State != remux.RunCompleted) {
@@ -418,6 +431,13 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 func (o *RemuxOrchestrator) admitFollow(roomID string, positionMs int64) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// A window that closed with nothing held is the same as no entry: the
+	// rooms that died without a cancel go here.
+	for id, held := range o.follows {
+		if held.timer == nil && time.Since(held.last) >= o.followDebounce {
+			delete(o.follows, id)
+		}
+	}
 	state, ok := o.follows[roomID]
 	if !ok {
 		state = &followState{}
@@ -487,9 +507,13 @@ func maxInt64(a, b int64) int64 {
 func (o *RemuxOrchestrator) CancelRoom(roomID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	lock := o.roomLock(roomID)
-	lock.Lock()
-	defer lock.Unlock()
+	o.mu.Lock()
+	if state := o.follows[roomID]; state != nil && state.timer != nil {
+		state.timer.Stop()
+	}
+	delete(o.follows, roomID)
+	o.mu.Unlock()
+	defer o.lockRoom(roomID)()
 	run, err := o.LoadRun(ctx, roomID)
 	if err != nil || run == nil {
 		return
@@ -627,9 +651,7 @@ func findRun(runs []remux.RunReport, runID string) *remux.RunReport {
 }
 
 func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, report *remux.RunReport) {
-	lock := o.roomLock(run.RoomID)
-	lock.Lock()
-	defer lock.Unlock()
+	defer o.lockRoom(run.RoomID)()
 	current, err := o.LoadRun(ctx, run.RoomID)
 	if err != nil || current == nil || current.RunID != run.RunID {
 		return
@@ -666,9 +688,7 @@ func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, repo
 			_ = o.saveRun(ctx, current)
 			restart := *current
 			go func() {
-				lock := o.roomLock(restart.RoomID)
-				lock.Lock()
-				defer lock.Unlock()
+				defer o.lockRoom(restart.RoomID)()
 				bg := context.Background()
 				latest, err := o.LoadRun(bg, restart.RoomID)
 				if err != nil || latest == nil || latest.RunID != restart.RunID {
