@@ -1,0 +1,82 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { resetDesktopForTests } from '../platform'
+import { remuxHandleFor } from '../upload'
+import { attachLocalRoom, browserMediaIdle, localMediaFor, needBrowserMedia, refreshLocalMedia, resetLocalRoomsForTests } from './localRoom'
+
+const regions = [{ n: 0, startMs: 0, producedMs: 8000, growing: true }]
+const meta = { key: 't-abc-0', title: 'Filme', durationMs: 600000, audioLangs: ['eng'], videoCodecs: null, regions: [] }
+
+let invoke: ReturnType<typeof vi.fn>
+let fetchMock: ReturnType<typeof vi.fn>
+
+beforeEach(() => {
+  invoke = vi.fn(async (cmd: string) => {
+    if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }
+    if (cmd === 'local_prepare') return meta
+    if (cmd === 'local_regions') return regions
+    return null
+  })
+  ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = { invoke }
+  resetDesktopForTests()
+  fetchMock = vi.fn(async () => new Response(JSON.stringify({ claim: 'CLAIM', mediaGeneration: 4, maxBytes: 1, metadataToken: 'm' }), { status: 200 }))
+  vi.stubGlobal('fetch', fetchMock)
+})
+
+afterEach(() => {
+  resetLocalRoomsForTests()
+  vi.unstubAllGlobals()
+  delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  resetDesktopForTests()
+})
+
+const source = { kind: 'torrent' as const, id: 'abc', index: 0, title: 'Filme' }
+
+describe('a room played from the desktop cache', () => {
+  it('prepares the source and plays its regions from the cache', async () => {
+    expect(await attachLocalRoom('ROOM1', 4, source)).toBeNull()
+    expect(invoke).toHaveBeenCalledWith('local_prepare', { source })
+    await refreshLocalMedia('ROOM1')
+    expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, regions })
+  })
+
+  it('hands the room position to the app', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    remuxHandleFor('ROOM1')?.follow(42_000)
+    expect(invoke).toHaveBeenCalledWith('local_follow', { key: 't-abc-0', positionMs: 42_000 })
+  })
+
+  it('a browser guest promotes the room and starts the upload at the playhead', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    remuxHandleFor('ROOM1')?.follow(42_000)
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/ROOM1/local/promote', expect.objectContaining({ method: 'POST', body: JSON.stringify({ memberId: 'm1', capability: 'cap' }) }))
+    expect(invoke).toHaveBeenCalledWith('upload_start', { key: 't-abc-0', roomId: 'ROOM1', claim: 'CLAIM', mediaGeneration: 4, positionMs: 42_000 })
+  })
+
+  it('a refused promote starts nothing', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_local' }), { status: 409 }))
+    await attachLocalRoom('ROOM1', 4, source)
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.anything())
+  })
+
+  it('a room this app does not produce ignores the event', async () => {
+    await needBrowserMedia('OTHER', { memberId: 'm1', capability: 'cap' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('stops the upload when the last browser guest leaves', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    await browserMediaIdle('ROOM1')
+    expect(invoke).toHaveBeenCalledWith('upload_stop', { roomId: 'ROOM1' })
+  })
+
+  it('a refused prepare is the reason, and nothing is attached', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }
+      throw 'torrent not live'
+    })
+    expect(await attachLocalRoom('ROOM1', 4, source)).toContain('torrent not live')
+    expect(localMediaFor('ROOM1')).toBeNull()
+  })
+})
