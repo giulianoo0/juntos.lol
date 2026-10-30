@@ -340,7 +340,7 @@ impl Remux {
         // One byte source per FFmpeg input, the video first; and the plan,
         // probed off the container or read off the resolved video. A
         // container's keyframe search runs next to its stream probe.
-        let (sources, source, vtt_subtitles, keyframe): (Vec<Arc<dyn ByteSource>>, plan::SourcePlan, Vec<youtube::SubtitlePick>, Option<f64>) =
+        let (sources, source, vtt_subtitles, keyframe) =
             match input {
                 RunInput::Container(bytes) => {
                     let (probe_url, probe_cap) =
