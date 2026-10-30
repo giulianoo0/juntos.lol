@@ -1,4 +1,4 @@
-import { Crown, Focus, MicOff, Pin, PinOff, X } from 'lucide-react'
+import { AppWindow, Crown, Focus, MicOff, Pin, PinOff, X } from 'lucide-react'
 import { useCallback, useLayoutEffect, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import type { Person, Stage } from '../model'
 import { RoundButton } from '../../ui/Pill'
@@ -100,6 +100,7 @@ export function PersonTile({ person, size, avatar: avatarSize }: { person: Perso
         ) : null}
         <span className={styles.nameText}>{person.name}</span>
         {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
+        {person.app ? <Tip label={strings.usingApp}><AppWindow size={12} className={styles.app} data-app="" aria-hidden="true" /></Tip> : null}
       </div>
       {size !== 'thumb' ? (
         <div className={styles.corner}>

@@ -1,4 +1,4 @@
-import { Crown, Mic, MicOff, VideoOff, X } from 'lucide-react'
+import { AppWindow, Crown, Mic, MicOff, VideoOff, X } from 'lucide-react'
 import type { Knock, StageRequest } from '../model'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
@@ -79,6 +79,7 @@ function PeopleList() {
               {person.host ? <Tip label={strings.host}><Crown size={13} className={styles.crown} fill="currentColor" aria-hidden="true" /></Tip> : null}
               <span className={styles.nameText}>{person.name}</span>
               {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
+              {person.app ? <Tip label={strings.usingApp}><AppWindow size={13} className={styles.app} data-app="" aria-hidden="true" /></Tip> : null}
               {self ? <span className={styles.you}>{strings.you}</span> : null}
             </span>
             {person.cam && !person.hostCamOff ? null : (

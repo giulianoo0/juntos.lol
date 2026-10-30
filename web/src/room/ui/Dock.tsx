@@ -54,7 +54,9 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
                   />
                 ))}
                 {mine.length > 0 ? <SpringRule /> : null}
-                {vm.sources.map((source) => (
+                {vm.sources.map((source) => vm.appOnly?.includes(source) ? (
+                  <SpringRow key={source} icon={sourceIcon[source]} label={labels[source]} locked={strings.appOnly} onSelect={() => { close(); vm.actions.getApp?.() }} />
+                ) : (
                   <SpringRow key={source} icon={sourceIcon[source]} label={labels[source]} onSelect={() => { close(); onShare(source) }} />
                 ))}
               </div>

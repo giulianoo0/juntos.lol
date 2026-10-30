@@ -110,6 +110,11 @@
   color: var(--text-faint);
 }
 
+.app {
+  flex: none;
+  color: var(--text-faint);
+}
+
 .you {
   font-size: var(--text-xs);
   font-weight: var(--weight-regular);

@@ -17,6 +17,8 @@ import { ScreenStage, screenStartedNotice, useScreenShareNotices } from '../scre
 import { useScreenShare } from '../screen/useScreenShare'
 import { JlocalPicker } from '../screen/JlocalPicker'
 import { useLocalRoomMedia } from '../desktop/localRoom'
+import { openDownloadApp } from '../components/DownloadApp'
+import { isDesktop } from '../platform'
 import { localStatus, playableRoom } from '../desktop/localView'
 import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
@@ -836,6 +838,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     hostCamOff: Boolean(member.hostCamOff),
     accountId: member.accountId || undefined,
     avatar: member.avatar || undefined,
+    app: member.client === 'desktop',
   }))
   const roomStages = stagesOf(stageRoom)
   const viewStages: ViewStage[] = roomStages.map((stage) => ({
@@ -877,6 +880,8 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     chat,
     reactions,
     sources,
+    // YouTube is opened from the app; a browser still watches it.
+    appOnly: isDesktop() ? [] : ['youtube'],
     levelOf: call.levelOf,
     actions: {
       setMic: call.setMic,
@@ -918,6 +923,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         sync.closeStage(stage.kind, stage.kind === 'screen' ? stage.ownerId : undefined)
       },
       openProfile: (accountId) => navigate(profilePath(accountId)),
+      getApp: openDownloadApp,
     },
     slots: {
       renderVideo: (memberId) => <CallVideo memberId={memberId} />,
@@ -933,7 +939,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
               maxFileBytes={MAX_UPLOAD_BYTES}
               t={t}
               onExit={close}
-              onYoutubeLink={close}
+              onYoutubeLink={isDesktop() ? close : () => { close(); openDownloadApp() }}
               onPicked={(file, session) => { close(); chooseTorrent(file, session) }}
               initialMagnet={playlist?.magnet}
               autoLoad={playlist !== null}

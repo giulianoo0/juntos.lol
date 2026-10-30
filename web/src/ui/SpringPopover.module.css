@@ -96,6 +96,16 @@
   color: var(--status-danger-ink);
 }
 
+/* Only the app opens it: dimmed, still picked to say how to get it. */
+.row[data-locked] {
+  color: var(--text-faint);
+}
+
+.lock {
+  flex: none;
+  color: var(--text-faint);
+}
+
 .row:disabled,
 .row[data-disabled] {
   color: var(--text-faint);

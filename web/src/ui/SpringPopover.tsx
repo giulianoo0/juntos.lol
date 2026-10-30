@@ -1,5 +1,7 @@
 import { Popover } from '@base-ui/react/popover'
+import { Lock } from 'lucide-react'
 import { useState, type ReactElement, type ReactNode, type RefObject } from 'react'
+import { Tip } from './Tip'
 import styles from './SpringPopover.module.css'
 
 export interface SpringPopoverProps {
@@ -90,18 +92,21 @@ export interface SpringRowProps {
   /** A destructive row (expulsar) in the danger ink. */
   tone?: 'danger'
   disabled?: boolean
+  /** Shown dimmed with a lock and this tip; still picked, to say how to get it. */
+  locked?: string
   onSelect: () => void
 }
 
 /** A row of the popover: the mark, the label, the check. */
-export function SpringRow({ icon, label, checked, tone, disabled, onSelect }: SpringRowProps) {
-  return (
+export function SpringRow({ icon, label, checked, tone, disabled, locked, onSelect }: SpringRowProps) {
+  const row = (
     <button
       type="button"
       role={checked === undefined ? 'menuitem' : 'menuitemradio'}
       aria-checked={checked}
       className={styles.row}
       data-tone={tone}
+      data-locked={locked ? '' : undefined}
       disabled={disabled}
       onClick={onSelect}
     >
@@ -112,8 +117,10 @@ export function SpringRow({ icon, label, checked, tone, disabled, onSelect }: Sp
           <path d="m3.5 8.4 2.9 2.9 6.1-6.6" />
         </svg>
       ) : null}
+      {locked ? <Lock size={14} className={styles.lock} aria-hidden="true" /> : null}
     </button>
   )
+  return locked ? <Tip label={locked} block render={row} /> : row
 }
 
 /** A hairline between groups of rows. */

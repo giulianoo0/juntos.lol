@@ -1,5 +1,5 @@
 import { Cpu, Download, Zap } from 'lucide-react'
-import { useEffect, useState, type ComponentType } from 'react'
+import { useEffect, useState, useSyncExternalStore, type ComponentType } from 'react'
 import { useT } from '../i18n/useT'
 import { isDesktop } from '../platform'
 import { GITHUB_URL } from '../ui/GithubGlyph'
@@ -46,14 +46,58 @@ function useDesktopRelease(open: boolean): ReleaseState {
   return state
 }
 
+// One modal for the page: the header's button and a pick only the app can
+// do (YouTube, in a browser) both open it.
+let modalOpen = false
+const modalListeners = new Set<() => void>()
+
+function setOpen(open: boolean): void {
+  if (modalOpen === open) return
+  modalOpen = open
+  for (const listener of modalListeners) listener()
+}
+
+/** Opens the download modal from anywhere; nothing happens inside the app. */
+export function openDownloadApp(): void {
+  if (!isDesktop()) setOpen(true)
+}
+
+function subscribeModal(listener: () => void): () => void {
+  modalListeners.add(listener)
+  return () => { modalListeners.delete(listener) }
+}
+
 /** The round way to the desktop app, beside the GitHub link; gone on phones, which have no app, and in the app. */
 export function DownloadApp() {
   const t = useT()
-  const [open, setOpen] = useState(false)
-  const release = useDesktopRelease(open)
-  const mine = currentPlatform()
   // Inside the app there is nothing to download.
-  if (!mine || isDesktop()) return null
+  if (!currentPlatform() || isDesktop()) return null
+  return (
+    <Tip
+      label={t('site.download')}
+      side="bottom"
+      render={
+        <button
+          type="button"
+          className={toggle.toggle}
+          aria-label={t('site.download')}
+          onPointerEnter={() => { void latestDesktopRelease().catch(() => {}) }}
+          onClick={openDownloadApp}
+        >
+          <Download size={18} aria-hidden="true" />
+        </button>
+      }
+    />
+  )
+}
+
+/** The download modal, mounted once at the page's root. */
+export function DownloadAppHost() {
+  const t = useT()
+  const open = useSyncExternalStore(subscribeModal, () => modalOpen, () => false)
+  const release = useDesktopRelease(open)
+  if (isDesktop()) return null
+  const mine = currentPlatform()
   const platforms = [...PLATFORMS].sort((a, b) => Number(b.id === mine) - Number(a.id === mine))
   const version = release.status === 'ready' ? release.release?.version : undefined
   const hrefFor = (id: Platform, file: string): string | undefined => {
@@ -62,61 +106,44 @@ export function DownloadApp() {
     return undefined
   }
   return (
-    <>
-      <Tip
-        label={t('site.download')}
-        side="bottom"
-        render={
-          <button
-            type="button"
-            className={toggle.toggle}
-            aria-label={t('site.download')}
-            onPointerEnter={() => { void latestDesktopRelease().catch(() => {}) }}
-            onClick={() => setOpen(true)}
-          >
-            <Download size={18} aria-hidden="true" />
-          </button>
-        }
-      />
-      <Modal
-        open={open}
-        onOpenChange={setOpen}
-        title={version ? <>{t('site.downloadTitle')} <DiaText className={styles.version}>{version}</DiaText></> : t('site.downloadTitle')}
-        closeLabel={t('account.close')}
-      >
-        <ul className={styles.perks}>
-          <li><span className={styles.perkIcon}><Zap size={18} aria-hidden="true" /></span>{t('site.perkTorrent')}</li>
-          <li><span className={styles.perkIcon}><YoutubeGlyph size={18} /></span>{t('site.perkYoutube')}</li>
-          <li><span className={styles.perkIcon}><Cpu size={18} aria-hidden="true" /></span>{t('site.perkLocal')}</li>
-        </ul>
-        {release.status === 'loading' ? (
-          <Loading label={t('site.downloadLoading')} className={styles.grid}>
-            {platforms.map(({ id }) => <Skeleton key={id} width="100%" height="auto" className={styles.skeleton} />)}
-          </Loading>
-        ) : (
-          <div className={styles.grid}>
-            {platforms.map(({ id, name, file, Glyph }) => {
-              const href = hrefFor(id, file)
-              const face = (
-                <>
-                  <Glyph size={32} />
-                  <span>{name}</span>
-                </>
-              )
-              return href ? (
-                <a key={id} className={styles.platform} data-mine={id === mine || undefined} href={href} download onClick={() => setOpen(false)}>
-                  {face}
-                </a>
-              ) : (
-                <Tip key={id} label={t('site.downloadSoon')} render={<span className={styles.platform} aria-disabled="true" />}>
-                  {face}
-                </Tip>
-              )
-            })}
-          </div>
-        )}
-        <p className={styles.optional}>{t('site.downloadOptional')}</p>
-      </Modal>
-    </>
+    <Modal
+      open={open}
+      onOpenChange={setOpen}
+      title={version ? <>{t('site.downloadTitle')} <DiaText className={styles.version}>{version}</DiaText></> : t('site.downloadTitle')}
+      closeLabel={t('account.close')}
+    >
+      <ul className={styles.perks}>
+        <li><span className={styles.perkIcon}><Zap size={18} aria-hidden="true" /></span>{t('site.perkTorrent')}</li>
+        <li><span className={styles.perkIcon}><YoutubeGlyph size={18} /></span>{t('site.perkYoutube')}</li>
+        <li><span className={styles.perkIcon}><Cpu size={18} aria-hidden="true" /></span>{t('site.perkLocal')}</li>
+      </ul>
+      {release.status === 'loading' ? (
+        <Loading label={t('site.downloadLoading')} className={styles.grid}>
+          {platforms.map(({ id }) => <Skeleton key={id} width="100%" height="auto" className={styles.skeleton} />)}
+        </Loading>
+      ) : (
+        <div className={styles.grid}>
+          {platforms.map(({ id, name, file, Glyph }) => {
+            const href = hrefFor(id, file)
+            const face = (
+              <>
+                <Glyph size={32} />
+                <span>{name}</span>
+              </>
+            )
+            return href ? (
+              <a key={id} className={styles.platform} data-mine={id === mine || undefined} href={href} download onClick={() => setOpen(false)}>
+                {face}
+              </a>
+            ) : (
+              <Tip key={id} label={t('site.downloadSoon')} render={<span className={styles.platform} aria-disabled="true" />}>
+                {face}
+              </Tip>
+            )
+          })}
+        </div>
+      )}
+      <p className={styles.optional}>{t('site.downloadOptional')}</p>
+    </Modal>
   )
 }
