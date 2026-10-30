@@ -296,6 +296,22 @@ export interface ScreenPublisher {
   close(): void
 }
 
+/** How often the catalog goes out again for viewers who joined after it was sent. */
+const CATALOG_REFRESH_MS = 1_000
+
+/**
+ * The relay hands a new subscriber only the groups written after it joined,
+ * and the catalog is one group written once, so whoever joins while someone
+ * else already holds the catalog could wait forever for it. A section of our
+ * own that ticks makes the catalog a new group every second; the player only
+ * looks at video and audio, so the tick changes nothing for anyone watching.
+ */
+function refreshCatalog(broadcast: { catalog: { mutate(fn: (catalog: Record<string, unknown>) => void): void } }): () => void {
+  let tick = 0
+  const timer = setInterval(() => { tick += 1; broadcast.catalog.mutate((catalog) => { catalog.juntos = { tick } }) }, CATALOG_REFRESH_MS)
+  return () => clearInterval(timer)
+}
+
 /** Encodes the stream's tracks and publishes them under the relay path until closed. */
 export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qualityId: ScreenQualityId): Promise<ScreenPublisher> {
   const Publish = await import('@moq/publish')
@@ -316,6 +332,7 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
     name: Net.Path.from(relay.path),
     display: capture.out.display,
   })
+  const stopRefresh = refreshCatalog(broadcast as unknown as Parameters<typeof refreshCatalog>[0])
   let quality = screenQuality(qualityId)
   const config = new Signals.Signal<Publish.Video.Config | undefined>(await encoderConfig(quality, videoTrack))
   // Switching to another window mid-share changes the surface's size; the
@@ -382,6 +399,7 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
     },
     close() {
       videoTrack.removeEventListener('configurationchange', onSurfaceChange)
+      stopRefresh()
       audio.close()
       video.close()
       broadcast.close()
@@ -613,6 +631,7 @@ export async function publishEncodedScreen(relay: ScreenRelay, initial: EncodedS
   const source = new Signals.Signal<EncodedSource>(initial)
   const display = new Signals.Signal<{ width: number; height: number } | undefined>({ width: initial.width, height: initial.height })
   const broadcast = new Publish.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(relay.path), display })
+  const stopRefresh = refreshCatalog(broadcast as unknown as Parameters<typeof refreshCatalog>[0])
   const rendition = broadcast.video('video')
   const audioSource = new Signals.Signal<Publish.Audio.Source | undefined>(audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
   const audioEnabled = new Signals.Signal(audioTrack !== undefined)
@@ -706,6 +725,7 @@ export async function publishEncodedScreen(relay: ScreenRelay, initial: EncodedS
       }
     },
     close() {
+      stopRefresh()
       signals.close()
       audio.close()
       rendition.close()
