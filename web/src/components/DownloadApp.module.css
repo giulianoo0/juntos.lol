@@ -22,7 +22,7 @@
 
 .platform[data-mine] {
   background: var(--brand);
-  color: var(--white);
+  color: var(--on-brand);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -39,7 +39,7 @@
   }
 }
 
-.platform:active {
+.platform:not([aria-disabled]):active {
   transform: scale(var(--press-scale));
 }
 
@@ -55,13 +55,8 @@
 }
 
 .platform[aria-disabled] {
-  color: var(--text-muted);
-  cursor: default;
-  opacity: 0.55;
-}
-
-.platform[aria-disabled]:active {
-  transform: none;
+  color: var(--text-faint);
+  cursor: not-allowed;
 }
 
 .perks {
@@ -101,7 +96,7 @@
 /* The version lands with one pass of the DiaShimmer, then rests in ink. */
 .version.version {
   animation-iteration-count: 1;
-  animation-duration: 1.4s;
+  animation-duration: calc(var(--duration-spring-pop) * 2);
 }
 
 @media (prefers-reduced-motion: reduce) {
