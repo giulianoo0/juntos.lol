@@ -153,6 +153,7 @@ impl Upload {
 
     async fn run(&self, producer: &Producer, key: &str, target: &Target) -> anyhow::Result<()> {
         let client = reqwest::Client::builder().timeout(Duration::from_secs(120)).build()?;
+        let given = self.playhead.load(Ordering::Relaxed);
         let fence = client
             .post(format!("{}/api/rooms/{}/client-media/run", target.api_base, target.room_id))
             .json(&json!({ "claim": target.claim, "runId": target.run_id }))
@@ -164,7 +165,6 @@ impl Upload {
         }
         // The page knows the position of the room's last change, not where
         // it played on to since; a seek in the meantime is newer still.
-        let given = self.playhead.load(Ordering::Relaxed);
         if let Some(position) = fenced_position(&fence.text().await.unwrap_or_default()) {
             let _ = self.playhead.compare_exchange(given, position, Ordering::Relaxed, Ordering::Relaxed);
         }
