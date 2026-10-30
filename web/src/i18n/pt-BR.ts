@@ -396,6 +396,8 @@ export const ptBR: Record<string, string> = {
   "lost.createAccount": "Criar conta",
   "lost.page": "Essa página não existe",
   "site.github": "Código no GitHub",
+  "site.download": "Baixar o app",
+  "site.downloadTitle": "Baixar o juntos",
   "landing.addDiscord": "Adicionar ao Discord",
   "landing.sources": "Qualquer coisa vira sessão.",
   "landing.screen": "Tela",

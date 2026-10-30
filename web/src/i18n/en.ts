@@ -396,6 +396,8 @@ export const en: Record<string, string> = {
   "lost.createAccount": "Create an account",
   "lost.page": "This page doesn't exist",
   "site.github": "Code on GitHub",
+  "site.download": "Download the app",
+  "site.downloadTitle": "Download juntos",
   "landing.addDiscord": "Add to Discord",
   "landing.sources": "Anything turns into a session.",
   "landing.screen": "Screen",

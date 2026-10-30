@@ -7,6 +7,7 @@ import { useT } from '../i18n/useT'
 import { HeroWordmark } from '../pages/home/Wordmark'
 import { arrive } from '../ui/arrive'
 import { DiscordGlyph } from '../ui/DiscordGlyph'
+import { DownloadApp } from './DownloadApp'
 import { MorphLink } from '../ui/MorphLink'
 import { Skeleton } from '../ui/Shimmer'
 import { GithubLink } from '../ui/GithubLink'
@@ -42,6 +43,7 @@ export function SiteHeader({ logo = true, you = true }: {
         </MorphLink>
       ) : <span />}
       <div className={styles.you}>
+        <DownloadApp />
         <GithubLink />
         <ThemeToggle />
         {me ? (

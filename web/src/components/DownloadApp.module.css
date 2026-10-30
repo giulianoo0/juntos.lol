@@ -1,0 +1,45 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.platform {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  aspect-ratio: 1;
+  border-radius: var(--radius-2xl);
+  background: var(--button-secondary-bg);
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  transition: var(--transition-button);
+}
+
+.platform[data-mine] {
+  background: var(--brand);
+  color: var(--white);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .platform:hover {
+    background: var(--button-secondary-hover);
+  }
+
+  .platform[data-mine]:hover {
+    background: var(--brand-hover);
+  }
+}
+
+.platform:active {
+  transform: scale(var(--press-scale));
+}
+
+.platform:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
