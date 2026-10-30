@@ -19,7 +19,7 @@ export const avocado: KindArt = {
     { d: ellipse(68, 64, 3.8, 2.4), fill: "#ff9a8a", opacity: 0.55 },
   ],
   eyeClip: FLESH,
-  socket: { box: [31, 46.5, 47.5, 65.5] },
+  socket: { box: [32, 46.5, 47.5, 64.5] },
   hat: -4,
   hatScale: 0.76,
   fit: { top: 20, chin: 89.75, temple: 24.25, side: 21, neck: 21.75, helmet: [57.5, 37.7], hair: [3, 4] },

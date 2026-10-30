@@ -1,6 +1,9 @@
 import { EYE_WHITE, GREEN_TIE, ellipse, type KindArt } from "../kind";
 
-const PATCHES = `${ellipse(37.5, 57, 8.4, 12.4, 42)} ${ellipse(62.5, 57, 8.4, 12.4, -42)}`;
+/** The left eye's patch, mirrored for the right. */
+export const PATCH = { cx: 37.5, cy: 57, rx: 9.2, ry: 13, deg: 40 } as const;
+
+const PATCHES = `${ellipse(PATCH.cx, PATCH.cy, PATCH.rx, PATCH.ry, PATCH.deg)} ${ellipse(100 - PATCH.cx, PATCH.cy, PATCH.rx, PATCH.ry, -PATCH.deg)}`;
 
 export const panda: KindArt = {
   name: "Panda",
@@ -17,8 +20,7 @@ export const panda: KindArt = {
   },
   marks: [{ d: PATCHES, fill: "tip" }],
   eyeClip: PATCHES,
-  socket: { box: [32.3, 51.8, 42.7, 62.2] },
-  iris: { size: 8.6, fill: "tip", pupil: 0.84, glint: EYE_WHITE },
+  socket: { box: [33.4, 49.6, 41.6, 64.4], scale: 0.62 },
   front: [{ d: ellipse(50, 68.6, 3.6, 2.5), fill: "tip" }],
   fit: { helmet: [53.25, 34.9] },
 };

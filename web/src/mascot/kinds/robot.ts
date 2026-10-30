@@ -1,6 +1,7 @@
 import { RED_TIE, capsule, circle, roundRect, type KindArt } from "../kind";
 
-const SCREEN = roundRect(25, 38, 50, 33, 8);
+export const SCREEN_RECT = { x: 25, y: 38, width: 50, height: 33, rx: 8 } as const;
+const SCREEN = roundRect(SCREEN_RECT.x, SCREEN_RECT.y, SCREEN_RECT.width, SCREEN_RECT.height, SCREEN_RECT.rx);
 
 export const robot: KindArt = {
   name: "Robô",
@@ -20,6 +21,7 @@ export const robot: KindArt = {
     { d: "M40 79.5 H60", stroke: "tip", width: 2.6 },
   ],
   eyeClip: SCREEN,
+  socket: { box: [28.5, 40.5, 48.5, 68.5] },
   fit: { top: 29, temple: 18, side: 18, neck: 18.25, helmet: [58.25, 39.8] },
   colors: {
     dourado: { body: "#e2b85c", tip: "#b48a35" },

@@ -49,24 +49,31 @@ describe("Mascot", () => {
     expect(Math.abs(height("listening") - height("speaking"))).toBeLessThan(0.5);
   });
 
-  it("gives the panda and the owl round eyes whose pupil follows them into a happy line", () => {
+  it("gives the owl round eyes whose flat pupil follows them into a happy line", () => {
     const clock = createManualClock(0);
     setMascotClock(clock);
     const size = (el: Element) => [Number(el.getAttribute("width")), Number(el.getAttribute("height"))] as const;
-    for (const [kind, shut] of [["panda", false], ["owl", true]] as const) {
-      const { container, rerender, unmount } = render(<Mascot kind={kind} expression="idle" still />);
-      const eye = () => size(container.querySelector('[data-eye="left"]')!);
-      const pupil = () => size(container.querySelector('[data-part="iris-left"] rect')!);
-      const [w, h] = eye();
-      expect(w / h, kind).toBeGreaterThan(0.85);
-      expect(pupil()[0], kind).toBeLessThan(w);
-      rerender(<Mascot kind={kind} expression="happy" still />);
-      act(() => clock.advance(1500));
-      const [hw, hh] = eye();
-      expect(hh, kind).toBeLessThan(hw / 4);
-      expect(pupil()[0], kind).toBeCloseTo(shut ? hw : 0, 1);
-      unmount();
-    }
+    const { container, rerender } = render(<Mascot kind="owl" expression="idle" still />);
+    const eye = () => size(container.querySelector('[data-eye="left"]')!);
+    const pupil = () => size(container.querySelector('[data-part="iris-left"] rect')!);
+    const [w, h] = eye();
+    expect(w / h).toBeGreaterThan(0.85);
+    expect(pupil()[0]).toBeGreaterThan(w * 0.45);
+    expect(pupil()[0]).toBeLessThan(w * 0.7);
+    expect(container.querySelector('[data-part="iris-left"] circle')).toBeNull();
+    rerender(<Mascot kind="owl" expression="happy" still />);
+    act(() => clock.advance(1500));
+    const [hw, hh] = eye();
+    expect(hh).toBeLessThan(hw / 4);
+    expect(pupil()[0]).toBeCloseTo(hw, 1);
+  });
+
+  it("gives the panda plain pill eyes, white on its patches, like the rest of the family", () => {
+    const html = renderToStaticMarkup(<Mascot kind="panda" expression="idle" />);
+    expect(html).not.toContain("iris-");
+    const [height] = eyeHeights(html);
+    const width = Number(html.match(/data-eye="left"[^>]*width="([\d.]+)"/)![1]);
+    expect(height! / width).toBeGreaterThan(1.8);
   });
 
   it("wears every accessory on every kind, nothing when asked for none", () => {

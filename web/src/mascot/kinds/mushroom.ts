@@ -29,6 +29,7 @@ export const mushroom: KindArt = {
     { d: ellipse(32, 66, 4, 2.6), fill: "inner", opacity: 0.7 },
     { d: ellipse(68, 66, 4, 2.6), fill: "inner", opacity: 0.7 },
   ],
+  socket: { box: [30.5, 44.5, 49, 69] },
   hat: -29,
   hatScale: 0.68,
   fit: { top: 34, chin: 88.75, temple: 25, side: 25, neck: 26, helmet: [55.25, 36.8], band: 3 },
