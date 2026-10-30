@@ -94,6 +94,7 @@ func (r *roomConn) recordSync(ctx context.Context, c *client, m Inbound, now int
 	t := &c.telemetry
 	t.reports++
 	t.recordHealth(m)
+	r.watchLink(c, m, m.Stalled && !t.wasStalled)
 	if m.Stalled && !t.wasStalled {
 		t.stalls++
 		slog.InfoContext(ctx, "viewer stalled",
@@ -123,6 +124,65 @@ func (r *roomConn) recordSync(ctx context.Context, c *client, m Inbound, now int
 		slog.InfoContext(ctx, "viewer drifted",
 			"room_id", r.id, "member", c.member.Nickname,
 			"drift_ms", drift, "buffer_ms", m.BufferAheadMs, "stalled", m.Stalled)
+	}
+}
+
+// A viewer's link is thin for the media when its measured bandwidth, over a
+// few readings, stays under thinLinkHeadroom times the media's bitrate, or
+// when its playback runs dry again and again.
+const (
+	thinLinkHeadroomTenths = 13
+	thinLinkReadings       = 3
+	thinLinkStalls         = 2
+)
+
+// linkWatch is one viewer's link against the media now playing; it starts
+// over when the media changes.
+type linkWatch struct {
+	readings     int64
+	bandwidthSum int64
+	mediaKbps    int64
+	stalls       int64
+}
+
+func (w *linkWatch) thin() bool {
+	if w.stalls >= thinLinkStalls {
+		return true
+	}
+	return w.readings >= thinLinkReadings && w.mediaKbps > 0 &&
+		w.bandwidthSum*10 < thinLinkHeadroomTenths*w.mediaKbps*w.readings
+}
+
+// watchLink folds one report into the viewer's link and, the first time a
+// browser's link proves thin for this media, asks the room for a lighter
+// rendition. An app playing its own cache has no link to judge.
+func (r *roomConn) watchLink(c *client, m Inbound, stallStarted bool) {
+	if c.localSource || r.thinAsked || r.hub.onThinLink == nil {
+		return
+	}
+	w := &c.link
+	if m.BandwidthKbps > 0 && m.MediaKbps > 0 {
+		w.readings++
+		w.bandwidthSum += m.BandwidthKbps
+		w.mediaKbps = m.MediaKbps
+	}
+	if stallStarted {
+		w.stalls++
+	}
+	if !w.thin() {
+		return
+	}
+	r.thinAsked = true
+	slog.Info("viewer link thin for the media", "room_id", r.id, "member", c.member.Nickname,
+		"readings", w.readings, "stalls", w.stalls, "media_kbps", w.mediaKbps)
+	go r.hub.onThinLink(r.id)
+}
+
+// forgetLinks starts every viewer's link over, for media that just changed.
+func (r *roomConn) forgetLinks() {
+	r.thinAsked = false
+	for _, seat := range r.seats() {
+		seat.link = linkWatch{}
 	}
 }
 

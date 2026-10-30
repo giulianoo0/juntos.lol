@@ -37,6 +37,7 @@ type client struct {
 	watch    *watchSpan
 	// The app playing a local source from its own cache, as its hello said.
 	localSource bool
+	link        linkWatch
 }
 
 func (c *client) readPump() {

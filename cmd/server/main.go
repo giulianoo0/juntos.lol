@@ -21,6 +21,7 @@ import (
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/objectstore"
+	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/usage"
@@ -119,6 +120,19 @@ func main() {
 		swarms.forget(roomID)
 	})
 	hub.OnPosition(remuxOrch.Follow)
+	hub.OnThinLink(func(roomID string) {
+		thinCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		added, err := store.EnableRendition(thinCtx, roomID, remux.Rendition480p)
+		if err != nil {
+			slog.Error("enable 480p rendition failed", "room_id", roomID, "error", err)
+			return
+		}
+		if added {
+			slog.Info("480p rendition on for the next runs", "room_id", roomID)
+			hub.NotifyRoomUpdated(roomID)
+		}
+	})
 	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
 		torrents.Charge(workerID, hb)
 		torrents.ObserveLives(workerID, hb)

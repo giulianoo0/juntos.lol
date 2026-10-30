@@ -54,6 +54,8 @@ type Hub struct {
 
 	onPosition func(roomID string, positionMs int64)
 
+	onThinLink func(roomID string)
+
 	onStageClose func(roomID, kind string)
 
 	usage *usage.Counter
@@ -100,6 +102,8 @@ type roomConn struct {
 	// put up for browsers, 0 when nothing is asked.
 	media        roomMedia
 	browserAsked int
+	// A viewer's link already asked for a lighter rendition of this media.
+	thinAsked bool
 
 	nextMember    int
 	nextRequest   int
@@ -158,6 +162,13 @@ func (h *Hub) SetUsage(counter *usage.Counter) {
 
 func (h *Hub) OnPosition(fn func(roomID string, positionMs int64)) {
 	h.onPosition = fn
+}
+
+// OnThinLink registers what to do the first time, per media, a browser's
+// link proves too thin for it: turning on a lighter rendition. Set once at
+// startup; it runs off the room's goroutine.
+func (h *Hub) OnThinLink(fn func(roomID string)) {
+	h.onThinLink = fn
 }
 
 func NewHub(store *room.Store, cfg config.Config, bucket room.MediaStore) *Hub {
@@ -525,6 +536,7 @@ func (r *roomConn) run() {
 				r.dropGate()
 			}
 			if event.mediaChanged {
+				r.forgetLinks()
 				ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 				r.mediaChanged(ctx)
 				cancel()
@@ -831,6 +843,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	next.member = previous.member
 	next.report = previous.report
 	next.telemetry = previous.telemetry
+	next.link = previous.link
 	next.lastTitleRequest = previous.lastTitleRequest
 	next.identity = previous.identity
 	next.watch = previous.watch
