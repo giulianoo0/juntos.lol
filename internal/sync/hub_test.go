@@ -808,6 +808,34 @@ func TestHubHostSubtitlesAreControllerOnlyAndGreetLateJoiners(t *testing.T) {
 
 // The orchestrator acts on the newest position it is given: two in flight at
 // once can land out of order and leave the remux where the room was before.
+// A panic in what follows the position is that code's bug; the server and the
+// positions after it go on.
+func TestHubHandsPositionsOnAfterAHandlerPanics(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{})
+	handed := make(chan int64, 4)
+	hub.OnPosition(func(_ string, positionMs int64) {
+		if positionMs == 1_000 {
+			panic("follow blew up")
+		}
+		handed <- positionMs
+	})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "seek", PositionMs: 1_000}))
+	require.Equal(t, "state", readHubEvent(t, host).Type)
+	require.Eventually(t, func() bool {
+		require.NoError(t, host.WriteJSON(Inbound{Type: "seek", PositionMs: 2_000}))
+		require.Equal(t, "state", readHubEvent(t, host).Type)
+		select {
+		case positionMs := <-handed:
+			return positionMs == 2_000
+		case <-time.After(20 * time.Millisecond):
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestHubHandsPositionsOverOneAtATimeAndTheNewestLast(t *testing.T) {
 	hub, _, server := newHubTestServer(t, config.Config{})
 	release := make(chan struct{})

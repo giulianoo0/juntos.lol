@@ -211,7 +211,8 @@ func (r *roomConn) handleStageClose(sender *client, message Inbound) {
 	r.touch()
 	if message.Kind != room.StageScreen {
 		if r.hub.onStageClose != nil {
-			go r.hub.onStageClose(r.id, message.Kind)
+			roomID, kind := r.id, message.Kind
+			go recovered("stage close", roomID, func() { r.hub.onStageClose(roomID, kind) })
 		}
 		return
 	}

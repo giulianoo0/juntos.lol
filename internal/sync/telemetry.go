@@ -176,12 +176,12 @@ func (r *roomConn) watchLink(c *client, m Inbound, stallStarted bool) {
 	r.thinAsked.Store(true)
 	slog.Info("viewer link thin for the media", "room_id", r.id, "member", c.member.Nickname,
 		"readings", w.readings, "stalls", w.stalls, "media_kbps", w.mediaKbps)
-	go func() {
+	go recovered("thin link", r.id, func() {
 		// Not turned on: the next thin reading asks again.
 		if err := r.hub.onThinLink(r.id); err != nil {
 			r.thinAsked.Store(false)
 		}
-	}()
+	})
 }
 
 // forgetLinks starts every viewer's link over, for media that just changed.

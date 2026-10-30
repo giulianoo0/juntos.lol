@@ -1206,9 +1206,20 @@ func (r *roomConn) handPosition(positionMs int64) {
 				return
 			}
 			r.positionMu.Unlock()
-			r.hub.onPosition(r.id, *next)
+			recovered("position handover", r.id, func() { r.hub.onPosition(r.id, *next) })
 		}
 	}()
+}
+
+// recovered runs fn, logging a panic instead of letting it take the whole
+// server down: the hooks it guards run off the request that would recover it.
+func recovered(what, roomID string, fn func()) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error(what+" panicked", "room_id", roomID, "panic", p, "stack", string(debug.Stack()))
+		}
+	}()
+	fn()
 }
 
 func (r *roomConn) members() []room.Member {
