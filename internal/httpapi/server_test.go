@@ -109,3 +109,19 @@ func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
 	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil))
 	require.Empty(t, rec.Header().Get("Content-Security-Policy"))
 }
+
+// The shell carries Last-Modified; without Cache-Control the browser kept it
+// by heuristic and reopened /c/5 from disk, pointing at chunks of an older
+// build. It must be asked again every time.
+func TestAppShellIsRevalidatedEveryTime(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>app</h1>"), 0o644))
+	server := newServerWithWebDir(t, dir)
+
+	for _, path := range []string{"/", "/c/5", "/conta"} {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, response.Code, path)
+		require.Equal(t, "no-cache", response.Header().Get("Cache-Control"), path)
+	}
+}

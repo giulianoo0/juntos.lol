@@ -808,9 +808,11 @@ func (a *accountRoutes) subject(c *gin.Context) (owner, viewer account.Account, 
 		c.Status(http.StatusInternalServerError)
 		return account.Account{}, account.Account{}, false, false, false
 	}
-	// A private account is not there for whoever may not see it.
+	// A private account shows nothing to whoever may not see it, but it is
+	// there: numbers are handed out in order, so saying no one has it only
+	// misleads.
 	if !visible && owner.Visibility == account.VisibilityPrivate {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user_not_found"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "account_private"})
 		return account.Account{}, account.Account{}, false, false, false
 	}
 	return owner, viewer, signed, visible, true

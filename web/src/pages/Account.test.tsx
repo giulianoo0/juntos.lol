@@ -197,6 +197,36 @@ describe('AccountPage', () => {
     expect(screen.queryByText(/^@/)).toBeNull()
   })
 
+  it('tells a private account apart from a number no one has, and asks to be friends', async () => {
+    const calls = serve(true, {
+      'GET /api/users/5': () => respond(403, { error: 'account_private' }),
+      'GET /api/users/5/history': () => respond(403, { error: 'account_private' }),
+      'POST /api/friends/requests': () => respond(200, { state: 'requested' }),
+    })
+    await refreshMe()
+    renderAt('/c/5')
+    expect(await screen.findByRole('heading', { name: 'Conta privada' })).toBeInTheDocument()
+    expect(screen.queryByText('Ninguém com esse número')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Pedir amizade' }))
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/friends/requests', body: { id: 5 } }))
+    expect(await screen.findByText('Pedido enviado')).toBeInTheDocument()
+  })
+
+  it('offers Discord on a private account to someone signed out', async () => {
+    serve(false, { 'GET /api/users/5': () => respond(403, { error: 'account_private' }) })
+    await refreshMe()
+    renderAt('/c/5')
+    expect(await screen.findByRole('heading', { name: 'Conta privada' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Entrar com Discord' })).toHaveAttribute('href', '/api/auth/discord?next=%2Fc%2F5')
+  })
+
+  it('still says no one has a number that is free', async () => {
+    serve(true, { 'GET /api/users/42': () => respond(404, { error: 'user_not_found' }) })
+    await refreshMe()
+    renderAt('/c/42')
+    expect(await screen.findByRole('heading', { name: 'Ninguém com esse número' })).toBeInTheDocument()
+  })
+
   it('shows the Discord name of someone who made it public', async () => {
     serve(true, { 'GET /api/users/7': () => respond(200, { ...lu, discord: { username: 'lu.discord' } }) })
     await refreshMe()

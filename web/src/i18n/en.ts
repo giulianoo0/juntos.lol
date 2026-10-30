@@ -458,6 +458,8 @@ export const en: Record<string, string> = {
   "account.logout": "Sign out",
   "account.yours": "Your account",
   "account.notFound": "No such account",
+  "account.privateAccount": "Private account",
+  "account.askFriend": "Add as friend",
   "account.loadFailed": "Couldn't load",
   "account.retry": "Try again",
   "account.discordVisibility": "Who sees the Discord",

@@ -21,7 +21,6 @@
   display: block;
   width: 6.5rem;
   height: auto;
-  view-transition-name: juntos-logo;
 }
 
 /* The colour band runs only while hovered or focused, fading in. */

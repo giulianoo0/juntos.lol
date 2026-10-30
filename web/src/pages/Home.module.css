@@ -116,13 +116,7 @@
   width: min(38.75rem, 86%);
   height: auto;
   color: var(--text);
-  view-transition-name: juntos-logo;
   animation: arrive var(--duration-spring-pop) var(--ease-spring-pop) both;
-}
-
-/* Back from a page with the header: the logo morphs here, no pop on top. */
-.heroMark[data-morphed] {
-  animation: none;
 }
 
 @keyframes arrive {
