@@ -138,8 +138,13 @@ pub async fn put_with_retry(
 ) -> anyhow::Result<()> {
     let mut last = None;
     for attempt in 0..=PUT_RETRIES {
-        let bytes = tokio::fs::read(&object.path).await.context("read spool")?;
-        let mut request = client.put(url).body(bytes);
+        // Streamed off the spool: two dozen PUTs of a 4K segment each would
+        // otherwise sit in memory whole.
+        let file = tokio::fs::File::open(&object.path).await.context("read spool")?;
+        let mut request = client
+            .put(url)
+            .header(reqwest::header::CONTENT_LENGTH, object.size)
+            .body(reqwest::Body::from(file));
         for (name, value) in headers {
             request = request.header(name, value);
         }
@@ -253,6 +258,18 @@ mod tests {
         assert_eq!(done, 40);
         let presigns = api.presigns.load(Ordering::SeqCst);
         assert!(presigns <= 5, "{presigns} presign requests for 40 objects");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_put_declares_its_length_as_the_bucket_requires() {
+        let api = fake_api().await;
+        let dir = crate::run_tests::scratch("put");
+        let object = object(&dir, 0, 1 << 20);
+        let url = format!("{}/put/{}", api.base.lock(), object.name);
+        put_with_retry(&reqwest::Client::new(), &url, &Default::default(), &object).await.unwrap();
+        let puts = api.puts.lock().clone();
+        assert_eq!(puts, vec![(object.name.clone(), Some((1usize << 20).to_string()), None, 1 << 20)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
