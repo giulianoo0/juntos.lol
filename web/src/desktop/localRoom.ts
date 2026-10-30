@@ -2,9 +2,10 @@
  * A room the desktop app produces on the host's machine (`kind: "local"`).
  * The app writes the source into its cache as regions; the host's player
  * reads them from there. Nothing reaches the bucket until the server says a
- * browser guest needs it (`needBrowserMedia`): then the room is promoted
- * and the app uploads from the cache, playhead first, until the last
- * browser guest leaves (`browserMediaIdle`).
+ * guest needs it (`needBrowserMedia`), on a browser or on the app: then the
+ * room is promoted and the app uploads from the cache, playhead first, until
+ * the last guest leaves (`browserMediaIdle`). Only the tab that prepared the
+ * source plays the cache; a guest on the app plays the bucket.
  */
 import { useSyncExternalStore } from 'react'
 import { desktop } from '../platform'
@@ -39,9 +40,13 @@ interface Attached {
   positionMs: number
   poll: ReturnType<typeof setInterval>
   low: boolean
+  lastFollow: number
+  followTimer: ReturnType<typeof setTimeout> | null
 }
 
 const POLL_MS = 1000
+/** A seek burst reaches the app as one follow now and its last one later. */
+const FOLLOW_DEBOUNCE_MS = 3_000
 const rooms = new Map<string, Attached>()
 const listeners = new Set<() => void>()
 
@@ -73,12 +78,27 @@ export async function attachLocalRoom(roomId: string, generation: number, source
     positionMs: 0,
     poll: setInterval(() => { void refreshLocalMedia(roomId) }, POLL_MS),
     low: false,
+    lastFollow: -Infinity,
+    followTimer: null,
   }
   rooms.set(roomId, attached)
+  const send = () => {
+    attached.lastFollow = Date.now()
+    void app.invoke('local_follow', { key: attached.key, positionMs: attached.positionMs }).catch(() => undefined)
+  }
   const handle = {
     follow: (absoluteMs: number) => {
       attached.positionMs = Math.max(0, Math.round(absoluteMs))
-      void app.invoke('local_follow', { key: attached.key, positionMs: attached.positionMs }).catch(() => undefined)
+      if (attached.followTimer !== null) return
+      const since = Date.now() - attached.lastFollow
+      if (since >= FOLLOW_DEBOUNCE_MS) {
+        send()
+        return
+      }
+      attached.followTimer = setTimeout(() => {
+        attached.followTimer = null
+        if (rooms.get(roomId) === attached) send()
+      }, FOLLOW_DEBOUNCE_MS - since)
     },
   }
   registerRemuxHandle(roomId, handle, () => {
@@ -97,6 +117,7 @@ function detach(roomId: string): void {
   const attached = rooms.get(roomId)
   if (!attached) return
   clearInterval(attached.poll)
+  if (attached.followTimer !== null) clearTimeout(attached.followTimer)
   rooms.delete(roomId)
   emit()
 }
@@ -119,7 +140,7 @@ export async function refreshLocalMedia(roomId: string): Promise<void> {
   } catch {}
 }
 
-/** A browser guest needs the room: promote it and upload from the cache. */
+/** A guest needs the room: promote it and upload from the cache. */
 export async function needBrowserMedia(roomId: string, auth: ControllerAuth): Promise<void> {
   const attached = rooms.get(roomId)
   if (!attached) return
@@ -162,7 +183,7 @@ export async function setLocalRenditions(roomId: string, renditions: string[] | 
   await app?.invoke('local_low', { key: attached.key, on, positionMs: attached.positionMs }).catch(() => undefined)
 }
 
-/** The last browser guest left: what is in the bucket stays, nothing more goes up. */
+/** The last guest left: what is in the bucket stays, nothing more goes up. */
 export async function browserMediaIdle(roomId: string): Promise<void> {
   if (!rooms.has(roomId)) return
   const app = await desktop()
