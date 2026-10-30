@@ -169,11 +169,14 @@ mod tests {
 
     use super::*;
 
+    /// Name, Content-Length, Transfer-Encoding and body length of each PUT.
+    type Put = (String, Option<String>, Option<String>, usize);
+
     #[derive(Clone, Default)]
     pub(crate) struct Api {
         pub base: Arc<parking_lot::Mutex<String>>,
         pub presigns: Arc<AtomicUsize>,
-        pub puts: Arc<parking_lot::Mutex<Vec<(String, Option<String>, Option<String>, usize)>>>,
+        pub puts: Arc<parking_lot::Mutex<Vec<Put>>>,
     }
 
     async fn sign(State(api): State<Api>, axum::Json(body): axum::Json<serde_json::Value>) -> axum::Json<serde_json::Value> {
