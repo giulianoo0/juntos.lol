@@ -329,15 +329,7 @@ impl Remux {
         }
         let (probe_url, probe_cap) =
             bridge.register_input(InputTarget { source: source.clone(), reader: format!("remux-key:{}", spec.run_id) });
-        let target = spec.start_ms as f64 / 1000.0;
-        let key_args: Vec<String> = [
-            "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
-            "-show_entries", "frame=pts_time", "-print_format", "json",
-            "-read_intervals", &format!("{target:.3}%+#1"), &probe_url,
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let key_args = plan::keyframe_args(&probe_url, spec.start_ms as f64 / 1000.0);
         let output = process::run_capture(&self.cfg.ffprobe_path, &key_args, Duration::from_secs(120)).await;
         bridge.revoke(&probe_cap, "");
         plan::first_frame_pts(&output.ok()?)
@@ -360,11 +352,7 @@ impl Remux {
                 RunInput::Container(bytes) => {
                     let (probe_url, probe_cap) =
                         bridge.register_input(InputTarget { source: bytes.clone(), reader: format!("remux-probe:{}", spec.run_id) });
-                    let probe_args: Vec<String> =
-                        ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", &probe_url]
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect();
+                    let probe_args = plan::probe_args(&probe_url);
                     let (probed, keyframe) = tokio::join!(
                         process::run_capture(&self.cfg.ffprobe_path, &probe_args, Duration::from_secs(120)),
                         self.keyframe_before(&bridge, &bytes, spec),

@@ -364,6 +364,40 @@ impl Start {
     }
 }
 
+/// Opens every input FFmpeg reads off the bridge. The bytes are a stranger's
+/// file under a video name: a demuxer that follows URLs inside it (a DASH
+/// manifest, a playlist) would fetch from wherever the file says, from the
+/// worker's network, and mux what it got into the room.
+pub const INPUT_GUARD: [&str; 4] = [
+    "-protocol_whitelist", "http,tcp",
+    "-format_whitelist", "matroska,mov,avi,mpegts,flv,asf,ogg",
+];
+
+fn guarded(input: &str) -> impl Iterator<Item = String> + '_ {
+    INPUT_GUARD.iter().map(|s| s.to_string()).chain(["-i".to_string(), input.to_string()])
+}
+
+/// ffprobe's look at a container: streams, format and chapters.
+pub fn probe_args(input: &str) -> Vec<String> {
+    let mut args: Vec<String> = ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    args.extend(guarded(input));
+    args
+}
+
+/// ffprobe's search for the first keyframe at `target` seconds.
+pub fn keyframe_args(input: &str, target: f64) -> Vec<String> {
+    let mut args: Vec<String> = ["-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey", "-show_entries", "frame=pts_time", "-print_format", "json"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    args.extend(["-read_intervals".to_string(), format!("{target:.3}%+#1")]);
+    args.extend(guarded(input));
+    args
+}
+
 /// The first frame's pts in an ffprobe `-show_entries frame=pts_time` dump.
 pub fn first_frame_pts(probe_json: &str) -> Option<f64> {
     let doc: serde_json::Value = serde_json::from_str(probe_json).ok()?;
@@ -403,7 +437,7 @@ pub fn ffmpeg_args(
     // read of several megabytes before the first segment.
     for input in inputs {
         args.extend(["-probesize".into(), PROBE_SIZE.into(), "-analyzeduration".into(), PROBE_SIZE.into()]);
-        args.extend(["-protocol_whitelist".into(), "http,tcp".into(), "-i".into(), input.clone()]);
+        args.extend(guarded(input));
     }
     args.extend(["-map".into(), "0:v:0".into(), "-c:v:0".into(), "copy".into()]);
     if low.is_some() {
@@ -624,8 +658,16 @@ mod tests {
         let inputs: Vec<String> = ["v", "a"].iter().map(|s| format!("http://127.0.0.1:9/in/{s}")).collect();
         let joined = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, Start::ZERO, None, None).join(" ");
         for input in &inputs {
-            assert!(joined.contains(&format!("-probesize 2000000 -analyzeduration 2000000 -protocol_whitelist http,tcp -i {input}")));
+            assert!(joined.contains(&format!("-probesize 2000000 -analyzeduration 2000000 {} -i {input}", INPUT_GUARD.join(" "))));
         }
+    }
+
+    #[test]
+    fn every_probe_opens_its_input_with_the_guard() {
+        let guard = INPUT_GUARD.join(" ");
+        assert!(probe_args("http://127.0.0.1:9/in/c").join(" ").contains(&format!("{guard} -i http://127.0.0.1:9/in/c")));
+        assert!(keyframe_args("http://127.0.0.1:9/in/c", 61.5).join(" ").contains(&format!("{guard} -i http://127.0.0.1:9/in/c")));
+        assert!(guard.contains("-format_whitelist matroska,mov,"), "{guard}");
     }
 
     fn args_with(plan: &SourcePlan, low: Option<Encoder>) -> String {
