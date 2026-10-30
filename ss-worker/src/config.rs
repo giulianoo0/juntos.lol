@@ -230,6 +230,7 @@ impl WorkerConfig {
             put_concurrency: self.remux_put_concurrency,
             put_global: self.remux_put_global,
             live_slots: self.live_slots,
+            rendition_encoder: ss_remux::plan::Encoder::X264,
             youtube: Some(ss_remux::youtube::Config {
                 ytdlp_path: self.ytdlp_path.clone(),
                 proxy: self.youtube_proxy.clone(),

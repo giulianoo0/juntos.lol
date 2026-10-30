@@ -43,6 +43,8 @@ pub struct RemuxConfig {
     pub youtube: Option<youtube::Config>,
     /// Lives on the relay at once; each is one FFmpeg copying, no encode.
     pub live_slots: usize,
+    /// Encodes the 480p variant when a run asks for it.
+    pub rendition_encoder: plan::Encoder,
 }
 
 /// What a run reads. A container is probed and its subtitles pulled by a
@@ -462,7 +464,11 @@ impl Remux {
 
         let prefix = plan::region_prefix(spec.region);
         let end_seconds = (spec.end_ms > 0).then(|| spec.end_ms as f64 / 1000.0);
-        let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start_seconds, end_seconds);
+        let low = spec.wants_480p().then_some(self.cfg.rendition_encoder);
+        if low.is_some() {
+            publisher = publisher.with_low_variant(plan::low_variant(&source));
+        }
+        let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start_seconds, end_seconds, low);
 
         let cleanup = |bridge: &Bridge| {
             for cap in &input_caps {

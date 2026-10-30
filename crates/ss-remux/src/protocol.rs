@@ -23,6 +23,15 @@ pub struct Spec {
     pub room_id: String,
     #[serde(default)]
     pub limits: Limits,
+    /// Variants beyond the copied one; today only "480p".
+    #[serde(default)]
+    pub renditions: Vec<String>,
+}
+
+impl Spec {
+    pub fn wants_480p(&self) -> bool {
+        self.renditions.iter().any(|r| r == "480p")
+    }
 }
 
 impl std::fmt::Debug for Spec {
@@ -96,5 +105,19 @@ mod tests {
         }))
         .unwrap();
         assert!(!format!("{spec:?}").contains("SECRET"));
+    }
+
+    #[test]
+    fn the_480p_rendition_is_asked_for_by_name() {
+        let base = serde_json::json!({
+            "protocolVersion": 1, "runId": "r", "claim": "c",
+            "mediaGeneration": 0, "region": 0, "apiBase": "http://a", "roomId": "x"
+        });
+        let spec: Spec = serde_json::from_value(base.clone()).unwrap();
+        assert!(!spec.wants_480p());
+        let mut asked = base;
+        asked["renditions"] = serde_json::json!(["480p"]);
+        let spec: Spec = serde_json::from_value(asked).unwrap();
+        assert!(spec.wants_480p());
     }
 }

@@ -49,6 +49,10 @@ pub fn confirmed_span_ms(manifests: &HashMap<String, String>, confirmed: &HashSe
     (span.unwrap_or(0.0) * 1000.0) as u64
 }
 
+/// The 480p variant's peak: video maxrate plus one AAC track. The full
+/// variant never declares less than 2 Mb/s, so it stays the heavier one.
+const LOW_BANDWIDTH: u64 = 1_700_000;
+
 pub struct Publisher {
     pub client: reqwest::Client,
     pub api_base: String,
@@ -65,6 +69,8 @@ pub struct Publisher {
     /// CODECS for the video variant, when the player cannot infer it (AV1, VP9).
     video_codecs: Option<String>,
     chapters: Vec<serde_json::Value>,
+    /// The 480p variant's playlist index, when the run encodes one.
+    low_variant: Option<usize>,
 
     seq: u64,
     uploaded_bytes: u64,
@@ -123,11 +129,17 @@ impl Publisher {
             audio_langs,
             video_codecs,
             chapters,
+            low_variant: None,
             seq: 0,
             uploaded_bytes: 0,
             pending: Vec::new(),
             confirmed: HashSet::new(),
         }
+    }
+
+    pub fn with_low_variant(mut self, index: usize) -> Self {
+        self.low_variant = Some(index);
+        self
     }
 
     pub fn absorb(&mut self, uploaded: &mut mpsc::UnboundedReceiver<ClosedObject>) {
@@ -153,7 +165,10 @@ impl Publisher {
         playlists.remove(&format!("{}master.m3u8", self.prefix));
         let produced = self.produced_ms(sink);
         if playlists.contains_key(&format!("{}client_stream_0.m3u8", self.prefix)) {
-            let master = self.synthesize_master(produced);
+            let low_ready = self
+                .low_variant
+                .is_some_and(|n| playlists.contains_key(&format!("{}client_stream_{n}.m3u8", self.prefix)));
+            let master = self.synthesize_master(produced, low_ready);
             playlists.insert("master.m3u8".into(), master.clone());
             playlists.insert(format!("r{}_master.m3u8", self.region), master);
         }
@@ -209,7 +224,9 @@ impl Publisher {
 }
 
 impl Publisher {
-    fn synthesize_master(&self, produced_ms: u64) -> String {
+    /// `low_ready`: the 480p playlist exists, so the variant can be listed
+    /// without the player fetching a name the bucket does not have yet.
+    fn synthesize_master(&self, produced_ms: u64, low_ready: bool) -> String {
         let seconds = (produced_ms as f64 / 1000.0).max(4.0);
         let bandwidth = (((self.uploaded_bytes as f64 * 8.0) / seconds) as u64).max(2_000_000);
         let mut out = String::from("#EXTM3U\n#EXT-X-VERSION:7\n");
@@ -232,6 +249,13 @@ impl Publisher {
             "#EXT-X-STREAM-INF:BANDWIDTH={bandwidth}{codecs_attr}{audio_attr}\n{}client_stream_0.m3u8\n",
             self.prefix,
         ));
+        if let (Some(index), true) = (self.low_variant, low_ready) {
+            let audio_codec = if self.audio_langs.is_empty() { "" } else { ",mp4a.40.2" };
+            out.push_str(&format!(
+                "#EXT-X-STREAM-INF:BANDWIDTH={LOW_BANDWIDTH},RESOLUTION=854x480,CODECS=\"avc1.4d401f{audio_codec}\"{audio_attr}\n{}client_stream_{index}.m3u8\n",
+                self.prefix,
+            ));
+        }
         out
     }
 }
@@ -294,7 +318,7 @@ mod master_tests {
 
     #[test]
     fn master_names_video_and_audio_within_the_grammar() {
-        let m = publisher(vec!["jpn".into(), "eng".into()], 2).synthesize_master(20_000);
+        let m = publisher(vec!["jpn".into(), "eng".into()], 2).synthesize_master(20_000, false);
         assert!(m.contains("#EXT-X-STREAM-INF:BANDWIDTH="));
         assert!(m.contains("AUDIO=\"aud\""));
         assert!(m.contains("URI=\"r2_client_stream_1.m3u8\""));
@@ -305,18 +329,34 @@ mod master_tests {
 
     #[test]
     fn master_declares_codecs_the_player_cannot_infer() {
-        let m = publisher(vec!["eng".into()], 0).synthesize_master(8_000);
+        let m = publisher(vec!["eng".into()], 0).synthesize_master(8_000, false);
         assert!(!m.contains("CODECS"), "avc stays undeclared, as it always was");
-        let m = publisher_with_codecs(vec!["eng".into()], 0, Some("av01.0.08M.10")).synthesize_master(8_000);
+        let m = publisher_with_codecs(vec!["eng".into()], 0, Some("av01.0.08M.10")).synthesize_master(8_000, false);
         assert!(m.contains("CODECS=\"av01.0.08M.10,mp4a.40.2\""));
-        let m = publisher_with_codecs(vec![], 0, Some("vp09.00.10.08")).synthesize_master(8_000);
+        let m = publisher_with_codecs(vec![], 0, Some("vp09.00.10.08")).synthesize_master(8_000, false);
         assert!(m.contains("CODECS=\"vp09.00.10.08\""));
         assert!(!m.contains("mp4a"));
     }
 
     #[test]
+    fn master_lists_the_480p_variant_once_its_playlist_exists() {
+        let p = publisher(vec!["jpn".into(), "eng".into()], 2).with_low_variant(3);
+        let m = p.synthesize_master(20_000, false);
+        assert!(!m.contains("client_stream_3"), "no variant the player cannot fetch yet");
+        let m = p.synthesize_master(20_000, true);
+        assert_eq!(m.matches("#EXT-X-STREAM-INF").count(), 2);
+        assert!(m.contains("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr2_client_stream_3.m3u8\n"));
+        let bandwidths: Vec<u64> = m
+            .lines()
+            .filter_map(|l| l.strip_prefix("#EXT-X-STREAM-INF:BANDWIDTH="))
+            .map(|l| l.split(',').next().unwrap().parse().unwrap())
+            .collect();
+        assert!(bandwidths[1] < bandwidths[0], "the full variant stays the heavier one");
+    }
+
+    #[test]
     fn master_without_audio_has_no_media_lines() {
-        let m = publisher(vec![], 0).synthesize_master(8_000);
+        let m = publisher(vec![], 0).synthesize_master(8_000, false);
         assert!(!m.contains("EXT-X-MEDIA"));
         assert!(m.ends_with("client_stream_0.m3u8\n"));
         assert!(!m.contains(",AUDIO"));
