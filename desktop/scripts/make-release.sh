@@ -17,9 +17,11 @@ mkdir -p "$OUT"
 ./scripts/fetch-sidecars.sh macos >/dev/null
 npm ci --silent
 
-# Sem identidade, o Tauri não assina: a assinatura de verdade vem abaixo.
+# Sem identidade e sem pacote do updater, o Tauri não assina nada: o app é
+# assinado e notarizado abaixo, e só então o pacote do updater é montado.
 env -u APPLE_SIGNING_IDENTITY -u TAURI_SIGNING_PRIVATE_KEY \
-  npx tauri build --target universal-apple-darwin --bundles app --config src-tauri/tauri.release.conf.json
+  npx tauri build --target universal-apple-darwin --bundles app --config src-tauri/tauri.release.conf.json \
+  --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
 BUILT=$(ls -d "${CARGO_TARGET_DIR:-src-tauri/target}"/universal-apple-darwin/release/bundle/macos/Juntos.app)
 APP="$OUT/Juntos.app"
