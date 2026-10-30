@@ -96,6 +96,10 @@ type roomConn struct {
 	positionMu      stdsync.Mutex
 	pendingPosition *int64
 	handingOver     bool
+	// The media stage as last read, and the generation the host was asked to
+	// put up for browsers, 0 when nothing is asked.
+	media        roomMedia
+	browserAsked int
 
 	nextMember    int
 	nextRequest   int
@@ -282,7 +286,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		nickname = identity.Nickname
 	}
 
-	roomConnection := h.getOrCreateRoom(roomID, storedRoom.ControllerID, storedRoom.OwnerToken, storedRoom.GatingEnabled)
+	roomConnection := h.getOrCreateRoom(storedRoom)
 	if roomConnection == nil {
 		writeHandshakeError(conn, "server_stopping")
 		return
@@ -294,11 +298,12 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	client := &client{
-		conn:      conn,
-		room:      roomConnection,
-		send:      make(chan Outbound, 64),
-		telemetry: syncTelemetry{device: deviceClass(c.Request.UserAgent())},
-		identity:  identity,
+		conn:        conn,
+		room:        roomConnection,
+		send:        make(chan Outbound, 64),
+		telemetry:   syncTelemetry{device: deviceClass(c.Request.UserAgent())},
+		identity:    identity,
+		localSource: playsLocally(hello),
 	}
 	result := make(chan string, 1)
 	request := joinRequest{
@@ -406,7 +411,8 @@ func (h *Hub) notify(roomID string, event Outbound) {
 	}
 }
 
-func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bool) *roomConn {
+func (h *Hub) getOrCreateRoom(stored *room.Room) *roomConn {
+	roomID := stored.ID
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -418,9 +424,10 @@ func (h *Hub) getOrCreateRoom(roomID, controllerID, ownerToken string, gating bo
 	connection := &roomConn{
 		id:           roomID,
 		hub:          h,
-		controllerID: controllerID,
-		ownerToken:   ownerToken,
-		gating:       gating,
+		controllerID: stored.ControllerID,
+		ownerToken:   stored.OwnerToken,
+		gating:       stored.GatingEnabled,
+		media:        mediaOf(stored),
 		nextMember:   1,
 		clients:      make(map[string]*client),
 		detached:     make(map[string]*detachedSeat),
@@ -523,8 +530,14 @@ func (r *roomConn) run() {
 				cancel()
 			}
 			r.deliver(event)
-			if r.dropped.Swap(false) {
+			dropped := r.dropped.Swap(false)
+			if dropped {
 				r.broadcast(Outbound{Type: "roomUpdated"})
+			}
+			if dropped || event.Type == "roomStatus" || event.mediaChanged {
+				ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
+				r.refreshMedia(ctx)
+				cancel()
 			}
 		case <-gateExpired:
 			r.releaseGate()
@@ -635,6 +648,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	if r.controllerID == memberID {
 		r.replayStageRequests()
 	}
+	r.syncBrowserMedia(request.client)
 	r.joined(request.client, claimsOwnership)
 	request.result <- ""
 }
@@ -699,6 +713,7 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.controllerID = target.id
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
 		r.replayStageRequests()
+		r.syncBrowserMedia(target)
 	case "kick":
 		r.dismiss(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
 	}
@@ -873,6 +888,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	if r.gate != nil {
 		r.broadcastWaiting()
 	}
+	r.syncBrowserMedia(next)
 	request.result <- ""
 }
 
@@ -922,6 +938,11 @@ func (r *roomConn) finalizeLeave(disconnected *client) {
 			r.replayStageRequests()
 		}
 	}
+	var heir *client
+	if promoted {
+		heir = r.clients[r.controllerID]
+	}
+	r.syncBrowserMedia(heir)
 	if r.gate != nil {
 		if len(r.clients) == 0 {
 			r.dropGate()

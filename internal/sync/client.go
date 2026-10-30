@@ -35,6 +35,8 @@ type client struct {
 	device   string
 	identity Identity
 	watch    *watchSpan
+	// The app playing a local source from its own cache, as its hello said.
+	localSource bool
 }
 
 func (c *client) readPump() {
