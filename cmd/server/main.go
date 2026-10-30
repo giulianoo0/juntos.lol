@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -177,7 +178,15 @@ func main() {
 		httpapi.WithUsage(counter),
 	)
 
-	if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
+	// No read or write deadline for whole requests: sockets and uploads run
+	// for hours. Only a client that never finishes its headers is cut off.
+	server := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
