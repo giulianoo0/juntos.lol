@@ -1,1 +1,1 @@
-Correção: assistir YouTube pelo app volta a funcionar.
+Novidade: compartilhe uma tela ou janela pelo app e escolha o som de cada app.
