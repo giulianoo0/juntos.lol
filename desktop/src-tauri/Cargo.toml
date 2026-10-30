@@ -28,6 +28,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 rand = "0.8"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+
 [dev-dependencies]
 tempfile = "3"
 async-trait = "0.1"

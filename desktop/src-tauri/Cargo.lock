@@ -2568,6 +2568,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "librqbit",
+ "objc2",
+ "objc2-foundation",
  "parking_lot",
  "rand 0.8.8",
  "reqwest 0.12.28",
@@ -2583,6 +2585,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "webkit2gtk",
 ]
 
 [[package]]

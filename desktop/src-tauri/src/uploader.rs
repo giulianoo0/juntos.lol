@@ -36,9 +36,14 @@ pub struct Round<'a> {
     pub master: &'a MasterInfo,
 }
 
+/// How short of the container's duration a remux may end and still be whole.
+const END_SLACK_MS: u64 = 10_000;
+
 /// One publish body: the variant playlists, a master per region, and the
 /// region map. `master.m3u8` is the earliest region's, which also sets the
 /// room's offset; the round is complete once region 0 holds the whole film.
+/// A region a seek stopped is sealed too (FFmpeg ends its playlist on the way
+/// out), so sealed alone does not make it whole: it has to reach the end.
 pub fn round_body(target: &Target, round: Round) -> Value {
     let mut playlists = round.playlists;
     // The 480p variant sits after every audio, as ss-remux numbers it.
@@ -53,7 +58,10 @@ pub fn round_body(target: &Target, round: Round) -> Value {
         let plain = playlists[&format!("r{}_master.m3u8", first.n)].clone();
         playlists.insert("master.m3u8".into(), plain);
     }
-    let complete = round.regions.iter().any(|r| r.n == 0 && !r.growing);
+    let complete = round
+        .regions
+        .iter()
+        .any(|r| r.n == 0 && !r.growing && r.start_ms + r.produced_ms + END_SLACK_MS >= round.duration_ms);
     json!({
         "claim": target.claim,
         "mediaGeneration": target.media_generation,
@@ -98,7 +106,7 @@ impl Upload {
             sent: AtomicU64::new(0),
         });
         let running = upload.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             if let Err(e) = running.run(&producer, &key, &target).await {
                 tracing::warn!(room = %target.room_id, error = %e, "upload stopped");
                 *running.error.lock() = Some(e.to_string().chars().take(300).collect());
@@ -291,6 +299,17 @@ mod tests {
         assert!(body["playlists"]["master.m3u8"].as_str().unwrap().ends_with("\nclient_stream_0.m3u8\n"));
         assert_eq!(body["timeline"]["offsetMs"], 0);
         assert_eq!(body["complete"], true);
+    }
+
+    #[test]
+    fn a_region_zero_a_seek_stopped_is_not_the_whole_film() {
+        let regions = [
+            RegionReport { n: 0, start_ms: 0, produced_ms: 240_000, growing: false },
+            RegionReport { n: 1, start_ms: 400_000, produced_ms: 6_000, growing: true },
+        ];
+        let master = info();
+        let body = round_body(&target(), Round { seq: 4, confirm: &[], playlists: BTreeMap::new(), regions: &regions, duration_ms: 600_000, master: &master });
+        assert_eq!(body["complete"], false);
     }
 
     #[test]

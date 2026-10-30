@@ -109,7 +109,8 @@ pub fn run() {
                     }
                     Navigation::Block => false,
                 })
-                .build()?;
+                .build()?
+                .with_webview(serve::mark_secure)?;
 
             app.manage(updates::AppUpdates::default());
             if !cfg!(debug_assertions) || std::env::var("JUNTOS_UPDATE_URL").is_ok() {

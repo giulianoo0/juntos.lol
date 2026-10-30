@@ -42,9 +42,14 @@ interface Attached {
   low: boolean
   lastFollow: number
   followTimer: ReturnType<typeof setTimeout> | null
+  /** Set while a guest waits on the bucket: who to promote as, again if the upload dies. */
+  wanted: ControllerAuth | null
+  uploadWatch: ReturnType<typeof setInterval> | null
 }
 
 const POLL_MS = 1000
+/** How often the upload is checked, and so how soon a dead one is promoted again. */
+const UPLOAD_WATCH_MS = 5_000
 /** A seek burst reaches the app as one follow now and its last one later. */
 const FOLLOW_DEBOUNCE_MS = 3_000
 const rooms = new Map<string, Attached>()
@@ -80,6 +85,8 @@ export async function attachLocalRoom(roomId: string, generation: number, source
     low: false,
     lastFollow: -Infinity,
     followTimer: null,
+    wanted: null,
+    uploadWatch: null,
   }
   rooms.set(roomId, attached)
   const send = () => {
@@ -118,6 +125,7 @@ function detach(roomId: string): void {
   if (!attached) return
   clearInterval(attached.poll)
   if (attached.followTimer !== null) clearTimeout(attached.followTimer)
+  stopWatching(attached)
   rooms.delete(roomId)
   emit()
 }
@@ -140,10 +148,39 @@ export async function refreshLocalMedia(roomId: string): Promise<void> {
   } catch {}
 }
 
-/** A guest needs the room: promote it and upload from the cache. */
+function stopWatching(attached: Attached): void {
+  attached.wanted = null
+  if (attached.uploadWatch !== null) clearInterval(attached.uploadWatch)
+  attached.uploadWatch = null
+}
+
+/**
+ * A guest needs the room: promote it and upload from the cache. While the
+ * guest waits, an upload that stops on its own (a lost claim, a network
+ * that gave up) is promoted again.
+ */
 export async function needBrowserMedia(roomId: string, auth: ControllerAuth): Promise<void> {
   const attached = rooms.get(roomId)
   if (!attached) return
+  attached.wanted = auth
+  if (attached.uploadWatch === null) {
+    attached.uploadWatch = setInterval(() => { void reviveUpload(roomId) }, UPLOAD_WATCH_MS)
+  }
+  await promote(roomId, attached, auth)
+}
+
+async function reviveUpload(roomId: string): Promise<void> {
+  const attached = rooms.get(roomId)
+  const app = await desktop()
+  if (!attached?.wanted || !app) return
+  const status = await app.invoke<{ active: boolean; error: string | null }>('upload_status', { roomId }).catch(() => null)
+  // Stopped without an error is an upload that finished the film.
+  if (!status || status.active || !status.error || rooms.get(roomId) !== attached || !attached.wanted) return
+  console.warn('local upload stopped, promoting again', status.error)
+  await promote(roomId, attached, attached.wanted)
+}
+
+async function promote(roomId: string, attached: Attached, auth: ControllerAuth): Promise<void> {
   const app = await desktop()
   if (!app) return
   try {
@@ -185,7 +222,9 @@ export async function setLocalRenditions(roomId: string, renditions: string[] | 
 
 /** The last guest left: what is in the bucket stays, nothing more goes up. */
 export async function browserMediaIdle(roomId: string): Promise<void> {
-  if (!rooms.has(roomId)) return
+  const attached = rooms.get(roomId)
+  if (!attached) return
+  stopWatching(attached)
   const app = await desktop()
   await app?.invoke('upload_stop', { roomId }).catch(() => undefined)
 }

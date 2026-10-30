@@ -461,7 +461,12 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
           logLevels(hls, 'parsed')
           if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('manifestParsed')
         })
-        hls.on(HlsClass.Events.FRAG_BUFFERED, () => { if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('firstFragBuffered') })
+        hls.on(HlsClass.Events.FRAG_BUFFERED, () => {
+          if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('firstFragBuffered')
+          // WebKit's MediaSource fires no progress event, and the opening gate
+          // reads what is buffered: read it as each fragment lands.
+          setBufferedRanges(keepRanges(shiftRanges(readBufferedRanges(video), loadedOffsetSecRef.current)))
+        })
         if (typeof video.requestVideoFrameCallback === 'function') {
           const onFrame = () => {
             if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('firstFrame')

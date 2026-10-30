@@ -98,6 +98,31 @@ describe('a room played from the desktop cache', () => {
     expect(invoke).toHaveBeenLastCalledWith('local_low', { key: 't-abc-0', on: false, positionMs: 42_000 })
   })
 
+  it('promotes again when the upload dies with a guest waiting, not when it finished or nobody waits', async () => {
+    let status = { active: true, sent: 0, error: null as string | null }
+    const base = invoke.getMockImplementation() as (cmd: string, args?: unknown) => Promise<unknown>
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => (cmd === 'upload_status' ? status : base(cmd, args)))
+    await attachLocalRoom('ROOM1', 4, source)
+    vi.useFakeTimers()
+    try {
+      await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+      const starts = () => invoke.mock.calls.filter(([cmd]) => cmd === 'upload_start').length
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(starts()).toBe(1)
+      status = { active: false, sent: 9, error: null }
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(starts()).toBe(1)
+      status = { active: false, sent: 9, error: 'presign refused: 403 Forbidden' }
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(starts()).toBe(2)
+      await browserMediaIdle('ROOM1')
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(starts()).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stops the upload when the last browser guest leaves', async () => {
     await attachLocalRoom('ROOM1', 4, source)
     await browserMediaIdle('ROOM1')
