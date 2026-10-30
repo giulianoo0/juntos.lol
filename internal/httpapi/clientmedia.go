@@ -27,7 +27,7 @@ const (
 	maxPresignObjects       = 64
 	maxConfirmObjects       = 128
 	presignExpiry           = 15 * time.Minute
-	confirmConcurrency      = 8
+	confirmConcurrency      = 32
 	budgetSlackNumerator    = 5
 	budgetSlackDenominator  = 4
 	maxClientAudioTracks    = 32

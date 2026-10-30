@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	gosync "sync"
 	"testing"
 	"time"
 
@@ -513,6 +516,54 @@ func TestClientMediaPublishAnswersAStaleSeqWithConflict(t *testing.T) {
 	w = postJSON(t, e, "/api/rooms/r1/client-media/publish",
 		`{"claim":"`+claim+`","runId":"run1","seq":1,"confirm":["cs_1_1.m4s"],"playlists":{"client_stream_1.m3u8":`+strconvQuote(short)+`}}`)
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+}
+
+// gatheringBucket holds every Stat until `want` of them are waiting at once,
+// or a short while passes, and records how many it saw together.
+type gatheringBucket struct {
+	*objectstore.Fake
+	want     int
+	mu       gosync.Mutex
+	waiting  int
+	most     int
+	gathered chan struct{}
+}
+
+func (b *gatheringBucket) Stat(ctx context.Context, key string) (int64, error) {
+	b.mu.Lock()
+	b.waiting++
+	b.most = max(b.most, b.waiting)
+	if b.waiting == b.want {
+		close(b.gathered)
+	}
+	b.mu.Unlock()
+	select {
+	case <-b.gathered:
+	case <-time.After(300 * time.Millisecond):
+	}
+	b.mu.Lock()
+	b.waiting--
+	b.mu.Unlock()
+	return b.Fake.Stat(ctx, key)
+}
+
+func TestClientMediaPublishChecksARoundOfConfirmationsTogether(t *testing.T) {
+	store := newTestStore(t)
+	addUploadingRoom(t, store, "r1")
+	bucket := &gatheringBucket{Fake: objectstore.NewFake(), want: 16, gathered: make(chan struct{})}
+	cfg := testCfg(t)
+	e := gin.New()
+	RegisterClientMediaRoutes(e.Group("/api"), store, cfg, bucket, ClientMediaHooks{})
+	claim := claimRoom(t, e, "r1")
+
+	names := make([]string, 16)
+	for i := range names {
+		names[i] = `"cs_0_` + strconv.Itoa(i) + `.m4s"`
+	}
+	w := postJSON(t, e, "/api/rooms/r1/client-media/publish",
+		`{"claim":"`+claim+`","runId":"run1","seq":1,"confirm":[`+strings.Join(names, ",")+`]}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, 16, bucket.most)
 }
 
 func TestClientMediaRunFenceSaysWhereTheRoomIs(t *testing.T) {
