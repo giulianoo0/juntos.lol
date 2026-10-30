@@ -3,7 +3,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -42,13 +41,7 @@ func callToken(store *room.Store, cfg config.Config, authorizer memberAuthorizer
 			return
 		}
 		roomID := c.Param("id")
-		storedRoom, err := store.Get(c.Request.Context(), roomID)
-		if errors.Is(err, room.ErrNotFound) || err == nil && !storedRoom.ExpiresAt.After(time.Now()) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
-			return
-		}
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		if _, ok := loadLiveRoom(c, store, roomID); !ok {
 			return
 		}
 		if authorizer == nil || !authorizer.AuthorizeMember(roomID, request.MemberID, request.Capability) {
