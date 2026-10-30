@@ -1144,6 +1144,9 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     </div>
   ) : null
 
+  // Nothing of a room that is gone stays mounted: the player would keep
+  // asking for its playlists.
+  if (sync.gone) return <NotFoundPage title={t('room.expired')} />
   if (sync.door === 'password' || sync.door === 'badPassword') {
     return <PasswordAgain bad={sync.door === 'badPassword'} onAgain={onPasswordAgain} />
   }

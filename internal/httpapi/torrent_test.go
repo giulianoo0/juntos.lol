@@ -58,6 +58,37 @@ func TestTorrentRoutesWithoutWorkers(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// The edge lets uploads through by the gigabyte; a JSON ask is never more
+// than a few kilobytes, so one that is gets refused before it is read.
+func TestTorrentAndYoutubeRefuseAnOversizedBody(t *testing.T) {
+	_, rdb := newRedis(t)
+	signer, err := worker.LoadOrCreateSigner("")
+	require.NoError(t, err)
+	registry := worker.NewRegistry(rdb, worker.NewMemoryEnrollments())
+	service := &worker.Service{Registry: registry, Hub: worker.NewHub(registry, signer, "secret"), Signer: signer, Blocklist: &worker.Blocklist{}}
+	access := TorrentAccess{Sessions: NewSessions(rdb, 1e9, 0, false), Service: service}
+	r := gin.New()
+	cfg := config.Config{YoutubeFleetEnabled: true}
+	RegisterTorrentRoutes(r.Group("/api"), cfg, access)
+	RegisterYoutubeRoutes(r.Group("/api"), cfg, access)
+	padding := strings.Repeat("a", 2<<20)
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"torrent", "/api/torrents", `{"infoHash":"` + strings.Repeat("a", 40) + `","trackers":["` + padding + `"]}`},
+		{"youtube", "/api/youtube", `{"url":"https://youtu.be/dQw4w9WgXcQ","pad":"` + padding + `"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body)))
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		})
+	}
+}
+
 func TestCleanTrackers(t *testing.T) {
 	kept, err := cleanTrackers([]string{
 		"udp://tracker.opentrackr.org:1337/announce",

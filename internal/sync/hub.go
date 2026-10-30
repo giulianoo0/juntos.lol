@@ -35,11 +35,13 @@ const (
 	maxWSMessageBytes    = 16 << 10
 	maxWSNicknameBytes   = 64
 	maxChatBytes         = 2 << 10
-	storeTimeout         = 5 * time.Second
 	maxTitleFieldBytes   = 256
 	maxTitleURLBytes     = 1 << 10
 	titleRequestCooldown = 5 * time.Second
 )
+
+// storeTimeout bounds one store call. A variable so tests can shrink it.
+var storeTimeout = 5 * time.Second
 
 type Hub struct {
 	store         *room.Store
@@ -120,6 +122,9 @@ type roomConn struct {
 	inbound    chan clientInbound
 	updates    chan Outbound
 	dropped    atomic.Bool
+	// Closed when run returns: whoever would still hand the room something
+	// gives up instead of waiting on a loop that is gone.
+	done chan struct{}
 }
 
 type joinRequest struct {
@@ -328,6 +333,10 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	}
 	select {
 	case roomConnection.register <- request:
+	case <-roomConnection.done:
+		// The room ended between the lookup and the join; the client's
+		// reconnect finds out whether it is still there.
+		return
 	case <-h.ctx.Done():
 		writeHandshakeError(conn, "server_stopping")
 		return
@@ -369,6 +378,29 @@ func (h *Hub) ResetPlayback(roomID string) {
 	}
 	select {
 	case connection.updates <- Outbound{Type: "state", State: &state, mediaChanged: true}:
+	case <-ctx.Done():
+	}
+}
+
+// RoomRemoved is the room deleted elsewhere, its time run out, while people
+// may still be in it: the work it started ends, and they hear it is gone
+// instead of reconnecting to it. Like a reset, it is never dropped.
+func (h *Hub) RoomRemoved(roomID string) {
+	if h.onReclaimed != nil {
+		h.onReclaimed(roomID)
+	}
+	h.roomClosed(roomID)
+	h.mu.Lock()
+	connection := h.rooms[roomID]
+	h.mu.Unlock()
+	if connection == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(h.ctx, storeTimeout)
+	defer cancel()
+	select {
+	case connection.updates <- Outbound{Type: "error", ErrCode: "room_gone", closeAfter: true, endsRoom: true}:
+	case <-connection.done:
 	case <-ctx.Done():
 	}
 }
@@ -451,6 +483,7 @@ func (h *Hub) getOrCreateRoom(stored *room.Room) *roomConn {
 		unregister:   make(chan *client),
 		inbound:      make(chan clientInbound),
 		updates:      make(chan Outbound, 32),
+		done:         make(chan struct{}),
 	}
 	h.rooms[roomID] = connection
 	h.wg.Go(connection.run)
@@ -474,6 +507,7 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 }
 
 func (r *roomConn) run() {
+	defer close(r.done)
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Error("room goroutine panicked", "room_id", r.id, "panic", p, "stack", string(debug.Stack()))
@@ -535,6 +569,10 @@ func (r *roomConn) run() {
 		case event := <-r.inbound:
 			r.handleInbound(event)
 		case event := <-r.updates:
+			if event.endsRoom {
+				r.broadcast(event)
+				return
+			}
 			if event.Type == "state" && event.State != nil {
 				r.playing = event.State.Playing
 				r.dropGate()
@@ -1195,9 +1233,20 @@ func (r *roomConn) handPosition(positionMs int64) {
 				return
 			}
 			r.positionMu.Unlock()
-			r.hub.onPosition(r.id, *next)
+			recovered("position handover", r.id, func() { r.hub.onPosition(r.id, *next) })
 		}
 	}()
+}
+
+// recovered runs fn, logging a panic instead of letting it take the whole
+// server down: the hooks it guards run off the request that would recover it.
+func recovered(what, roomID string, fn func()) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error(what+" panicked", "room_id", roomID, "panic", p, "stack", string(debug.Stack()))
+		}
+	}()
+	fn()
 }
 
 func (r *roomConn) members() []room.Member {
@@ -1247,7 +1296,8 @@ func (r *roomConn) send(target *client, event Outbound) {
 
 const preparingGrace = 10 * time.Minute
 
-const (
+// Variables so tests can shrink them.
+var (
 	idleAsk   = 15 * time.Minute
 	idleClose = 20 * time.Minute
 	idleTick  = 15 * time.Second
@@ -1298,7 +1348,11 @@ func (r *roomConn) sweepIdle() bool {
 	}
 	quiet := time.Since(r.lastActivity)
 	if quiet >= idleClose {
-		r.cleanupIdle()
+		if r.hub.reclaimIdle(r.id) {
+			// Said before the sockets close, so a tab stops instead of
+			// knocking on a room that is gone.
+			r.broadcast(Outbound{Type: "error", ErrCode: "room_gone", closeAfter: true})
+		}
 		return true
 	}
 	if quiet >= idleAsk && !r.asked {
@@ -1392,7 +1446,10 @@ func (h *Hub) reclaimIdle(id string) bool {
 		slog.ErrorContext(ctx, "idle room media cleanup failed", "room_id", id, "error", mediaErr)
 		return false
 	}
-	storeErr := h.store.Delete(ctx, id)
+	// The media can take longer than a store call: the delete gets its own clock.
+	deleteCtx, cancelDelete := context.WithTimeout(h.ctx, storeTimeout)
+	storeErr := h.store.Delete(deleteCtx, id)
+	cancelDelete()
 	if err := errors.Join(fileErr, storeErr); err != nil {
 		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", id, "error", err)
 		return false

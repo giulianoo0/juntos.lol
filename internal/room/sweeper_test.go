@@ -47,9 +47,10 @@ func TestSweeperReclaimsTheExpiredRoomsMedia(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Minute), CreatedAt: time.Now().Add(-2 * time.Hour),
 	}))
 
-	SweepOnce(t.Context(), s, dir, bucket)
+	removed := SweepOnce(t.Context(), s, dir, bucket)
 
 	require.Equal(t, []string{"rooms/live/g0/hls/stream_0_000.m4s"}, bucket.Keys())
+	require.Equal(t, []string{"old"}, removed, "the hub hears which rooms went, to tell whoever is still in them")
 }
 
 func TestSweeperKeepsTheRoomWhenItsMediaCannotBeReclaimed(t *testing.T) {
@@ -63,8 +64,9 @@ func TestSweeperKeepsTheRoomWhenItsMediaCannotBeReclaimed(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Minute), CreatedAt: time.Now().Add(-2 * time.Hour),
 	}))
 
-	SweepOnce(t.Context(), s, dir, bucket)
+	removed := SweepOnce(t.Context(), s, dir, bucket)
 
 	_, err := s.Get(t.Context(), "old")
 	require.NoError(t, err, "a room whose media survived it must stay sweepable")
+	require.Empty(t, removed)
 }

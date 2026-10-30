@@ -82,7 +82,7 @@ func RegisterYoutubeRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	rg.GET("/youtube/capacity", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"capacity": access.Service.YoutubeCapacity()})
 	})
-	group := rg.Group("/youtube")
+	group := rg.Group("/youtube", limitBody(maxTorrentBodyBytes))
 	if access.Sessions != nil {
 		group.Use(access.Sessions.Middleware())
 	}

@@ -242,6 +242,16 @@ describe('sala com aprovação', () => {
 
     expect(sent()).toContainEqual(expect.objectContaining({ type: 'admit', targetId: 'k1' }))
   })
+
+  it('sai da sala e tira o player quando o servidor diz que ela acabou', async () => {
+    serve()
+    await joined('m1')
+
+    receive({ type: 'error', error: 'room_gone' })
+
+    expect(await screen.findByText('Esta sala expirou.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copiar link da sala' })).not.toBeInTheDocument()
+  })
 })
 
 describe('versão da sala', () => {

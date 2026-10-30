@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -113,17 +114,70 @@ func previewRoom(store *room.Store) gin.HandlerFunc {
 // requestIP is the client address to rate-limit on. Behind the edge the
 // server sees the edge, so the address the edge vouches for wins; directly,
 // the socket's own, since anyone can write that header.
+// requestIP is the client's address. Behind Cloudflare that is the edge's
+// CF-Connecting-IP, but only on a request Cloudflare brought: the origin
+// answers anyone who finds it, and they write the header themselves.
 func requestIP(r *http.Request, behindEdge bool) string {
-	if behindEdge {
-		if ip := strings.TrimSpace(r.Header.Get(clientIPHeader)); ip != "" {
-			return ip
-		}
+	if !behindEdge {
+		return socketHost(r)
 	}
+	peer := strings.TrimSpace(r.Header.Get(proxyPeerHeader))
+	if ip := strings.TrimSpace(r.Header.Get(clientIPHeader)); ip != "" && (peer == "" || fromCloudflare(peer)) {
+		return ip
+	}
+	if peer != "" {
+		return peer
+	}
+	return socketHost(r)
+}
+
+func socketHost(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// cloudflareRanges are the addresses Cloudflare connects to origins from,
+// as published at https://www.cloudflare.com/ips/.
+var cloudflareRanges = []netip.Prefix{
+	netip.MustParsePrefix("173.245.48.0/20"),
+	netip.MustParsePrefix("103.21.244.0/22"),
+	netip.MustParsePrefix("103.22.200.0/22"),
+	netip.MustParsePrefix("103.31.4.0/22"),
+	netip.MustParsePrefix("141.101.64.0/18"),
+	netip.MustParsePrefix("108.162.192.0/18"),
+	netip.MustParsePrefix("190.93.240.0/20"),
+	netip.MustParsePrefix("188.114.96.0/20"),
+	netip.MustParsePrefix("197.234.240.0/22"),
+	netip.MustParsePrefix("198.41.128.0/17"),
+	netip.MustParsePrefix("162.158.0.0/15"),
+	netip.MustParsePrefix("104.16.0.0/13"),
+	netip.MustParsePrefix("104.24.0.0/14"),
+	netip.MustParsePrefix("172.64.0.0/13"),
+	netip.MustParsePrefix("131.0.72.0/22"),
+	netip.MustParsePrefix("2400:cb00::/32"),
+	netip.MustParsePrefix("2606:4700::/32"),
+	netip.MustParsePrefix("2803:f800::/32"),
+	netip.MustParsePrefix("2405:b500::/32"),
+	netip.MustParsePrefix("2405:8100::/32"),
+	netip.MustParsePrefix("2a06:98c0::/29"),
+	netip.MustParsePrefix("2c0f:f248::/32"),
+}
+
+func fromCloudflare(peer string) bool {
+	addr, err := netip.ParseAddr(peer)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, prefix := range cloudflareRanges {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // windowLimiter allows `limit` hits per key in any sliding `window`.

@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +34,9 @@ type PluginFetcher struct {
 	selfHost  string
 	resolve   func(ctx context.Context, host string) ([]netip.Addr, error)
 	allowAddr func(netip.Addr) bool
+	// connect opens a connection to one admitted address, directly or
+	// through the configured proxy.
+	connect   func(ctx context.Context, network, address string) (net.Conn, error)
 	transport *http.Transport
 	client    *http.Client
 }
@@ -60,6 +65,15 @@ func NewPluginFetcher(cfg config.Config) *PluginFetcher {
 	if origin, err := url.Parse(cfg.PublicOrigin); err == nil {
 		f.selfHost = normalizeHost(origin.Hostname())
 	}
+	f.connect = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+	// Through a proxy the name is still resolved and checked here, and the
+	// proxy is asked for the checked address: a proxy resolving it on its
+	// own would reach whatever private network it sits in.
+	if cfg.PluginFetchProxy != "" {
+		if proxy, err := url.Parse(cfg.PluginFetchProxy); err == nil {
+			f.connect = connectThrough(proxy)
+		}
+	}
 	f.transport = &http.Transport{
 		Proxy:                 nil,
 		DialContext:           f.dial,
@@ -67,11 +81,6 @@ func NewPluginFetcher(cfg config.Config) *PluginFetcher {
 		ResponseHeaderTimeout: pluginFetchTimeout,
 		MaxIdleConns:          32,
 		IdleConnTimeout:       30 * time.Second,
-	}
-	if cfg.PluginFetchProxy != "" {
-		proxy, _ := url.Parse(cfg.PluginFetchProxy)
-		f.transport.Proxy = http.ProxyURL(proxy)
-		f.transport.DialContext = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
 	}
 	f.client = &http.Client{
 		Transport: f.transport,
@@ -116,7 +125,6 @@ func (f *PluginFetcher) dial(ctx context.Context, network, address string) (net.
 		err  error
 	}
 	results := make(chan attempt, len(addrs))
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	for i, addr := range addrs {
 		go func() {
 			if i > 0 {
@@ -127,7 +135,7 @@ func (f *PluginFetcher) dial(ctx context.Context, network, address string) (net.
 					return
 				}
 			}
-			conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+			conn, err := f.connect(ctx, network, net.JoinHostPort(addr.String(), port))
 			results <- attempt{conn: conn, err: err}
 		}()
 	}
@@ -153,6 +161,54 @@ func (f *PluginFetcher) dial(ctx context.Context, network, address string) (net.
 
 const dialStagger = 250 * time.Millisecond
 
+// connectThrough opens a tunnel to address through an HTTP proxy with CONNECT.
+func connectThrough(proxy *url.URL) func(ctx context.Context, network, address string) (net.Conn, error) {
+	proxyAddr := proxy.Host
+	if proxy.Port() == "" {
+		proxyAddr = net.JoinHostPort(proxy.Hostname(), "80")
+	}
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, proxyAddr)
+		if err != nil {
+			return nil, err
+		}
+		stop := context.AfterFunc(ctx, func() { conn.Close() })
+		defer stop()
+		request := &http.Request{
+			Method: http.MethodConnect,
+			URL:    &url.URL{Opaque: address},
+			Host:   address,
+			Header: http.Header{},
+		}
+		if proxy.User != nil {
+			password, _ := proxy.User.Password()
+			request.Header.Set("Proxy-Authorization", "Basic "+
+				base64.StdEncoding.EncodeToString([]byte(proxy.User.Username()+":"+password)))
+		}
+		if err := request.Write(conn); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		reader := bufio.NewReader(conn)
+		response, err := http.ReadResponse(reader, request)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || reader.Buffered() > 0 {
+			conn.Close()
+			return nil, fmt.Errorf("proxy refused the tunnel: %s", response.Status)
+		}
+		if ctx.Err() != nil {
+			conn.Close()
+			return nil, ctx.Err()
+		}
+		return conn, nil
+	}
+}
+
 // publicAddr is the guard: everything reserved is out — loopback, private,
 // link-local, carrier NAT, multicast, unspecified.
 func publicAddr(a netip.Addr) bool {
@@ -161,7 +217,7 @@ func publicAddr(a netip.Addr) bool {
 		a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
 		return false
 	}
-	for _, reserved := range reservedV4 {
+	for _, reserved := range reserved {
 		if reserved.Contains(a) {
 			return false
 		}
@@ -169,11 +225,16 @@ func publicAddr(a netip.Addr) bool {
 	return true
 }
 
-var reservedV4 = []netip.Prefix{
+var reserved = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("192.0.0.0/24"),
 	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	// NAT64 and 6to4 hand the IPv4 address inside them to a translator.
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
 }
 
 func normalizeHost(host string) string {

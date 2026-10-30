@@ -25,10 +25,14 @@ describe('useSync', () => {
   beforeEach(() => {
     FakeWebSocket.instances = []
     vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })))
     vi.spyOn(Date, 'now').mockReturnValue(100_000)
   })
 
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
   it('only seeks when state drift exceeds the threshold', () => {
     const video = document.createElement('video')
@@ -358,6 +362,80 @@ describe('useSync', () => {
     act(() => { FakeWebSocket.instances[1].onclose?.() })
     act(() => { vi.advanceTimersByTime(10_000) })
     expect(FakeWebSocket.instances).toHaveLength(2)
+    vi.useRealTimers()
+  })
+
+  it('stays connected in a background tab whose timers fire once a minute', () => {
+    vi.useFakeTimers()
+    let now = 100_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    // The server answers each heartbeat the moment it arrives.
+    socket.send.mockImplementation((frame: string) => {
+      if (JSON.parse(frame).type === 'heartbeat') socket.receive({ type: 'pong' })
+    })
+
+    for (let minute = 0; minute < 3; minute += 1) {
+      now += 60_000
+      act(() => { vi.advanceTimersByTime(5_000) })
+    }
+
+    expect(socket.close).not.toHaveBeenCalled()
+    unmount()
+    vi.useRealTimers()
+  })
+
+  it('closes a socket whose heartbeat goes unanswered, to reconnect', () => {
+    vi.useFakeTimers()
+    let now = 100_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    for (let tick = 0; tick < 5; tick += 1) {
+      now += 5_000
+      act(() => { vi.advanceTimersByTime(5_000) })
+    }
+
+    expect(socket.close).toHaveBeenCalled()
+    unmount()
+    vi.useRealTimers()
+  })
+
+  it('stops for good when the server says the room is gone', () => {
+    vi.useFakeTimers()
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    act(() => socket.receive({ type: 'error', error: 'room_gone' }))
+    act(() => { socket.onclose?.() })
+    act(() => { vi.advanceTimersByTime(30_000) })
+
+    expect(result.current.gone).toBe(true)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    unmount()
+    vi.useRealTimers()
+  })
+
+  it('asks whether the room still exists when the socket is turned away, and stops if it does not', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'room_not_found' }), { status: 404 }))
+    vi.stubGlobal('fetch', fetch)
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    await act(async () => { FakeWebSocket.instances[0].onclose?.() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+
+    expect(fetch).toHaveBeenCalledWith('/api/rooms/r1/preview', expect.anything())
+    expect(result.current.gone).toBe(true)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    unmount()
     vi.useRealTimers()
   })
 

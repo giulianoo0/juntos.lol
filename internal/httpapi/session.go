@@ -19,8 +19,11 @@ const (
 	sessionCookie     = "ss_sid"
 	sessionContextKey = "ss.session"
 	sessionIDBytes    = 32
-	// clientIPHeader is set by the edge proxy from the connection, so clients cannot spoof it.
+	// clientIPHeader is set by Cloudflare from the connection it accepted.
 	clientIPHeader = "CF-Connecting-IP"
+	// proxyPeerHeader is set by the nginx in front of the app to the address
+	// that connected to it, overwriting whatever the client sent.
+	proxyPeerHeader = "X-Real-IP"
 )
 
 // Sessions mints and recognises the anonymous identity the torrent routes require;
@@ -48,15 +51,7 @@ var ErrTooManySessions = errors.New("too many sessions")
 
 // clientIP is the address to rate-limit on, or "" when there is no trustworthy one.
 func (s *Sessions) clientIP(r *http.Request) string {
-	if s.behindEdge {
-		if ip := strings.TrimSpace(r.Header.Get(clientIPHeader)); ip != "" {
-			return ip
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	host := requestIP(r, s.behindEdge)
 	if !s.behindEdge {
 		if parsed := net.ParseIP(host); parsed != nil && parsed.IsLoopback() {
 			return ""

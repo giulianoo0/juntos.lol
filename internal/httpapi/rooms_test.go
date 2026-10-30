@@ -163,15 +163,29 @@ func TestGetRoomCarriesTheProducerHeartbeat(t *testing.T) {
 	require.Greater(t, beat, float64(0))
 }
 
+// A room past its time is as gone as a deleted one, the way the socket and
+// the preview already see it, until the sweeper gets to it.
 func TestGetRoomNotFound(t *testing.T) {
-	s := newTestStore(t)
-	e := gin.New()
-	RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/rooms/missing1", nil)
-	e.ServeHTTP(w, req)
-	require.Equal(t, 404, w.Code)
-	var resp struct{ Error string }
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Equal(t, "room_not_found", resp.Error)
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{"room that never existed", "missing1"},
+		{"room past its expiry", "expired1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			e := gin.New()
+			RegisterRoomRoutes(e.Group("/api"), s, testCfg(t))
+			require.NoError(t, s.Create(context.Background(), &room.Room{ID: "expired1", Status: "ready",
+				CreatedAt: time.Now().Add(-6 * time.Hour), ExpiresAt: time.Now().Add(-time.Minute)}))
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, httptest.NewRequest("GET", "/api/rooms/"+tt.id, nil))
+			require.Equal(t, 404, w.Code)
+			var resp struct{ Error string }
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			require.Equal(t, "room_not_found", resp.Error)
+		})
+	}
 }

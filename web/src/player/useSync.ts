@@ -17,9 +17,11 @@ const READINESS_DEBOUNCE_MS = 100
 const RECONNECT_MIN_MS = 500
 const RECONNECT_MAX_MS = 8000
 /**
- * The server answers every heartbeat, so a socket that has said nothing for
- * this long is dead whatever its readyState claims — the browser only learns
- * of a lost link when a write fails, and a viewer sends almost nothing.
+ * The server answers every heartbeat, so a heartbeat left unanswered this
+ * long means a dead socket whatever its readyState claims — the browser only
+ * learns of a lost link when a write fails, and a viewer sends almost nothing.
+ * Counted from the heartbeat, not from the last word heard: a background tab
+ * runs its timers once a minute, and a quiet minute is not a dead link.
  */
 const HEARTBEAT_MS = 5000
 const DEAD_AFTER_MS = 15_000
@@ -96,6 +98,8 @@ interface SyncResult {
   kicked: boolean
   /** Another tab of this browser took the seat. */
   replaced: boolean
+  /** The room no longer exists: nothing reconnects to it. */
+  gone: boolean
   leave: () => void
   /** Lets the seat go now, for a tab on its way out. */
   sayGoodbye: () => void
@@ -131,6 +135,18 @@ const TITLE_REQUEST_LIMIT = 20
 
 const initialState: PlayState = { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 }
 
+/** Whether the server says, beyond doubt, that the room is gone; a failed ask is not that. */
+async function roomGone(roomId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/preview`, { cache: 'no-store' })
+    if (response.status !== 404) return false
+    const body = await response.json() as { error?: string }
+    return body.error === 'room_not_found'
+  } catch {
+    return false
+  }
+}
+
 export function useSync(
   roomId: string,
   nickname: string,
@@ -146,7 +162,8 @@ export function useSync(
   const seatRef = useRef<{ roomId: string; memberId: string; capability: string } | null>(null)
   /** Chat typed while the socket was down; it goes out the moment the seat is ours again. */
   const pendingChatRef = useRef<Record<string, unknown>[]>([])
-  const lastHeardRef = useRef(0)
+  /** When the oldest heartbeat the server has not answered went out, or null. */
+  const unansweredSinceRef = useRef<number | null>(null)
   const bufferingRef = useRef(false)
   const mediaOffset = () => mediaOffsetMsRef?.current ?? 0
   const coldWait = () => coldWaitRef?.current ?? false
@@ -180,6 +197,7 @@ export function useSync(
   const [left, setLeft] = useState(false)
   const [kicked, setKicked] = useState(false)
   const [replaced, setReplaced] = useState(false)
+  const [gone, setGone] = useState(false)
   const titleSeqRef = useRef(0)
   const [stages, dispatchStage] = useReducer(stagesReducer, initialStages)
   const [door, setDoor] = useState<Door>('in')
@@ -331,7 +349,7 @@ export function useSync(
       socket.onopen = () => {
         opened = true
         attempt = 0
-        lastHeardRef.current = Date.now()
+        unansweredSinceRef.current = null
         setConnected(true)
         const clientTimeMs = Date.now()
         const seat = seatRef.current?.roomId === roomId ? seatRef.current : null
@@ -350,17 +368,26 @@ export function useSync(
       }
       socket.onclose = () => {
         setConnected(false)
-        // Refused at the upgrade: most likely the day's check ran out.
+        // Refused at the upgrade, which the socket cannot tell apart: the
+        // day's check ran out, or the room is no more.
         if (!opened) forgetHuman()
         if (disposed || halted || socketRef.current !== socket) return
         const backoff = Math.min(RECONNECT_MIN_MS * 2 ** attempt, RECONNECT_MAX_MS)
         attempt += 1
         retry = window.setTimeout(connect, backoff * (0.75 + Math.random() * 0.5))
+        if (!opened) {
+          void roomGone(roomId).then((isGone) => {
+            if (!isGone || disposed) return
+            halted = true
+            if (retry !== null) window.clearTimeout(retry)
+            setGone(true)
+          })
+        }
       }
       socket.onmessage = (event) => {
         // A socket this tab already moved on from: its last words are not ours.
         if (socketRef.current !== socket) return
-        lastHeardRef.current = Date.now()
+        unansweredSinceRef.current = null
         const message = JSON.parse(String(event.data)) as Outbound
         if (message.serverTimeMs !== undefined && message.clientTimeMs !== undefined) {
           const now = Date.now()
@@ -422,6 +449,11 @@ export function useSync(
             }
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
+            if (message.error === 'room_gone') {
+              halted = true
+              setGone(true)
+              setConnected(false)
+            }
             if (message.error === 'kicked' || message.error === 'replaced') {
               halted = true
               if (message.error === 'kicked') setKicked(true)
@@ -514,13 +546,15 @@ export function useSync(
 
     const heartbeat = window.setInterval(() => {
       const socket = socketRef.current
-      if (socket?.readyState === WebSocket.OPEN && Date.now() - lastHeardRef.current > DEAD_AFTER_MS) {
+      const unansweredSince = unansweredSinceRef.current
+      if (socket?.readyState === WebSocket.OPEN && unansweredSince !== null && Date.now() - unansweredSince > DEAD_AFTER_MS) {
         // Closing it ourselves is what brings the reconnect loop in; the
         // seat is asked back straight away rather than after a backoff.
         attempt = 0
         socket.close()
         return
       }
+      if (socket?.readyState === WebSocket.OPEN && unansweredSince === null) unansweredSinceRef.current = Date.now()
       send('heartbeat', { clientTimeMs: Date.now() })
       sendReadiness()
       const media = videoRef.current
@@ -630,6 +664,7 @@ export function useSync(
     left,
     kicked,
     replaced,
+    gone,
     leave,
     sayGoodbye,
     send,

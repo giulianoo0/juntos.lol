@@ -52,6 +52,7 @@ func (c *client) readPump() {
 	defer func() {
 		select {
 		case c.room.unregister <- c:
+		case <-c.room.done:
 		case <-c.room.hub.ctx.Done():
 		}
 	}()
@@ -83,6 +84,8 @@ func (c *client) readPump() {
 		}
 		select {
 		case c.room.inbound <- event:
+		case <-c.room.done:
+			return
 		case <-c.room.hub.ctx.Done():
 			return
 		}

@@ -164,7 +164,7 @@ func validRoomText(value string, maxBytes int) bool {
 func getRoom(store *room.Store, mediaBaseURL string, authorizer memberAuthorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		r, err := store.Get(c.Request.Context(), c.Param("id"))
-		if errors.Is(err, room.ErrNotFound) {
+		if errors.Is(err, room.ErrNotFound) || err == nil && !r.ExpiresAt.After(time.Now()) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
 			return
 		}

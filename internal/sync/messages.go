@@ -134,6 +134,8 @@ type Outbound struct {
 	closeAfter   bool
 	// Set on the reset that follows a swap of the media stage.
 	mediaChanged bool
+	// Set on the farewell of a room deleted elsewhere: the loop ends with it.
+	endsRoom bool
 }
 
 // MemberReadiness is one member's buffering picture during a gated start.
