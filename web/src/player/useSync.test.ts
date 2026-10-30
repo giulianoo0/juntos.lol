@@ -361,6 +361,48 @@ describe('useSync', () => {
     vi.useRealTimers()
   })
 
+  it('stays connected in a background tab whose timers fire once a minute', () => {
+    vi.useFakeTimers()
+    let now = 100_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    // The server answers each heartbeat the moment it arrives.
+    socket.send.mockImplementation((frame: string) => {
+      if (JSON.parse(frame).type === 'heartbeat') socket.receive({ type: 'pong' })
+    })
+
+    for (let minute = 0; minute < 3; minute += 1) {
+      now += 60_000
+      act(() => { vi.advanceTimersByTime(5_000) })
+    }
+
+    expect(socket.close).not.toHaveBeenCalled()
+    unmount()
+    vi.useRealTimers()
+  })
+
+  it('closes a socket whose heartbeat goes unanswered, to reconnect', () => {
+    vi.useFakeTimers()
+    let now = 100_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+
+    for (let tick = 0; tick < 5; tick += 1) {
+      now += 5_000
+      act(() => { vi.advanceTimersByTime(5_000) })
+    }
+
+    expect(socket.close).toHaveBeenCalled()
+    unmount()
+    vi.useRealTimers()
+  })
+
   it('reports whether a command actually left the tab', () => {
     const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const { result, unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
