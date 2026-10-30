@@ -14,6 +14,17 @@ import (
 // with browserMediaIdle; until the bucket holds something, a browser waits
 // on its own and holds no one else back.
 
+// ClientDesktop on a hello is the desktop app; the room lists the member
+// with it, and a browser with nothing.
+const ClientDesktop = "desktop"
+
+func clientKind(hello Inbound) string {
+	if hello.Client == ClientDesktop {
+		return ClientDesktop
+	}
+	return ""
+}
+
 // featureLocalSource on a hello is a client that plays a local source from
 // its own cache.
 const featureLocalSource = "localSource"

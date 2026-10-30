@@ -53,6 +53,8 @@ type Member struct {
 	// The account a signed-in member is, by its public number, and its avatar.
 	AccountID int64  `json:"accountId,omitempty"`
 	Avatar    string `json:"avatar,omitempty"`
+	// Client is "desktop" for a member on the app, empty for a browser.
+	Client string `json:"client,omitempty"`
 	// Unlisted: a private account. The room still knows the number for the
 	// history, but it never goes out, so a nickname can't be tied to a profile.
 	Unlisted bool `json:"-"`

@@ -315,6 +315,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		telemetry:   syncTelemetry{device: deviceClass(c.Request.UserAgent())},
 		identity:    identity,
 		localSource: playsLocally(hello),
+		kind:        clientKind(hello),
 	}
 	result := make(chan string, 1)
 	request := joinRequest{
@@ -589,7 +590,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		return
 	}
 	request.client.capability = base64.RawURLEncoding.EncodeToString(capabilityBytes)
-	request.client.member = withIdentity(room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now()},
+	request.client.member = withIdentity(room.Member{ID: memberID, Nickname: request.nickname, JoinedAt: time.Now(), Client: request.client.kind},
 		request.client.identity)
 	request.client.telemetry.joinedAt = time.Now()
 
@@ -853,8 +854,9 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
 	renamed := false
-	if request.nickname != next.member.Nickname {
+	if request.nickname != next.member.Nickname || next.kind != next.member.Client {
 		next.member.Nickname = request.nickname
+		next.member.Client = next.kind
 		if err := r.hub.store.AddMember(ctx, r.id, next.member); err != nil {
 			slog.ErrorContext(ctx, "rename resumed websocket member failed", "room_id", r.id, "member_id", next.id, "error", err)
 		}

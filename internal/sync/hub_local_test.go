@@ -59,6 +59,38 @@ func TestTheAppHostIsAskedForBrowserMediaWhileABrowserIsIn(t *testing.T) {
 	nextOf(t, host, "browserMediaIdle")
 }
 
+func clientOf(members []room.Member) map[string]string {
+	out := map[string]string{}
+	for _, member := range members {
+		out[member.ID] = member.Client
+	}
+	return out
+}
+
+// The list of people marks who is on the app; a browser carries no mark.
+func TestMembersSayWhoIsOnTheApp(t *testing.T) {
+	holdSeats(t)
+	_, _, server := newHubTestServer(t, config.Config{})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	app := dialHubWS(t, server)
+	welcome := helloApp(t, app, "friend")
+
+	joined := nextOf(t, host, "members")
+	require.Equal(t, map[string]string{"m1": "", "m2": ClientDesktop}, clientOf(joined.Members))
+
+	late := dialHubWS(t, server)
+	lateWelcome := helloHubClient(t, late, "late", 3)
+	require.Equal(t, map[string]string{"m1": "", "m2": ClientDesktop, "m3": ""}, clientOf(lateWelcome.Members))
+	nextOf(t, host, "members")
+
+	require.NoError(t, app.Close())
+	back := dialHubWS(t, server)
+	resumed := resumeHubClient(t, back, "friend", welcome.MemberID, welcome.Capability, 4)
+	require.Equal(t, "", clientOf(resumed.Members)["m2"], "the seat came back from a browser")
+	require.Equal(t, "", clientOf(nextOf(t, host, "members").Members)["m2"])
+}
+
 func TestAnotherAppInTheRoomNeedsNoBrowserMedia(t *testing.T) {
 	_, _, server, _ := localRoom(t)
 	host := dialHubWS(t, server)
