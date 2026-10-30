@@ -35,11 +35,13 @@ const (
 	maxWSMessageBytes    = 16 << 10
 	maxWSNicknameBytes   = 64
 	maxChatBytes         = 2 << 10
-	storeTimeout         = 5 * time.Second
 	maxTitleFieldBytes   = 256
 	maxTitleURLBytes     = 1 << 10
 	titleRequestCooldown = 5 * time.Second
 )
+
+// storeTimeout bounds one store call. A variable so tests can shrink it.
+var storeTimeout = 5 * time.Second
 
 type Hub struct {
 	store         *room.Store
@@ -1392,7 +1394,10 @@ func (h *Hub) reclaimIdle(id string) bool {
 		slog.ErrorContext(ctx, "idle room media cleanup failed", "room_id", id, "error", mediaErr)
 		return false
 	}
-	storeErr := h.store.Delete(ctx, id)
+	// The media can take longer than a store call: the delete gets its own clock.
+	deleteCtx, cancelDelete := context.WithTimeout(h.ctx, storeTimeout)
+	storeErr := h.store.Delete(deleteCtx, id)
+	cancelDelete()
 	if err := errors.Join(fileErr, storeErr); err != nil {
 		slog.ErrorContext(ctx, "idle room cleanup failed", "room_id", id, "error", err)
 		return false

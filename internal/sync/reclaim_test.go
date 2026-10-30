@@ -1,13 +1,18 @@
 package sync
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -83,6 +88,46 @@ func TestAbandonedSweepSparesARoomWhoseHostIsStillAtTheDoor(t *testing.T) {
 
 	_, err := store.Get(t.Context(), "fresh")
 	require.NoError(t, err)
+}
+
+// slowBucket takes its time giving a room's objects back, as R2 does for a
+// room with thousands of segments.
+type slowBucket struct {
+	*objectstore.Fake
+	delay time.Duration
+}
+
+func (b slowBucket) RemovePrefix(ctx context.Context, prefix string) error {
+	select {
+	case <-time.After(b.delay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return b.Fake.RemovePrefix(ctx, prefix)
+}
+
+func TestAbandonedSweepOutlastsASlowMediaRemoval(t *testing.T) {
+	previous := storeTimeout
+	storeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { storeTimeout = previous })
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { require.NoError(t, rdb.Close()) })
+	store := room.NewStore(rdb, time.Hour)
+	now := time.Now()
+	require.NoError(t, store.Create(t.Context(), &room.Room{
+		ID: "done", Status: "ready", CreatedAt: now.Add(-arrivalGrace - time.Minute), ExpiresAt: now.Add(time.Hour),
+	}))
+	bucket := slowBucket{Fake: objectstore.NewFake(), delay: 4 * storeTimeout}
+	require.NoError(t, bucket.Put(t.Context(), "rooms/done/g0/hls/stream_0_000.m4s", strings.NewReader("x"), 1, "", ""))
+	hub := NewHub(store, config.Config{DataDir: t.TempDir()}, bucket)
+	t.Cleanup(hub.Close)
+
+	hub.sweepAbandoned()
+
+	_, err := store.Get(t.Context(), "done")
+	require.ErrorIs(t, err, room.ErrNotFound)
+	require.Empty(t, bucket.Keys())
 }
 
 func TestHubTransferHandsTheControlsToTheTarget(t *testing.T) {
