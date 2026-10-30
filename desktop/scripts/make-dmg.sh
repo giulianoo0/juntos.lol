@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 APP="${1:?usage: make-dmg.sh <app> <dmg>}"
 DMG="${2:?usage: make-dmg.sh <app> <dmg>}"
 VOL="Juntos"
-ICON_SRC=../logos/juntos-icon-1024.png
+ICON_SRC=../logos/juntos-app-icon-1024.png
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
