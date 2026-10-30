@@ -147,6 +147,8 @@ const VOLUME_CHASE_MS = 500
 const FEEDBACK_MS = 700
 const FRAME_WATCH_INTERVAL_MS = 1000
 const MANIFEST_RETRY_MS = 2000
+/** Media hls.js keeps on each side of the playhead. */
+const BUFFER_SEC = 60
 const VIDEO_STARVATION_SECONDS = 5
 const LIVE_SYNC_THRESHOLD_MS = 1000
 
@@ -436,9 +438,15 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
       const buildPlayer = (stripCodecs: boolean) => {
         const config: Partial<HlsConfig> = {
           startPosition,
-          maxBufferLength: 60,
-          maxBufferSize: 160 * 1000 * 1000,
-          ...(isTouchDevice() ? { backBufferLength: TOUCH_BACK_BUFFER_SEC } : {}),
+          // hls.js aims 8·maxBufferSize/bitrate seconds ahead, capped only by
+          // maxMaxBufferLength (600 s by default): a master declaring 2 Mbit
+          // had it fetch ten minutes, past the 12 MB of audio Chrome holds, and
+          // a seek back then found no room to append and froze the room.
+          maxBufferLength: BUFFER_SEC,
+          maxMaxBufferLength: BUFFER_SEC,
+          backBufferLength: isTouchDevice() ? TOUCH_BACK_BUFFER_SEC : BUFFER_SEC,
+          // What a far seek left ahead goes once playback moves on.
+          frontBufferFlushThreshold: BUFFER_SEC,
         }
         const bundled = bundledLoader(HlsClass.DefaultConfig.loader as Parameters<typeof bundledLoader>[0], bundle)
         config.pLoader = stripCodecs ? codecStrippingLoader(bundled as HlsModule['default']['DefaultConfig']['loader']) : bundled

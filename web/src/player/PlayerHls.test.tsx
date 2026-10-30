@@ -66,6 +66,10 @@ vi.mock('hls.js', () => {
 interface FakeHlsInstance {
   config: {
     startPosition?: number
+    maxBufferLength?: number
+    maxBufferSize?: number
+    maxMaxBufferLength?: number
+    backBufferLength?: number
     pLoader?: new (config: unknown) => {
       load: (context: unknown, config: unknown, callbacks: unknown) => void
       lastCallbacks: { onSuccess: (response: { data: string }, stats: unknown, context: unknown, network: unknown) => void } | null
@@ -121,6 +125,18 @@ describe('Player HLS lifecycle', () => {
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+
+  it('keeps hls.js within a minute ahead and behind whatever bitrate the master declares', async () => {
+    const { hls } = await renderPlayer()
+    const { maxBufferLength = 30, maxBufferSize = 60e6, maxMaxBufferLength = 600, backBufferLength = Infinity } =
+      hls.instances[0].config
+    // hls.js's own forward target for a level of this bitrate.
+    const aheadFor = (bitrate: number) =>
+      Math.min(Math.max((8 * maxBufferSize) / bitrate, maxBufferLength), maxMaxBufferLength)
+
+    for (const bitrate of [500_000, 2_000_000, 20_000_000]) expect(aheadFor(bitrate)).toBeLessThanOrEqual(60)
+    expect(backBufferLength).toBeLessThanOrEqual(60)
   })
 
   it('does not reload the source when the media re-attaches after a recovery', async () => {
