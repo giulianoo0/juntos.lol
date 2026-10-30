@@ -16,10 +16,12 @@ import type { Translator as T } from '../i18n/useT'
 import { SCREEN_QUALITIES, screenQuality, type ScreenQualityId, type ScreenSendStats } from '../screenshare'
 import type { JlocalPick, ScreenShareApi as ScreenShare, ScreenTile } from './useScreenShare'
 import { Dialog, DialogContent } from '../ui/Dialog'
-import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { JlocalPicker } from './JlocalPicker'
+import { AppScreenPicker } from './AppScreenPicker'
+import { APP_QUALITIES } from './appShare'
 import { SoundMenu } from './SoundMenu'
 import { getCachedJLocalCapabilities } from '../jlocal/capabilities'
+import { encodedPicker, type EncodedOrigin } from './encodedOrigin'
 
 /** Columns that keep every tile as close to a screen's own shape as possible. */
 /** The bar and the cursor go away after this long without the pointer moving, as on the player. */
@@ -83,6 +85,8 @@ export function ScreenStage({ share, only, memberId, viewers, t }: {
   const soundLocked = useAudioLocked()
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  /** Whose picker is open: the desktop app's or jlocal's. */
+  const [pickerKind, setPickerKind] = useState<EncodedOrigin['kind']>('jlocal')
   /** Whether the open picker starts a share or swaps the surface of the live one. */
   const [pickerMode, setPickerMode] = useState<'start' | 'switch'>('start')
   const [pickerError, setPickerError] = useState<string | null>(null)
@@ -125,24 +129,34 @@ export function ScreenStage({ share, only, memberId, viewers, t }: {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [focused])
 
-  // The companion's picker when the app is up and can capture; the browser's otherwise.
+  const openPicker = (kind: EncodedOrigin['kind'], mode: 'start' | 'switch') => {
+    setPickerError(null)
+    setPickerKind(kind)
+    setPickerMode(mode)
+    setPickerOpen(true)
+  }
+  // The desktop app's picker, or the companion's when it is up and can
+  // capture; the browser's otherwise.
   const beginShare = () => {
-    if (isJLocalCaptureAvailable()) { setPickerError(null); setPickerMode('start'); setPickerOpen(true); return }
+    const kind = encodedPicker()
+    if (kind) { openPicker(kind, 'start'); return }
     share.start()
   }
-  // Mid-share, the same choice again: the companion's picker or the browser's.
+  // Mid-share, the same choice again.
   const switchShare = () => {
-    if (isJLocalCaptureAvailable()) { setPickerError(null); setPickerMode('switch'); setPickerOpen(true); return }
+    const kind = share.viaApp ? 'app' : encodedPicker()
+    if (kind) { openPicker(kind, 'switch'); return }
     share.switchSource()
   }
   const pickJlocal = (pick: JlocalPick) => {
     setPickerError(null)
     const attempt = pickerMode === 'switch' ? share.switchJlocal(pick) : share.startWithJlocal(pick)
+    const own = pickerKind === 'app' ? 'appScreen' : 'jlocal'
     attempt
       .then(() => setPickerOpen(false))
       .catch((failure: unknown) => {
         const message = failure instanceof Error ? failure.message : ''
-        setPickerError(t(message.includes('permission') ? 'jlocal.permission' : message === 'sharing_closed' ? 'room.screenClosedNotice' : 'jlocal.failed'))
+        setPickerError(t(message.includes('permission') ? `${own}.permission` : message === 'sharing_closed' ? 'room.screenClosedNotice' : `${own}.failed`))
       })
   }
 
@@ -180,10 +194,11 @@ export function ScreenStage({ share, only, memberId, viewers, t }: {
             </Button>
           )
       ) : null}
-      {canPublish && !share.viaJlocal ? (
-        <QualityMenu quality={share.quality} onPick={share.setQuality} t={t} />
+      {sharing && share.viaApp ? <SoundMenu app t={t} /> : null}
+      {canPublish && (!share.viaJlocal || share.viaApp) ? (
+        <QualityMenu quality={share.quality} options={share.viaApp ? APP_QUALITIES : undefined} onPick={share.setQuality} t={t} />
       ) : null}
-      {sharing && share.viaJlocal && getCachedJLocalCapabilities()?.audio.capture ? <SoundMenu t={t} /> : null}
+      {sharing && share.viaJlocal && !share.viaApp && getCachedJLocalCapabilities()?.audio.capture ? <SoundMenu t={t} /> : null}
       {share.sendingSilent ? (
         <span className="stage-volume is-silent" title={t('room.screenSendingSilentHint')}>
           <VolumeX size={16} aria-hidden="true" />{t('room.screenSendingSilent')}
@@ -267,18 +282,33 @@ export function ScreenStage({ share, only, memberId, viewers, t }: {
       ) : null}
       {tiles.length > 0 ? <div className="screen-bar" onDoubleClick={(event) => event.stopPropagation()}>{controls}</div> : null}
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="jpick-dialog" title={t(pickerMode === 'switch' ? 'jlocal.switchTitle' : 'jlocal.pickTitle')} description={t(pickerMode === 'switch' ? 'jlocal.switchGuide' : 'jlocal.pickGuide')} closeLabel={t('home.closeDialog')}>
-          {pickerOpen ? (
-            <JlocalPicker
-              t={t}
-              busy={share.state === 'starting'}
-              error={pickerError}
-              mode={pickerMode}
-              onPick={pickJlocal}
-              onExit={() => setPickerOpen(false)}
-            />
-          ) : null}
-        </DialogContent>
+        {pickerKind === 'app' ? (
+          <DialogContent className="app-pick-dialog" title={t(pickerMode === 'switch' ? 'room.screenSwitch' : 'appScreen.title')} closeLabel={t('home.closeDialog')}>
+            {pickerOpen ? (
+              <AppScreenPicker
+                t={t}
+                busy={share.state === 'starting'}
+                error={pickerError}
+                mode={pickerMode}
+                onPick={pickJlocal}
+                onExit={() => setPickerOpen(false)}
+              />
+            ) : null}
+          </DialogContent>
+        ) : (
+          <DialogContent className="jpick-dialog" title={t(pickerMode === 'switch' ? 'jlocal.switchTitle' : 'jlocal.pickTitle')} description={t(pickerMode === 'switch' ? 'jlocal.switchGuide' : 'jlocal.pickGuide')} closeLabel={t('home.closeDialog')}>
+            {pickerOpen ? (
+              <JlocalPicker
+                t={t}
+                busy={share.state === 'starting'}
+                error={pickerError}
+                mode={pickerMode}
+                onPick={pickJlocal}
+                onExit={() => setPickerOpen(false)}
+              />
+            ) : null}
+          </DialogContent>
+        )}
       </Dialog>
     </div>
   )
@@ -332,8 +362,10 @@ const Tile = forwardRef<HTMLDivElement, {
 })
 
 /** The quality pill: the current preset as the trigger, the list as the morphed panel. */
-function QualityMenu({ quality, onPick, t }: {
+function QualityMenu({ quality, options = SCREEN_QUALITIES.map((option) => option.id), onPick, t }: {
   quality: ScreenQualityId
+  /** The rungs on offer; every one by default. */
+  options?: readonly ScreenQualityId[]
   onPick: (id: ScreenQualityId) => void
   t: Translator
 }) {
@@ -349,16 +381,16 @@ function QualityMenu({ quality, onPick, t }: {
     >
       {(close) => (
         <div className="screen-quality-menu" role="listbox" aria-label={t('room.screenQuality')}>
-          {SCREEN_QUALITIES.map((option) => (
+          {options.map((id) => (
             <button
-              key={option.id}
+              key={id}
               type="button"
               role="option"
-              aria-selected={option.id === quality}
-              onClick={() => { close(); onPick(option.id) }}
+              aria-selected={id === quality}
+              onClick={() => { close(); onPick(id) }}
             >
-              {label(option.id)}
-              {option.id === quality ? <Check size={14} aria-hidden="true" /> : null}
+              {label(id)}
+              {id === quality ? <Check size={14} aria-hidden="true" /> : null}
             </button>
           ))}
         </div>

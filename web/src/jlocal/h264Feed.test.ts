@@ -27,6 +27,16 @@ describe('FrameParser', () => {
       [16_667, false, 6],
     ])
   })
+
+  it('takes the end flag as the end of the feed, not as a frame', () => {
+    const parser = new FrameParser()
+    expect(parser.push(packet(1_000, true, [0, 0, 0, 1, 0x65])).length).toBe(1)
+    expect(parser.ended).toBe(false)
+    const end = packet(2_000, false, [])
+    end[12] = 0x2
+    expect(parser.push(end)).toEqual([])
+    expect(parser.ended).toBe(true)
+  })
 })
 
 describe('codecFromAnnexB', () => {

@@ -8,7 +8,8 @@ import { incidentalAudio } from '../ui/audioUnlock'
  * the relay as they came.
  *
  * Wire format per frame: big-endian u32 payload length, u64 presentation
- * time in microseconds, one flag byte (bit 0 = keyframe), then the payload.
+ * time in microseconds, one flag byte (bit 0 = keyframe, bit 1 = the source
+ * ended), then the payload.
  */
 
 export interface EncodedFrame {
@@ -57,6 +58,8 @@ export function codecFromAnnexB(data: Uint8Array): string | null {
 export class FrameParser {
   private pending = new Uint8Array(0)
   private origin: number | null = null
+  /** The source sent its end mark; nothing after it is a frame. */
+  ended = false
 
   push(chunk: Uint8Array): EncodedFrame[] {
     const merged = new Uint8Array(this.pending.length + chunk.length)
@@ -65,11 +68,13 @@ export class FrameParser {
     const frames: EncodedFrame[] = []
     let at = 0
     const view = new DataView(merged.buffer, merged.byteOffset, merged.byteLength)
-    while (merged.length - at >= HEADER_BYTES) {
+    while (!this.ended && merged.length - at >= HEADER_BYTES) {
       const length = view.getUint32(at)
       if (merged.length - at - HEADER_BYTES < length) break
       const pts = Number(view.getBigUint64(at + 4))
-      const keyframe = (view.getUint8(at + 12) & 1) === 1
+      const flags = view.getUint8(at + 12)
+      if ((flags & 2) === 2) { this.ended = true; break }
+      const keyframe = (flags & 1) === 1
       if (this.origin === null) this.origin = pts
       frames.push({ data: merged.slice(at + HEADER_BYTES, at + HEADER_BYTES + length), timestamp: Math.max(0, pts - this.origin), keyframe })
       at += HEADER_BYTES + length
@@ -170,13 +175,13 @@ export interface SystemAudio {
 }
 
 /**
- * The app's system-audio mix as a track the publisher can encode: raw
- * s16le 48 kHz stereo from `GET /audio/stream`, scheduled gapless into a
- * MediaStreamAudioDestination. The track exists before the first byte
- * arrives, so it can be handed to the publisher right away; a missing app
- * or an unwired platform just leaves it silent.
+ * Raw s16le 48 kHz stereo as a track the publisher can encode, scheduled
+ * gapless into a MediaStreamAudioDestination. The track exists before the
+ * first byte arrives, so it can be handed to the publisher right away; a
+ * source that never sends just leaves it silent. `feed` pushes the bytes in
+ * chunks of any size until the signal aborts.
  */
-export function systemAudioTrack(): SystemAudio | null {
+export function pcmTrack(feed: (push: (chunk: Uint8Array) => void, signal: AbortSignal) => void): SystemAudio | null {
   const scope = globalThis as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }
   const AudioCtor = scope.AudioContext ?? scope.webkitAudioContext
   if (!AudioCtor) return null
@@ -190,46 +195,35 @@ export function systemAudioTrack(): SystemAudio | null {
   const [track] = destination.stream.getAudioTracks()
   if (!track) { void context.close().catch(() => undefined); return null }
   const controller = new AbortController()
-  void (async () => {
-    await context.resume().catch(() => undefined)
-    let response: Response
-    try {
-      response = await fetch(`${JLOCAL_ORIGIN}/audio/stream`, { signal: controller.signal })
-    } catch {
-      return
+  let pending = new Uint8Array(0)
+  let nextStart: number | null = null
+  const push = (chunk: Uint8Array) => {
+    if (controller.signal.aborted) return
+    const merged = new Uint8Array(pending.length + chunk.length)
+    merged.set(pending, 0)
+    merged.set(chunk, pending.length)
+    pending = merged
+    while (pending.length >= AUDIO_FRAME_BYTES) {
+      const frame = pending.subarray(0, AUDIO_FRAME_BYTES)
+      pending = pending.slice(AUDIO_FRAME_BYTES)
+      const now = context.currentTime
+      // Behind the clock: the slack is taken again from here, one gap
+      // instead of a click on every frame until the source catches up.
+      if (nextStart === null || nextStart < now) nextStart = now + AUDIO_LEAD_S
+      // Too far ahead: the sound would trail the picture; skip the frame.
+      if (nextStart - now > AUDIO_MAX_LEAD_S) continue
+      const buffer = context.createBuffer(AUDIO_CHANNELS, AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE)
+      decodeInterleavedS16(frame, buffer)
+      const node = context.createBufferSource()
+      node.buffer = buffer
+      node.connect(destination)
+      node.start(nextStart)
+      nextStart += AUDIO_FRAME_SAMPLES / AUDIO_SAMPLE_RATE
     }
-    if (!response.ok || !response.body) return
-    const reader = response.body.getReader()
-    let pending = new Uint8Array(0)
-    let nextStart = context.currentTime + AUDIO_LEAD_S
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done || controller.signal.aborted) break
-        const merged = new Uint8Array(pending.length + value.length)
-        merged.set(pending, 0)
-        merged.set(value, pending.length)
-        pending = merged
-        while (pending.length >= AUDIO_FRAME_BYTES) {
-          const frame = pending.subarray(0, AUDIO_FRAME_BYTES)
-          pending = pending.slice(AUDIO_FRAME_BYTES)
-          const now = context.currentTime
-          // Behind the clock: the slack is taken again from here, one gap
-          // instead of a click on every frame until the source catches up.
-          if (nextStart < now) nextStart = now + AUDIO_LEAD_S
-          // Too far ahead: the sound would trail the picture; skip the frame.
-          if (nextStart - now > AUDIO_MAX_LEAD_S) continue
-          const buffer = context.createBuffer(AUDIO_CHANNELS, AUDIO_FRAME_SAMPLES, AUDIO_SAMPLE_RATE)
-          decodeInterleavedS16(frame, buffer)
-          const node = context.createBufferSource()
-          node.buffer = buffer
-          node.connect(destination)
-          node.start(nextStart)
-          nextStart += AUDIO_FRAME_SAMPLES / AUDIO_SAMPLE_RATE
-        }
-      }
-    } catch { /* the app went away; the track goes quiet */ }
-  })()
+  }
+  void context.resume().catch(() => undefined).then(() => {
+    if (!controller.signal.aborted) feed(push, controller.signal)
+  })
   return {
     track,
     stop() {
@@ -238,6 +232,29 @@ export function systemAudioTrack(): SystemAudio | null {
       void context.close().catch(() => undefined)
     },
   }
+}
+
+/** The jlocal companion's system-audio mix, from `GET /audio/stream`. */
+export function systemAudioTrack(): SystemAudio | null {
+  return pcmTrack((push, signal) => {
+    void (async () => {
+      let response: Response
+      try {
+        response = await fetch(`${JLOCAL_ORIGIN}/audio/stream`, { signal })
+      } catch {
+        return
+      }
+      if (!response.ok || !response.body) return
+      const reader = response.body.getReader()
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done || signal.aborted) break
+          push(value)
+        }
+      } catch { /* the app went away; the track goes quiet */ }
+    })()
+  })
 }
 
 /**

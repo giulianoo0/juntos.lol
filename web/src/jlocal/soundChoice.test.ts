@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getSoundChoice, modeFor, resetSoundChoiceForTests, setAppMuted, setSoundEnabled } from './soundChoice'
+import { getSoundChoice, isMuted, modeFor, resetSoundChoiceForTests, setAppMuted, setSoundEnabled } from './soundChoice'
 
 const calls: { url: string; body: unknown }[] = []
 
@@ -17,18 +17,33 @@ afterEach(() => {
 })
 
 describe('soundChoice', () => {
-  it('starts with the whole mix', () => {
-    expect(getSoundChoice()).toEqual({ enabled: true, muted: [] })
-    expect(modeFor(getSoundChoice())).toBe('all')
+  it('starts with Discord muted, so the call does not echo back', () => {
+    expect(isMuted(getSoundChoice(), 'discord')).toBe(true)
+    expect(modeFor(getSoundChoice())).toBe('custom')
+  })
+
+  it('every Discord starts muted, and one turned on stays on', () => {
+    for (const id of ['discord', 'discordptb', 'discordcanary', 'vesktop']) expect(isMuted(getSoundChoice(), id)).toBe(true)
+    expect(isMuted(getSoundChoice(), 'spotify')).toBe(false)
+    setAppMuted('discordptb', false)
+    expect(isMuted(getSoundChoice(), 'discordptb')).toBe(false)
+    expect(isMuted(getSoundChoice(), 'discord')).toBe(true)
+    setAppMuted('discordptb', true)
+    expect(isMuted(getSoundChoice(), 'discordptb')).toBe(true)
   })
 
   it('leaving an app out switches the app to custom and mutes it there', () => {
+    setAppMuted('discord', false)
+    calls.length = 0
     setAppMuted('spotify', true)
     expect(getSoundChoice().muted).toEqual(['spotify'])
     expect(calls.map((call) => call.body)).toEqual([{ mode: 'custom' }, { app: 'spotify', muted: true }])
   })
 
   it('bringing the last app back returns to the whole mix and unmutes it', () => {
+    setAppMuted('discord', false)
+    calls.length = 0
+    expect(getSoundChoice().muted).toEqual([])
     setAppMuted('spotify', true)
     calls.length = 0
     setAppMuted('spotify', false)
@@ -40,7 +55,7 @@ describe('soundChoice', () => {
     setAppMuted('spotify', true)
     setSoundEnabled(false)
     expect(modeFor(getSoundChoice())).toBe('none')
-    expect(calls.at(-2)?.body).toEqual({ mode: 'none' })
+    expect(calls.map((call) => call.body)).toContainEqual({ mode: 'none' })
     setSoundEnabled(true)
     expect(modeFor(getSoundChoice())).toBe('custom')
   })
