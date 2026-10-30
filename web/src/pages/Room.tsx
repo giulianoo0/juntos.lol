@@ -401,9 +401,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     else if (sync.lastError === 'rate_limited') toast(t('room.rateLimited'))
     else if (sync.lastError === 'producer_left') toast(t('room.producerLeft'))
   }, [sync.errorSeq, sync.lastError, t, toast])
-  if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
-    mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
-  }
   const [localSwarm, setLocalSwarm] = useState<TorrentStats | null>(null)
   useEffect(() => {
     const read = () => setLocalSwarm(torrentStatsFor(room.id))
@@ -490,6 +487,11 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const localMedia = useLocalRoomMedia(room.id)
   const mediaStatus = localStatus(sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status, localMedia, liveRoom.mediaGeneration)
   const played = useMemo(() => playableRoom(liveRoom, localMedia), [liveRoom, localMedia])
+  // With regions the player sets the offset of the one it loaded; the app's
+  // regions live in the played room, never in the server's.
+  if (!played.room.mediaRegions || played.room.mediaRegions.length === 0) {
+    mediaOffsetMsRef.current = played.room.mediaOffsetMs ?? 0
+  }
   // A guest on the app opens the source the host's app shared and plays its
   // own copy; one that cannot tells the room, which has the host upload.
   const copySource = isDesktop() && liveRoom.localSource && liveRoom.status !== 'empty' && liveRoom.status !== 'error'

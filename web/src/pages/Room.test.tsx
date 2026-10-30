@@ -516,6 +516,32 @@ describe('cópia própria no app', () => {
     expect(calls('local_stop')).toEqual([])
   })
 
+  it('numa região que não começa no zero, o convidado diz à sala a posição do episódio', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.2.1', compatible: true, features: [], mediaRoot: 'juntos-media://localhost' }
+      if (cmd === 'torrent_open') return { id: 'abc', name: 'Maçã', files: [] }
+      if (cmd === 'local_prepare') return meta
+      if (cmd === 'local_regions') return [{ n: 0, startMs: 0, producedMs: 30000, growing: false }, { n: 3, startMs: 59375, producedMs: 270000, growing: true }]
+      return null
+    })
+    serve({ room: localRoom() })
+    renderRoom()
+    await enter()
+    receive({
+      type: 'welcome', memberId: 'm2', controllerId: 'm1', capability: 'cap-token',
+      members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }],
+      state: { playing: false, positionMs: 60000, rate: 1, serverTimeMs: 0 },
+    })
+    await waitFor(() => expect(calls('local_regions').length).toBeGreaterThan(1), { timeout: 3000 })
+    document.querySelector('video')!.currentTime = 0.625
+    receive({ type: 'members', controllerId: 'm1', members: [{ id: 'm1', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }, { id: 'm2', nickname: 'Giuli', joinedAt: '2026-01-01T00:00:00Z' }] })
+
+    receive({ type: 'waiting', targetMs: 60000, readiness: [] })
+
+    const ready = sent().filter((message) => message.type === 'ready').at(-1)
+    expect(ready?.positionMs).toBe(60000)
+  })
+
   it('no navegador nada se abre', async () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     resetDesktopForTests()
