@@ -65,6 +65,13 @@ const SAME_PLACE_MS = 2_000
 const rooms = new Map<string, Attached>()
 /** The follow of a room this tab plays its own copy of, as a guest. */
 const copies = new Map<string, (absoluteMs: number) => void>()
+/**
+ * Browser guests waiting on the bucket, by room. It outlives the source: the
+ * room asks for the new one as the swap begins, while the app still prepares it.
+ */
+const waiting = new Map<string, ControllerAuth>()
+/** Rooms whose next source is being prepared: the old one is not uploaded meanwhile. */
+const preparing = new Set<string>()
 const listeners = new Set<() => void>()
 
 function emit(): void {
@@ -80,7 +87,16 @@ function reason(error: unknown): string {
  * local producer. Resolves null when it took, or with why it did not.
  */
 export async function attachLocalRoom(roomId: string, generation: number, source: LocalSource, auth?: ControllerAuth): Promise<string | null> {
-  return await attach(roomId, generation, source, auth ?? null)
+  preparing.add(roomId)
+  let failed: string | null
+  try {
+    failed = await attach(roomId, generation, source, auth ?? null)
+  } finally {
+    preparing.delete(roomId)
+  }
+  const wanted = waiting.get(roomId)
+  if (failed === null && wanted) void needBrowserMedia(roomId, wanted)
+  return failed
 }
 
 /**
@@ -216,6 +232,7 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
   registerRemuxHandle(roomId, handle, () => {
     unregisterRemuxHandle(roomId, handle)
     if (rooms.get(roomId) !== attached) return
+    waiting.delete(roomId)
     detach(roomId)
     void app.invoke('upload_stop', { roomId }).catch(() => undefined)
     void app.invoke('local_stop', { key: attached.key }).catch(() => undefined)
@@ -272,8 +289,10 @@ function stopWatching(attached: Attached): void {
  * that gave up) is promoted again.
  */
 export async function needBrowserMedia(roomId: string, auth: ControllerAuth): Promise<void> {
+  if (copies.has(roomId)) return
+  waiting.set(roomId, auth)
   const attached = rooms.get(roomId)
-  if (!attached || copies.has(roomId)) return
+  if (!attached || preparing.has(roomId)) return
   attached.wanted = auth
   if (attached.uploadWatch === null) {
     attached.uploadWatch = setInterval(() => { void reviveUpload(roomId) }, UPLOAD_WATCH_MS)
@@ -334,6 +353,7 @@ export async function setLocalRenditions(roomId: string, renditions: string[] | 
 
 /** The last guest left: what is in the bucket stays, nothing more goes up. */
 export async function browserMediaIdle(roomId: string): Promise<void> {
+  waiting.delete(roomId)
   const attached = rooms.get(roomId)
   if (!attached) return
   stopWatching(attached)
@@ -352,4 +372,6 @@ export function useLocalRoomMedia(roomId: string): LocalMedia | null {
 
 export function resetLocalRoomsForTests(): void {
   for (const roomId of [...rooms.keys()]) detach(roomId)
+  waiting.clear()
+  preparing.clear()
 }

@@ -112,6 +112,49 @@ describe('a room played from the desktop cache', () => {
     expect(invoke).toHaveBeenCalledWith('upload_start', { key: 't-abc-0', roomId: 'ROOM1', claim: 'CLAIM', mediaGeneration: 4, positionMs: 42_000 })
   })
 
+  it('a browser guest asking while the next source is prepared gets that one, never the old one', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    let prepared!: (value: unknown) => void
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }
+      if (cmd === 'local_prepare') return new Promise((resolve) => { prepared = resolve })
+      return null
+    })
+    const swapping = attachLocalRoom('ROOM1', 5, { ...source, id: 'def' })
+    await vi.waitFor(() => expect(prepared).toBeDefined())
+
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.anything())
+
+    prepared({ ...meta, key: 't-def-0' })
+    await swapping
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('upload_start', expect.objectContaining({ key: 't-def-0' })))
+  })
+
+  it('a browser guest already waiting gets the new source after a swap', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    invoke.mockClear()
+    invoke.mockImplementation(async (cmd: string) => cmd === 'local_prepare' ? { ...meta, key: 't-def-0' } : null)
+
+    await attachLocalRoom('ROOM1', 5, { ...source, id: 'def' })
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('upload_start', expect.objectContaining({ key: 't-def-0' })))
+  })
+
+  it('once the last browser guest left, a swap uploads nothing', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    await browserMediaIdle('ROOM1')
+    invoke.mockClear()
+    invoke.mockImplementation(async (cmd: string) => cmd === 'local_prepare' ? { ...meta, key: 't-def-0' } : null)
+
+    await attachLocalRoom('ROOM1', 5, { ...source, id: 'def' })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.anything())
+  })
+
   it('a refused promote starts nothing', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_local' }), { status: 409 }))
     await attachLocalRoom('ROOM1', 4, source)
