@@ -326,7 +326,7 @@ impl Remux {
         .collect();
         let output = process::run_capture(&self.cfg.ffprobe_path, &key_args, Duration::from_secs(120)).await;
         bridge.revoke(&probe_cap, "");
-        first_frame_pts(&output.ok()?)
+        plan::first_frame_pts(&output.ok()?)
     }
 
     fn cancelled(entry: &RunEntry) -> bool {
@@ -368,7 +368,8 @@ impl Remux {
         if Self::cancelled(entry) {
             return Ok(());
         }
-        let (start_seconds, offset_ms) = seek_start(spec.start_ms, keyframe);
+        let start = plan::Start::seek(spec.start_ms, keyframe);
+        let offset_ms = start.offset_ms;
 
         let mut input_urls = Vec::new();
         let mut input_caps = Vec::new();
@@ -464,11 +465,11 @@ impl Remux {
 
         let prefix = plan::region_prefix(spec.region);
         let end_seconds = (spec.end_ms > 0).then(|| spec.end_ms as f64 / 1000.0);
-        let low = spec.wants_480p().then_some(self.cfg.rendition_encoder);
+        let low = start.low(spec.wants_480p().then_some(self.cfg.rendition_encoder));
         if low.is_some() {
             publisher = publisher.with_low_variant(plan::low_variant(&source));
         }
-        let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start_seconds, end_seconds, low);
+        let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start, end_seconds, low);
 
         let cleanup = |bridge: &Bridge| {
             for cap in &input_caps {
@@ -640,42 +641,5 @@ impl Remux {
         cleanup(&bridge);
         run_sink.destroy().await;
         Ok(())
-    }
-}
-
-/// Where a run seeks to: the keyframe the search found, never past the
-/// target; the target itself when none was found.
-fn seek_start(start_ms: u64, keyframe: Option<f64>) -> (f64, u64) {
-    if start_ms == 0 {
-        return (0.0, 0);
-    }
-    let target = start_ms as f64 / 1000.0;
-    match keyframe.map(|pts| pts.min(target)) {
-        Some(pts) if (pts * 1000.0) as u64 > 0 => (pts, (pts * 1000.0) as u64),
-        _ => (target, start_ms),
-    }
-}
-
-fn first_frame_pts(probe_json: &str) -> Option<f64> {
-    let doc: serde_json::Value = serde_json::from_str(probe_json).ok()?;
-    doc["frames"].as_array()?.first()?["pts_time"].as_str()?.parse().ok()
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn first_frame_pts_reads_ffprobe_frames() {
-        let json = r#"{"frames":[{"pts_time":"1077.577000"},{"pts_time":"1081.0"}]}"#;
-        assert_eq!(super::first_frame_pts(json), Some(1077.577));
-        assert_eq!(super::first_frame_pts("{}"), None);
-    }
-
-    #[test]
-    fn a_run_starts_on_the_keyframe_at_or_before_the_target() {
-        assert_eq!(super::seek_start(0, Some(3.0)), (0.0, 0));
-        assert_eq!(super::seek_start(61_000, Some(59.5)), (59.5, 59_500));
-        assert_eq!(super::seek_start(61_000, Some(64.0)), (61.0, 61_000), "never later than asked");
-        assert_eq!(super::seek_start(61_000, None), (61.0, 61_000), "no keyframe found: the target itself");
-        assert_eq!(super::seek_start(61_000, Some(0.0)), (61.0, 61_000));
     }
 }
