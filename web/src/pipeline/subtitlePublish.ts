@@ -50,8 +50,9 @@ export async function publishSubtitles(
   sideFiles: SubtitleSideFile[],
   roomID: string,
   mediaGeneration: number,
+  claim: Promise<string>,
 ): Promise<void> {
-  const collector = createSubtitleCollector(roomID, mediaGeneration)
+  const collector = createSubtitleCollector(roomID, mediaGeneration, claim)
   const external = sideFiles.slice(0, MAX_EXTERNAL_SUBTITLES)
   const embedded = isMatroska(input)
   if (external.length > 0) collector.register('external')

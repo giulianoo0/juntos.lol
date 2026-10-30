@@ -424,7 +424,7 @@ export function startTorrentUpload(
   }
   void (async () => {
     let refusal = current.startRemux
-      ? await current.startRemux(file, { roomId: roomID, mediaGeneration })
+      ? await current.startRemux(file, { roomId: roomID, mediaGeneration, auth })
       : await startRemoteRemux(roomID, mediaGeneration, current, auth)
     if (refusal !== null && current.backend === 'jlocal' && current.magnet && !mocksEnabled) {
       console.warn('jlocal refused the torrent; handing it to the fleet', refusal)

@@ -20,8 +20,22 @@ import (
 
 const validVTT = "WEBVTT\n\n00:00.000 --> 00:02.000\nhello\n"
 
-func postSubtitles(t *testing.T, e *gin.Engine, roomID, body string) *httptest.ResponseRecorder {
+// postSubtitles posts as the tab preparing the room's media, holding its claim.
+func postSubtitles(t *testing.T, store *room.Store, e *gin.Engine, roomID, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	if err := store.ReserveUpload(t.Context(), roomID, testSubtitleClaim, time.Now()); err != nil && !errors.Is(err, room.ErrUploadReserved) {
+		t.Logf("no claim on %s: %v", roomID, err)
+	}
+	return postSubtitlesAs(t, e, roomID, testSubtitleClaim, body)
+}
+
+const testSubtitleClaim = "client:subtitles-test"
+
+func postSubtitlesAs(t *testing.T, e *gin.Engine, roomID, claim, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	if claim != "" && strings.HasPrefix(body, "{") {
+		body = `{"claim":` + strconvQuote(claim) + `,` + strings.TrimPrefix(body, "{")
+	}
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/subtitles", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -38,13 +52,13 @@ func TestStoreClientSubtitlesHappyPath(t *testing.T) {
 	}))
 	stored := make(chan string, 1)
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, func(id string) { stored <- id })
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, func(id string) { stored <- id })
 
 	body := `{"tracks":[` +
 		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `},` +
 		`{"language":"en us","title":"","vtt":` + strconvQuote(validVTT) + `}` +
 		`]}`
-	w := postSubtitles(t, e, "r1", body)
+	w := postSubtitles(t, store, e, "r1", body)
 
 	require.Equal(t, http.StatusCreated, w.Code)
 	select {
@@ -74,9 +88,9 @@ func TestStoreClientSubtitlesHappyPath(t *testing.T) {
 func TestStoreClientSubtitlesMissingRoom(t *testing.T) {
 	cfg := testCfg(t)
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), newTestStore(t), cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), newTestStore(t), cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
-	w := postSubtitles(t, e, "missing", `{"tracks":[{"language":"eng","vtt":"WEBVTT"}]}`)
+	w := postSubtitlesAs(t, e, "missing", testSubtitleClaim, `{"tracks":[{"language":"eng","vtt":"WEBVTT"}]}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -88,9 +102,9 @@ func TestStoreClientSubtitlesExpiredRoom(t *testing.T) {
 		ID: "expired", Status: "uploading", CreatedAt: now.Add(-2 * time.Hour), ExpiresAt: now.Add(-time.Minute),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
-	w := postSubtitles(t, e, "expired", `{"tracks":[{"language":"eng","vtt":"WEBVTT"}]}`)
+	w := postSubtitles(t, store, e, "expired", `{"tracks":[{"language":"eng","vtt":"WEBVTT"}]}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -102,7 +116,7 @@ func TestStoreClientSubtitlesRejectsBadInput(t *testing.T) {
 		ID: "r1", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	tests := []struct {
 		name string
@@ -117,7 +131,7 @@ func TestStoreClientSubtitlesRejectsBadInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			w := postSubtitles(t, e, "r1", tt.body)
+			w := postSubtitles(t, store, e, "r1", tt.body)
 			require.Equal(t, http.StatusBadRequest, w.Code)
 		})
 	}
@@ -150,10 +164,10 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 		ID: "r2", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	body := `{"complete":false,"tracks":[{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
-	w := postSubtitles(t, e, "r2", body)
+	w := postSubtitles(t, store, e, "r2", body)
 	require.Equal(t, http.StatusCreated, w.Code)
 
 	got, err := store.Get(t.Context(), "r2")
@@ -167,7 +181,7 @@ func TestStoreClientSubtitlesPartialKeepsServerExtraction(t *testing.T) {
 
 	require.False(t, got.ClientSubs)
 
-	w = postSubtitles(t, e, "r2", `{"complete":true,"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}]}`)
+	w = postSubtitles(t, store, e, "r2", `{"complete":true,"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}]}`)
 	require.Equal(t, http.StatusCreated, w.Code)
 	got, err = store.Get(t.Context(), "r2")
 	require.NoError(t, err)
@@ -202,9 +216,9 @@ func TestStoreClientSubtitlesUploadsBeforeAnnouncing(t *testing.T) {
 	addSubtitlesTestRoom(t, store, "r1")
 	publisher := &recordingSubtitlePublisher{}
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, publisher, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, publisher, nil)
 
-	w := postSubtitles(t, e, "r1", oneTrackBody())
+	w := postSubtitles(t, store, e, "r1", oneTrackBody())
 
 	require.Equal(t, http.StatusCreated, w.Code)
 	require.Equal(t, []string{filepath.Join(cfg.DataDir, "rooms", "r1", "subs")}, publisher.dirs)
@@ -215,10 +229,10 @@ func TestStoreClientSubtitlesFailsWhenTheBucketRefuses(t *testing.T) {
 	store := newTestStore(t)
 	addSubtitlesTestRoom(t, store, "r1")
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg,
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true},
 		&recordingSubtitlePublisher{err: errors.New("bucket refused")}, nil)
 
-	w := postSubtitles(t, e, "r1", oneTrackBody())
+	w := postSubtitles(t, store, e, "r1", oneTrackBody())
 
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 	got, err := store.Get(t.Context(), "r1")
@@ -238,11 +252,11 @@ func TestStoreClientSubtitlesRejectsAnExtractionFromAReplacedSource(t *testing.T
 	require.Equal(t, 1, generation)
 
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 	body := `{"mediaGeneration":0,"tracks":[` +
 		`{"language":"eng","title":"From the first video","vtt":` + strconvQuote(validVTT) + `}` +
 		`]}`
-	w := postSubtitles(t, e, "r1", body)
+	w := postSubtitles(t, store, e, "r1", body)
 
 	require.Equal(t, http.StatusConflict, w.Code)
 	got, err := store.Get(t.Context(), "r1")
@@ -259,12 +273,12 @@ func TestStoreClientSubtitlesAcceptsTheCurrentGeneration(t *testing.T) {
 		ID: "r1", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	body := `{"mediaGeneration":0,"tracks":[` +
 		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}` +
 		`]}`
-	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r1", body).Code)
+	require.Equal(t, http.StatusCreated, postSubtitles(t, store, e, "r1", body).Code)
 }
 
 func TestStoreClientSubtitlesCarriesOverATrackWithNoNewBytes(t *testing.T) {
@@ -275,13 +289,13 @@ func TestStoreClientSubtitlesCarriesOverATrackWithNoNewBytes(t *testing.T) {
 		ID: "r5", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	first := `{"complete":false,"tracks":[` +
 		`{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `},` +
 		`{"language":"por","title":"","vtt":` + strconvQuote(validVTT) + `}` +
 		`]}`
-	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r5", first).Code)
+	require.Equal(t, http.StatusCreated, postSubtitles(t, store, e, "r5", first).Code)
 
 	path := filepath.Join(cfg.DataDir, "rooms", "r5", "subs", "sub_0_eng.vtt")
 	before, err := os.Stat(path)
@@ -292,7 +306,7 @@ func TestStoreClientSubtitlesCarriesOverATrackWithNoNewBytes(t *testing.T) {
 		`{"language":"eng","title":"Signs"},` +
 		`{"language":"por","title":"","vtt":` + strconvQuote(grown) + `}` +
 		`]}`
-	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r5", second).Code)
+	require.Equal(t, http.StatusCreated, postSubtitles(t, store, e, "r5", second).Code)
 
 	got, err := store.Get(t.Context(), "r5")
 	require.NoError(t, err)
@@ -317,10 +331,10 @@ func TestStoreClientSubtitlesRefusesOmittedBytesForATrackItNeverHad(t *testing.T
 		ID: "r6", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	body := `{"tracks":[{"language":"eng","title":"Signs"}]}`
-	require.Equal(t, http.StatusBadRequest, postSubtitles(t, e, "r6", body).Code)
+	require.Equal(t, http.StatusBadRequest, postSubtitles(t, store, e, "r6", body).Code)
 }
 
 func TestStoreClientSubtitlesLeavesUnchangedBytesAlone(t *testing.T) {
@@ -331,15 +345,15 @@ func TestStoreClientSubtitlesLeavesUnchangedBytesAlone(t *testing.T) {
 		ID: "r7", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	body := `{"complete":false,"tracks":[{"language":"eng","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
-	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r7", body).Code)
+	require.Equal(t, http.StatusCreated, postSubtitles(t, store, e, "r7", body).Code)
 	path := filepath.Join(cfg.DataDir, "rooms", "r7", "subs", "sub_0_eng.vtt")
 	before, err := os.Stat(path)
 	require.NoError(t, err)
 
-	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r7", body).Code)
+	require.Equal(t, http.StatusCreated, postSubtitles(t, store, e, "r7", body).Code)
 	after, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, before.ModTime(), after.ModTime())
@@ -353,13 +367,13 @@ func TestStoreClientSubtitlesRefusesACarryOverUnderADifferentName(t *testing.T) 
 		ID: "r8", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	first := `{"complete":false,"tracks":[{"language":"spa","title":"Signs","vtt":` + strconvQuote(validVTT) + `}]}`
-	require.Equal(t, http.StatusCreated, postSubtitles(t, e, "r8", first).Code)
+	require.Equal(t, http.StatusCreated, postSubtitles(t, store, e, "r8", first).Code)
 
 	shifted := `{"complete":false,"tracks":[{"language":"eng","title":"Forced"}]}`
-	require.Equal(t, http.StatusBadRequest, postSubtitles(t, e, "r8", shifted).Code)
+	require.Equal(t, http.StatusBadRequest, postSubtitles(t, store, e, "r8", shifted).Code)
 }
 
 const validASS = "[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,hello\n"
@@ -372,11 +386,11 @@ func TestStoreClientSubtitlesWithASS(t *testing.T) {
 		ID: "ra", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	body := `{"tracks":[{"language":"eng","title":"Full","vtt":` + strconvQuote(validVTT) +
 		`,"ass":` + strconvQuote(validASS) + `}]}`
-	w := postSubtitles(t, e, "ra", body)
+	w := postSubtitles(t, store, e, "ra", body)
 	require.Equal(t, http.StatusCreated, w.Code)
 
 	got, err := store.Get(t.Context(), "ra")
@@ -400,11 +414,11 @@ func TestStoreClientSubtitlesRejectsBadASS(t *testing.T) {
 		ID: "rb", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	body := `{"tracks":[{"language":"eng","title":"x","vtt":` + strconvQuote(validVTT) +
 		`,"ass":` + strconvQuote("not an ass document") + `}]}`
-	w := postSubtitles(t, e, "rb", body)
+	w := postSubtitles(t, store, e, "rb", body)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -416,7 +430,7 @@ func TestStoreSubtitleFont(t *testing.T) {
 		ID: "rf", FileName: "movie.mkv", Status: "uploading", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, nil)
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, nil)
 
 	post := func(name, payload string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -456,7 +470,7 @@ func TestStoreFleetSubtitlesNeedsTheProducerClaim(t *testing.T) {
 	e := gin.New()
 	api := e.Group("/api")
 	RegisterClientMediaRoutes(api, store, cfg, objectstore.NewFake(), ClientMediaHooks{})
-	RegisterSubtitlesRoute(api, store, cfg, nil, func(id string) { stored <- id })
+	RegisterSubtitlesRoute(api, store, cfg, testMemberAuthorizer{allowed: true}, nil, func(id string) { stored <- id })
 	claim := claimRoom(t, e, "r1")
 
 	track := `{"language":"por","title":"Português","vtt":` + strconvQuote(validVTT) +
@@ -488,7 +502,7 @@ func TestStoreFleetSubtitlesOutliveTheCompletedMedia(t *testing.T) {
 	e := gin.New()
 	api := e.Group("/api")
 	RegisterClientMediaRoutes(api, store, cfg, objectstore.NewFake(), ClientMediaHooks{})
-	RegisterSubtitlesRoute(api, store, cfg, nil, func(string) {})
+	RegisterSubtitlesRoute(api, store, cfg, testMemberAuthorizer{allowed: true}, nil, func(string) {})
 	claim := claimRoom(t, e, "r1")
 
 	// The media completed: the claim is released, but its receipt stays.
@@ -520,19 +534,19 @@ func newImportTestRoom(t *testing.T) (*gin.Engine, *room.Store, chan string, str
 	store := newTestStore(t)
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
-		ID: "r1", FileName: "movie.mkv", Status: "ready", ControllerID: "host", MediaGeneration: 2,
+		ID: "r1", FileName: "movie.mkv", Status: "uploading", ControllerID: "m1", MediaGeneration: 2,
 		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	stored := make(chan string, 4)
 	e := gin.New()
-	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, nil, func(id string) { stored <- id })
+	RegisterSubtitlesRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, nil, func(id string) { stored <- id })
 	return e, store, stored, cfg.DataDir
 }
 
 func TestImportSubtitleByTheControllerReachesEveryone(t *testing.T) {
 	e, store, stored, dataDir := newImportTestRoom(t)
 
-	w := postImportedSubtitle(t, e, "r1", `{"memberId":"host","mediaGeneration":2,"language":"por","title":"Filme.srt","vtt":`+strconvQuote(validVTT)+`}`)
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","mediaGeneration":2,"language":"por","title":"Filme.srt","vtt":`+strconvQuote(validVTT)+`}`)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	select {
 	case <-stored:
@@ -544,7 +558,7 @@ func TestImportSubtitleByTheControllerReachesEveryone(t *testing.T) {
 	require.Equal(t, validVTT, string(data))
 
 	// The extraction posting later keeps the imported track after its own.
-	w = postSubtitles(t, e, "r1", `{"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}],"mediaGeneration":2}`)
+	w = postSubtitles(t, store, e, "r1", `{"tracks":[{"language":"eng","title":"Signs","vtt":`+strconvQuote(validVTT)+`}],"mediaGeneration":2}`)
 	require.Equal(t, http.StatusCreated, w.Code)
 	got, err := store.Get(t.Context(), "r1")
 	require.NoError(t, err)
@@ -553,7 +567,7 @@ func TestImportSubtitleByTheControllerReachesEveryone(t *testing.T) {
 		{Index: 1000, Language: "por", Title: "Filme.srt", Codec: "webvtt", Digest: subtitleDigest(validVTT)},
 	}, got.SubtitleTracks)
 
-	w = postImportedSubtitle(t, e, "r1", `{"memberId":"host","mediaGeneration":2,"language":"jpn","title":"Anime.ass","vtt":`+strconvQuote(validVTT)+`,"ass":"[Script Info]\nTitle: x\n"}`)
+	w = postImportedSubtitle(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","mediaGeneration":2,"language":"jpn","title":"Anime.ass","vtt":`+strconvQuote(validVTT)+`,"ass":"[Script Info]\nTitle: x\n"}`)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	got, err = store.Get(t.Context(), "r1")
 	require.NoError(t, err)
@@ -566,32 +580,91 @@ func TestImportSubtitleByTheControllerReachesEveryone(t *testing.T) {
 
 func TestImportSubtitleRefusesAnyoneButTheController(t *testing.T) {
 	e, _, _, _ := newImportTestRoom(t)
-	w := postImportedSubtitle(t, e, "r1", `{"memberId":"guest","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"m2","capability":"secret-capability","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "not_controller")
 }
 
+// A member id is seen by the whole room; without that seat's capability it
+// opens nothing.
+func TestImportSubtitleCannotBeForgedWithTheHostsId(t *testing.T) {
+	e, store, _, _ := newImportTestRoom(t)
+	for _, body := range []string{
+		`{"memberId":"m1","mediaGeneration":2,"language":"por","title":"x","vtt":` + strconvQuote(validVTT) + `}`,
+		`{"memberId":"m1","capability":"guessed","mediaGeneration":2,"language":"por","title":"x","vtt":` + strconvQuote(validVTT) + `}`,
+	} {
+		w := postImportedSubtitle(t, e, "r1", body)
+		require.Contains(t, []int{http.StatusBadRequest, http.StatusForbidden}, w.Code, body)
+	}
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, got.SubtitleTracks)
+}
+
+// The browser's route takes only the claim of the tab preparing the media.
+func TestStoreClientSubtitlesCannotBeForgedWithoutTheClaim(t *testing.T) {
+	e, store, _, _ := newImportTestRoom(t)
+	body := `{"tracks":[{"language":"eng","title":"Fake","vtt":` + strconvQuote(validVTT) + `}],"mediaGeneration":2}`
+	require.Equal(t, http.StatusBadRequest, postSubtitlesAs(t, e, "r1", "", body).Code)
+	require.Equal(t, http.StatusForbidden, postSubtitlesAs(t, e, "r1", "client:guessed", body).Code)
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Empty(t, got.SubtitleTracks)
+}
+
 func TestImportSubtitleByWhoeverOpenedTheMedia(t *testing.T) {
 	e, store, _, _ := newImportTestRoom(t)
-	require.NoError(t, store.SetSourceHolder(t.Context(), "r1", "guest", "file"))
-	w := postImportedSubtitle(t, e, "r1", `{"memberId":"guest","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.NoError(t, store.SetSourceHolder(t.Context(), "r1", "m2", "file"))
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"m2","capability":"secret-capability","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 }
 
 func TestImportSubtitleRefusesAReplacedSource(t *testing.T) {
 	e, _, _, _ := newImportTestRoom(t)
-	w := postImportedSubtitle(t, e, "r1", `{"memberId":"host","mediaGeneration":1,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	w := postImportedSubtitle(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","mediaGeneration":1,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
 	require.Equal(t, http.StatusConflict, w.Code)
 }
 
 func TestImportSubtitleRejectsBadInput(t *testing.T) {
 	e, _, _, _ := newImportTestRoom(t)
 	for _, body := range []string{
-		`{"memberId":"host","mediaGeneration":2,"language":"por","title":"x","vtt":"not vtt"}`,
-		`{"memberId":"host","mediaGeneration":2,"language":"por","title":"x"}`,
-		`{"memberId":"host","mediaGeneration":2,"language":"por","title":"x","vtt":` + strconvQuote(validVTT) + `,"ass":"nope"}`,
+		`{"memberId":"m1","capability":"secret-capability","mediaGeneration":2,"language":"por","title":"x","vtt":"not vtt"}`,
+		`{"memberId":"m1","capability":"secret-capability","mediaGeneration":2,"language":"por","title":"x"}`,
+		`{"memberId":"m1","capability":"secret-capability","mediaGeneration":2,"language":"por","title":"x","vtt":` + strconvQuote(validVTT) + `,"ass":"nope"}`,
 	} {
 		w := postImportedSubtitle(t, e, "r1", body)
 		require.Equal(t, http.StatusBadRequest, w.Code, body)
 	}
+}
+
+func TestOnlyTheProducingAppPublishesALocalSourcesSubtitles(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	authorizer := testMemberAuthorizer{allowed: true}
+	RegisterSourceRoute(e.Group("/api"), store, cfg, authorizer, SourceHooks{})
+	RegisterLocalSubtitlesRoute(e.Group("/api"), store, cfg, authorizer, nil, nil)
+	post := func(body string) int {
+		return postJSON(t, e, "/api/rooms/r1/subtitles/local", body).Code
+	}
+	track := `"tracks":[{"language":"por","title":"Português – Brasil","vtt":` + strconvQuote(validVTT) + `}]`
+
+	require.Equal(t, http.StatusConflict, post(`{"memberId":"m1","capability":"secret-capability","mediaGeneration":0,`+track+`}`), "a room the fleet produces")
+	require.Equal(t, http.StatusOK, postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Filme"}`).Code)
+
+	require.Equal(t, http.StatusBadRequest, post(`{"mediaGeneration":1,`+track+`}`), "no member at all")
+	require.Equal(t, http.StatusForbidden, post(`{"memberId":"m2","capability":"secret-capability","mediaGeneration":1,`+track+`}`), "a member who did not open it")
+	require.Equal(t, http.StatusConflict, post(`{"memberId":"m1","capability":"secret-capability","mediaGeneration":0,`+track+`}`), "the source before")
+	require.Equal(t, http.StatusCreated, post(`{"memberId":"m1","capability":"secret-capability","mediaGeneration":1,"complete":true,`+track+`}`))
+
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleTracks, 1)
+	require.Equal(t, "Português – Brasil", got.SubtitleTracks[0].Title)
+	require.Equal(t, "por", got.SubtitleTracks[0].Language)
+
+	e2 := gin.New()
+	RegisterLocalSubtitlesRoute(e2.Group("/api"), store, cfg, testMemberAuthorizer{allowed: false}, nil, nil)
+	w := postJSON(t, e2, "/api/rooms/r1/subtitles/local", `{"memberId":"m1","capability":"wrong","mediaGeneration":1,`+track+`}`)
+	require.Equal(t, http.StatusForbidden, w.Code, "a capability the room does not know")
 }

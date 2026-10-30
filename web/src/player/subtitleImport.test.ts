@@ -34,15 +34,15 @@ describe('subtitle import', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ subtitleTracks: [stored] }), { status: 201 }),
     )
-    const track = await publishImportedSubtitle('r1', 'm1', 2, { language: 'por', title: 'Filme.srt', vtt: 'WEBVTT\n' })
+    const track = await publishImportedSubtitle('r1', 'm1', 'cap', 2, { language: 'por', title: 'Filme.srt', vtt: 'WEBVTT\n' })
     expect(track).toEqual(stored)
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('/api/rooms/r1/subtitles/import')
-    expect(JSON.parse(String(init?.body))).toEqual({ memberId: 'm1', mediaGeneration: 2, language: 'por', title: 'Filme.srt', vtt: 'WEBVTT\n' })
+    expect(JSON.parse(String(init?.body))).toEqual({ memberId: 'm1', capability: 'cap', mediaGeneration: 2, language: 'por', title: 'Filme.srt', vtt: 'WEBVTT\n' })
   })
 
   it('names the refusal when the server will not take the import', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"error":"not_controller"}', { status: 403 }))
-    await expect(publishImportedSubtitle('r1', 'm1', 2, { language: 'por', title: 'x', vtt: 'WEBVTT\n' })).rejects.toThrow('not_controller')
+    await expect(publishImportedSubtitle('r1', 'm1', 'cap', 2, { language: 'por', title: 'x', vtt: 'WEBVTT\n' })).rejects.toThrow('not_controller')
   })
 })

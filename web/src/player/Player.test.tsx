@@ -204,7 +204,7 @@ describe('Player', () => {
     const send = vi.fn()
     const { container, rerender } = render(
       <ToastProvider>
-        <Player room={{ ...room, mediaGeneration: 2 }} isController memberId="m1" videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />
+        <Player room={{ ...room, mediaGeneration: 2 }} isController memberId="m1" capability="cap" videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />
       </ToastProvider>,
     )
     const file = new File(['1\n00:00:01,000 --> 00:00:02,000\nOi\n'], 'Filme.srt')
@@ -212,14 +212,14 @@ describe('Player', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/rooms/r1/subtitles/import', expect.anything()))
     const importCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/subtitles/import'))!
-    expect(JSON.parse(String(importCall[1]?.body))).toMatchObject({ memberId: 'm1', mediaGeneration: 2, title: 'Filme.srt' })
+    expect(JSON.parse(String(importCall[1]?.body))).toMatchObject({ memberId: 'm1', capability: 'cap', mediaGeneration: 2, title: 'Filme.srt' })
     expect(container.querySelector('track')).toBeNull()
 
     rerender(
       <ToastProvider>
         <Player
           room={{ ...room, mediaGeneration: 2, subtitleTracks: [stored], mediaBaseUrl: 'https://media.example.test/rooms/r1/g2' }}
-          isController memberId="m1" videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
+          isController memberId="m1" capability="cap" videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
         />
       </ToastProvider>,
     )

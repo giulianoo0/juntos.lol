@@ -256,7 +256,8 @@ interface CollectorSource {
   complete: boolean
 }
 
-export function createSubtitleCollector(roomID: string, mediaGeneration: number): SubtitleCollector {
+/** Posts as the tab preparing the room's media: nothing goes up before its claim does. */
+export function createSubtitleCollector(roomID: string, mediaGeneration: number, claim: Promise<string>): SubtitleCollector {
   const sources = new Map<string, CollectorSource>()
   const order: string[] = []
   let pending: Promise<void> = Promise.resolve()
@@ -287,12 +288,14 @@ export function createSubtitleCollector(roomID: string, mediaGeneration: number)
         : track
     ))
     try {
+      const held = await claim
       const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/subtitles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tracks: body, complete, mediaGeneration }),
+        body: JSON.stringify({ claim: held, tracks: body, complete, mediaGeneration }),
       })
-      if (response.status === 409) return
+      // A source replaced, or a claim the room has moved past: these tracks are no one's now.
+      if (response.status === 409 || response.status === 403) return
       if (!response.ok) {
         console.warn(`subtitle upload failed with status ${response.status}`)
         sent.clear()

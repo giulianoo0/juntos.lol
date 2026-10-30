@@ -6,8 +6,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -272,16 +274,30 @@ func CloseStage(ctx context.Context, store *room.Store, cfg config.Config, hooks
 
 // localDuration is the length the app read from its file; the other kinds
 // learn theirs from the producer.
+var (
+	magnetHash = regexp.MustCompile(`(?i)(^|&)xt=urn:btih:([0-9a-f]{40}|[a-z2-7]{32})(&|$)`)
+	videoID    = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+)
+
+// youtubeHosts are the pages a shared video may name; members' apps open
+// only the canonical one anyway.
+var youtubeHosts = map[string]bool{
+	"youtube.com": true, "www.youtube.com": true, "m.youtube.com": true, "music.youtube.com": true, "youtu.be": true,
+}
+
 // validLocalCopy accepts a torrent's magnet and file, or a video's page, and
-// nothing a member's app would not open as one of those.
+// nothing a member's app would not open as one of those. The apps clean what
+// they open themselves; this keeps the room from carrying the rest at all.
 func validLocalCopy(local room.LocalCopy) bool {
 	switch local.Kind {
 	case "torrent":
-		return strings.HasPrefix(local.Magnet, "magnet:?") && len(local.Magnet) <= 4096 && local.Index >= 0 &&
+		return strings.HasPrefix(local.Magnet, "magnet:?") && len(local.Magnet) <= 4096 &&
+			magnetHash.MatchString(strings.TrimPrefix(local.Magnet, "magnet:?")) && local.Index >= 0 &&
 			local.URL == "" && local.VideoID == ""
 	case "youtube":
-		return strings.HasPrefix(local.URL, "https://") && len(local.URL) <= 2048 && local.VideoID != "" &&
-			len(local.VideoID) <= 64 && local.Magnet == ""
+		page, err := url.Parse(local.URL)
+		return err == nil && page.Scheme == "https" && youtubeHosts[strings.ToLower(page.Hostname())] && page.Port() == "" &&
+			len(local.URL) <= 2048 && videoID.MatchString(local.VideoID) && local.Magnet == ""
 	}
 	return false
 }

@@ -137,6 +137,8 @@ export interface RunClientRemuxOptions {
   onTrace?: (trace: SeekTrace) => void
   onRegionWarm?: () => void
   onHandle?: (handle: ClientRemuxHandle) => void
+  /** The claim the server handed this preparo: the proof its subtitles go up with. */
+  onClaim?: (claim: string) => void
 }
 
 /**
@@ -194,7 +196,7 @@ async function serverError(response: Response): Promise<ServerError> {
  * RoomMovedOnError when the room was swapped, any other error when the run
  * itself failed. The claim is released on the way out either way.
  */
-export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress, onHandle, onTrace, onRegionWarm }: RunClientRemuxOptions): Promise<void> {
+export async function runClientRemux({ roomID, mediaGeneration, file, plan, onProgress, onHandle, onTrace, onRegionWarm, onClaim }: RunClientRemuxOptions): Promise<void> {
   const claimResponse = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/client-media/claim`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -208,6 +210,7 @@ export async function runClientRemux({ roomID, mediaGeneration, file, plan, onPr
   }
 
   try {
+    onClaim?.(claim)
     await remuxAndPublish({ roomID, mediaGeneration, file, plan, claim, metadataToken, onProgress, onHandle, onTrace, onRegionWarm })
   } catch (error) {
     await releaseClaimReliably(roomID, claim)

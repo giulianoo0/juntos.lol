@@ -57,7 +57,7 @@ async fn room(posts: Arc<Mutex<Vec<serde_json::Value>>>) -> String {
                     if raw.len() < end + 4 + length {
                         continue;
                     }
-                    assert!(head.starts_with("post /api/rooms/r1/subtitles "), "{head}");
+                    assert!(head.starts_with("post /api/rooms/r1/subtitles/local "), "{head}");
                     posts.lock().unwrap().push(serde_json::from_slice(&raw[end + 4..end + 4 + length]).unwrap());
                     let _ = socket.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await;
                     return;
@@ -90,7 +90,8 @@ async fn a_containers_subtitles_reach_the_room() {
     let producer = Producer::new(dir.path().join("cache"), "ffmpeg".into(), "ffprobe".into(), 1 << 30);
     let size = std::fs::metadata(&mkv).unwrap().len();
     producer.prepare("k", "Filme", Input::Container(Arc::new(File(mkv, size)))).await.unwrap();
-    producer.subtitles("k", base, "r1".into(), 2).await.unwrap();
+    let auth = ss_remux::subs::PublishAuth::Producer { member_id: "m1".into(), capability: "cap".into() };
+    producer.subtitles("k", base, "r1".into(), 2, auth).await.unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -104,6 +105,7 @@ async fn a_containers_subtitles_reach_the_room() {
     let last = posts.lock().unwrap().last().cloned().unwrap();
     println!("{}", serde_json::to_string_pretty(&last).unwrap());
     assert!(last.get("claim").is_none());
+    assert_eq!(last["memberId"], "m1");
     assert_eq!(last["mediaGeneration"], 2);
     let track = &last["tracks"][0];
     assert_eq!(track["language"], "por");

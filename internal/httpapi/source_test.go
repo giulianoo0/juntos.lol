@@ -442,7 +442,7 @@ func TestTheNextSourceDropsTheLastOnesLocalCopy(t *testing.T) {
 	store := newTestStore(t)
 	e := sourceRoom(t, cfg, store)
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
-	first := `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Um","localCopy":{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc","index":1}}`
+	first := `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Um","localCopy":{"kind":"torrent","magnet":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10","index":1}}`
 	require.Equal(t, http.StatusOK, postSource(t, e, "r1", first).Code)
 
 	// An app too old to send one opens the next.
@@ -461,22 +461,27 @@ func TestALocalCopyNoAppWouldOpenIsRefused(t *testing.T) {
 	e := sourceRoom(t, cfg, store)
 	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
 
-	long := "magnet:?xt=urn:btih:abc&dn=" + strings.Repeat("a", 4096)
+	long := "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=" + strings.Repeat("a", 4096)
 	tests := []struct {
 		name string
 		kind string
 		copy string
 	}{
-		{name: "on a file the server holds", kind: "file", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc"}`},
+		{name: "on a file the server holds", kind: "file", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10"}`},
 		{name: "of an unknown kind", kind: "local", copy: `{"kind":"file","url":"https://example.com/a.mkv"}`},
 		{name: "a torrent without a magnet", kind: "local", copy: `{"kind":"torrent","magnet":"https://example.com/a.torrent"}`},
-		{name: "a torrent with a negative file", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc","index":-1}`},
+		{name: "a torrent with a negative file", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10","index":-1}`},
 		{name: "a magnet past the limit", kind: "local", copy: `{"kind":"torrent","magnet":"` + long + `"}`},
-		{name: "a torrent that also names a page", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc","url":"https://youtu.be/x"}`},
+		{name: "a torrent that also names a page", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10","url":"https://youtu.be/x"}`},
 		{name: "a video over plain http", kind: "local", copy: `{"kind":"youtube","url":"http://www.youtube.com/watch?v=x","videoId":"x"}`},
 		{name: "a video without its id", kind: "local", copy: `{"kind":"youtube","url":"https://www.youtube.com/watch?v=x"}`},
+		{name: "a torrent without a hash", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?dn=x&tr=http://10.0.0.1/a"}`},
+		{name: "a torrent with a hash that is not one", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc"}`},
+		{name: "a video on another site", kind: "local", copy: `{"kind":"youtube","url":"https://evil.example/watch?v=dQw4w9WgXcQ","videoId":"dQw4w9WgXcQ"}`},
+		{name: "a video on a youtube name at another port", kind: "local", copy: `{"kind":"youtube","url":"https://www.youtube.com:8443/watch?v=dQw4w9WgXcQ","videoId":"dQw4w9WgXcQ"}`},
+		{name: "a video id that is not one", kind: "local", copy: `{"kind":"youtube","url":"https://youtu.be/x","videoId":"../../etc/x"}`},
 		{name: "a video id past the limit", kind: "local", copy: `{"kind":"youtube","url":"https://youtu.be/x","videoId":"` + strings.Repeat("x", 65) + `"}`},
-		{name: "a video that also names a magnet", kind: "local", copy: `{"kind":"youtube","url":"https://youtu.be/x","videoId":"x","magnet":"magnet:?xt=urn:btih:abc"}`},
+		{name: "a video that also names a magnet", kind: "local", copy: `{"kind":"youtube","url":"https://youtu.be/x","videoId":"x","magnet":"magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

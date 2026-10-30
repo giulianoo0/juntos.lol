@@ -157,12 +157,23 @@ pub async fn local_stop(state: State<'_, AppState>, key: String) -> Result<(), S
 
 /// Publishes the prepared source's subtitles to the room this app produces.
 #[tauri::command]
-pub async fn local_subtitles(state: State<'_, AppState>, key: String, room_id: String, media_generation: u64) -> Result<(), String> {
+pub async fn local_subtitles(
+    state: State<'_, AppState>,
+    key: String,
+    room_id: String,
+    media_generation: u64,
+    member_id: String,
+    capability: String,
+) -> Result<(), String> {
     if !valid_room(&room_id) {
         return Err("invalid room".into());
     }
+    if member_id.is_empty() || capability.is_empty() {
+        return Err("no member".into());
+    }
     let api_base = state.site.as_str().trim_end_matches('/').to_string();
-    state.producer.subtitles(&key, api_base, room_id, media_generation).await.map_err(|e| e.to_string())
+    let auth = ss_remux::subs::PublishAuth::Producer { member_id, capability };
+    state.producer.subtitles(&key, api_base, room_id, media_generation, auth).await.map_err(|e| e.to_string())
 }
 
 fn valid_room(room_id: &str) -> bool {

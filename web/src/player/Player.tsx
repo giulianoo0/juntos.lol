@@ -48,8 +48,9 @@ interface PlayerProps {
   /** Where the HLS is read from instead of the room's bucket: the desktop app's cache. */
   mediaRoot?: string
   isController: boolean
-  /** This viewer's seat, which a host import is authorized by. */
+  /** This viewer's seat, and the secret that proves it, which a host import is authorized by. */
   memberId?: string
+  capability?: string
   hostSubtitles?: HostSubtitles | null
   videoRef: RefObject<HTMLVideoElement | null>
   send: (type: string, payload?: Record<string, unknown>) => void
@@ -168,7 +169,7 @@ function subtitleSource(room: SubtitleBucket, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, mediaRoot: localRoot, isController, memberId = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
+export function Player({ room, mediaRoot: localRoot, isController, memberId = '', capability = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
   const { toast } = useToast()
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement | null>(null)
@@ -632,7 +633,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     }
     if (isController && memberId !== '') {
       try {
-        const stored = await publishImportedSubtitle(room.id, memberId, room.mediaGeneration, track)
+        const stored = await publishImportedSubtitle(room.id, memberId, capability, room.mediaGeneration, track)
         pickSubtitle(stored.index)
         toast(t('room.subtitleImported'))
       } catch (error) {

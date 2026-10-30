@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -70,12 +69,51 @@ type SubtitlePublisher interface {
 
 // RegisterSubtitlesRoute mounts the browser-extracted subtitle upload endpoints.
 // onSubsStored fires after the tracks are persisted (nil-safe).
-func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config,
+func RegisterSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer memberAuthorizer,
 	publisher SubtitlePublisher, onSubsStored func(roomID string)) {
 	rg.POST("/rooms/:id/subtitles", storeClientSubtitles(store, cfg, publisher, onSubsStored))
 	rg.POST("/rooms/:id/subtitles/fleet", storeFleetSubtitles(store, cfg, publisher, onSubsStored))
 	rg.POST("/rooms/:id/subtitles/fonts", storeSubtitleFont(store, cfg, publisher, onSubsStored))
-	rg.POST("/rooms/:id/subtitles/import", importSubtitle(store, cfg, publisher, onSubsStored))
+	rg.POST("/rooms/:id/subtitles/import", importSubtitle(store, cfg, authorizer, publisher, onSubsStored))
+}
+
+// localSubtitlesRequest is a publish from the app that opened the room's
+// local source, which proves who it is the way the room knows it.
+type localSubtitlesRequest struct {
+	clientSubtitlesRequest
+	MemberID   string `json:"memberId" binding:"required"`
+	Capability string `json:"capability" binding:"required"`
+}
+
+// RegisterLocalSubtitlesRoute mounts the route the producing app publishes
+// the subtitles of its own source through.
+func RegisterLocalSubtitlesRoute(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer stageAuthorizer,
+	publisher SubtitlePublisher, onSubsStored func(roomID string)) {
+	rg.POST("/rooms/:id/subtitles/local", func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSubtitlesBodyBytes)
+		var req localSubtitlesRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		storedRoom, ok := loadLiveRoom(c, store, roomID)
+		if !ok {
+			return
+		}
+		if !storedRoom.LocalSource {
+			c.JSON(http.StatusConflict, gin.H{"error": "not_local"})
+			return
+		}
+		if !authorizeProducer(c, authorizer, storedRoom, req.MemberID, req.Capability) {
+			return
+		}
+		persistSubtitles(c, store, cfg, publisher, onSubsStored, roomID, storedRoom, req.clientSubtitlesRequest)
+	})
 }
 
 const maxImportedSubtitles = 8
@@ -85,6 +123,7 @@ const maxImportedSubtitles = 8
 // the media: anyone else's import stays in their own browser.
 type importSubtitleRequest struct {
 	MemberID        string  `json:"memberId" binding:"required"`
+	Capability      string  `json:"capability" binding:"required"`
 	MediaGeneration *int    `json:"mediaGeneration" binding:"required"`
 	Language        string  `json:"language"`
 	Title           string  `json:"title"`
@@ -95,7 +134,7 @@ type importSubtitleRequest struct {
 // importSubtitle stores a host-imported track for the whole room. Imported
 // tracks are indexed from 1000 and kept apart from the extraction, so a later
 // extraction post never drops them.
-func importSubtitle(store *room.Store, cfg config.Config, publisher SubtitlePublisher,
+func importSubtitle(store *room.Store, cfg config.Config, authorizer memberAuthorizer, publisher SubtitlePublisher,
 	onSubsStored func(roomID string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		roomID := c.Param("id")
@@ -111,6 +150,12 @@ func importSubtitle(store *room.Store, cfg config.Config, publisher SubtitlePubl
 		var req importSubtitleRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		// The member id is no secret, everyone in the room sees it; the
+		// capability is, and only that seat holds it.
+		if authorizer == nil || !authorizer.AuthorizeMember(roomID, req.MemberID, req.Capability) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
 			return
 		}
 		if req.MemberID != storedRoom.ControllerID && req.MemberID != storedRoom.SourceMemberID {
@@ -313,28 +358,19 @@ func storeClientSubtitles(store *room.Store, cfg config.Config, publisher Subtit
 			c.Status(http.StatusNotFound)
 			return
 		}
-		storedRoom, err := store.Get(c.Request.Context(), roomID)
-		if errors.Is(err, room.ErrNotFound) {
-			c.Status(http.StatusNotFound)
-			return
-		}
-		if err != nil {
-			slog.ErrorContext(c.Request.Context(), "load room for subtitles failed", "room_id", roomID, "error", err)
-			c.Status(http.StatusInternalServerError)
-			return
-		}
-		if !storedRoom.ExpiresAt.After(time.Now()) {
-			c.Status(http.StatusNotFound)
-			return
-		}
-
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSubtitlesBodyBytes)
-		var req clientSubtitlesRequest
+		var req fleetSubtitlesRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
-		persistSubtitles(c, store, cfg, publisher, onSubsStored, roomID, storedRoom, req)
+		// Only the tab preparing the media, by the claim it holds: anyone
+		// else with the room's code would replace what everyone reads.
+		storedRoom, ok := authorizeSubtitleClaim(c, store, roomID, req.Claim)
+		if !ok {
+			return
+		}
+		persistSubtitles(c, store, cfg, publisher, onSubsStored, roomID, storedRoom, req.clientSubtitlesRequest)
 	}
 }
 

@@ -79,8 +79,8 @@ export async function openDesktopTorrent(magnet: string, onStats?: (stats: Torre
       await bridge.invoke('torrent_select', { id: torrent.id, index: file.index })
       watch()
     },
-    startRemux: (file, { roomId, mediaGeneration }) =>
-      attachLocalRoom(roomId, mediaGeneration, { kind: 'torrent', id: torrent.id, index: file.index, title: file.name }),
+    startRemux: (file, { roomId, mediaGeneration, auth }) =>
+      attachLocalRoom(roomId, mediaGeneration, { kind: 'torrent', id: torrent.id, index: file.index, title: file.name }, auth),
     // What came down stays in the app: the next room with this magnet starts warm.
     destroy: stop,
     detach: stop,
@@ -107,12 +107,12 @@ export const desktopYoutubeBackend: YoutubeBackend = {
     }
     return { url, videoId: summary.videoId || youtubeVideoId(url) || '', summary, backend: 'desktop', destroy: () => undefined }
   },
-  async start(session, { roomId, mediaGeneration }) {
+  async start(session, { roomId, mediaGeneration, auth }) {
     return await attachLocalRoom(roomId, mediaGeneration, {
       kind: 'youtube',
       url: session.url,
       videoId: session.videoId,
       title: session.summary.title,
-    })
+    }, auth)
   },
 }

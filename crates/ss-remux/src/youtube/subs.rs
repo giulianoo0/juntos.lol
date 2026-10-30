@@ -19,8 +19,7 @@ pub struct Publisher {
     pub room_id: String,
     pub run_id: String,
     pub media_generation: u64,
-    /// None for the app that opened the video itself (see subs::publish_url).
-    pub claim: Option<String>,
+    pub auth: crate::subs::PublishAuth,
 }
 
 impl Publisher {
@@ -36,8 +35,8 @@ impl Publisher {
             anyhow::bail!("no subtitle document could be fetched");
         }
         let count = tracks.len();
-        let body = crate::subs::publish_body(&self.claim, self.media_generation, true, tracks);
-        let url = crate::subs::publish_url(&self.api_base, &self.room_id, &self.claim);
+        let body = crate::subs::publish_body(&self.auth, self.media_generation, true, tracks);
+        let url = crate::subs::publish_url(&self.api_base, &self.room_id, &self.auth);
         let mut last = None;
         for attempt in 0..3 {
             let response = self.api.post(&url).json(&body).send().await.context("subtitles send")?;

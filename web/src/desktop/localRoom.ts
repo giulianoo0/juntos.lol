@@ -11,6 +11,8 @@
 import { useSyncExternalStore } from 'react'
 import { desktop } from '../platform'
 import { registerRemuxHandle, unregisterRemuxHandle } from '../upload'
+import { parseMagnet } from '../remoteTorrent'
+import { canonicalYoutubeUrl } from '../youtube'
 import type { LocalCopy, MediaRegion } from '../types'
 
 export type LocalSource =
@@ -77,8 +79,8 @@ function reason(error: unknown): string {
  * Prepares the source in the app's cache and makes this tab the room's
  * local producer. Resolves null when it took, or with why it did not.
  */
-export async function attachLocalRoom(roomId: string, generation: number, source: LocalSource): Promise<string | null> {
-  return await attach(roomId, generation, source, true)
+export async function attachLocalRoom(roomId: string, generation: number, source: LocalSource, auth?: ControllerAuth): Promise<string | null> {
+  return await attach(roomId, generation, source, auth ?? null)
 }
 
 /**
@@ -86,9 +88,11 @@ export async function attachLocalRoom(roomId: string, generation: number, source
  * cache of its own. Resolves null when it took, or with why it did not; the
  * caller then plays the bucket and tells the room so.
  */
-export async function openLocalCopy(roomId: string, generation: number, copy: LocalCopy, title: string): Promise<string | null> {
+export async function openLocalCopy(roomId: string, generation: number, given: LocalCopy, title: string): Promise<string | null> {
   const app = await desktop()
   if (!app) return 'desktop app unavailable'
+  const copy = safeLocalCopy(given)
+  if (!copy) return 'the shared source is not one the app opens'
   let source: LocalSource
   if (copy.kind === 'torrent') {
     try {
@@ -104,6 +108,45 @@ export async function openLocalCopy(roomId: string, generation: number, copy: Lo
   return await attach(roomId, generation, source, false)
 }
 
+const MAX_TRACKERS = 20
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+const PRIVATE_SUFFIX = /\.(local|lan|home|internal|intranet|corp|localhost|test|invalid|arpa)$/
+
+/** A tracker on a public name: never an address, this machine or the local network's. */
+function publicTracker(raw: string): boolean {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  if (!['udp:', 'http:', 'https:', 'wss:'].includes(url.protocol)) return false
+  const host = url.hostname.toLowerCase()
+  if (!host.includes('.') || host.startsWith('[') || host.includes(':')) return false
+  if (/^[\d.]+$/.test(host) || /^0x/i.test(host)) return false
+  return !PRIVATE_SUFFIX.test(host)
+}
+
+/**
+ * What another member's app may open of what the host shared: the host could
+ * be anyone, so a video is only ever its own page on YouTube, and a torrent
+ * only its hash, its name and trackers with public names. Web seeds, fixed
+ * peers and anything pointing at an address are dropped: they would have this
+ * app reach wherever the host wanted, the guest's own network included.
+ */
+export function safeLocalCopy(copy: LocalCopy): LocalCopy | null {
+  if (copy.kind === 'youtube') {
+    return VIDEO_ID.test(copy.videoId) ? { kind: 'youtube', url: canonicalYoutubeUrl(copy.videoId), videoId: copy.videoId } : null
+  }
+  if (copy.kind !== 'torrent' || !Number.isInteger(copy.index) || copy.index < 0) return null
+  const parsed = parseMagnet(copy.magnet)
+  if (!parsed) return null
+  const parts = [`xt=urn:btih:${parsed.infoHash}`]
+  if (parsed.dn) parts.push(`dn=${encodeURIComponent(parsed.dn.slice(0, 200))}`)
+  for (const tracker of parsed.trackers.filter(publicTracker).slice(0, MAX_TRACKERS)) parts.push(`tr=${encodeURIComponent(tracker)}`)
+  return { kind: 'torrent', magnet: `magnet:?${parts.join('&')}`, index: copy.index }
+}
+
 /** The room moved on from the copy this tab played: its production stops, the cache stays. */
 export function closeLocalCopy(roomId: string, generation: number): void {
   const attached = rooms.get(roomId)
@@ -117,7 +160,8 @@ export function followLocalCopy(roomId: string, absoluteMs: number): void {
   copies.get(roomId)?.(absoluteMs)
 }
 
-async function attach(roomId: string, generation: number, source: LocalSource, produce: boolean): Promise<string | null> {
+/** `produce` is the seat producing the room (null when it has none to give), or false for a guest's copy. */
+async function attach(roomId: string, generation: number, source: LocalSource, produce: ControllerAuth | null | false): Promise<string | null> {
   const app = await desktop()
   if (!app) return 'desktop app unavailable'
   let meta: Meta
@@ -163,7 +207,7 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
       }, FOLLOW_DEBOUNCE_MS - since)
     },
   }
-  if (!produce) {
+  if (produce === false) {
     copies.set(roomId, handle.follow)
     emit()
     void refreshLocalMedia(roomId)
@@ -176,8 +220,12 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
     void app.invoke('upload_stop', { roomId }).catch(() => undefined)
     void app.invoke('local_stop', { key: attached.key }).catch(() => undefined)
   })
-  // Everyone reads the subtitles from the room; an app too old to send them says no.
-  void app.invoke('local_subtitles', { key: meta.key, roomId, mediaGeneration: generation }).catch(() => undefined)
+  // Everyone reads the subtitles from the room, sent as the seat that opened
+  // the source; an app too old to send them says no.
+  if (produce) {
+    void app.invoke('local_subtitles', { key: meta.key, roomId, mediaGeneration: generation, memberId: produce.memberId, capability: produce.capability })
+      .catch(() => undefined)
+  }
   emit()
   void refreshLocalMedia(roomId)
   return null

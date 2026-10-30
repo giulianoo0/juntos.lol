@@ -409,7 +409,7 @@ impl Remux {
                 room_id: spec.room_id.clone(),
                 run_id: spec.run_id.clone(),
                 media_generation: spec.media_generation,
-                claim: Some(spec.claim.clone()),
+                auth: subs::PublishAuth::Claim(spec.claim.clone()),
                 input_url: subs_url,
                 dir: self.cfg.data_dir.join("remux").join(&spec.run_id).join("subs"),
                 state: subs::room_state(&self.subtitle_rooms, &spec.room_id, spec.media_generation, &source),
@@ -433,7 +433,7 @@ impl Remux {
                 room_id: spec.room_id.clone(),
                 run_id: spec.run_id.clone(),
                 media_generation: spec.media_generation,
-                claim: Some(spec.claim.clone()),
+                auth: subs::PublishAuth::Claim(spec.claim.clone()),
             };
             let run_id = spec.run_id.clone();
             *entry.subtitles.lock() = Some(tokio::spawn(async move {

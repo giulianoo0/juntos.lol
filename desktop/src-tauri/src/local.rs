@@ -410,7 +410,14 @@ impl Producer {
     /// them: the container's own tracks, pulled once the first frames are
     /// out so the pass does not hold the picture back, or the page's. Once
     /// per room and generation; a new one replaces the pass before it.
-    pub async fn subtitles(self: &Arc<Self>, key: &str, api_base: String, room_id: String, generation: u64) -> anyhow::Result<()> {
+    pub async fn subtitles(
+        self: &Arc<Self>,
+        key: &str,
+        api_base: String,
+        room_id: String,
+        generation: u64,
+        auth: subs::PublishAuth,
+    ) -> anyhow::Result<()> {
         let Some(production) = self.entries.lock().get(key).cloned() else { bail!("unknown source") };
         let bridge = self.bridge().await?;
         let mut held = production.subtitles.lock();
@@ -436,7 +443,7 @@ impl Producer {
                     room_id: room,
                     run_id: run_id.clone(),
                     media_generation: generation,
-                    claim: None,
+                    auth,
                 };
                 if let Err(e) = publisher.run(page.picks.clone()).await {
                     tracing::warn!(run = %run_id, error = %e, "page subtitles not published");
@@ -460,7 +467,7 @@ impl Producer {
                 room_id: room.clone(),
                 run_id: run_id.clone(),
                 media_generation: generation,
-                claim: None,
+                auth,
                 input_url,
                 dir,
                 state: subs::room_state(&this.subtitle_rooms, &room, generation, &source.plan),
@@ -716,6 +723,10 @@ mod tests {
         producer
     }
 
+    fn member() -> subs::PublishAuth {
+        subs::PublishAuth::Producer { member_id: "m1".into(), capability: "cap".into() }
+    }
+
     async fn posts_settle(posts: &Arc<Mutex<Vec<(String, serde_json::Value)>>>, count: usize) {
         for _ in 0..100 {
             if posts.lock().len() >= count {
@@ -733,22 +744,23 @@ mod tests {
         let (base, posts) = subtitle_server().await;
         let producer = page_producer(root.path(), &base);
 
-        producer.subtitles("y", base.clone(), "R1".into(), 4).await.unwrap();
-        producer.subtitles("y", base.clone(), "R1".into(), 4).await.unwrap();
+        producer.subtitles("y", base.clone(), "R1".into(), 4, member()).await.unwrap();
+        producer.subtitles("y", base.clone(), "R1".into(), 4, member()).await.unwrap();
         posts_settle(&posts, 1).await;
 
         let sent = posts.lock().clone();
         assert_eq!(sent.len(), 1, "the same source was published twice");
         let (path, body) = &sent[0];
-        assert_eq!(path, "/api/rooms/R1/subtitles");
+        assert_eq!(path, "/api/rooms/R1/subtitles/local");
         assert!(body.get("claim").is_none());
+        assert_eq!((body["memberId"].as_str(), body["capability"].as_str()), (Some("m1"), Some("cap")));
         assert_eq!(body["mediaGeneration"], 4);
         assert_eq!(body["complete"], true);
         assert_eq!(body["tracks"][0]["language"], "pt-BR");
         assert_eq!(body["tracks"][0]["title"], "Português (Brasil)");
         assert!(body["tracks"][0]["vtt"].as_str().unwrap().contains("Olá, coração – 字幕"));
 
-        producer.subtitles("y", base.clone(), "R1".into(), 5).await.unwrap();
+        producer.subtitles("y", base.clone(), "R1".into(), 5, member()).await.unwrap();
         posts_settle(&posts, 2).await;
         assert_eq!(posts.lock().len(), 2, "a new source in the room was not published");
         assert_eq!(posts.lock()[1].1["mediaGeneration"], 5);
@@ -758,7 +770,7 @@ mod tests {
     async fn subtitles_for_a_source_never_prepared_are_refused() {
         let root = tempfile::tempdir().unwrap();
         let producer = Producer::new(root.path().join("cache"), "true".into(), "true".into(), u64::MAX);
-        assert!(producer.subtitles("nope", "http://127.0.0.1:9".into(), "R1".into(), 1).await.is_err());
+        assert!(producer.subtitles("nope", "http://127.0.0.1:9".into(), "R1".into(), 1, member()).await.is_err());
     }
 
     #[cfg(unix)]
@@ -767,7 +779,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (base, _posts) = subtitle_server().await;
         let producer = page_producer(root.path(), &base);
-        producer.subtitles("y", base, "R1".into(), 4).await.unwrap();
+        producer.subtitles("y", base, "R1".into(), 4, member()).await.unwrap();
         producer.stop("y").await;
         let production = producer.entries.lock().get("y").cloned().unwrap();
         assert!(production.subtitles.lock().is_none());

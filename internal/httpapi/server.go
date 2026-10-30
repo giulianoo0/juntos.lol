@@ -114,12 +114,13 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	}
 	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
 	RegisterCallRoutes(r.Group("/api"), store, cfg, screenAuthorizer)
-	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
+	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, screenAuthorizer, options.subtitlePublisher, onSubsStored)
 	var authorizer stageAuthorizer
 	if hub != nil {
 		authorizer = hub
 	}
 	RegisterSourceRoute(counted, store, cfg, authorizer, options.sourceHooks)
+	RegisterLocalSubtitlesRoute(r.Group("/api"), store, cfg, authorizer, options.subtitlePublisher, onSubsStored)
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)

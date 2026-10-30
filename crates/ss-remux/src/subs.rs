@@ -86,9 +86,7 @@ pub struct Extractor {
     pub room_id: String,
     pub run_id: String,
     pub media_generation: u64,
-    /// The fleet's claim; None for the app that opened the source itself,
-    /// which posts where a browser would.
-    pub claim: Option<String>,
+    pub auth: PublishAuth,
     pub input_url: String,
     pub dir: PathBuf,
     pub state: Arc<Mutex<RoomSubtitles>>,
@@ -260,8 +258,8 @@ impl Extractor {
                 })
                 .collect()
         };
-        let body = publish_body(&self.claim, self.media_generation, complete, tracks);
-        let url = publish_url(&self.api_base, &self.room_id, &self.claim);
+        let body = publish_body(&self.auth, self.media_generation, complete, tracks);
+        let url = publish_url(&self.api_base, &self.room_id, &self.auth);
         let response = self.client.post(&url).json(&body).send().await.context("subtitles send")?;
         let status = response.status();
         if !status.is_success() {
@@ -332,21 +330,35 @@ impl Extractor {
     }
 }
 
-/// Where a publish of tracks goes: the fleet's route with its claim, or the
-/// browser's.
-pub fn publish_url(api_base: &str, room_id: &str, claim: &Option<String>) -> String {
-    let route = if claim.is_some() { "subtitles/fleet" } else { "subtitles" };
-    format!("{api_base}/api/rooms/{room_id}/{route}")
+/// Who publishes a room's subtitles: the fleet with the run's claim, or the
+/// app that opened the room's source, as the member the room knows.
+#[derive(Clone, Debug)]
+pub enum PublishAuth {
+    Claim(String),
+    Producer { member_id: String, capability: String },
 }
 
-pub fn publish_body(claim: &Option<String>, media_generation: u64, complete: bool, tracks: Vec<serde_json::Value>) -> serde_json::Value {
+/// Where a publish of tracks goes, by who sends it.
+pub fn publish_url(api_base: &str, room_id: &str, auth: &PublishAuth) -> String {
+    let route = match auth {
+        PublishAuth::Claim(_) => "fleet",
+        PublishAuth::Producer { .. } => "local",
+    };
+    format!("{api_base}/api/rooms/{room_id}/subtitles/{route}")
+}
+
+pub fn publish_body(auth: &PublishAuth, media_generation: u64, complete: bool, tracks: Vec<serde_json::Value>) -> serde_json::Value {
     let mut body = serde_json::json!({
         "mediaGeneration": media_generation,
         "complete": complete,
         "tracks": tracks,
     });
-    if let Some(claim) = claim {
-        body["claim"] = serde_json::Value::String(claim.clone());
+    match auth {
+        PublishAuth::Claim(claim) => body["claim"] = claim.clone().into(),
+        PublishAuth::Producer { member_id, capability } => {
+            body["memberId"] = member_id.clone().into();
+            body["capability"] = capability.clone().into();
+        }
     }
     body
 }
@@ -452,18 +464,21 @@ mod tests {
     use crate::plan::SubtitleTrack;
 
     #[test]
-    fn the_fleet_posts_with_its_claim_and_the_app_where_a_browser_would() {
-        let claim = Some("client:abc".to_string());
-        assert_eq!(publish_url("https://juntos.lol", "R1", &claim), "https://juntos.lol/api/rooms/R1/subtitles/fleet");
-        assert_eq!(publish_url("https://juntos.lol", "R1", &None), "https://juntos.lol/api/rooms/R1/subtitles");
+    fn the_fleet_posts_with_its_claim_and_the_app_as_the_member_who_opened_the_source() {
+        let fleet = PublishAuth::Claim("client:abc".into());
+        let app = PublishAuth::Producer { member_id: "m1".into(), capability: "cap".into() };
+        assert_eq!(publish_url("https://juntos.lol", "R1", &fleet), "https://juntos.lol/api/rooms/R1/subtitles/fleet");
+        assert_eq!(publish_url("https://juntos.lol", "R1", &app), "https://juntos.lol/api/rooms/R1/subtitles/local");
         let tracks = vec![serde_json::json!({ "language": "por", "title": "Português – Brasil", "vtt": "WEBVTT\n" })];
-        let fleet = publish_body(&claim, 3, false, tracks.clone());
-        assert_eq!(fleet["claim"], "client:abc");
-        assert_eq!(fleet["mediaGeneration"], 3);
-        assert_eq!(fleet["complete"], false);
-        let app = publish_body(&None, 3, true, tracks);
-        assert!(app.get("claim").is_none());
-        assert_eq!(app["tracks"][0]["title"], "Português – Brasil");
+        let body = publish_body(&fleet, 3, false, tracks.clone());
+        assert_eq!(body["claim"], "client:abc");
+        assert!(body.get("memberId").is_none());
+        assert_eq!(body["mediaGeneration"], 3);
+        assert_eq!(body["complete"], false);
+        let body = publish_body(&app, 3, true, tracks);
+        assert!(body.get("claim").is_none());
+        assert_eq!((body["memberId"].as_str(), body["capability"].as_str()), (Some("m1"), Some("cap")));
+        assert_eq!(body["tracks"][0]["title"], "Português – Brasil");
     }
 
     fn plan() -> SourcePlan {

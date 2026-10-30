@@ -104,8 +104,23 @@ describe('createSubtitleCollector', () => {
     mediaGeneration: number
   }
 
+  it('posts nothing before the preparo holds its claim, then posts with it', async () => {
+    let give: (claim: string) => void = () => undefined
+    const collector = createSubtitleCollector('room1', 2, new Promise<string>((resolve) => { give = resolve }))
+    collector.publish('embedded', [{ language: 'por', title: 'Português – Brasil', vtt: 'WEBVTT' }], true)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fetch).not.toHaveBeenCalled()
+
+    give('client:abc')
+    await collector.flush()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string)).toMatchObject({
+      claim: 'client:abc', mediaGeneration: 2, tracks: [{ title: 'Português – Brasil' }],
+    })
+  })
+
   it('names the source the tracks were read from', async () => {
-    const collector = createSubtitleCollector('room1', 2)
+    const collector = createSubtitleCollector('room1', 2, Promise.resolve('client:test'))
     collector.publish('embedded', [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }], true)
     await collector.flush()
 
@@ -113,7 +128,7 @@ describe('createSubtitleCollector', () => {
   })
 
   it('reports incomplete while any registered source is still running', async () => {
-    const collector = createSubtitleCollector('room1', 0)
+    const collector = createSubtitleCollector('room1', 0, Promise.resolve('client:test'))
     collector.register('embedded')
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await collector.flush()
@@ -123,7 +138,7 @@ describe('createSubtitleCollector', () => {
   })
 
   it('posts the union of every source in registration order once all are done', async () => {
-    const collector = createSubtitleCollector('room1', 0)
+    const collector = createSubtitleCollector('room1', 0, Promise.resolve('client:test'))
     collector.register('external')
     collector.register('embedded')
     collector.publish('embedded', [{ language: 'jpn', title: 'Muxed', vtt: 'WEBVTT' }], true)
@@ -136,14 +151,14 @@ describe('createSubtitleCollector', () => {
   })
 
   it('sends nothing while no source has produced a track', async () => {
-    const collector = createSubtitleCollector('room1', 0)
+    const collector = createSubtitleCollector('room1', 0, Promise.resolve('client:test'))
     collector.publish('embedded', [], false)
     await collector.flush()
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it('coalesces progressive updates instead of posting on every publish', async () => {
-    const collector = createSubtitleCollector('room1', 0)
+    const collector = createSubtitleCollector('room1', 0, Promise.resolve('client:test'))
     collector.register('embedded')
     for (let index = 0; index < 5; index += 1) {
       collector.publish('embedded', [{ language: 'eng', title: `cue ${index}`, vtt: 'WEBVTT' }], false)
@@ -155,7 +170,7 @@ describe('createSubtitleCollector', () => {
 
   it('keeps the room usable when a publish request fails', async () => {
     vi.mocked(fetch).mockRejectedValue(new Error('offline'))
-    const collector = createSubtitleCollector('room1', 0)
+    const collector = createSubtitleCollector('room1', 0, Promise.resolve('client:test'))
     collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
     await expect(collector.flush()).resolves.toBeUndefined()
     expect(console.error).toHaveBeenCalled()
@@ -177,7 +192,7 @@ describe('createSubtitleCollector, once the server has the bytes', () => {
   }
 
   it('sends only the tracks whose cues moved', async () => {
-    const collector = createSubtitleCollector('r1', 1)
+    const collector = createSubtitleCollector('r1', 1, Promise.resolve('client:test'))
     collector.publish('embedded', [
       { language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\none' },
       { language: 'por', title: '', vtt: 'WEBVTT\n\num' },
@@ -197,7 +212,7 @@ describe('createSubtitleCollector, once the server has the bytes', () => {
   })
 
   it('sends everything again after a post the server refused', async () => {
-    const collector = createSubtitleCollector('r1', 1)
+    const collector = createSubtitleCollector('r1', 1, Promise.resolve('client:test'))
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 500 } as Response)
     collector.publish('embedded', [{ language: 'eng', title: '', vtt: 'WEBVTT\n\none' }], false)
     await collector.flush()

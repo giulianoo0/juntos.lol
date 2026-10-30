@@ -48,6 +48,8 @@ export interface TorrentStats {
 export interface TorrentStart {
   roomId: string
   mediaGeneration: number
+  /** The seat opening it, which the app's subtitles go up as. */
+  auth?: { memberId: string; capability: string }
 }
 
 export interface TorrentSession {

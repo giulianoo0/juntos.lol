@@ -3,7 +3,7 @@ import { resetDesktopForTests } from '../platform'
 import { remuxHandleFor } from '../upload'
 import {
   attachLocalRoom, browserMediaIdle, closeLocalCopy, followLocalCopy, localMediaFor, needBrowserMedia, openLocalCopy,
-  refreshLocalMedia, resetLocalRoomsForTests, setLocalRenditions,
+  refreshLocalMedia, resetLocalRoomsForTests, safeLocalCopy, setLocalRenditions,
 } from './localRoom'
 
 const regions = [{ n: 0, startMs: 0, producedMs: 8000, growing: true }]
@@ -43,11 +43,13 @@ describe('a room played from the desktop cache', () => {
     expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, regions })
   })
 
-  it('has the app publish the source\'s subtitles to the room, and a guest copy never does', async () => {
-    await attachLocalRoom('ROOM1', 4, source)
-    expect(invoke).toHaveBeenCalledWith('local_subtitles', { key: 't-abc-0', roomId: 'ROOM1', mediaGeneration: 4 })
+  it('has the app publish the source\'s subtitles to the room as the seat that opened it, and a guest copy never does', async () => {
+    await attachLocalRoom('ROOM0', 4, source)
+    expect(invoke).not.toHaveBeenCalledWith('local_subtitles', expect.anything())
+    await attachLocalRoom('ROOM1', 4, source, { memberId: 'm1', capability: 'cap' })
+    expect(invoke).toHaveBeenCalledWith('local_subtitles', { key: 't-abc-0', roomId: 'ROOM1', mediaGeneration: 4, memberId: 'm1', capability: 'cap' })
     invoke.mockClear()
-    await openLocalCopy('GUEST2', 4, { kind: 'torrent', magnet: 'magnet:?xt=urn:btih:abc', index: 0 }, 'Filme')
+    await openLocalCopy('GUEST2', 4, { kind: 'torrent', magnet: 'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10', index: 0 }, 'Filme')
     expect(invoke).not.toHaveBeenCalledWith('local_subtitles', expect.anything())
   })
 
@@ -57,7 +59,7 @@ describe('a room played from the desktop cache', () => {
       if (cmd === 'local_subtitles') throw new Error('command local_subtitles not found')
       return plain(cmd, args)
     })
-    expect(await attachLocalRoom('ROOM1', 4, source)).toBeNull()
+    expect(await attachLocalRoom('ROOM1', 4, source, { memberId: 'm1', capability: 'cap' })).toBeNull()
     expect(remuxHandleFor('ROOM1')).toBeDefined()
   })
 
@@ -178,7 +180,7 @@ describe('a room played from the desktop cache', () => {
 })
 
 describe('a guest on the app playing its own copy', () => {
-  const magnet = 'magnet:?xt=urn:btih:abc&dn=A%20Viagem%20de%20Chihiro%20%E2%80%93%20Dublado'
+  const magnet = 'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=A%20Viagem%20de%20Chihiro%20%E2%80%93%20Dublado'
   const torrentCopy = { kind: 'torrent' as const, magnet, index: 2 }
   const calls = (name: string) => invoke.mock.calls.filter(([cmd]) => cmd === name).map(([, args]) => args)
 
@@ -250,5 +252,30 @@ describe('a guest on the app playing its own copy', () => {
     expect(remuxHandleFor('ROOM1')).toBeDefined()
     followLocalCopy('ROOM1', 9_000)
     expect(calls('local_follow')).toEqual([])
+  })
+
+  it('opens only what is safe of what the host shared', () => {
+    const hostile = 'magnet:?xt=urn:btih:08ADA5A7A6183AAE1E09D831DF6748D566095A10&dn=Ma%C3%A7%C3%A3'
+      + '&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce'
+      + '&tr=http%3A%2F%2F192.168.0.1%2Fannounce&tr=http%3A%2F%2Flocalhost%3A8080%2Fa&tr=http%3A%2F%2F%5B%3A%3A1%5D%2Fa'
+      + '&tr=http%3A%2F%2Frouter.lan%2Fa&tr=http%3A%2F%2F0x7f000001%2Fa&tr=file%3A%2F%2F%2Fetc%2Fpasswd'
+      + '&ws=http%3A%2F%2F10.0.0.2%2Fmovie.mkv&xs=http%3A%2F%2F10.0.0.2%2Fa.torrent&x.pe=192.168.0.5%3A6881'
+    expect(safeLocalCopy({ kind: 'torrent', magnet: hostile, index: 1 })).toEqual({
+      kind: 'torrent',
+      magnet: 'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Ma%C3%A7%C3%A3&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce',
+      index: 1,
+    })
+    expect(safeLocalCopy({ kind: 'torrent', magnet: 'magnet:?xt=urn:btih:nothash', index: 0 })).toBeNull()
+    expect(safeLocalCopy({ kind: 'torrent', magnet: hostile, index: -1 })).toBeNull()
+
+    expect(safeLocalCopy({ kind: 'youtube', url: 'https://evil.example/x?v=dQw4w9WgXcQ', videoId: 'dQw4w9WgXcQ' })).toEqual({
+      kind: 'youtube', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', videoId: 'dQw4w9WgXcQ',
+    })
+    expect(safeLocalCopy({ kind: 'youtube', url: 'https://www.youtube.com/watch?v=x', videoId: '../../etc' })).toBeNull()
+  })
+
+  it('refuses to open what is not safe, and opens nothing for it', async () => {
+    expect(await openLocalCopy('GUEST3', 4, { kind: 'youtube', url: 'https://youtu.be/x', videoId: 'x' }, 'Clipe')).toMatch(/not one the app opens/)
+    expect(calls('local_prepare')).toEqual([])
   })
 })

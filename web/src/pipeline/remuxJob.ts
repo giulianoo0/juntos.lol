@@ -57,7 +57,9 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace
   }
   if (!plan) throw new UnsupportedMediaError(lastPlanRefusal())
 
-  const subtitles = publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration)
+  let giveClaim: (claim: string) => void = () => undefined
+  const claim = new Promise<string>((resolve) => { giveClaim = resolve })
+  const subtitles = publishSubtitles(input, job.sideFiles, job.roomID, job.mediaGeneration, claim)
   try {
     await runClientRemux({
       roomID: job.roomID,
@@ -68,6 +70,7 @@ export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace
       onHandle,
       onTrace,
       onRegionWarm: input.warm,
+      onClaim: giveClaim,
     })
   } catch (error) {
     input.dispose()

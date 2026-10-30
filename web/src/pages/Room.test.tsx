@@ -422,7 +422,7 @@ describe('tela pelo app', () => {
 })
 
 describe('cópia própria no app', () => {
-  const magnet = 'magnet:?xt=urn:btih:abc&dn=Ma%C3%A7%C3%A3'
+  const magnet = 'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Ma%C3%A7%C3%A3'
   const meta = { key: 't-abc-2', title: 'Maçã', durationMs: 600000, audioLangs: ['por'], videoCodecs: null, regions: [] }
   let invoke: ReturnType<typeof vi.fn>
   let produced: number

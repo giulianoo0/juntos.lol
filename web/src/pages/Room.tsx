@@ -1068,6 +1068,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           mediaRoot={played.mediaRoot}
           isController={canDrive}
           memberId={sync.memberId}
+          capability={sync.capability}
           hostSubtitles={sync.hostSubtitles}
           videoRef={videoRef}
           send={sync.send}
