@@ -55,7 +55,8 @@ fi
 
 TARBALL="$OUT/Juntos.app.tar.gz"
 rm -f "$TARBALL" "$TARBALL.sig"
-tar -czf "$TARBALL" -C "$OUT" Juntos.app
+# Sem os ._* do macOS: o updater do Tauri não extrai esses arquivos e a atualização falha.
+COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -czf "$TARBALL" -C "$OUT" Juntos.app
 if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
   npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "$TARBALL"
 else
