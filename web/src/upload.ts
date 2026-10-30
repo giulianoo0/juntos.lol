@@ -214,7 +214,13 @@ export interface RoomSource {
   mediaGeneration: number
 }
 
-export type MediaSourceKind = 'upload' | 'youtube'
+/** `local`: the desktop app plays it from its cache and uploads only for browser guests. */
+export type MediaSourceKind = 'upload' | 'youtube' | 'local'
+
+/** The kind a session's room is opened as: the app's own sources are local. */
+export function sourceKindFor(backend: string | undefined, otherwise: MediaSourceKind): MediaSourceKind {
+  return backend === 'desktop' ? 'local' : otherwise
+}
 
 async function postRoomSource(roomID: string, body: Record<string, unknown>): Promise<RoomSource> {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
@@ -237,8 +243,14 @@ export async function changeRoomSource(
   capability: string,
   kind: MediaSourceKind,
   fileName?: string,
+  durationMs?: number,
 ): Promise<RoomSource> {
-  return postRoomSource(roomID, { memberId, capability, kind, fileName })
+  return postRoomSource(roomID, { memberId, capability, kind, fileName, ...localFields(kind, fileName, durationMs) })
+}
+
+function localFields(kind: MediaSourceKind, fileName?: string, durationMs?: number): Record<string, unknown> {
+  if (kind !== 'local') return {}
+  return { title: fileName ?? '', ...(durationMs && durationMs > 0 ? { durationMs } : {}) }
 }
 
 // The creator opens the first media before the room has seated them.

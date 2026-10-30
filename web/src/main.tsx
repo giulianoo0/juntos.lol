@@ -8,6 +8,7 @@ import { installMockApi } from './mocks'
 import { markEngine } from './engine'
 import { registerYoutubeBackend } from './youtube'
 import { jlocalBackend } from './jlocal/youtube'
+import { desktopYoutubeBackend } from './desktop/sources'
 import { installAudioUnlock } from './ui/audioUnlock'
 import { applyTheme } from './ui/theme'
 
@@ -25,6 +26,8 @@ createRoot(document.getElementById('root')!).render(
 )
 
 registerYoutubeBackend(jlocalBackend)
+// Inside the desktop app, yt-dlp on this machine goes first.
+registerYoutubeBackend(desktopYoutubeBackend)
 
 // One page load for /data's tally: nothing in it names the browser.
 try { navigator.sendBeacon?.('/api/visit') } catch {}

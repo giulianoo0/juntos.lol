@@ -4,8 +4,10 @@ import {
   REMUX_UNAVAILABLE,
   SOURCE_UNREACHABLE,
   UNSUPPORTED_MEDIA,
+  changeRoomSource,
   createRoomAndUpload,
   createRoomAndUploadTorrent,
+  sourceKindFor,
   isUnreadableFile,
   startUrlUpload,
   subscribeUploadDone,
@@ -312,5 +314,19 @@ describe('url upload', () => {
     const done = vi.fn()
     subscribeUploadDone('room9', done)
     await vi.waitFor(() => expect(done).toHaveBeenCalledWith(SOURCE_UNREACHABLE))
+  })
+})
+
+describe('a local source', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('opens the room as local with its title and duration, and only app sources are local', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'local', fileName: 'Filme', mediaGeneration: 2 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await changeRoomSource('ROOM1', 'm1', 'cap', 'local', 'Filme', 600000)
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({ memberId: 'm1', capability: 'cap', kind: 'local', fileName: 'Filme', title: 'Filme', durationMs: 600000 })
+    expect(sourceKindFor('desktop', 'upload')).toBe('local')
+    expect(sourceKindFor('fleet', 'youtube')).toBe('youtube')
   })
 })

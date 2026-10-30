@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { savePickedAvatar } from '../room/avatar'
 import { useSync } from './useSync'
 
+const localRoomFakes = vi.hoisted(() => ({ needBrowserMedia: vi.fn(), browserMediaIdle: vi.fn() }))
+vi.mock('../desktop/localRoom', () => localRoomFakes)
+
 class FakeWebSocket {
   static OPEN = 1
   static instances: FakeWebSocket[] = []
@@ -83,6 +86,36 @@ describe('useSync', () => {
     expect(JSON.parse(socket.send.mock.calls[0][0] as string)).toMatchObject({ type: 'hello', avatar: 'cat-preto.beanie' })
     unmount()
     localStorage.clear()
+  })
+
+  it('says in the hello that the desktop app can play a local source, and a browser says nothing', () => {
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const browser = renderHook(() => useSync('r1', 'giuli', videoRef))
+    act(() => FakeWebSocket.instances[0].onopen?.())
+    const plain = JSON.parse(FakeWebSocket.instances[0].send.mock.calls[0][0] as string)
+    expect(plain.client).toBeUndefined()
+    expect(plain.features).toBeUndefined()
+    browser.unmount()
+
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke: vi.fn() }
+    const app = renderHook(() => useSync('r1', 'giuli', videoRef))
+    act(() => FakeWebSocket.instances[1].onopen?.())
+    expect(JSON.parse(FakeWebSocket.instances[1].send.mock.calls[0][0] as string)).toMatchObject({ client: 'desktop', features: ['localSource'] })
+    app.unmount()
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
+  it('hands needBrowserMedia and browserMediaIdle to the local room with the seat', () => {
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'giuli', videoRef))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.onopen?.())
+    act(() => socket.receive({ type: 'welcome', memberId: 'm1', capability: 'cap', controllerId: 'm1', members: [] }))
+    act(() => socket.receive({ type: 'needBrowserMedia', generation: 4 }))
+    expect(localRoomFakes.needBrowserMedia).toHaveBeenCalledWith('r1', { memberId: 'm1', capability: 'cap' })
+    act(() => socket.receive({ type: 'browserMediaIdle' }))
+    expect(localRoomFakes.browserMediaIdle).toHaveBeenCalledWith('r1')
+    unmount()
   })
 
   it('names the same browser in the hello of every tab', () => {

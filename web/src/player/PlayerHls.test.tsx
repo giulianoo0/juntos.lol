@@ -134,6 +134,23 @@ describe('Player HLS lifecycle', () => {
     expect(instance.loadSourceCalls).toBe(1)
   })
 
+  it('reads a local room from the desktop cache root', async () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    render(
+      <Player
+        room={{ ...room, mediaRegions: [{ n: 0, startMs: 0, producedMs: 8000, growing: true }] }}
+        mediaRoot="juntos-media://localhost/t-abc-0"
+        isController={false}
+        videoRef={videoRef}
+        send={vi.fn()}
+        t={t}
+      />,
+    )
+    const hls = await fakeHls()
+    await waitFor(() => expect(hls.instances.length).toBeGreaterThan(0))
+    expect(hls.instances[0].loadedSource).toMatch(/^juntos-media:\/\/localhost\/t-abc-0\/hls\/r0_master\.m3u8\?/)
+  })
+
   it('declares the room unplayable when hls.js drops the only video rendition', async () => {
     const { view, hls } = await renderPlayer()
     const instance = hls.instances[0]

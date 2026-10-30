@@ -158,7 +158,7 @@ function subscribe(listener: () => void): () => void {
   return () => { listeners.delete(listener) }
 }
 
-export function useLocalMedia(roomId: string): LocalMedia | null {
+export function useLocalRoomMedia(roomId: string): LocalMedia | null {
   return useSyncExternalStore(subscribe, () => localMediaFor(roomId), () => null)
 }
 

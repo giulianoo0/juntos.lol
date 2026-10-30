@@ -1,6 +1,7 @@
 import { Cpu, Download, Zap } from 'lucide-react'
 import { useEffect, useState, type ComponentType } from 'react'
 import { useT } from '../i18n/useT'
+import { isDesktop } from '../platform'
 import { GITHUB_URL } from '../ui/GithubGlyph'
 import { Modal } from '../ui/Modal'
 import { AppleGlyph, LinuxGlyph, WindowsGlyph } from '../ui/PlatformGlyphs'
@@ -45,13 +46,14 @@ function useDesktopRelease(open: boolean): ReleaseState {
   return state
 }
 
-/** The round way to the desktop app, beside the GitHub link; gone on phones, which have no app. */
+/** The round way to the desktop app, beside the GitHub link; gone on phones, which have no app, and in the app. */
 export function DownloadApp() {
   const t = useT()
   const [open, setOpen] = useState(false)
   const release = useDesktopRelease(open)
   const mine = currentPlatform()
-  if (!mine) return null
+  // Inside the app there is nothing to download.
+  if (!mine || isDesktop()) return null
   const platforms = [...PLATFORMS].sort((a, b) => Number(b.id === mine) - Number(a.id === mine))
   const version = release.status === 'ready' ? release.release?.version : undefined
   const hrefFor = (id: Platform, file: string): string | undefined => {

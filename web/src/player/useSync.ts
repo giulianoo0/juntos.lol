@@ -8,6 +8,8 @@ import { loadPickedAvatar } from '../room/avatar'
 import { deviceId, joinTicketFor } from '../join'
 import { expectedPositionMs, needsResync } from './position'
 import { ownerTokenFor } from '../upload'
+import { isDesktop } from '../platform'
+import { browserMediaIdle, needBrowserMedia } from '../desktop/localRoom'
 
 const PRESENCE_LIMIT = 50
 const WAITING_REPORT_MS = 1000
@@ -343,6 +345,7 @@ export function useSync(
           ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
           ...(deviceId() ? { device: deviceId() } : {}),
           ...(picked ? { avatar: picked } : {}),
+          ...(isDesktop() ? { client: 'desktop', features: ['localSource'] } : {}),
         }))
       }
       socket.onclose = () => {
@@ -445,6 +448,14 @@ export function useSync(
             break
           case 'chat':
             if (message.message) setMessages((current) => [...current, message.message!])
+            break
+          case 'needBrowserMedia': {
+            const held = seatRef.current
+            if (held?.roomId === roomId) void needBrowserMedia(roomId, { memberId: held.memberId, capability: held.capability })
+            break
+          }
+          case 'browserMediaIdle':
+            void browserMediaIdle(roomId)
             break
           case 'roomStatus':
             setRoomStatus(message.status ?? '')
