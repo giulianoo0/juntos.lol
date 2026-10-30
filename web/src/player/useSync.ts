@@ -98,6 +98,8 @@ interface SyncResult {
   kicked: boolean
   /** Another tab of this browser took the seat. */
   replaced: boolean
+  /** The room no longer exists: nothing reconnects to it. */
+  gone: boolean
   leave: () => void
   /** Lets the seat go now, for a tab on its way out. */
   sayGoodbye: () => void
@@ -132,6 +134,18 @@ export type Door = 'in' | 'password' | 'badPassword' | 'lobby' | 'denied'
 const TITLE_REQUEST_LIMIT = 20
 
 const initialState: PlayState = { playing: false, positionMs: 0, rate: 1, serverTimeMs: 0 }
+
+/** Whether the server says, beyond doubt, that the room is gone; a failed ask is not that. */
+async function roomGone(roomId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/preview`, { cache: 'no-store' })
+    if (response.status !== 404) return false
+    const body = await response.json() as { error?: string }
+    return body.error === 'room_not_found'
+  } catch {
+    return false
+  }
+}
 
 export function useSync(
   roomId: string,
@@ -183,6 +197,7 @@ export function useSync(
   const [left, setLeft] = useState(false)
   const [kicked, setKicked] = useState(false)
   const [replaced, setReplaced] = useState(false)
+  const [gone, setGone] = useState(false)
   const titleSeqRef = useRef(0)
   const [stages, dispatchStage] = useReducer(stagesReducer, initialStages)
   const [door, setDoor] = useState<Door>('in')
@@ -353,12 +368,21 @@ export function useSync(
       }
       socket.onclose = () => {
         setConnected(false)
-        // Refused at the upgrade: most likely the day's check ran out.
+        // Refused at the upgrade, which the socket cannot tell apart: the
+        // day's check ran out, or the room is no more.
         if (!opened) forgetHuman()
         if (disposed || halted || socketRef.current !== socket) return
         const backoff = Math.min(RECONNECT_MIN_MS * 2 ** attempt, RECONNECT_MAX_MS)
         attempt += 1
         retry = window.setTimeout(connect, backoff * (0.75 + Math.random() * 0.5))
+        if (!opened) {
+          void roomGone(roomId).then((isGone) => {
+            if (!isGone || disposed) return
+            halted = true
+            if (retry !== null) window.clearTimeout(retry)
+            setGone(true)
+          })
+        }
       }
       socket.onmessage = (event) => {
         // A socket this tab already moved on from: its last words are not ours.
@@ -425,6 +449,11 @@ export function useSync(
             }
             setLastError(message.error ?? 'error')
             setErrorSeq((seq) => seq + 1)
+            if (message.error === 'room_gone') {
+              halted = true
+              setGone(true)
+              setConnected(false)
+            }
             if (message.error === 'kicked' || message.error === 'replaced') {
               halted = true
               if (message.error === 'kicked') setKicked(true)
@@ -635,6 +664,7 @@ export function useSync(
     left,
     kicked,
     replaced,
+    gone,
     leave,
     sayGoodbye,
     send,
