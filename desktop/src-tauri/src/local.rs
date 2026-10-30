@@ -33,12 +33,23 @@ pub struct RegionState {
 /// position: the player's own allowance (REGION_AHEAD_MS in Player.tsx).
 pub const AHEAD_MS: u64 = 30_000;
 pub const BEHIND_MS: u64 = 1_000;
+/// How short of the container's duration a remux may end and still be whole.
+pub const END_SLACK_MS: u64 = 10_000;
 
 /// Whether some region holds `position_ms`, the way the web player decides it.
-/// With `need_low`, a region without the 480p variant does not count.
-pub fn covered(regions: &[RegionState], position_ms: u64, need_low: bool) -> bool {
+/// With `need_low`, a region without the 480p variant does not count. A
+/// region that reached the end holds whatever lies past it: the room's clock
+/// can sit a few frames beyond the last one.
+pub fn covered(regions: &[RegionState], position_ms: u64, need_low: bool, duration_ms: u64) -> bool {
     regions.iter().filter(|r| r.low || !need_low).any(|r| {
-        let end = r.start_ms + r.produced_ms + if r.growing { AHEAD_MS } else { 0 };
+        let written = r.start_ms + r.produced_ms;
+        let end = if r.growing {
+            written + AHEAD_MS
+        } else if duration_ms > 0 && written + END_SLACK_MS >= duration_ms {
+            u64::MAX
+        } else {
+            written
+        };
         position_ms + BEHIND_MS >= r.start_ms && position_ms <= end
     })
 }
@@ -205,7 +216,8 @@ impl Producer {
         *production.used.lock() = SystemTime::now();
         let _starting = production.starting.lock().await;
         let need_low = *production.low.lock();
-        if covered(&self.regions(key), position_ms, need_low) {
+        let duration_ms = production.meta.lock().duration_ms;
+        if covered(&self.regions(key), position_ms, need_low, duration_ms) {
             return Ok(());
         }
         self.start_region(key, &production, position_ms).await
@@ -500,32 +512,39 @@ mod tests {
 
     #[test]
     fn nothing_covers_an_empty_cache() {
-        assert!(!covered(&[], 0, false));
+        assert!(!covered(&[], 0, false, 0));
     }
 
     #[test]
     fn a_sealed_region_covers_what_it_wrote() {
         let regions = [region(0, 0, 60_000, false)];
-        assert!(covered(&regions, 0, false));
-        assert!(covered(&regions, 60_000, false));
-        assert!(!covered(&regions, 60_001, false));
+        assert!(covered(&regions, 0, false, 0));
+        assert!(covered(&regions, 60_000, false, 0));
+        assert!(!covered(&regions, 60_001, false, 0));
     }
 
     #[test]
     fn a_growing_region_covers_the_window_ahead() {
         let regions = [region(1, 100_000, 10_000, true)];
-        assert!(covered(&regions, 99_000, false));
-        assert!(!covered(&regions, 98_999, false));
-        assert!(covered(&regions, 140_000, false));
-        assert!(!covered(&regions, 140_001, false));
+        assert!(covered(&regions, 99_000, false, 0));
+        assert!(!covered(&regions, 98_999, false, 0));
+        assert!(covered(&regions, 140_000, false, 0));
+        assert!(!covered(&regions, 140_001, false, 0));
     }
 
     #[test]
     fn once_480p_is_wanted_only_a_region_with_it_covers() {
         let mut regions = vec![region(0, 0, 600_000, true)];
-        assert!(covered(&regions, 300_000, false));
-        assert!(!covered(&regions, 300_000, true));
+        assert!(covered(&regions, 300_000, false, 0));
+        assert!(!covered(&regions, 300_000, true, 0));
         regions.push(RegionState { low: true, ..region(1, 299_000, 2_000, true) });
-        assert!(covered(&regions, 300_000, true));
+        assert!(covered(&regions, 300_000, true, 0));
+    }
+
+    #[test]
+    fn a_region_that_reached_the_end_holds_past_it() {
+        let regions = [region(1, 1_195_000, 4_955, false)];
+        assert!(covered(&regions, 1_200_000, false, 1_199_955));
+        assert!(!covered(&regions, 1_200_000, false, 1_300_000));
     }
 }

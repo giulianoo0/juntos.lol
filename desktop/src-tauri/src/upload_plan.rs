@@ -76,6 +76,15 @@ impl Planner {
     /// Up to `max` objects to send now, in priority order; they count as in
     /// flight until `done` or `failed`.
     pub fn next(&mut self, local: &[LocalRegion], playhead_ms: u64, max: usize) -> Vec<Item> {
+        let out = self.upcoming(local, playhead_ms, max);
+        for item in &out {
+            self.inflight.insert(item.remote.clone());
+        }
+        out
+    }
+
+    /// What `next` would hand out, without taking it: what to sign ahead.
+    pub fn upcoming(&mut self, local: &[LocalRegion], playhead_ms: u64, max: usize) -> Vec<Item> {
         let mut order: Vec<(usize, usize)> = Vec::new();
         let mut rest: Vec<(usize, usize)> = Vec::new();
         let anchor = self.anchor(local, playhead_ms);
@@ -108,9 +117,6 @@ impl Planner {
                     self.offer(item, &mut out, &mut seen, max);
                 }
             }
-        }
-        for item in &out {
-            self.inflight.insert(item.remote.clone());
         }
         out
     }

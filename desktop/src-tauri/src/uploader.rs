@@ -2,19 +2,20 @@
 //! fed to ss-remux's uploader (presign in batches by claim, PUT under a
 //! ceiling) in the plan's order, and a publish round every couple of seconds
 //! with the regions the bucket holds.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
-use ss_remux::sink::{ClosedObject, Sink};
-use ss_remux::upload::Uploader;
-use tokio::sync::{Notify, Semaphore};
+use ss_remux::sink::ClosedObject;
+use ss_remux::upload::{presign, put_with_retry, PresignedObject};
+use tokio::sync::Notify;
+use tokio::task::JoinSet;
 
 use crate::hls::{self, MasterInfo};
-use crate::local::Producer;
+use crate::local::{Producer, END_SLACK_MS};
 use crate::upload_plan::{region_prefix, Planner, RegionReport};
 
 /// Who the upload publishes as. No Debug: the claim never reaches a log.
@@ -35,9 +36,6 @@ pub struct Round<'a> {
     pub duration_ms: u64,
     pub master: &'a MasterInfo,
 }
-
-/// How short of the container's duration a remux may end and still be whole.
-const END_SLACK_MS: u64 = 10_000;
 
 /// One publish body: the variant playlists, a master per region, and the
 /// region map. `master.m3u8` is the earliest region's, which also sets the
@@ -80,9 +78,14 @@ pub fn round_body(target: &Target, round: Round) -> Value {
     })
 }
 
-/// Objects handed to the uploader at once: small, so a seek reorders the
-/// queue within a few PUTs.
-const WINDOW: usize = 6;
+/// PUTs at once. The uploader gets an object only when one of them frees,
+/// picked then for the room's position: a seek reorders what goes next
+/// without dropping what is already on the way.
+const PUTS: usize = 4;
+/// Objects signed in one request, the ones about to go and those after them.
+const SIGN_AHEAD: usize = 16;
+/// The server signs for 15 minutes; a URL is used well inside that.
+const SIGNED_FOR: Duration = Duration::from_secs(10 * 60);
 const ROUND_EVERY: Duration = Duration::from_secs(2);
 const REVOKED: &[&str] = &["claim_mismatch", "stale_generation", "stale_run", "room_not_found"];
 
@@ -151,58 +154,87 @@ impl Upload {
             bail!("run fence refused: {}", fence.status());
         }
 
-        let spool = producer.root().join(".spool").join(&target.run_id);
-        // The sink only carries the cancel: the objects come from the cache,
-        // fed in the plan's order instead of FFmpeg's.
-        let (sink, _unused) = Sink::new(spool.clone(), 64 << 20, 16 << 20)?;
-        let (feed_tx, feed_rx) = tokio::sync::mpsc::unbounded_channel::<ClosedObject>();
-        let (uploaded_tx, mut uploaded_rx) = tokio::sync::mpsc::unbounded_channel();
-        let uploader = Uploader {
-            client: client.clone(),
-            api_base: target.api_base.clone(),
-            room_id: target.room_id.clone(),
-            claim: target.claim.clone(),
-            job_puts: 4,
-            global_puts: Arc::new(Semaphore::new(4)),
-            uploaded_tx,
-        };
-        let mut uploading = tokio::spawn(uploader.run(sink.clone(), feed_rx));
-
         let meta = producer.meta(key).context("unknown source")?;
+        let dir = producer.hls_dir(key);
         let mut planner = Planner::new();
-        let mut inflight = 0usize;
+        let mut signed: HashMap<String, (PresignedObject, tokio::time::Instant)> = HashMap::new();
+        let mut puts: JoinSet<anyhow::Result<ClosedObject>> = JoinSet::new();
         let mut confirm: Vec<String> = Vec::new();
         let mut seq = 0u64;
         let mut bytes = 0u64;
         let mut last_round = tokio::time::Instant::now() - ROUND_EVERY;
-        let result = loop {
+        // Regions the server has heard of: a new one (a seek's) is published
+        // as soon as its first object is up, not at the next round.
+        let mut announced = HashSet::new();
+        loop {
             if self.stopped() {
-                break Ok(());
+                return Ok(());
             }
-            while let Ok(object) = uploaded_rx.try_recv() {
+            while let Some(done) = puts.try_join_next() {
+                let object = done.context("upload task")??;
                 planner.done(&object.name);
-                inflight = inflight.saturating_sub(1);
                 bytes += object.size;
                 self.sent.fetch_add(1, Ordering::Relaxed);
                 confirm.push(object.name);
             }
             let local = producer.local_regions(key);
-            if inflight < WINDOW {
-                let dir = producer.hls_dir(key);
-                for item in planner.next(&local, self.playhead.load(Ordering::Relaxed), WINDOW - inflight) {
-                    let path = dir.join(&item.local);
-                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    if size == 0 {
-                        planner.failed(&item.remote);
-                        continue;
+            let playhead = self.playhead.load(Ordering::Relaxed);
+            if puts.len() < PUTS {
+                signed.retain(|_, (_, at)| at.elapsed() < SIGNED_FOR);
+                // Chosen now, for where the room is now; signed ahead, so a
+                // free slot never waits on the server.
+                let items: Vec<ClosedObject> = planner
+                    .next(&local, playhead, PUTS - puts.len())
+                    .into_iter()
+                    .filter_map(|item| {
+                        let path = dir.join(&item.local);
+                        match std::fs::metadata(&path).map(|m| m.len()) {
+                            Ok(size) if size > 0 => Some(ClosedObject { name: item.remote, path, size, digest: [0; 32] }),
+                            _ => {
+                                planner.failed(&item.remote);
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                if items.iter().any(|object| !signed.contains_key(&object.name)) {
+                    let mut batch: Vec<ClosedObject> = items.iter().filter(|o| !signed.contains_key(&o.name)).cloned().collect();
+                    for item in planner.upcoming(&local, playhead, SIGN_AHEAD) {
+                        let path = dir.join(&item.local);
+                        if signed.contains_key(&item.remote) || batch.iter().any(|o| o.name == item.remote) {
+                            continue;
+                        }
+                        if let Ok(size) = std::fs::metadata(&path).map(|m| m.len()) {
+                            if size > 0 {
+                                batch.push(ClosedObject { name: item.remote, path, size, digest: [0; 32] });
+                            }
+                        }
                     }
-                    inflight += 1;
-                    let _ = feed_tx.send(ClosedObject { name: item.remote, path, size, digest: [0; 32] });
+                    match presign(&client, &target.api_base, &target.room_id, &target.claim, &batch).await {
+                        Ok(objects) => {
+                            let now = tokio::time::Instant::now();
+                            signed.extend(objects.into_iter().map(|o| (o.name.clone(), (o, now))));
+                        }
+                        Err(e) if REVOKED.iter().any(|code| e.to_string().contains(code)) => return Err(e),
+                        Err(e) => tracing::warn!(error = %e, "presign failed; retrying"),
+                    }
+                }
+                for object in items {
+                    let Some((sign, _)) = signed.remove(&object.name) else {
+                        planner.failed(&object.name);
+                        continue;
+                    };
+                    let client = client.clone();
+                    puts.spawn(async move {
+                        put_with_retry(&client, &sign.url, &sign.headers, &object).await?;
+                        Ok(object)
+                    });
                 }
             }
-            if last_round.elapsed() >= ROUND_EVERY && (!confirm.is_empty() || seq == 0) {
+            let regions = planner.regions(&local);
+            let fresh = regions.iter().any(|r| r.produced_ms > 0 && !announced.contains(&r.n));
+            if (last_round.elapsed() >= ROUND_EVERY || fresh) && (!confirm.is_empty() || seq == 0) {
                 last_round = tokio::time::Instant::now();
-                let regions = planner.regions(&local);
                 let produced: u64 = regions.iter().map(|r| r.produced_ms).sum();
                 let master = MasterInfo {
                     audio_langs: meta.audio_langs.clone(),
@@ -216,27 +248,29 @@ impl Upload {
                     Round { seq, confirm: &confirm, playlists: planner.playlists(&local), regions: &regions, duration_ms: meta.duration_ms, master: &master },
                 );
                 match publish(&client, target, &body).await {
-                    Ok(()) => confirm.clear(),
-                    Err(e) if REVOKED.iter().any(|code| e.to_string().contains(code)) => break Err(e),
+                    Ok(()) => {
+                        confirm.clear();
+                        for region in regions.iter().filter(|r| r.produced_ms > 0 && announced.insert(r.n)) {
+                            tracing::info!(n = region.n, start_ms = region.start_ms, "remote region published");
+                        }
+                    }
+                    Err(e) if REVOKED.iter().any(|code| e.to_string().contains(code)) => return Err(e),
                     Err(e) => tracing::warn!(error = %e, "publish round failed; retrying"),
                 }
             }
             tokio::select! {
-                result = &mut uploading => {
-                    break match result {
-                        Ok(Ok(())) => Ok(()),
-                        Ok(Err(e)) => Err(e),
-                        Err(e) => Err(e.into()),
-                    };
+                // A finished PUT frees a slot for the next object right away.
+                Some(done) = puts.join_next(), if !puts.is_empty() => {
+                    let object = done.context("upload task")??;
+                    planner.done(&object.name);
+                    bytes += object.size;
+                    self.sent.fetch_add(1, Ordering::Relaxed);
+                    confirm.push(object.name);
                 }
                 _ = self.wake.notified() => {}
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
             }
-        };
-        sink.cancel();
-        uploading.abort();
-        let _ = std::fs::remove_dir_all(spool);
-        result
+        }
     }
 }
 

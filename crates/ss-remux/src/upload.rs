@@ -25,12 +25,12 @@ struct PresignResponse {
     objects: Vec<PresignedObject>,
 }
 
-#[derive(Deserialize)]
-struct PresignedObject {
-    name: String,
-    url: String,
+#[derive(Clone, Deserialize)]
+pub struct PresignedObject {
+    pub name: String,
+    pub url: String,
     #[serde(default)]
-    headers: std::collections::HashMap<String, String>,
+    pub headers: std::collections::HashMap<String, String>,
 }
 
 const PRESIGN_BATCH: usize = 16;
@@ -89,31 +89,42 @@ impl Uploader {
     }
 
     async fn presign(&self, batch: &[ClosedObject]) -> anyhow::Result<Vec<PresignedObject>> {
-        let body = serde_json::json!({
-            "claim": self.claim,
-            "objects": batch.iter().map(|o| serde_json::json!({"name": o.name, "size": o.size})).collect::<Vec<_>>(),
-        });
-        let url = format!("{}/api/rooms/{}/client-media/presign", self.api_base, self.room_id);
-        for attempt in 0..3u32 {
-            let response = self.client.post(&url).json(&body).send().await;
-            match response {
-                Ok(r) if r.status().is_success() => {
-                    let parsed: PresignResponse = r.json().await.context("presign body")?;
-                    return Ok(parsed.objects);
-                }
-                Ok(r) if r.status().is_client_error() => {
-                    bail!("presign refused: {}", r.status());
-                }
-                Ok(r) => tracing::warn!(status = %r.status(), "presign retryable failure"),
-                Err(e) => tracing::warn!(error = %e, "presign network failure"),
-            }
-            tokio::time::sleep(Duration::from_millis(500 * (attempt as u64 + 1))).await;
-        }
-        bail!("presign kept failing");
+        presign(&self.client, &self.api_base, &self.room_id, &self.claim, batch).await
     }
 }
 
-async fn put_with_retry(
+/// Signs a batch of PUTs under the run's claim.
+pub async fn presign(
+    client: &reqwest::Client,
+    api_base: &str,
+    room_id: &str,
+    claim: &str,
+    batch: &[ClosedObject],
+) -> anyhow::Result<Vec<PresignedObject>> {
+    let body = serde_json::json!({
+        "claim": claim,
+        "objects": batch.iter().map(|o| serde_json::json!({"name": o.name, "size": o.size})).collect::<Vec<_>>(),
+    });
+    let url = format!("{api_base}/api/rooms/{room_id}/client-media/presign");
+    for attempt in 0..3u32 {
+        let response = client.post(&url).json(&body).send().await;
+        match response {
+            Ok(r) if r.status().is_success() => {
+                let parsed: PresignResponse = r.json().await.context("presign body")?;
+                return Ok(parsed.objects);
+            }
+            Ok(r) if r.status().is_client_error() => {
+                bail!("presign refused: {}", r.status());
+            }
+            Ok(r) => tracing::warn!(status = %r.status(), "presign retryable failure"),
+            Err(e) => tracing::warn!(error = %e, "presign network failure"),
+        }
+        tokio::time::sleep(Duration::from_millis(500 * (attempt as u64 + 1))).await;
+    }
+    bail!("presign kept failing");
+}
+
+pub async fn put_with_retry(
     client: &reqwest::Client,
     url: &str,
     headers: &std::collections::HashMap<String, String>,
