@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	stdsync "sync"
 	"testing"
 	"time"
 
@@ -803,4 +804,44 @@ func TestHubHostSubtitlesAreControllerOnlyAndGreetLateJoiners(t *testing.T) {
 	welcome := helloHubClient(t, late, "late", 3)
 	require.NotNil(t, welcome.HostSubtitles)
 	require.Equal(t, prefs, *welcome.HostSubtitles)
+}
+
+// The orchestrator acts on the newest position it is given: two in flight at
+// once can land out of order and leave the remux where the room was before.
+func TestHubHandsPositionsOverOneAtATimeAndTheNewestLast(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{})
+	release := make(chan struct{})
+	var mu stdsync.Mutex
+	var got []int64
+	inFlight, most := 0, 0
+	hub.OnPosition(func(_ string, positionMs int64) {
+		mu.Lock()
+		got = append(got, positionMs)
+		inFlight++
+		most = max(most, inFlight)
+		mu.Unlock()
+		if positionMs == 1_000 {
+			<-release
+		}
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+	})
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+
+	for _, position := range []int64{1_000, 2_000, 3_000} {
+		require.NoError(t, host.WriteJSON(Inbound{Type: "seek", PositionMs: position}))
+		require.Equal(t, "state", readHubEvent(t, host).Type)
+	}
+	close(release)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return inFlight == 0 && len(got) > 0 && got[len(got)-1] == 3_000
+	}, time.Second, 5*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 1, most, "positions overlapped: %v", got)
 }

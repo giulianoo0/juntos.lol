@@ -91,6 +91,11 @@ type roomConn struct {
 	playing          bool
 	progressMu       stdsync.Mutex
 	lastProgressAt   time.Time
+	// The newest position not yet handed to onPosition, and whether a
+	// goroutine is handing them over: one at a time, newest last.
+	positionMu      stdsync.Mutex
+	pendingPosition *int64
+	handingOver     bool
 
 	nextMember    int
 	nextRequest   int
@@ -1061,7 +1066,7 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 		return
 	}
 	if r.hub.onPosition != nil && message.Type != "rate" {
-		go r.hub.onPosition(r.id, message.PositionMs)
+		r.handPosition(message.PositionMs)
 	}
 	state, err := r.hub.store.GetState(ctx, r.id)
 	if err != nil {
@@ -1122,6 +1127,34 @@ func (r *roomConn) handleState(sender *client, message Inbound) {
 	case "play", "pause", "seek":
 		r.dropGate()
 	}
+}
+
+// handPosition passes a controller's position to onPosition off the room's
+// goroutine, in order: while one is being handled the newest waits, and the
+// ones it replaced are dropped, since only where the room is now matters.
+func (r *roomConn) handPosition(positionMs int64) {
+	r.positionMu.Lock()
+	r.pendingPosition = &positionMs
+	if r.handingOver {
+		r.positionMu.Unlock()
+		return
+	}
+	r.handingOver = true
+	r.positionMu.Unlock()
+	go func() {
+		for {
+			r.positionMu.Lock()
+			next := r.pendingPosition
+			r.pendingPosition = nil
+			if next == nil {
+				r.handingOver = false
+				r.positionMu.Unlock()
+				return
+			}
+			r.positionMu.Unlock()
+			r.hub.onPosition(r.id, *next)
+		}
+	}()
 }
 
 func (r *roomConn) members() []room.Member {
