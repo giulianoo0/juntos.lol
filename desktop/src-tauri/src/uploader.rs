@@ -88,6 +88,14 @@ const SIGN_AHEAD: usize = 16;
 /// The server signs for 15 minutes; a URL is used well inside that.
 const SIGNED_FOR: Duration = Duration::from_secs(10 * 60);
 const ROUND_EVERY: Duration = Duration::from_secs(2);
+/// What the room's gate waits to have buffered past the position
+/// (GateReadyBufferMs), with some slack.
+const READY_AHEAD_MS: u64 = 3_500;
+/// How far past what a region holds the playhead may sit and still be
+/// that region's to fill: the next couple of segments.
+const REACH_MS: u64 = 10_000;
+/// Objects a held region lets pile up before the rounds go on without it.
+const HELD_CONFIRMS: usize = 32;
 const REVOKED: &[&str] = &["claim_mismatch", "stale_generation", "stale_run", "room_not_found"];
 
 /// One room's upload from the cache. Stops on `stop`, on a revoked claim,
@@ -169,7 +177,7 @@ impl Upload {
         let mut bytes = 0u64;
         let mut last_round = Instant::now() - ROUND_EVERY;
         // Regions the server has heard of: a new one (a seek's) is published
-        // as soon as its first object is up, not at the next round.
+        // as soon as it can be played, not at the next round.
         let mut announced = HashSet::new();
         loop {
             if self.stopped() {
@@ -251,9 +259,13 @@ impl Upload {
                     flying.insert(name, (put, sign, at));
                 }
             }
-            let regions = planner.regions(&local);
+            let mut regions = planner.regions(&local);
+            let hold = held(&regions, &announced, playhead);
+            regions.retain(|r| Some(r.n) != hold);
             let fresh = regions.iter().any(|r| r.produced_ms > 0 && !announced.contains(&r.n));
-            if (last_round.elapsed() >= ROUND_EVERY || fresh) && (!confirm.is_empty() || seq == 0) {
+            // While the playhead's region fills, a round would only hold up the one announcing it.
+            let due = last_round.elapsed() >= ROUND_EVERY && (hold.is_none() || confirm.len() >= HELD_CONFIRMS);
+            if (due || fresh) && (!confirm.is_empty() || seq == 0) {
                 last_round = Instant::now();
                 let produced: u64 = regions.iter().map(|r| r.produced_ms).sum();
                 let master = MasterInfo {
@@ -286,6 +298,19 @@ impl Upload {
             }
         }
     }
+}
+
+/// The region the rounds keep from the room for now: the newest one at the
+/// playhead, not announced yet, until it holds what the gate waits for. Seen
+/// with one segment, the rest would reach the guest only at its next
+/// playlist reload.
+pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64) -> Option<u64> {
+    let region = regions
+        .iter()
+        .filter(|r| r.start_ms <= playhead_ms && playhead_ms <= r.start_ms + r.produced_ms + REACH_MS)
+        .max_by_key(|r| r.start_ms)?;
+    let ready = !region.growing || region.start_ms + region.produced_ms >= playhead_ms + READY_AHEAD_MS;
+    (!ready && !announced.contains(&region.n)).then_some(region.n)
 }
 
 /// The object a finished PUT sent; none for one a seek dropped.
@@ -380,6 +405,34 @@ mod tests {
         let body = round_body(&target(), Round { seq: 3, confirm: &[], playlists, regions: &regions, duration_ms: 600_000, master: &master });
         assert!(body["playlists"]["r1_master.m3u8"].as_str().unwrap().ends_with("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr1_client_stream_2.m3u8\n"));
         assert!(!body["playlists"]["r0_master.m3u8"].as_str().unwrap().contains("854x480"));
+    }
+
+    fn report(n: u64, start_ms: u64, produced_ms: u64, growing: bool) -> RegionReport {
+        RegionReport { n, start_ms, produced_ms, growing }
+    }
+
+    #[test]
+    fn a_seek_region_is_held_until_it_covers_what_the_gate_waits_for() {
+        let announced = HashSet::from([0]);
+        let one = [report(0, 0, 320_000, true), report(1, 598_083, 4_000, true)];
+        assert_eq!(held(&one, &announced, 600_000), Some(1));
+        let two = [report(0, 0, 320_000, true), report(1, 598_083, 8_000, true)];
+        assert_eq!(held(&two, &announced, 600_000), None);
+    }
+
+    #[test]
+    fn an_announced_region_or_one_at_its_end_is_never_held() {
+        let regions = [report(0, 0, 320_000, true), report(1, 598_083, 4_000, true)];
+        assert_eq!(held(&regions, &HashSet::from([0, 1]), 600_000), None);
+        let ended = [report(0, 0, 320_000, true), report(1, 884_000, 4_000, false)];
+        assert_eq!(held(&ended, &HashSet::from([0]), 886_000), None);
+    }
+
+    #[test]
+    fn a_region_far_from_the_playhead_is_not_held() {
+        let regions = [report(0, 0, 4_000, true)];
+        assert_eq!(held(&regions, &HashSet::new(), 600_000), None);
+        assert_eq!(held(&regions, &HashSet::new(), 2_000), Some(0));
     }
 
     #[tokio::test]
