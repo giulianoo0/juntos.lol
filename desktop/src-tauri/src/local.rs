@@ -85,8 +85,26 @@ struct Production {
     meta: Mutex<Meta>,
     running: Mutex<Option<Running>>,
     used: Mutex<SystemTime>,
-    /// A browser guest needs 480p: new regions encode it too.
+    /// A guest on a thin link needs 480p: new regions encode it too.
     low: Mutex<bool>,
+    /// One region starts at a time: two follows at once would both take the
+    /// same number and write over each other's files.
+    starting: tokio::sync::Mutex<()>,
+}
+
+impl Production {
+    fn new(dir: PathBuf, sources: Vec<Arc<dyn ByteSource>>, plan: SourcePlan, meta: Meta) -> Arc<Self> {
+        Arc::new(Production {
+            dir,
+            sources,
+            plan,
+            meta: Mutex::new(meta),
+            running: Mutex::new(None),
+            used: Mutex::new(SystemTime::now()),
+            low: Mutex::new(false),
+            starting: tokio::sync::Mutex::new(()),
+        })
+    }
 }
 
 /// The 480p encoder: the GPU's on a Mac, x264 elsewhere.
@@ -102,7 +120,8 @@ pub struct Producer {
     cap_bytes: u64,
     bridge: tokio::sync::OnceCell<Arc<Bridge>>,
     entries: Mutex<HashMap<String, Arc<Production>>>,
-    busy: Mutex<HashSet<String>>,
+    /// One prepare per key at a time: a second one waits and reuses the first.
+    preparing: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Producer {
@@ -114,7 +133,7 @@ impl Producer {
             cap_bytes,
             bridge: tokio::sync::OnceCell::new(),
             entries: Mutex::new(HashMap::new()),
-            busy: Mutex::new(HashSet::new()),
+            preparing: Mutex::new(HashMap::new()),
         })
     }
 
@@ -132,6 +151,8 @@ impl Producer {
         if !cache::valid_key(key) {
             bail!("invalid cache key");
         }
+        let gate = self.preparing.lock().entry(key.to_string()).or_default().clone();
+        let _preparing = gate.lock().await;
         if let Some(existing) = self.entries.lock().get(key).cloned() {
             *existing.used.lock() = SystemTime::now();
             return Ok(existing.meta.lock().clone());
@@ -166,15 +187,7 @@ impl Producer {
             video_codecs: plan.video_codecs.clone(),
             regions: stored.map(|m| m.regions).unwrap_or_default(),
         };
-        let production = Arc::new(Production {
-            dir,
-            sources,
-            plan,
-            meta: Mutex::new(meta.clone()),
-            running: Mutex::new(None),
-            used: Mutex::new(SystemTime::now()),
-            low: Mutex::new(false),
-        });
+        let production = Production::new(dir, sources, plan, meta.clone());
         self.entries.lock().insert(key.to_string(), production);
         self.evict();
         self.follow(key, 0).await?;
@@ -186,6 +199,7 @@ impl Producer {
     pub async fn follow(self: &Arc<Self>, key: &str, position_ms: u64) -> anyhow::Result<()> {
         let Some(production) = self.entries.lock().get(key).cloned() else { bail!("unknown source") };
         *production.used.lock() = SystemTime::now();
+        let _starting = production.starting.lock().await;
         let need_low = *production.low.lock();
         if covered(&self.regions(key), position_ms, need_low) {
             return Ok(());
@@ -204,12 +218,13 @@ impl Producer {
         Ok(())
     }
 
+    /// Called with `production.starting` held.
     async fn start_region(self: &Arc<Self>, key: &str, production: &Arc<Production>, position_ms: u64) -> anyhow::Result<()> {
+        let n = production.meta.lock().regions.iter().map(|r| r.n + 1).max().unwrap_or(0);
         let bridge = self.bridge().await?;
         self.stop_running(production, &bridge).await;
-        let n = production.meta.lock().regions.iter().map(|r| r.n + 1).max().unwrap_or(0);
 
-        let mut start_seconds = 0.0;
+        let mut keyframe = None;
         if position_ms > 0 {
             let target = position_ms as f64 / 1000.0;
             let (url, cap) = bridge.register_input(InputTarget { source: production.sources[0].clone(), reader: format!("key:{key}") });
@@ -220,11 +235,11 @@ impl Producer {
             .iter()
             .map(|s| s.to_string())
             .collect();
-            let keyframe = process::run_capture(&self.ffprobe, &args, Duration::from_secs(120)).await.ok().and_then(|out| first_frame_pts(&out));
+            keyframe = process::run_capture(&self.ffprobe, &args, Duration::from_secs(120)).await.ok().and_then(|out| plan::first_frame_pts(&out));
             bridge.revoke(&cap, "");
-            start_seconds = keyframe.map(|pts| pts.min(target)).unwrap_or(target);
         }
-        let start_ms = (start_seconds * 1000.0) as u64;
+        let start = plan::Start::seek(position_ms, keyframe);
+        let start_ms = start.offset_ms;
 
         let mut urls = Vec::new();
         let mut caps = Vec::new();
@@ -235,9 +250,9 @@ impl Producer {
         }
         let prefix = upload_plan::region_prefix(n);
         let base = production.dir.to_string_lossy().into_owned();
-        let low = *production.low.lock();
-        let encoder = low.then(low_encoder);
-        let args = plan::ffmpeg_args(&urls, &base, &prefix, &production.plan, start_seconds, None, encoder);
+        let encoder = start.low(production.low.lock().then(low_encoder));
+        let low = encoder.is_some();
+        let args = plan::ffmpeg_args(&urls, &base, &prefix, &production.plan, start, None, encoder);
         let process = process::spawn(&self.ffmpeg, &args)?;
         {
             let mut meta = production.meta.lock();
@@ -334,16 +349,6 @@ impl Producer {
         self.root.join(key).join("hls")
     }
 
-    /// A key a room plays or uploads from never leaves the cache.
-    pub fn hold(&self, key: &str, held: bool) {
-        let mut busy = self.busy.lock();
-        if held {
-            busy.insert(key.to_string());
-        } else {
-            busy.remove(key);
-        }
-    }
-
     pub async fn stop(&self, key: &str) {
         let production = self.entries.lock().get(key).cloned();
         if let (Some(production), Ok(bridge)) = (production, self.bridge().await) {
@@ -361,8 +366,9 @@ impl Producer {
                 Some(cache::Entry { bytes: dir_bytes(&dir.path()), key, used })
             })
             .collect();
-        let mut busy = self.busy.lock().clone();
-        busy.extend(self.entries.lock().keys().cloned());
+        // Every key this run prepared stays: a room plays or uploads only
+        // from those.
+        let busy: HashSet<String> = self.entries.lock().keys().cloned().collect();
         for key in cache::evictions(&entries, self.cap_bytes, &busy) {
             tracing::info!(key, "cache entry evicted");
             let _ = std::fs::remove_dir_all(self.root.join(key));
@@ -386,17 +392,96 @@ fn dir_bytes(path: &Path) -> u64 {
         .sum()
 }
 
-fn first_frame_pts(probe_json: &str) -> Option<f64> {
-    let doc: serde_json::Value = serde_json::from_str(probe_json).ok()?;
-    doc["frames"].as_array()?.first()?["pts_time"].as_str()?.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn region(n: u64, start_ms: u64, produced_ms: u64, growing: bool) -> RegionState {
         RegionState { n, start_ms, produced_ms, growing, low: false }
+    }
+
+    struct Empty;
+
+    #[async_trait::async_trait]
+    impl ByteSource for Empty {
+        fn size(&self) -> u64 {
+            0
+        }
+        async fn open(&self, _reader: &str, _position: u64) -> anyhow::Result<Box<dyn ss_remux::SourceReader>> {
+            bail!("empty source")
+        }
+    }
+
+    const PROBE: &str = r#"{"format":{"duration":"3600"},"streams":[{"codec_type":"video","codec_name":"h264"},{"codec_type":"audio","codec_name":"aac","channels":2}]}"#;
+
+    /// A stand-in for ffprobe that counts its calls next to itself, takes a
+    /// moment, and prints `out` (or fails without it).
+    fn fake_ffprobe(dir: &Path, out: Option<&str>) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("ffprobe.sh");
+        let print = out.map(|o| format!("printf '%s' '{o}'")).unwrap_or_else(|| "exit 1".into());
+        std::fs::write(&path, format!("#!/bin/sh\necho x >> '{}'\nsleep 0.2\n{print}\n", dir.join("calls").display())).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn calls(dir: &Path) -> usize {
+        std::fs::read_to_string(dir.join("calls")).map(|s| s.lines().count()).unwrap_or(0)
+    }
+
+    /// A producer whose FFmpeg exits at once, with source `k` already known.
+    fn producer_with_source(root: &Path, ffprobe: String) -> Arc<Producer> {
+        let producer = Producer::new(root.join("cache"), "true".into(), ffprobe, u64::MAX);
+        let dir = root.join("cache/k/hls");
+        std::fs::create_dir_all(&dir).unwrap();
+        let plan = plan::plan_streams(PROBE).unwrap();
+        let meta = Meta { key: "k".into(), title: "Filme".into(), duration_ms: plan.duration_ms, audio_langs: vec![], video_codecs: None, regions: vec![] };
+        producer.entries.lock().insert("k".into(), Production::new(dir, vec![Arc::new(Empty)], plan, meta));
+        producer
+    }
+
+    fn region_numbers(producer: &Producer) -> Vec<u64> {
+        producer.meta("k").unwrap().regions.iter().map(|r| r.n).collect()
+    }
+
+    #[tokio::test]
+    async fn regions_started_at_once_get_numbers_of_their_own() {
+        let root = tempfile::tempdir().unwrap();
+        let producer = producer_with_source(root.path(), fake_ffprobe(root.path(), None));
+
+        let (a, b) = tokio::join!(producer.follow("k", 500_000), producer.follow("k", 900_000));
+        a.unwrap();
+        b.unwrap();
+
+        let mut numbers = region_numbers(&producer);
+        numbers.sort();
+        assert_eq!(numbers, vec![0, 1]);
+    }
+
+    #[tokio::test]
+    async fn a_region_whose_keyframe_probe_failed_has_no_480p() {
+        let root = tempfile::tempdir().unwrap();
+        let producer = producer_with_source(root.path(), fake_ffprobe(root.path(), None));
+
+        producer.want_low("k", true, 500_000).await.unwrap();
+
+        let regions = producer.meta("k").unwrap().regions;
+        assert_eq!(regions.len(), 1);
+        assert!(!regions[0].low);
+    }
+
+    #[tokio::test]
+    async fn preparing_a_source_twice_at_once_reads_it_once() {
+        let root = tempfile::tempdir().unwrap();
+        let producer = Producer::new(root.path().join("cache"), "true".into(), fake_ffprobe(root.path(), Some(PROBE)), u64::MAX);
+
+        let input = || Input::Container(Arc::new(Empty));
+        let (a, b) = tokio::join!(producer.prepare("k", "Filme", input()), producer.prepare("k", "Filme", input()));
+        a.unwrap();
+        b.unwrap();
+
+        assert_eq!(calls(root.path()), 1);
+        assert_eq!(region_numbers(&producer), vec![0]);
     }
 
     #[test]

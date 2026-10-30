@@ -99,13 +99,11 @@ impl Upload {
         });
         let running = upload.clone();
         tokio::spawn(async move {
-            producer.hold(&key, true);
             if let Err(e) = running.run(&producer, &key, &target).await {
                 tracing::warn!(room = %target.room_id, error = %e, "upload stopped");
                 *running.error.lock() = Some(e.to_string().chars().take(300).collect());
             }
             running.stopped.store(true, Ordering::SeqCst);
-            producer.hold(&key, false);
         });
         upload
     }
