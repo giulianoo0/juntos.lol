@@ -3,5 +3,6 @@
 pub mod plan;
 pub mod range;
 pub mod source;
+pub mod tools;
 
 pub use source::{ByteSource, SourceReader};

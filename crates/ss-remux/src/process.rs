@@ -22,7 +22,7 @@ pub fn spawn(binary: &str, args: &[String]) -> anyhow::Result<Supervised> {
     let mut child = Command::new(binary)
         .args(args)
         .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .envs(ss_media::tools::tool_env())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -87,7 +87,7 @@ pub async fn run_capture(binary: &str, args: &[String], timeout: Duration) -> an
         Command::new(binary)
             .args(args)
             .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .envs(ss_media::tools::tool_env())
             .stdin(Stdio::null())
             .kill_on_drop(true)
             .output(),

@@ -290,7 +290,7 @@ impl Extractor {
                 ])
                 .current_dir(&fonts_dir)
                 .env_clear()
-                .env("PATH", std::env::var("PATH").unwrap_or_default())
+                .envs(ss_media::tools::tool_env())
                 .stdin(std::process::Stdio::null())
                 .kill_on_drop(true)
                 .output(),

@@ -638,7 +638,7 @@ impl Resolver {
     fn command(&self) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(&self.cfg.ytdlp_path);
         cmd.env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .envs(ss_media::tools::tool_env())
             .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true);
