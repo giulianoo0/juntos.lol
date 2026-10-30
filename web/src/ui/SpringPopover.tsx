@@ -104,6 +104,8 @@ export function SpringRow({ icon, label, checked, tone, disabled, locked, onSele
       type="button"
       role={checked === undefined ? 'menuitem' : 'menuitemradio'}
       aria-checked={checked}
+      // The lock is only drawn: the name carries why ("YouTube, exclusivo do app").
+      aria-label={locked ? `${label}, ${locked.charAt(0).toLowerCase()}${locked.slice(1)}` : undefined}
       className={styles.row}
       data-tone={tone}
       data-locked={locked ? '' : undefined}
