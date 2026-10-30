@@ -6,15 +6,15 @@ pub mod plan;
 pub mod process;
 pub mod protocol;
 pub mod publish;
-pub mod range;
 pub mod sink;
-pub mod source;
 pub mod subs;
 pub mod upload;
 pub mod youtube;
+#[cfg(feature = "live")]
 pub mod live;
-#[cfg(feature = "torrent")]
-pub mod torrent;
+
+pub use ss_media::{range, source};
+pub use ss_torrent as torrent;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -43,6 +43,8 @@ pub struct RemuxConfig {
     pub youtube: Option<youtube::Config>,
     /// Lives on the relay at once; each is one FFmpeg copying, no encode.
     pub live_slots: usize,
+    /// Encodes the 480p variant when a run asks for it.
+    pub rendition_encoder: plan::Encoder,
 }
 
 /// What a run reads. A container is probed and its subtitles pulled by a
@@ -68,64 +70,12 @@ pub struct Remux {
     /// the documents come whole, so one run per generation does it.
     vtt_done: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Lives on the relay, one per room.
+    #[cfg(feature = "live")]
     lives: Mutex<HashMap<String, Arc<live::Session>>>,
 }
 
-struct RunEntry {
-    room: String,
-    status: Mutex<RunStatus>,
-    sink: Mutex<Option<Arc<sink::Sink>>>,
-    process: Mutex<Option<process::Supervised>>,
-    subtitles: Mutex<Option<tokio::task::JoinHandle<()>>>,
-}
-
-#[derive(Clone)]
-pub struct RunStatus {
-    pub state: &'static str,
-    pub produced_ms: u64,
-    pub error: Option<String>,
-}
-
+#[cfg(feature = "live")]
 impl Remux {
-    pub async fn new(cfg: RemuxConfig) -> Arc<Self> {
-        let ffmpeg_version = if cfg.slots > 0 { process::detect_version(&cfg.ffmpeg_path).await } else { None };
-        if cfg.slots > 0 && ffmpeg_version.is_none() {
-            tracing::warn!(path = %cfg.ffmpeg_path, "ffmpeg not found; remux capability void");
-        }
-        let youtube = match &cfg.youtube {
-            Some(yt) if ffmpeg_version.is_some() => {
-                let resolver = youtube::Resolver::new(yt.clone()).await;
-                match &resolver.version {
-                    Some(version) => tracing::info!(%version, proxy = yt.proxy.is_some(), "youtube capability on"),
-                    None => tracing::warn!(path = %yt.ytdlp_path, "yt-dlp not found; youtube capability void"),
-                }
-                resolver.version.is_some().then(|| Arc::new(resolver))
-            }
-            _ => None,
-        };
-        Arc::new(Self {
-            slots: Arc::new(Semaphore::new(cfg.slots.max(1))),
-            global_puts: Arc::new(Semaphore::new(cfg.put_global.max(1))),
-            client: reqwest::Client::builder().timeout(Duration::from_secs(120)).build().expect("reqwest client"),
-            bridge: tokio::sync::OnceCell::new(),
-            runs: Mutex::new(HashMap::new()),
-            subtitle_rooms: subs::new_rooms(),
-            vtt_done: Arc::new(Mutex::new(Default::default())),
-            lives: Mutex::new(HashMap::new()),
-            ffmpeg_version,
-            youtube,
-            cfg,
-        })
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.cfg.slots > 0 && self.ffmpeg_version.is_some()
-    }
-
-    pub fn slots(&self) -> usize {
-        self.cfg.slots
-    }
-
     pub fn live_slots(&self) -> usize {
         if self.youtube.is_some() { self.cfg.live_slots } else { 0 }
     }
@@ -173,6 +123,63 @@ impl Remux {
 
     pub fn active_lives(&self) -> usize {
         self.lives.lock().values().filter(|session| !session.state().is_final()).count()
+    }
+}
+
+struct RunEntry {
+    room: String,
+    status: Mutex<RunStatus>,
+    sink: Mutex<Option<Arc<sink::Sink>>>,
+    process: Mutex<Option<process::Supervised>>,
+    subtitles: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+#[derive(Clone)]
+pub struct RunStatus {
+    pub state: &'static str,
+    pub produced_ms: u64,
+    pub error: Option<String>,
+}
+
+impl Remux {
+    pub async fn new(cfg: RemuxConfig) -> Arc<Self> {
+        let ffmpeg_version = if cfg.slots > 0 { process::detect_version(&cfg.ffmpeg_path).await } else { None };
+        if cfg.slots > 0 && ffmpeg_version.is_none() {
+            tracing::warn!(path = %cfg.ffmpeg_path, "ffmpeg not found; remux capability void");
+        }
+        let youtube = match &cfg.youtube {
+            Some(yt) if ffmpeg_version.is_some() => {
+                let resolver = youtube::Resolver::new(yt.clone()).await;
+                match &resolver.version {
+                    Some(version) => tracing::info!(%version, proxy = yt.proxy.is_some(), "youtube capability on"),
+                    None => tracing::warn!(path = %yt.ytdlp_path, "yt-dlp not found; youtube capability void"),
+                }
+                resolver.version.is_some().then(|| Arc::new(resolver))
+            }
+            _ => None,
+        };
+        Arc::new(Self {
+            slots: Arc::new(Semaphore::new(cfg.slots.max(1))),
+            global_puts: Arc::new(Semaphore::new(cfg.put_global.max(1))),
+            client: reqwest::Client::builder().timeout(Duration::from_secs(120)).build().expect("reqwest client"),
+            bridge: tokio::sync::OnceCell::new(),
+            runs: Mutex::new(HashMap::new()),
+            subtitle_rooms: subs::new_rooms(),
+            vtt_done: Arc::new(Mutex::new(Default::default())),
+            #[cfg(feature = "live")]
+            lives: Mutex::new(HashMap::new()),
+            ffmpeg_version,
+            youtube,
+            cfg,
+        })
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.cfg.slots > 0 && self.ffmpeg_version.is_some()
+    }
+
+    pub fn slots(&self) -> usize {
+        self.cfg.slots
     }
 
     pub fn status(&self, run_id: &str) -> Option<RunStatus> {
@@ -301,6 +308,27 @@ impl Remux {
         true
     }
 
+    /// The first keyframe at the run's start, read off the video input.
+    async fn keyframe_before(&self, bridge: &Bridge, source: &Arc<dyn ByteSource>, spec: &Spec) -> Option<f64> {
+        if spec.start_ms == 0 {
+            return None;
+        }
+        let (probe_url, probe_cap) =
+            bridge.register_input(InputTarget { source: source.clone(), reader: format!("remux-key:{}", spec.run_id) });
+        let target = spec.start_ms as f64 / 1000.0;
+        let key_args: Vec<String> = [
+            "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
+            "-show_entries", "frame=pts_time", "-print_format", "json",
+            "-read_intervals", &format!("{target:.3}%+#1"), &probe_url,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let output = process::run_capture(&self.cfg.ffprobe_path, &key_args, Duration::from_secs(120)).await;
+        bridge.revoke(&probe_cap, "");
+        first_frame_pts(&output.ok()?)
+    }
+
     fn cancelled(entry: &RunEntry) -> bool {
         entry.status.lock().state == state::CANCELLED
     }
@@ -310,8 +338,9 @@ impl Remux {
         let bridge = self.bridge.get_or_try_init(|| Bridge::start()).await.context("bridge start")?.clone();
 
         // One byte source per FFmpeg input, the video first; and the plan,
-        // probed off the container or read off the resolved video.
-        let (sources, source, vtt_subtitles): (Vec<Arc<dyn ByteSource>>, plan::SourcePlan, Vec<youtube::SubtitlePick>) =
+        // probed off the container or read off the resolved video. A
+        // container's keyframe search runs next to its stream probe.
+        let (sources, source, vtt_subtitles, keyframe) =
             match input {
                 RunInput::Container(bytes) => {
                     let (probe_url, probe_cap) =
@@ -321,47 +350,25 @@ impl Remux {
                             .iter()
                             .map(|s| s.to_string())
                             .collect();
-                    let probed = process::run_capture(&self.cfg.ffprobe_path, &probe_args, Duration::from_secs(120)).await;
+                    let (probed, keyframe) = tokio::join!(
+                        process::run_capture(&self.cfg.ffprobe_path, &probe_args, Duration::from_secs(120)),
+                        self.keyframe_before(&bridge, &bytes, spec),
+                    );
                     bridge.revoke(&probe_cap, "");
-                    (vec![bytes], plan::plan_streams(&probed?)?, Vec::new())
+                    (vec![bytes], plan::plan_streams(&probed?)?, Vec::new(), keyframe)
                 }
                 RunInput::Youtube(request) => {
                     let resolver = self.youtube.clone().context("youtube_disabled")?;
                     let materialized = resolver.materialize(&request).await?;
                     let sources: Vec<Arc<dyn ByteSource>> = materialized.streams.into_iter().map(|s| s as Arc<dyn ByteSource>).collect();
-                    (sources, materialized.plan, materialized.subtitles)
+                    let keyframe = self.keyframe_before(&bridge, &sources[0], spec).await;
+                    (sources, materialized.plan, materialized.subtitles, keyframe)
                 }
             };
         if Self::cancelled(entry) {
             return Ok(());
         }
-
-        let (probe_url, probe_cap) =
-            bridge.register_input(InputTarget { source: sources[0].clone(), reader: format!("remux-key:{}", spec.run_id) });
-        let mut start_seconds = 0.0f64;
-        let mut offset_ms = 0u64;
-        if spec.start_ms > 0 {
-            let target = spec.start_ms as f64 / 1000.0;
-            let key_args: Vec<String> = [
-                "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
-                "-show_entries", "frame=pts_time", "-print_format", "json",
-                "-read_intervals", &format!("{target:.3}%+#1"), &probe_url,
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-            if let Ok(output) = process::run_capture(&self.cfg.ffprobe_path, &key_args, Duration::from_secs(120)).await {
-                if let Some(pts) = first_frame_pts(&output) {
-                    start_seconds = pts.min(target);
-                    offset_ms = (start_seconds * 1000.0) as u64;
-                }
-            }
-            if offset_ms == 0 && spec.start_ms > 0 {
-                start_seconds = target;
-                offset_ms = spec.start_ms;
-            }
-        }
-        bridge.revoke(&probe_cap, "");
+        let (start_seconds, offset_ms) = seek_start(spec.start_ms, keyframe);
 
         let mut input_urls = Vec::new();
         let mut input_caps = Vec::new();
@@ -457,7 +464,11 @@ impl Remux {
 
         let prefix = plan::region_prefix(spec.region);
         let end_seconds = (spec.end_ms > 0).then(|| spec.end_ms as f64 / 1000.0);
-        let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start_seconds, end_seconds);
+        let low = spec.wants_480p().then_some(self.cfg.rendition_encoder);
+        if low.is_some() {
+            publisher = publisher.with_low_variant(plan::low_variant(&source));
+        }
+        let args = plan::ffmpeg_args(&input_urls, &output_base, &prefix, &source, start_seconds, end_seconds, low);
 
         let cleanup = |bridge: &Bridge| {
             for cap in &input_caps {
@@ -632,6 +643,19 @@ impl Remux {
     }
 }
 
+/// Where a run seeks to: the keyframe the search found, never past the
+/// target; the target itself when none was found.
+fn seek_start(start_ms: u64, keyframe: Option<f64>) -> (f64, u64) {
+    if start_ms == 0 {
+        return (0.0, 0);
+    }
+    let target = start_ms as f64 / 1000.0;
+    match keyframe.map(|pts| pts.min(target)) {
+        Some(pts) if (pts * 1000.0) as u64 > 0 => (pts, (pts * 1000.0) as u64),
+        _ => (target, start_ms),
+    }
+}
+
 fn first_frame_pts(probe_json: &str) -> Option<f64> {
     let doc: serde_json::Value = serde_json::from_str(probe_json).ok()?;
     doc["frames"].as_array()?.first()?["pts_time"].as_str()?.parse().ok()
@@ -644,5 +668,14 @@ mod tests {
         let json = r#"{"frames":[{"pts_time":"1077.577000"},{"pts_time":"1081.0"}]}"#;
         assert_eq!(super::first_frame_pts(json), Some(1077.577));
         assert_eq!(super::first_frame_pts("{}"), None);
+    }
+
+    #[test]
+    fn a_run_starts_on_the_keyframe_at_or_before_the_target() {
+        assert_eq!(super::seek_start(0, Some(3.0)), (0.0, 0));
+        assert_eq!(super::seek_start(61_000, Some(59.5)), (59.5, 59_500));
+        assert_eq!(super::seek_start(61_000, Some(64.0)), (61.0, 61_000), "never later than asked");
+        assert_eq!(super::seek_start(61_000, None), (61.0, 61_000), "no keyframe found: the target itself");
+        assert_eq!(super::seek_start(61_000, Some(0.0)), (61.0, 61_000));
     }
 }

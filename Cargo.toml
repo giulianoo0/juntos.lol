@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ss-media",
+    "crates/ss-torrent",
+    "crates/ss-youtube",
+    "crates/ss-remux",
+    "ss-worker",
+    # "desktop/src-tauri",
+]
+# The fork is a dependency, not ours to test: its own suite needs fixtures it
+# does not ship.
+exclude = ["crates/librqbit"]
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 4

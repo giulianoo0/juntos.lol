@@ -3,5 +3,9 @@ web/node_modules
 web/dist
 .git
 ss-worker/
-ss-worker/target
+crates/
+desktop/
+target/
+.cargo-target/
 .worktrees/
+.claude/

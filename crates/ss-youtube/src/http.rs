@@ -12,7 +12,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 
-use crate::source::{ByteSource, SourceReader};
+use ss_media::{ByteSource, SourceReader};
 
 const PIECE: u64 = 10 * 1024 * 1024;
 const EDGE: u64 = 4 * 1024 * 1024;

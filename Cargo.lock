@@ -4356,17 +4356,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "ss-remux"
+name = "ss-media"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "http",
+]
+
+[[package]]
+name = "ss-remux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "axum 0.7.9",
  "bytes",
  "futures",
- "hang",
  "hex 0.4.3",
- "librqbit",
  "moq-mux",
  "moq-native",
  "moq-net",
@@ -4376,8 +4382,25 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "ss-media",
+ "ss-torrent",
+ "ss-youtube",
  "tokio",
  "tokio-stream",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "ss-torrent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "librqbit",
+ "parking_lot",
+ "ss-media",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -4395,8 +4418,6 @@ dependencies = [
  "bytes",
  "ed25519-dalek",
  "futures",
- "hex 0.4.3",
- "http-body-util",
  "instant-acme",
  "libc",
  "librqbit",
@@ -4411,17 +4432,31 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
- "sha2",
  "ss-remux",
- "time",
  "tokio",
- "tokio-stream",
  "tokio-tungstenite 0.24.0",
- "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
  "x509-parser 0.16.0",
+]
+
+[[package]]
+name = "ss-youtube"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum 0.7.9",
+ "bytes",
+ "futures",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "ss-media",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

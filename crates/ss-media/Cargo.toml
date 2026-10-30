@@ -1,0 +1,10 @@
+[package]
+name = "ss-media"
+version = "0.1.0"
+edition = "2021"
+description = "What every remux input shares: the byte source, Range parsing and the stream plan."
+
+[dependencies]
+async-trait = "0.1"
+anyhow = "1"
+http = "1"

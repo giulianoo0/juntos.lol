@@ -1,60 +1,10 @@
 use anyhow::{bail, Context};
 use serde::Deserialize;
 
-/// The explicit codec matrix, mirrored from internal/remux: an unlisted
-/// codec is a clear refusal, never a hidden transcode.
+pub use ss_media::plan::{AudioAction, AudioTrack, Chapter, SourcePlan, SubtitleTrack};
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AudioAction {
-    Copy,
-    ConvertAac,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct AudioTrack {
-    /// Which `-i` carries the track: 0 for a container, one per stream when
-    /// the elementary streams arrive separately.
-    pub input_file: usize,
-    pub input_index: usize,
-    pub codec: String,
-    pub channels: u32,
-    pub language: String,
-    pub action: AudioAction,
-}
-
-/// One text subtitle stream, addressed as `0:s:{input_index}`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SubtitleTrack {
-    pub input_index: usize,
-    pub codec: String,
-    pub language: String,
-    pub title: String,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct SourcePlan {
-    pub video_codec: String,
-    /// The RFC 6381 string for the video track, when the player cannot read
-    /// it off the init segment itself: hls.js infers avc1/hvc1 from the
-    /// sample entry but not av01/vp09, and without CODECS in the master it
-    /// opens the SourceBuffers wrong and fails on the first audio append.
-    pub video_codecs: Option<String>,
-    pub audios: Vec<AudioTrack>,
-    pub duration_ms: u64,
-    pub subtitles: Vec<SubtitleTrack>,
-    pub bitmap_subtitles: usize,
-    pub attachments: usize,
-    pub chapters: Vec<Chapter>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chapter {
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub title: String,
-}
+// The explicit codec matrix, mirrored from internal/remux: an unlisted
+// codec is a clear refusal, never a hidden transcode.
 
 #[derive(Deserialize)]
 struct ProbeDoc {
@@ -138,6 +88,11 @@ const BITMAP_SUBTITLE_CODECS: &[&str] = &["hdmv_pgs_subtitle", "dvd_subtitle", "
 const MAX_AUDIO_CHANNELS: u32 = 8;
 
 const AAC_BITRATE: u32 = 160_000;
+/// Bytes and microseconds FFmpeg may read off an input before muxing.
+const PROBE_SIZE: &str = "2000000";
+const LOW_VIDEO_BITRATE: &str = "1200k";
+const LOW_VIDEO_MAXRATE: &str = "1500k";
+const LOW_VIDEO_BUFSIZE: &str = "3000k";
 
 /// None means the track is dropped from the output — a codec outside the
 /// matrix or a layout we don't take never costs the whole file, since a
@@ -308,9 +263,62 @@ pub fn region_prefix(region: u64) -> String {
     if region == 0 { String::new() } else { format!("r{region}_") }
 }
 
+/// The encoder behind the 480p rendition: x264 on the fleet, the GPU's on a
+/// Mac running the app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Encoder {
+    X264,
+    VideoToolbox,
+}
+
+impl Encoder {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "libx264" => Some(Self::X264),
+            "h264_videotoolbox" => Some(Self::VideoToolbox),
+            _ => None,
+        }
+    }
+}
+
+/// The 480p variant's index: after every audio, so the full variant and the
+/// audio keep the names they have without it.
+pub fn low_variant(plan: &SourcePlan) -> usize {
+    1 + plan.audios.len()
+}
+
+/// The second video output, encoded down to 480p. Its keyframes are the
+/// source's, so both variants cut their segments at the same instants and
+/// the player can switch between them.
+fn low_rendition_args(encoder: Encoder) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-map".into(), "0:v:0".into()];
+    match encoder {
+        Encoder::X264 => args.extend([
+            "-c:v:1".into(), "libx264".into(),
+            "-preset:v:1".into(), "superfast".into(),
+            "-level:v:1".into(), "3.1".into(),
+            // A scene cut of its own would cut a segment the full variant lacks.
+            "-sc_threshold:v:1".into(), "0".into(),
+        ]),
+        Encoder::VideoToolbox => args.extend(["-c:v:1".into(), "h264_videotoolbox".into()]),
+    }
+    args.extend([
+        "-filter:v:1".into(), "scale=-2:'min(480,ih)'".into(),
+        "-pix_fmt:v:1".into(), "yuv420p".into(),
+        "-profile:v:1".into(), "main".into(),
+        "-b:v:1".into(), LOW_VIDEO_BITRATE.into(),
+        "-maxrate:v:1".into(), LOW_VIDEO_MAXRATE.into(),
+        "-bufsize:v:1".into(), LOW_VIDEO_BUFSIZE.into(),
+        "-g:v:1".into(), "1000".into(),
+        "-force_key_frames:v:1".into(), "source".into(),
+    ]);
+    args
+}
+
 /// FFmpeg argv for one run: video copied, audio per the matrix, HLS fMP4 in
 /// 4-second target segments, every output PUT to the loopback sink. The
-/// first input carries the video; the seek applies to every input.
+/// first input carries the video; the seek applies to every input. With an
+/// encoder, a 480p variant rides along (see `low_variant`).
 pub fn ffmpeg_args(
     inputs: &[String],
     sink_base: &str,
@@ -318,6 +326,7 @@ pub fn ffmpeg_args(
     plan: &SourcePlan,
     start_seconds: f64,
     end_seconds: Option<f64>,
+    low: Option<Encoder>,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-nostdin".into(),
@@ -333,12 +342,20 @@ pub fn ffmpeg_args(
     if let Some(end) = end_seconds {
         args.extend(["-to".into(), format!("{end:.3}")]);
     }
+    // ffprobe already read the streams; a short probe spares the torrent a
+    // read of several megabytes before the first segment.
     for input in inputs {
+        args.extend(["-probesize".into(), PROBE_SIZE.into(), "-analyzeduration".into(), PROBE_SIZE.into()]);
         args.extend(["-protocol_whitelist".into(), "http,tcp".into(), "-i".into(), input.clone()]);
     }
-    args.extend(["-map".into(), "0:v:0".into(), "-c:v".into(), "copy".into()]);
+    args.extend(["-map".into(), "0:v:0".into(), "-c:v:0".into(), "copy".into()]);
+    if low.is_some() {
+        // A seek lands the copy one GOP early while the encoder starts at
+        // -ss; without that GOP both variants cut at the same keyframes.
+        args.extend(["-copypriorss:v:0".into(), "0".into()]);
+    }
     if plan.video_codec == "hevc" {
-        args.extend(["-tag:v".into(), "hvc1".into()]);
+        args.extend(["-tag:v:0".into(), "hvc1".into()]);
     }
     let mut var_map = vec!["v:0,agroup:aud".to_string()];
     for (out_index, audio) in plan.audios.iter().enumerate() {
@@ -348,6 +365,10 @@ pub fn ffmpeg_args(
             AudioAction::ConvertAac => args.extend([
                 format!("-c:a:{out_index}"),
                 "aac".into(),
+                // The default coder is most of a remux's cost; at 160 kb/s
+                // stereo the fast one is indistinguishable.
+                format!("-aac_coder:a:{out_index}"),
+                "fast".into(),
                 format!("-b:a:{out_index}"),
                 AAC_BITRATE.to_string(),
                 format!("-filter:a:{out_index}"),
@@ -359,6 +380,10 @@ pub fn ffmpeg_args(
             safe_language(&audio.language),
             if out_index == 0 { ",default:yes" } else { "" },
         ));
+    }
+    if let Some(encoder) = low {
+        args.extend(low_rendition_args(encoder));
+        var_map.push("v:1,agroup:aud".into());
     }
     args.extend([
         "-f".into(),
@@ -464,7 +489,7 @@ mod tests {
     #[test]
     fn converted_audio_is_downmixed_to_stereo() {
         let plan = plan_streams(PROBE).unwrap();
-        let args = ffmpeg_args(&["in".into()], "http://sink", "", &plan, 0.0, None);
+        let args = ffmpeg_args(&["in".into()], "http://sink", "", &plan, 0.0, None, None);
         let joined = args.join(" ");
         assert!(joined.contains("aformat=channel_layouts=stereo"), "{joined}");
         assert!(joined.contains("160000"), "{joined}");
@@ -512,7 +537,7 @@ mod tests {
     #[test]
     fn args_name_objects_inside_the_server_grammar() {
         let plan = plan_streams(PROBE).unwrap();
-        let args = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", &plan, 61.0, None);
+        let args = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", &plan, 61.0, None, None);
         let joined = args.join(" ");
         assert!(joined.contains("-ss 61.000"));
         assert!(joined.contains("r2_cs_%v_%d.m4s"));
@@ -521,8 +546,74 @@ mod tests {
         assert!(joined.ends_with("r2_client_stream_%v.m3u8"));
         assert!(joined.contains("v:0,agroup:aud a:0,agroup:aud,language:eng,default:yes a:1,agroup:aud,language:por"));
         assert!(joined.contains("-c:a:0 copy"));
-        assert!(joined.contains("-c:a:1 aac -b:a:1 160000"));
+        assert!(joined.contains("-b:a:1 160000"));
         assert!(joined.contains("-hls_segment_options movflags=+frag_discont"));
+    }
+
+    #[test]
+    fn converted_audio_uses_the_fast_aac_coder() {
+        let plan = plan_streams(PROBE).unwrap();
+        let joined = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "", &plan, 0.0, None, None).join(" ");
+        assert!(joined.contains("-c:a:1 aac -aac_coder:a:1 fast"));
+        assert!(!joined.contains("-aac_coder:a:0"), "a copied track has no coder");
+    }
+
+    #[test]
+    fn every_input_is_opened_with_a_short_probe() {
+        let plan = plan_streams(PROBE).unwrap();
+        let inputs: Vec<String> = ["v", "a"].iter().map(|s| format!("http://127.0.0.1:9/in/{s}")).collect();
+        let joined = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, 0.0, None, None).join(" ");
+        for input in &inputs {
+            assert!(joined.contains(&format!("-probesize 2000000 -analyzeduration 2000000 -protocol_whitelist http,tcp -i {input}")));
+        }
+    }
+
+    fn args_with(plan: &SourcePlan, low: Option<Encoder>) -> String {
+        ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", plan, 0.0, None, low).join(" ")
+    }
+
+    #[test]
+    fn the_480p_variant_comes_after_the_audio_and_follows_the_source_keyframes() {
+        let plan = plan_streams(PROBE).unwrap();
+        assert_eq!(low_variant(&plan), 3);
+        let joined = args_with(&plan, Some(Encoder::X264));
+        assert!(joined.contains("-map 0:a:1 -c:a:1 aac"));
+        assert!(joined.contains("-map 0:v:0 -c:v:1 libx264 -preset:v:1 superfast"));
+        assert!(joined.contains("-filter:v:1 scale=-2:'min(480,ih)'"));
+        assert!(joined.contains("-force_key_frames:v:1 source"));
+        assert!(joined.contains("-pix_fmt:v:1 yuv420p"));
+        assert!(joined.contains("a:1,agroup:aud,language:por v:1,agroup:aud -method"));
+        assert!(joined.contains("-c:v:0 copy -copypriorss:v:0 0"));
+    }
+
+    #[test]
+    fn the_480p_variant_can_be_encoded_by_videotoolbox() {
+        let plan = plan_streams(PROBE).unwrap();
+        let joined = args_with(&plan, Some(Encoder::VideoToolbox));
+        assert!(joined.contains("-c:v:1 h264_videotoolbox"));
+        assert!(!joined.contains("superfast"));
+        assert!(joined.contains("-force_key_frames:v:1 source"));
+        assert_eq!(Encoder::from_name("h264_videotoolbox"), Some(Encoder::VideoToolbox));
+        assert_eq!(Encoder::from_name("libx264"), Some(Encoder::X264));
+        assert_eq!(Encoder::from_name("nvenc"), None);
+    }
+
+    #[test]
+    fn without_renditions_there_is_one_video_variant() {
+        let plan = plan_streams(PROBE).unwrap();
+        let joined = args_with(&plan, None);
+        assert_eq!(joined.matches("-map 0:v:0").count(), 1);
+        assert!(!joined.contains("v:1"));
+        assert!(!joined.contains("copypriorss"));
+    }
+
+    #[test]
+    fn hevc_tagging_stays_on_the_copied_variant() {
+        let hevc = PROBE.replace(r#""codec_name":"h264""#, r#""codec_name":"hevc""#);
+        let plan = plan_streams(&hevc).unwrap();
+        let joined = args_with(&plan, Some(Encoder::X264));
+        assert!(joined.contains("-tag:v:0 hvc1"));
+        assert!(!joined.contains("-tag:v hvc1"));
     }
 
     #[test]
@@ -554,7 +645,7 @@ mod tests {
         plan.audios[1].input_file = 2;
         plan.audios[1].input_index = 0;
         let inputs: Vec<String> = ["v", "a1", "a2"].iter().map(|s| format!("http://127.0.0.1:9/in/{s}")).collect();
-        let args = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, 0.0, None);
+        let args = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, 0.0, None, None);
         let joined = args.join(" ");
         assert_eq!(joined.matches(" -i ").count(), 3);
         assert!(joined.contains("-map 0:v:0"));
