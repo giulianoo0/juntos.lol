@@ -34,6 +34,8 @@ pub struct PresignedObject {
 }
 
 const PRESIGN_BATCH: usize = 16;
+const PRESIGN_GAP: Duration = Duration::from_millis(25);
+const PRESIGN_WINDOW: Duration = Duration::from_millis(100);
 const PUT_RETRIES: usize = 5;
 
 impl Uploader {
@@ -46,10 +48,14 @@ impl Uploader {
                 Some(object) => batch.push(object),
                 None => break,
             }
+            // A whole-file remux closes objects milliseconds apart: wait a
+            // beat for the next one rather than signing each on its own.
+            let deadline = tokio::time::Instant::now() + PRESIGN_WINDOW;
             while batch.len() < PRESIGN_BATCH {
-                match closed_rx.try_recv() {
-                    Ok(object) => batch.push(object),
-                    Err(_) => break,
+                let wait = PRESIGN_GAP.min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+                match tokio::time::timeout(wait, closed_rx.recv()).await {
+                    Ok(Some(object)) => batch.push(object),
+                    _ => break,
                 }
             }
             if sink.cancelled() {
@@ -146,4 +152,107 @@ pub async fn put_with_retry(
         tokio::time::sleep(Duration::from_millis(400 << attempt.min(5))).await;
     }
     Err(last.unwrap_or_else(|| anyhow::anyhow!("PUT failed")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use axum::extract::State;
+    use axum::routing::{post, put};
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    pub(crate) struct Api {
+        pub base: Arc<parking_lot::Mutex<String>>,
+        pub presigns: Arc<AtomicUsize>,
+        pub puts: Arc<parking_lot::Mutex<Vec<(String, Option<String>, Option<String>, usize)>>>,
+    }
+
+    async fn sign(State(api): State<Api>, axum::Json(body): axum::Json<serde_json::Value>) -> axum::Json<serde_json::Value> {
+        api.presigns.fetch_add(1, Ordering::SeqCst);
+        let base = api.base.lock().clone();
+        let objects: Vec<serde_json::Value> = body["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| serde_json::json!({ "name": o["name"], "url": format!("{base}/put/{}", o["name"].as_str().unwrap()) }))
+            .collect();
+        axum::Json(serde_json::json!({ "objects": objects }))
+    }
+
+    async fn store(
+        State(api): State<Api>,
+        axum::extract::Path(name): axum::extract::Path<String>,
+        headers: axum::http::HeaderMap,
+        body: axum::body::Bytes,
+    ) -> axum::http::StatusCode {
+        let header = |h: axum::http::HeaderName| headers.get(h).map(|v| v.to_str().unwrap().to_string());
+        api.puts.lock().push((
+            name,
+            header(axum::http::header::CONTENT_LENGTH),
+            header(axum::http::header::TRANSFER_ENCODING),
+            body.len(),
+        ));
+        axum::http::StatusCode::OK
+    }
+
+    pub(crate) async fn fake_api() -> Api {
+        let api = Api::default();
+        let app = axum::Router::new()
+            .route("/api/rooms/:room/client-media/presign", post(sign))
+            .route("/put/:name", put(store))
+            .with_state(api.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        *api.base.lock() = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        api
+    }
+
+    fn object(dir: &std::path::Path, n: usize, size: usize) -> ClosedObject {
+        let name = format!("cs_0_{n}.m4s");
+        let path = dir.join(&name);
+        std::fs::write(&path, vec![7u8; size]).unwrap();
+        ClosedObject { name, path, size: size as u64, digest: [0; 32] }
+    }
+
+    fn uploader(api: &Api) -> (Uploader, mpsc::UnboundedReceiver<ClosedObject>) {
+        let (uploaded_tx, uploaded_rx) = mpsc::unbounded_channel();
+        let uploader = Uploader {
+            client: reqwest::Client::new(),
+            api_base: api.base.lock().clone(),
+            room_id: "ROOM".into(),
+            claim: "c".into(),
+            job_puts: 4,
+            global_puts: Arc::new(Semaphore::new(8)),
+            uploaded_tx,
+        };
+        (uploader, uploaded_rx)
+    }
+
+    #[tokio::test]
+    async fn objects_closing_close_together_are_signed_together() {
+        let api = fake_api().await;
+        let dir = crate::run_tests::scratch("presign");
+        let (sink, _) = Sink::new(dir.join("spool"), 1 << 20, 1 << 20).unwrap();
+        let (uploader, mut uploaded) = uploader(&api);
+        let (closed_tx, closed_rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(uploader.run(sink, closed_rx));
+        for n in 0..40 {
+            closed_tx.send(object(&dir, n, 1000)).unwrap();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        drop(closed_tx);
+        task.await.unwrap().unwrap();
+        let mut done = 0;
+        while uploaded.try_recv().is_ok() {
+            done += 1;
+        }
+        assert_eq!(done, 40);
+        let presigns = api.presigns.load(Ordering::SeqCst);
+        assert!(presigns <= 5, "{presigns} presign requests for 40 objects");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
