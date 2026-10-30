@@ -2,9 +2,12 @@
 name = "ss-remux"
 version = "0.1.0"
 edition = "2021"
-description = "The remote remux for juntos.lol: FFmpeg over a loopback bridge, HLS objects PUT to the bucket, shared by ss-worker and jlocal."
+description = "The remote remux for juntos.lol: FFmpeg over a loopback bridge, HLS objects PUT to the bucket, shared by ss-worker and the desktop app."
 
 [dependencies]
+ss-media = { path = "../ss-media" }
+ss-torrent = { path = "../ss-torrent" }
+ss-youtube = { path = "../ss-youtube" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 axum = { version = "0.7", features = ["http2"] }
@@ -20,15 +23,15 @@ rand = "0.8"
 sha2 = "0.10"
 tracing = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "socks"] }
-moq-net = "0.2"
-moq-native = "0.19"
-moq-mux = "0.9"
-hang = "0.20"
+moq-net = { version = "0.2", optional = true }
+moq-native = { version = "0.19", optional = true }
+moq-mux = { version = "0.9", optional = true }
+hang = { version = "0.20", optional = true }
 url = "2"
-librqbit = { path = "../librqbit", optional = true }
 
 [features]
-torrent = ["dep:librqbit"]
+# A YouTube live put on the MoQ relay; only the fleet worker carries it.
+live = ["dep:moq-net", "dep:moq-native", "dep:moq-mux", "dep:hang"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }

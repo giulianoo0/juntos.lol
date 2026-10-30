@@ -3,7 +3,7 @@
 //! stream is read over HTTP by ranges. URLs never leave this process: they
 //! are bound to the IP that resolved them.
 pub mod http;
-pub mod subs;
+pub mod live;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use anyhow::Context;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::plan::{AudioAction, AudioTrack, Chapter, SourcePlan};
+use ss_media::plan::{AudioAction, AudioTrack, Chapter, SourcePlan};
 
 const MAX_HEIGHT: u32 = 1080;
 const MAX_AUDIOS: usize = 8;
@@ -764,7 +764,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> Info {
-        serde_json::from_str(include_str!("../../tests/fixtures/dub.json")).unwrap()
+        serde_json::from_str(include_str!("../tests/fixtures/dub.json")).unwrap()
     }
 
     #[test]

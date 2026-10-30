@@ -6,15 +6,15 @@ pub mod plan;
 pub mod process;
 pub mod protocol;
 pub mod publish;
-pub mod range;
 pub mod sink;
-pub mod source;
 pub mod subs;
 pub mod upload;
 pub mod youtube;
+#[cfg(feature = "live")]
 pub mod live;
-#[cfg(feature = "torrent")]
-pub mod torrent;
+
+pub use ss_media::{range, source};
+pub use ss_torrent as torrent;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -68,64 +68,12 @@ pub struct Remux {
     /// the documents come whole, so one run per generation does it.
     vtt_done: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Lives on the relay, one per room.
+    #[cfg(feature = "live")]
     lives: Mutex<HashMap<String, Arc<live::Session>>>,
 }
 
-struct RunEntry {
-    room: String,
-    status: Mutex<RunStatus>,
-    sink: Mutex<Option<Arc<sink::Sink>>>,
-    process: Mutex<Option<process::Supervised>>,
-    subtitles: Mutex<Option<tokio::task::JoinHandle<()>>>,
-}
-
-#[derive(Clone)]
-pub struct RunStatus {
-    pub state: &'static str,
-    pub produced_ms: u64,
-    pub error: Option<String>,
-}
-
+#[cfg(feature = "live")]
 impl Remux {
-    pub async fn new(cfg: RemuxConfig) -> Arc<Self> {
-        let ffmpeg_version = if cfg.slots > 0 { process::detect_version(&cfg.ffmpeg_path).await } else { None };
-        if cfg.slots > 0 && ffmpeg_version.is_none() {
-            tracing::warn!(path = %cfg.ffmpeg_path, "ffmpeg not found; remux capability void");
-        }
-        let youtube = match &cfg.youtube {
-            Some(yt) if ffmpeg_version.is_some() => {
-                let resolver = youtube::Resolver::new(yt.clone()).await;
-                match &resolver.version {
-                    Some(version) => tracing::info!(%version, proxy = yt.proxy.is_some(), "youtube capability on"),
-                    None => tracing::warn!(path = %yt.ytdlp_path, "yt-dlp not found; youtube capability void"),
-                }
-                resolver.version.is_some().then(|| Arc::new(resolver))
-            }
-            _ => None,
-        };
-        Arc::new(Self {
-            slots: Arc::new(Semaphore::new(cfg.slots.max(1))),
-            global_puts: Arc::new(Semaphore::new(cfg.put_global.max(1))),
-            client: reqwest::Client::builder().timeout(Duration::from_secs(120)).build().expect("reqwest client"),
-            bridge: tokio::sync::OnceCell::new(),
-            runs: Mutex::new(HashMap::new()),
-            subtitle_rooms: subs::new_rooms(),
-            vtt_done: Arc::new(Mutex::new(Default::default())),
-            lives: Mutex::new(HashMap::new()),
-            ffmpeg_version,
-            youtube,
-            cfg,
-        })
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.cfg.slots > 0 && self.ffmpeg_version.is_some()
-    }
-
-    pub fn slots(&self) -> usize {
-        self.cfg.slots
-    }
-
     pub fn live_slots(&self) -> usize {
         if self.youtube.is_some() { self.cfg.live_slots } else { 0 }
     }
@@ -173,6 +121,63 @@ impl Remux {
 
     pub fn active_lives(&self) -> usize {
         self.lives.lock().values().filter(|session| !session.state().is_final()).count()
+    }
+}
+
+struct RunEntry {
+    room: String,
+    status: Mutex<RunStatus>,
+    sink: Mutex<Option<Arc<sink::Sink>>>,
+    process: Mutex<Option<process::Supervised>>,
+    subtitles: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+#[derive(Clone)]
+pub struct RunStatus {
+    pub state: &'static str,
+    pub produced_ms: u64,
+    pub error: Option<String>,
+}
+
+impl Remux {
+    pub async fn new(cfg: RemuxConfig) -> Arc<Self> {
+        let ffmpeg_version = if cfg.slots > 0 { process::detect_version(&cfg.ffmpeg_path).await } else { None };
+        if cfg.slots > 0 && ffmpeg_version.is_none() {
+            tracing::warn!(path = %cfg.ffmpeg_path, "ffmpeg not found; remux capability void");
+        }
+        let youtube = match &cfg.youtube {
+            Some(yt) if ffmpeg_version.is_some() => {
+                let resolver = youtube::Resolver::new(yt.clone()).await;
+                match &resolver.version {
+                    Some(version) => tracing::info!(%version, proxy = yt.proxy.is_some(), "youtube capability on"),
+                    None => tracing::warn!(path = %yt.ytdlp_path, "yt-dlp not found; youtube capability void"),
+                }
+                resolver.version.is_some().then(|| Arc::new(resolver))
+            }
+            _ => None,
+        };
+        Arc::new(Self {
+            slots: Arc::new(Semaphore::new(cfg.slots.max(1))),
+            global_puts: Arc::new(Semaphore::new(cfg.put_global.max(1))),
+            client: reqwest::Client::builder().timeout(Duration::from_secs(120)).build().expect("reqwest client"),
+            bridge: tokio::sync::OnceCell::new(),
+            runs: Mutex::new(HashMap::new()),
+            subtitle_rooms: subs::new_rooms(),
+            vtt_done: Arc::new(Mutex::new(Default::default())),
+            #[cfg(feature = "live")]
+            lives: Mutex::new(HashMap::new()),
+            ffmpeg_version,
+            youtube,
+            cfg,
+        })
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.cfg.slots > 0 && self.ffmpeg_version.is_some()
+    }
+
+    pub fn slots(&self) -> usize {
+        self.cfg.slots
     }
 
     pub fn status(&self, run_id: &str) -> Option<RunStatus> {

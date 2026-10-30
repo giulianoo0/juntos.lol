@@ -1,4 +1,4 @@
-use axum::http::HeaderValue;
+use http::HeaderValue;
 
 /// RFC 9110 single-range parsing: an end past the size is clamped, a start
 /// at or past the size is unsatisfiable, and `bytes=-N` means the tail.

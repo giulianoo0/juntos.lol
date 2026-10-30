@@ -18,7 +18,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
 use super::fill::{self, Fill};
 use super::window::{self, Cursor};
 use super::TorrentFiles;
-use crate::source::SourceReader;
+use ss_media::source::SourceReader;
 
 const SWEEP: Duration = Duration::from_secs(2);
 const CURSOR_IDLE: Duration = Duration::from_secs(20);
