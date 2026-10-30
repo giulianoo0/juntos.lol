@@ -19,7 +19,8 @@ use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
-use windows::Win32::Foundation::{HMODULE, RECT};
+use windows::Win32::Foundation::{HMODULE, HWND, RECT};
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_RATIONAL, DXGI_SAMPLE_DESC};
@@ -141,7 +142,7 @@ fn run(mut target: Target, mut quality: Quality, sink: Sink, rx: mpsc::Receiver<
             }
             Err(mpsc::TryRecvError::Empty) => {}
         }
-        if pipeline.capture.closed.load(Ordering::Acquire) {
+        if pipeline.capture.ended() {
             tracing::info!("shared source closed");
             sink(frame(clock.elapsed().as_micros() as u64, ENDED, &[]));
             break;
@@ -266,6 +267,7 @@ struct Capture {
     session: GraphicsCaptureSession,
     latest: Arc<Mutex<Option<Latest>>>,
     closed: Arc<AtomicBool>,
+    window: Option<HWND>,
 }
 
 impl Drop for Capture {
@@ -278,6 +280,7 @@ impl Drop for Capture {
 impl Capture {
     fn open(gpu: &Gpu, target: &Target) -> Result<Capture, String> {
         let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(err("capture interop"))?;
+        let mut window = None;
         let item: GraphicsCaptureItem = unsafe {
             match target.kind {
                 TargetKind::Display => {
@@ -286,6 +289,7 @@ impl Capture {
                 }
                 TargetKind::Window => {
                     let hwnd = super::win::window(&target.id).ok_or("not_found: window")?;
+                    window = Some(hwnd);
                     interop.CreateForWindow(hwnd).map_err(err("capture item"))?
                 }
             }
@@ -338,7 +342,12 @@ impl Capture {
             .map_err(err("closed handler"))?;
         }
         session.StartCapture().map_err(err("start capture"))?;
-        Ok(Capture { _item: item, pool, session, latest, closed })
+        Ok(Capture { _item: item, pool, session, latest, closed, window })
+    }
+
+    /// `Closed` only reaches a thread that pumps messages, and this one doesn't, so a window is also checked directly.
+    fn ended(&self) -> bool {
+        self.closed.load(Ordering::Acquire) || self.window.is_some_and(|hwnd| unsafe { !IsWindow(Some(hwnd)).as_bool() })
     }
 
 }

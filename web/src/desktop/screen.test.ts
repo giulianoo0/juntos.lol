@@ -75,6 +75,7 @@ describe('app screen feed', () => {
     })
     const frames: EncodedFrame[] = []
     feed.open((f) => frames.push(f), () => {})
+    await Promise.resolve()
     expect(frames.map((f) => [f.keyframe, f.timestamp])).toEqual([[true, 0], [false, 1_500]])
     app.send(channel, frame(3_000, 0, DELTA))
     expect(frames.at(-1)).toMatchObject({ keyframe: false, timestamp: 2_000 })
@@ -93,7 +94,23 @@ describe('app screen feed', () => {
     app.send(channel, frame(4_000, 0, DELTA))
     const frames: EncodedFrame[] = []
     feed.open((f) => frames.push(f), () => {})
+    await Promise.resolve()
     expect(frames.map((f) => [f.keyframe, f.timestamp])).toEqual([[true, 0], [false, 1_000]])
+  })
+
+  it('a reader can close from inside its first frame', async () => {
+    let channel: unknown
+    const app = installApp((cmd, args) => {
+      if (cmd === 'screen_start') channel = args.frames
+      return { width: 1920, height: 1080, fps: 60 }
+    })
+    const feed = await startAppFeed(options)
+    app.send(channel, frame(1_000, 1, KEY))
+    const onFrame = vi.fn()
+    const close = feed.open((f) => { onFrame(f); close() }, () => {})
+    await Promise.resolve()
+    app.send(channel, frame(2_000, 0, DELTA))
+    expect(onFrame).toHaveBeenCalledTimes(1)
   })
 
   it('ends the feed when the app says the source closed', async () => {
@@ -105,6 +122,7 @@ describe('app screen feed', () => {
     const feed = await startAppFeed(options)
     const onEnd = vi.fn()
     feed.open(() => {}, onEnd)
+    await Promise.resolve()
     app.send(channel, frame(1_000, 1, KEY))
     app.send(channel, frame(2_000, 0x2, []))
     app.send(channel, frame(3_000, 0x2, []))

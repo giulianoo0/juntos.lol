@@ -108,6 +108,18 @@ describe('useScreenShare through the desktop app', () => {
     expect(startAppFeed).toHaveBeenCalledTimes(1)
   })
 
+  it('stops the share when the shared window closes', async () => {
+    await installApp(['screenCapture'])
+    const { result } = renderShare()
+    await act(() => result.current.startWithJlocal(pick))
+    const feed = await vi.mocked(startAppFeed).mock.results[0].value as AppFeed
+    const onEnd = vi.mocked(feed.open).mock.calls.at(-1)?.[1]
+    act(() => onEnd?.())
+    expect(result.current.state).toBe('idle')
+    expect(feed.stop).toHaveBeenCalled()
+    expect(publisher.close).toHaveBeenCalled()
+  })
+
   it('changes the quality of a live app share in place', async () => {
     await installApp(['screenCapture'])
     const { result } = renderShare()

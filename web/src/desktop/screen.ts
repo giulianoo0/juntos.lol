@@ -154,10 +154,15 @@ export async function startAppFeed(options: H264FeedOptions): Promise<AppFeed> {
         },
         end: onEnd,
       }
-      if (ended) { onEnd(); return () => undefined }
-      for (const frame of replay) reader.take(frame)
-      readers.add(reader)
-      return () => { readers.delete(reader) }
+      // Like jlocal, the first frame comes after `open` returns, so a reader may close from inside it.
+      let closed = false
+      queueMicrotask(() => {
+        if (closed) return
+        if (ended) { onEnd(); return }
+        for (const frame of replay) reader.take(frame)
+        if (!closed) readers.add(reader)
+      })
+      return () => { closed = true; readers.delete(reader) }
     },
     async retarget(next) {
       const wanted = quality(next)

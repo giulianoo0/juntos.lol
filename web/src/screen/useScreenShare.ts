@@ -278,6 +278,10 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     setState('sharing')
     companion.preview?.()
     companion.preview = selfCanvasElRef.current ? previewH264(companion.feed, selfCanvasElRef.current) : null
+    // The app keeps one feed through every move, so it only ends when the shared window or screen is gone.
+    if (companion.origin.kind === 'app') {
+      companion.feed.open(() => undefined, () => { if (jlocalRef.current === companion) stopRef.current() })
+    }
     await publisher.ready
     await setScreenLive(roomId, memberId, capability, true)
   }, [roomId, memberId, capability])
