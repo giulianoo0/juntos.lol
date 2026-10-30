@@ -531,6 +531,22 @@ impl Remux {
                 if let Some(status) = process_done? {
                     break 'attempts Some((status, stderr_tail.clone()));
                 }
+                // The uploader only ends early by failing; waiting on it would
+                // freeze the region until the spool's stall gives up.
+                if upload_task.is_finished() {
+                    let failed = match (&mut upload_task).await {
+                        Ok(Ok(())) => anyhow::anyhow!("uploads ended before the run"),
+                        Ok(Err(e)) => e,
+                        Err(e) => e.into(),
+                    };
+                    let mut process = entry.process.lock().take();
+                    if let Some(process) = process.as_mut() {
+                        process.kill().await;
+                    }
+                    cleanup(&bridge);
+                    run_sink.destroy().await;
+                    return Err(failed);
+                }
                 // Until the region shows its first frames, a finished upload
                 // is published at once (the rest of its batch a beat later)
                 // instead of on the next tick: that is the seek's wait.
@@ -611,15 +627,28 @@ impl Remux {
             }
         }
         entry.status.lock().state = state::DRAINING;
-        run_sink.settle().await;
-        run_sink.close_producer();
         // ffmpeg can finish long before the uploads do (many small audio
         // segments, ~600 ms a PUT): keep confirming what landed, so the
-        // region grows with the uploads instead of all at the end.
+        // region grows with the uploads instead of all at the end. The
+        // producer closes once the bodies ffmpeg left behind are stored;
+        // one waiting on spool the rounds free must not hold it forever.
+        const SETTLE_LIMIT: Duration = Duration::from_secs(30);
+        let settle_by = tokio::time::Instant::now() + SETTLE_LIMIT;
+        let mut settle = tokio::time::interval(Duration::from_millis(50));
+        let mut producing = true;
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         let uploads = loop {
             tokio::select! {
                 result = &mut upload_task => break result,
+                _ = settle.tick(), if producing => {
+                    if run_sink.settled() || tokio::time::Instant::now() >= settle_by {
+                        if !run_sink.settled() {
+                            tracing::warn!(run = %spec.run_id, "remux outputs still storing after ffmpeg exited");
+                        }
+                        run_sink.close_producer();
+                        producing = false;
+                    }
+                }
                 _ = ticker.tick() => {
                     if Self::cancelled(entry) {
                         upload_task.abort();

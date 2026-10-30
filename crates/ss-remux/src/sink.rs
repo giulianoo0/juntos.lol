@@ -105,7 +105,6 @@ impl Drop for Storing {
 /// How long the outputs stay quiet before an exited FFmpeg counts as
 /// delivered: its last connections may still be in the accept queue.
 const SETTLE_QUIET: std::time::Duration = std::time::Duration::from_millis(250);
-const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl Sink {
     pub fn new(dir: PathBuf, spool_bytes: u64, object_cap: u64) -> anyhow::Result<(Arc<Self>, mpsc::UnboundedReceiver<ClosedObject>)> {
@@ -146,21 +145,12 @@ impl Sink {
         Storing(self.stores.clone())
     }
 
-    /// Waits out the bodies FFmpeg sent before it exited, so the last
-    /// segments and the playlists that end them are in before the drain.
-    pub async fn settle(&self) {
-        let deadline = std::time::Instant::now() + SETTLE_LIMIT;
-        loop {
-            let (open, last) = *self.stores.lock();
-            if open == 0 && last.elapsed() >= SETTLE_QUIET {
-                return;
-            }
-            if std::time::Instant::now() >= deadline {
-                tracing::warn!(open, "remux outputs still storing after ffmpeg exited");
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
+    /// No body is being stored and none arrived for a beat: what FFmpeg
+    /// sent before it exited is in, the last segments and the playlists
+    /// that end them included.
+    pub fn settled(&self) -> bool {
+        let (open, last) = *self.stores.lock();
+        open == 0 && last.elapsed() >= SETTLE_QUIET
     }
 
     pub fn cancelled(&self) -> bool {
