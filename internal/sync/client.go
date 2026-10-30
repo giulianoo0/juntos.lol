@@ -35,9 +35,10 @@ type client struct {
 	device   string
 	identity Identity
 	watch    *watchSpan
-	// The app playing a local source from its own cache, as its hello said.
 	// ClientDesktop for the app, as its hello said, or "" for a browser.
-	kind        string
+	kind string
+	// The hello said it can play a local source it opened from its own
+	// cache; only the seat that produces the room's source does.
 	localSource bool
 	link        linkWatch
 }

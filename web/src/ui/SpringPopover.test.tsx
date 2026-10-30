@@ -16,4 +16,9 @@ describe('SpringPopover', () => {
     expect(onPick).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: 'Compartilhar' })).toHaveAttribute('aria-expanded', 'false')
   })
+
+  it('a locked row says why in its name', () => {
+    render(<SpringRow label="YouTube" locked="Exclusivo do app" onSelect={() => {}} />)
+    expect(screen.getByRole('menuitem', { name: 'YouTube, exclusivo do app' })).toBeInTheDocument()
+  })
 })

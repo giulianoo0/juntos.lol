@@ -71,6 +71,7 @@ pub struct Publisher {
     chapters: Vec<serde_json::Value>,
     /// The 480p variant's playlist index, when the run encodes one.
     low_variant: Option<usize>,
+    low_resolution: Option<(u32, u32)>,
 
     seq: u64,
     uploaded_bytes: u64,
@@ -130,6 +131,7 @@ impl Publisher {
             video_codecs,
             chapters,
             low_variant: None,
+            low_resolution: None,
             seq: 0,
             uploaded_bytes: 0,
             pending: Vec::new(),
@@ -137,8 +139,11 @@ impl Publisher {
         }
     }
 
-    pub fn with_low_variant(mut self, index: usize) -> Self {
+    /// The 480p variant at `index`, of `resolution` when the source's size
+    /// is known (see `plan::low_resolution`).
+    pub fn with_low_variant(mut self, index: usize, resolution: Option<(u32, u32)>) -> Self {
         self.low_variant = Some(index);
+        self.low_resolution = resolution;
         self
     }
 
@@ -251,8 +256,9 @@ impl Publisher {
         ));
         if let (Some(index), true) = (self.low_variant, low_ready) {
             let audio_codec = if self.audio_langs.is_empty() { "" } else { ",mp4a.40.2" };
+            let resolution = self.low_resolution.map(|(w, h)| format!(",RESOLUTION={w}x{h}")).unwrap_or_default();
             out.push_str(&format!(
-                "#EXT-X-STREAM-INF:BANDWIDTH={LOW_BANDWIDTH},RESOLUTION=854x480,CODECS=\"avc1.4d401f{audio_codec}\"{audio_attr}\n{}client_stream_{index}.m3u8\n",
+                "#EXT-X-STREAM-INF:BANDWIDTH={LOW_BANDWIDTH}{resolution},CODECS=\"avc1.4d401f{audio_codec}\"{audio_attr}\n{}client_stream_{index}.m3u8\n",
                 self.prefix,
             ));
         }
@@ -340,18 +346,25 @@ mod master_tests {
 
     #[test]
     fn master_lists_the_480p_variant_once_its_playlist_exists() {
-        let p = publisher(vec!["jpn".into(), "eng".into()], 2).with_low_variant(3);
+        let p = publisher(vec!["jpn".into(), "eng".into()], 2).with_low_variant(3, Some((1152, 480)));
         let m = p.synthesize_master(20_000, false);
         assert!(!m.contains("client_stream_3"), "no variant the player cannot fetch yet");
         let m = p.synthesize_master(20_000, true);
         assert_eq!(m.matches("#EXT-X-STREAM-INF").count(), 2);
-        assert!(m.contains("RESOLUTION=854x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr2_client_stream_3.m3u8\n"));
+        assert!(m.contains("RESOLUTION=1152x480,CODECS=\"avc1.4d401f,mp4a.40.2\",AUDIO=\"aud\"\nr2_client_stream_3.m3u8\n"));
         let bandwidths: Vec<u64> = m
             .lines()
             .filter_map(|l| l.strip_prefix("#EXT-X-STREAM-INF:BANDWIDTH="))
             .map(|l| l.split(',').next().unwrap().parse().unwrap())
             .collect();
         assert!(bandwidths[1] < bandwidths[0], "the full variant stays the heavier one");
+    }
+
+    #[test]
+    fn a_480p_variant_of_unknown_size_declares_no_resolution() {
+        let m = publisher(vec!["eng".into()], 2).with_low_variant(2, None).synthesize_master(20_000, true);
+        assert!(m.contains("client_stream_2.m3u8"));
+        assert!(!m.contains("RESOLUTION"));
     }
 
     #[test]

@@ -1,0 +1,16 @@
+app_hello
+torrent_open
+torrent_select
+torrent_stats
+youtube_resolve
+local_prepare
+local_regions
+local_follow
+local_low
+local_stop
+upload_start
+upload_stop
+upload_status
+update_status
+update_restart
+update_now

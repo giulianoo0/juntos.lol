@@ -51,8 +51,8 @@ type Inbound struct {
 	// Avatar on a hello is the one a guest picked; an account's own wins.
 	Avatar string `json:"avatar,omitempty"`
 	// Client and Features on a hello say what is on the other end: "desktop"
-	// for the app, and "localSource" when it plays the room's media from its
-	// own cache. They change what the room asks of it, never what it may do.
+	// for the app, and "localSource" when it can play a source it opened
+	// from its own cache. They change what the room asks of it, never what it may do.
 	Client   string   `json:"client,omitempty"`
 	Features []string `json:"features,omitempty"`
 }

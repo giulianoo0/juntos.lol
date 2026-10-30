@@ -91,15 +91,43 @@ func TestMembersSayWhoIsOnTheApp(t *testing.T) {
 	require.Equal(t, "", clientOf(nextOf(t, host, "members").Members)["m2"])
 }
 
-func TestAnotherAppInTheRoomNeedsNoBrowserMedia(t *testing.T) {
-	_, _, server, _ := localRoom(t)
+// Only the seat that produces the source plays it from its own cache: a
+// friend on the app plays the bucket like a browser does.
+func TestAGuestOnTheAppAlsoNeedsTheBucket(t *testing.T) {
+	_, _, server, generation := localRoom(t)
 	host := dialHubWS(t, server)
 	helloApp(t, host, "host")
 	friend := dialHubWS(t, server)
 	helloApp(t, friend, "friend")
 
-	require.Equal(t, "members", readHubEvent(t, host).Type)
-	requireNoEvent(t, host, 50*time.Millisecond)
+	asked := nextOf(t, host, "needBrowserMedia")
+	require.Equal(t, generation, asked.Generation)
+}
+
+// The producer keeps being the one asked for the media when the controls
+// go to someone else, who has no cache to put up.
+func TestTheProducerIsAskedEvenAfterHandingTheControlsAway(t *testing.T) {
+	holdSeats(t)
+	_, _, server, generation := localRoom(t)
+	host := dialHubWS(t, server)
+	welcome := helloApp(t, host, "host")
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	nextOf(t, host, "needBrowserMedia")
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))
+	nextOf(t, guest, "members")
+	requireNoEvent(t, guest, 50*time.Millisecond)
+
+	require.NoError(t, host.Close())
+	again := dialHubWS(t, server)
+	require.NoError(t, again.WriteJSON(Inbound{
+		Type: "hello", Nickname: "host", ClientTimeMs: 1, MemberID: welcome.MemberID, Capability: welcome.Capability,
+		Client: "desktop", Features: []string{"localSource"},
+	}))
+	require.Equal(t, "welcome", readHubEvent(t, again).Type)
+	asked := nextOf(t, again, "needBrowserMedia")
+	require.Equal(t, generation, asked.Generation)
 }
 
 func TestTheHostIsAskedAgainWhenItComesBack(t *testing.T) {
@@ -140,9 +168,9 @@ func TestTheHostIsAskedOnceTheMediaTurnsLocal(t *testing.T) {
 	require.Equal(t, generation, asked.Generation)
 }
 
-// A browser with nothing to play yet waits on a short "preparing", and the
-// apps in the room start without it.
-func TestABrowserWithoutMediaDoesNotHoldTheGate(t *testing.T) {
+// A guest with nothing to play yet, on a browser or on the app, waits on a
+// short "preparing", and the producer starts without them.
+func TestAGuestWithoutMediaDoesNotHoldTheGate(t *testing.T) {
 	_, _, server, _ := localRoom(t)
 	host := dialHubWS(t, server)
 	helloApp(t, host, "host")
@@ -155,15 +183,35 @@ func TestABrowserWithoutMediaDoesNotHoldTheGate(t *testing.T) {
 	require.False(t, nextOf(t, host, "state").State.Playing)
 	nextOf(t, host, "waiting")
 	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 60_000, BufferAheadMs: 5_000}))
-	require.NoError(t, friend.WriteJSON(Inbound{Type: "ready", PositionMs: 60_000, BufferAheadMs: 5_000}))
 
 	for {
 		event := readHubEvent(t, host)
 		if event.Type == "state" {
-			require.True(t, event.State.Playing, "the apps waited for a browser with no media")
+			require.True(t, event.State.Playing, "the producer waited for a guest with no media")
 			return
 		}
 	}
+}
+
+func TestAGuestOnTheAppCountsForTheGateOnceTheMediaIsUp(t *testing.T) {
+	hub, store, server, _ := localRoom(t)
+	require.NoError(t, store.SetStatus(t.Context(), "r1", room.StatusReady))
+	hub.NotifyStatus("r1", room.StatusReady)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	friend := dialHubWS(t, server)
+	helloApp(t, friend, "friend")
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 60_000, Rate: 1}))
+	nextOf(t, host, "waiting")
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 60_000, BufferAheadMs: 5_000}))
+
+	waiting := nextOf(t, host, "waiting")
+	byMember := map[string]MemberReadiness{}
+	for _, member := range waiting.Readiness {
+		byMember[member.MemberID] = member
+	}
+	require.False(t, byMember["m2"].Ready, "a guest app with media to load was skipped")
 }
 
 func TestABrowserCountsForTheGateOnceTheMediaIsUp(t *testing.T) {

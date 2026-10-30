@@ -85,7 +85,7 @@ describe('RoomView', () => {
     const vm = model({ sources: ['torrent', 'youtube'], appOnly: ['youtube'] })
     render(<RoomView vm={vm} />)
     fireEvent.click(screen.getByRole('button', { name: 'Compartilhar' }))
-    const youtube = await screen.findByRole('menuitem', { name: 'YouTube' })
+    const youtube = await screen.findByRole('menuitem', { name: 'YouTube, exclusivo do app' })
     expect(youtube).toHaveAttribute('data-locked')
     fireEvent.click(youtube)
     expect(vm.actions.getApp).toHaveBeenCalledTimes(1)

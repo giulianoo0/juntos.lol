@@ -30,6 +30,7 @@ rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+async-trait = "0.1"
 
 # Fora do workspace da raiz: o worker e o CI de Linux não precisam do Tauri.
 [workspace]

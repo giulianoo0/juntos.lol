@@ -45,6 +45,25 @@ describe('a room played from the desktop cache', () => {
     expect(invoke).toHaveBeenCalledWith('local_follow', { key: 't-abc-0', positionMs: 42_000 })
   })
 
+  it('hands a burst of positions to the app once now and the last one 3 s later', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    vi.useFakeTimers()
+    try {
+      const handle = remuxHandleFor('ROOM1')
+      handle?.follow(10_000)
+      handle?.follow(20_000)
+      handle?.follow(30_000)
+      const follows = () => invoke.mock.calls.filter(([cmd]) => cmd === 'local_follow').map(([, args]) => args.positionMs)
+      expect(follows()).toEqual([10_000])
+      await vi.advanceTimersByTimeAsync(2_999)
+      expect(follows()).toEqual([10_000])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(follows()).toEqual([10_000, 30_000])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a browser guest promotes the room and starts the upload at the playhead', async () => {
     await attachLocalRoom('ROOM1', 4, source)
     remuxHandleFor('ROOM1')?.follow(42_000)

@@ -65,6 +65,10 @@ struct ProbeStream {
     #[serde(default)]
     pix_fmt: Option<String>,
     #[serde(default)]
+    width: Option<u32>,
+    #[serde(default)]
+    height: Option<u32>,
+    #[serde(default)]
     channels: Option<u32>,
     #[serde(default)]
     tags: Option<ProbeTags>,
@@ -160,6 +164,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     let chapters = plan_chapters(&doc.chapters);
     let mut video_codec = None;
     let mut video_codecs = None;
+    let mut video_size = None;
     let mut audios = Vec::new();
     let mut audio_index = 0usize;
     let mut subtitles = Vec::new();
@@ -185,6 +190,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
                             stream.pix_fmt.as_deref(),
                         );
                         video_codec = Some(codec);
+                        video_size = stream.width.zip(stream.height).filter(|&(w, h)| w > 0 && h > 0);
                     }
                     other => bail!("video codec {other:?} has no matrix entry"),
                 }
@@ -252,7 +258,7 @@ pub fn plan_streams(probe_json: &str) -> anyhow::Result<SourcePlan> {
     if duration_ms == 0 {
         bail!("source reports no usable duration");
     }
-    Ok(SourcePlan { video_codec, video_codecs, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
+    Ok(SourcePlan { video_codec, video_codecs, video_size, audios, duration_ms, subtitles, bitmap_subtitles, attachments,
         chapters,
     })
 }
@@ -287,6 +293,15 @@ pub fn low_variant(plan: &SourcePlan) -> usize {
     1 + plan.audios.len()
 }
 
+/// The 480p variant's size, as `scale=-2:'min(480,ih)'` gives it: the
+/// source's height up to 480, and the width that keeps the aspect, even.
+pub fn low_resolution(plan: &SourcePlan) -> Option<(u32, u32)> {
+    let (width, height) = plan.video_size?;
+    let out_height = height.min(480);
+    let half = (u64::from(out_height) * u64::from(width) + u64::from(height)) / (2 * u64::from(height));
+    Some(((half * 2) as u32, out_height))
+}
+
 /// The second video output, encoded down to 480p. Its keyframes are the
 /// source's, so both variants cut their segments at the same instants and
 /// the player can switch between them.
@@ -296,7 +311,6 @@ fn low_rendition_args(encoder: Encoder) -> Vec<String> {
         Encoder::X264 => args.extend([
             "-c:v:1".into(), "libx264".into(),
             "-preset:v:1".into(), "superfast".into(),
-            "-level:v:1".into(), "3.1".into(),
             // A scene cut of its own would cut a segment the full variant lacks.
             "-sc_threshold:v:1".into(), "0".into(),
         ]),
@@ -305,7 +319,9 @@ fn low_rendition_args(encoder: Encoder) -> Vec<String> {
     args.extend([
         "-filter:v:1".into(), "scale=-2:'min(480,ih)'".into(),
         "-pix_fmt:v:1".into(), "yuv420p".into(),
+        // Main 3.1 plays on any phone; past it some decoders refuse the variant.
         "-profile:v:1".into(), "main".into(),
+        "-level:v:1".into(), "3.1".into(),
         "-b:v:1".into(), LOW_VIDEO_BITRATE.into(),
         "-maxrate:v:1".into(), LOW_VIDEO_MAXRATE.into(),
         "-bufsize:v:1".into(), LOW_VIDEO_BUFSIZE.into(),
@@ -315,19 +331,60 @@ fn low_rendition_args(encoder: Encoder) -> Vec<String> {
     args
 }
 
+/// Where a run seeks to, and whether the keyframe search confirmed a
+/// keyframe there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Start {
+    pub seconds: f64,
+    pub offset_ms: u64,
+    pub on_keyframe: bool,
+}
+
+impl Start {
+    pub const ZERO: Start = Start { seconds: 0.0, offset_ms: 0, on_keyframe: true };
+
+    /// The keyframe the search found, never past the target; the target
+    /// itself, unconfirmed, when none was found.
+    pub fn seek(start_ms: u64, keyframe: Option<f64>) -> Start {
+        if start_ms == 0 {
+            return Start::ZERO;
+        }
+        match keyframe {
+            Some(pts) if pts * 1000.0 <= start_ms as f64 && (pts * 1000.0) as u64 > 0 => {
+                Start { seconds: pts, offset_ms: (pts * 1000.0) as u64, on_keyframe: true }
+            }
+            _ => Start { seconds: start_ms as f64 / 1000.0, offset_ms: start_ms, on_keyframe: false },
+        }
+    }
+
+    /// The 480p encoder the run really uses: the copy and the encoder only
+    /// start on the same frame from a confirmed keyframe.
+    pub fn low(&self, encoder: Option<Encoder>) -> Option<Encoder> {
+        encoder.filter(|_| self.on_keyframe)
+    }
+}
+
+/// The first frame's pts in an ffprobe `-show_entries frame=pts_time` dump.
+pub fn first_frame_pts(probe_json: &str) -> Option<f64> {
+    let doc: serde_json::Value = serde_json::from_str(probe_json).ok()?;
+    doc["frames"].as_array()?.first()?["pts_time"].as_str()?.parse().ok()
+}
+
 /// FFmpeg argv for one run: video copied, audio per the matrix, HLS fMP4 in
 /// 4-second target segments, every output PUT to the loopback sink. The
 /// first input carries the video; the seek applies to every input. With an
-/// encoder, a 480p variant rides along (see `low_variant`).
+/// encoder and a start on a keyframe, a 480p variant rides along (see
+/// `low_variant` and `Start::low`).
 pub fn ffmpeg_args(
     inputs: &[String],
     sink_base: &str,
     prefix: &str,
     plan: &SourcePlan,
-    start_seconds: f64,
+    start: Start,
     end_seconds: Option<f64>,
     low: Option<Encoder>,
 ) -> Vec<String> {
+    let low = start.low(low);
     let mut args: Vec<String> = vec![
         "-nostdin".into(),
         "-hide_banner".into(),
@@ -336,8 +393,8 @@ pub fn ffmpeg_args(
         "-progress".into(),
         "pipe:1".into(),
     ];
-    if start_seconds > 0.0 {
-        args.extend(["-ss".into(), format!("{start_seconds:.3}")]);
+    if start.seconds > 0.0 {
+        args.extend(["-ss".into(), format!("{:.3}", start.seconds)]);
     }
     if let Some(end) = end_seconds {
         args.extend(["-to".into(), format!("{end:.3}")]);
@@ -489,7 +546,7 @@ mod tests {
     #[test]
     fn converted_audio_is_downmixed_to_stereo() {
         let plan = plan_streams(PROBE).unwrap();
-        let args = ffmpeg_args(&["in".into()], "http://sink", "", &plan, 0.0, None, None);
+        let args = ffmpeg_args(&["in".into()], "http://sink", "", &plan, Start::ZERO, None, None);
         let joined = args.join(" ");
         assert!(joined.contains("aformat=channel_layouts=stereo"), "{joined}");
         assert!(joined.contains("160000"), "{joined}");
@@ -537,7 +594,7 @@ mod tests {
     #[test]
     fn args_name_objects_inside_the_server_grammar() {
         let plan = plan_streams(PROBE).unwrap();
-        let args = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", &plan, 61.0, None, None);
+        let args = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", &plan, Start::seek(61_000, None), None, None);
         let joined = args.join(" ");
         assert!(joined.contains("-ss 61.000"));
         assert!(joined.contains("r2_cs_%v_%d.m4s"));
@@ -553,7 +610,7 @@ mod tests {
     #[test]
     fn converted_audio_uses_the_fast_aac_coder() {
         let plan = plan_streams(PROBE).unwrap();
-        let joined = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "", &plan, 0.0, None, None).join(" ");
+        let joined = ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "", &plan, Start::ZERO, None, None).join(" ");
         assert!(joined.contains("-c:a:1 aac -aac_coder:a:1 fast"));
         assert!(!joined.contains("-aac_coder:a:0"), "a copied track has no coder");
     }
@@ -562,14 +619,14 @@ mod tests {
     fn every_input_is_opened_with_a_short_probe() {
         let plan = plan_streams(PROBE).unwrap();
         let inputs: Vec<String> = ["v", "a"].iter().map(|s| format!("http://127.0.0.1:9/in/{s}")).collect();
-        let joined = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, 0.0, None, None).join(" ");
+        let joined = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, Start::ZERO, None, None).join(" ");
         for input in &inputs {
             assert!(joined.contains(&format!("-probesize 2000000 -analyzeduration 2000000 -protocol_whitelist http,tcp -i {input}")));
         }
     }
 
     fn args_with(plan: &SourcePlan, low: Option<Encoder>) -> String {
-        ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", plan, 0.0, None, low).join(" ")
+        ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", plan, Start::ZERO, None, low).join(" ")
     }
 
     #[test]
@@ -605,6 +662,80 @@ mod tests {
         assert_eq!(joined.matches("-map 0:v:0").count(), 1);
         assert!(!joined.contains("v:1"));
         assert!(!joined.contains("copypriorss"));
+    }
+
+    fn sized(width: u32, height: u32) -> SourcePlan {
+        let probe = PROBE.replace(
+            r#"{"codec_type":"video","codec_name":"h264"}"#,
+            &format!(r#"{{"codec_type":"video","codec_name":"h264","width":{width},"height":{height}}}"#),
+        );
+        plan_streams(&probe).unwrap()
+    }
+
+    // The size FFmpeg's scale=-2:'min(480,ih)' gives the 480p variant.
+    #[test]
+    fn the_480p_size_keeps_the_source_aspect() {
+        assert_eq!(sized(1920, 1080).video_size, Some((1920, 1080)));
+        assert_eq!(low_resolution(&sized(1920, 1080)), Some((854, 480)));
+        assert_eq!(low_resolution(&sized(1920, 800)), Some((1152, 480)));
+        assert_eq!(low_resolution(&sized(1440, 1080)), Some((640, 480)));
+        assert_eq!(low_resolution(&sized(640, 360)), Some((640, 360)), "never scaled up");
+        assert_eq!(low_resolution(&plan_streams(PROBE).unwrap()), None, "no size probed");
+    }
+
+    #[test]
+    fn the_480p_variant_is_main_at_level_3_1_on_either_encoder() {
+        let plan = plan_streams(PROBE).unwrap();
+        for encoder in [Encoder::X264, Encoder::VideoToolbox] {
+            let joined = args_with(&plan, Some(encoder));
+            assert!(joined.contains("-profile:v:1 main"), "{joined}");
+            assert_eq!(joined.matches("-level:v:1 3.1").count(), 1, "{joined}");
+        }
+    }
+
+    #[test]
+    fn first_frame_pts_reads_ffprobe_frames() {
+        let json = r#"{"frames":[{"pts_time":"1077.577000"},{"pts_time":"1081.0"}]}"#;
+        assert_eq!(first_frame_pts(json), Some(1077.577));
+        assert_eq!(first_frame_pts("{}"), None);
+    }
+
+    #[test]
+    fn a_run_starts_on_the_keyframe_at_or_before_the_target() {
+        assert_eq!(Start::seek(0, Some(3.0)), Start::ZERO);
+        assert_eq!(Start::seek(61_000, Some(59.5)), Start { seconds: 59.5, offset_ms: 59_500, on_keyframe: true });
+        let unconfirmed = Start { seconds: 61.0, offset_ms: 61_000, on_keyframe: false };
+        assert_eq!(Start::seek(61_000, Some(64.0)), unconfirmed, "never later than asked");
+        assert_eq!(Start::seek(61_000, None), unconfirmed, "no keyframe found: the target itself");
+        assert_eq!(Start::seek(61_000, Some(0.0)), unconfirmed);
+    }
+
+    fn seek_args(plan: &SourcePlan, start: Start) -> String {
+        ffmpeg_args(&["http://127.0.0.1:9/in/c".to_string()], "http://127.0.0.1:9/out/c", "r2_", plan, start, None, Some(Encoder::X264)).join(" ")
+    }
+
+    // Without a keyframe under the seek the copy and the encoder start at
+    // different frames, and the variants would cut different segments.
+    #[test]
+    fn a_seek_without_a_confirmed_keyframe_writes_no_480p() {
+        let plan = plan_streams(PROBE).unwrap();
+        for start in [Start::seek(61_000, None), Start::seek(61_000, Some(64.0))] {
+            assert_eq!(start.low(Some(Encoder::X264)), None);
+            let joined = seek_args(&plan, start);
+            assert!(!joined.contains("v:1"), "{joined}");
+            assert!(!joined.contains("copypriorss"), "{joined}");
+        }
+    }
+
+    #[test]
+    fn a_seek_onto_a_keyframe_keeps_the_480p_aligned() {
+        let plan = plan_streams(PROBE).unwrap();
+        let start = Start::seek(61_000, Some(59.5));
+        assert_eq!(start.low(Some(Encoder::X264)), Some(Encoder::X264));
+        let joined = seek_args(&plan, start);
+        assert!(joined.contains("-ss 59.500"));
+        assert!(joined.contains("-c:v:0 copy -copypriorss:v:0 0"));
+        assert!(joined.contains("-c:v:1 libx264"));
     }
 
     #[test]
@@ -645,7 +776,7 @@ mod tests {
         plan.audios[1].input_file = 2;
         plan.audios[1].input_index = 0;
         let inputs: Vec<String> = ["v", "a1", "a2"].iter().map(|s| format!("http://127.0.0.1:9/in/{s}")).collect();
-        let args = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, 0.0, None, None);
+        let args = ffmpeg_args(&inputs, "http://127.0.0.1:9/out/c", "", &plan, Start::ZERO, None, None);
         let joined = args.join(" ");
         assert_eq!(joined.matches(" -i ").count(), 3);
         assert!(joined.contains("-map 0:v:0"));

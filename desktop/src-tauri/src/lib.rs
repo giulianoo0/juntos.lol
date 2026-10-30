@@ -19,24 +19,10 @@ use tauri_plugin_opener::OpenerExt;
 use commands::{AppState, Tools};
 use site::Navigation;
 
-const COMMANDS: &[&str] = &[
-    "app-hello",
-    "torrent-open",
-    "torrent-select",
-    "torrent-stats",
-    "youtube-resolve",
-    "local-prepare",
-    "local-regions",
-    "local-follow",
-    "local-low",
-    "local-stop",
-    "upload-start",
-    "upload-stop",
-    "upload-status",
-    "update-status",
-    "update-restart",
-    "update-now",
-];
+/// The permission of each command build.rs declares from commands.txt.
+fn site_permissions() -> impl Iterator<Item = String> {
+    include_str!("../commands.txt").lines().filter(|line| !line.is_empty()).map(|name| format!("allow-{}", name.replace('_', "-")))
+}
 
 /// A bundled sidecar sits beside the app's executable; in dev the one on
 /// PATH answers.
@@ -98,8 +84,8 @@ pub fn run() {
 
             // The IPC answers the site's origin and nothing else.
             let mut capability = CapabilityBuilder::new("site").remote(format!("{}*", site.as_str())).window("main");
-            for command in COMMANDS {
-                capability = capability.permission(format!("allow-{command}"));
+            for permission in site_permissions() {
+                capability = capability.permission(permission);
             }
             app.add_capability(capability)?;
 
@@ -139,4 +125,19 @@ pub fn run() {
                 updates::install_pending(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // build.rs turns each name in commands.txt into the permission allow-<name>, in kebab case.
+    #[test]
+    fn the_site_is_granted_each_command_the_build_declares() {
+        let granted: Vec<String> = site_permissions().collect();
+        assert_eq!(granted.len(), 16);
+        assert_eq!(granted[0], "allow-app-hello");
+        assert!(granted.contains(&"allow-local-prepare".to_string()));
+        assert!(granted.iter().all(|p| !p.contains('_')));
+    }
 }

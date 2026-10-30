@@ -369,6 +369,20 @@ func TestPromoteRefusals(t *testing.T) {
 	}
 }
 
+// The app that opened the source holds the cache: it is the one promoted,
+// even after it handed the controls to someone who has nothing to upload.
+func TestPromoteFollowsTheProducerAfterTheControlsMoved(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
+	require.Equal(t, http.StatusOK, postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Filme"}`).Code)
+	require.NoError(t, store.SetController(t.Context(), "r1", "m2"))
+
+	require.Equal(t, http.StatusForbidden, postPromote(t, e, `{"memberId":"m2","capability":"secret-capability"}`).Code)
+	require.Equal(t, http.StatusOK, postPromote(t, e, `{"memberId":"m1","capability":"secret-capability"}`).Code)
+}
+
 func TestChangeSourceMissingRoom(t *testing.T) {
 	cfg := testCfg(t)
 	store := newTestStore(t)

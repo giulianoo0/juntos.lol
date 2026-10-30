@@ -160,13 +160,30 @@ func authorizeController(c *gin.Context, authorizer stageAuthorizer, storedRoom 
 	return true
 }
 
+// authorizeProducer answers the refusal itself and reports whether the
+// caller is the connected member whose app opened the room's source, who
+// keeps it after handing the controls away.
+func authorizeProducer(c *gin.Context, authorizer stageAuthorizer, storedRoom *room.Room, memberID, capability string) bool {
+	if authorizer == nil || !authorizer.AuthorizeMember(storedRoom.ID, memberID, capability) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
+		return false
+	}
+	// A room whose source is not local has no producer: the promote that
+	// follows refuses it as not_local.
+	if storedRoom.LocalSource && storedRoom.SourceMemberID != memberID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not_producer"})
+		return false
+	}
+	return true
+}
+
 type promoteRequest struct {
 	MemberID   string `json:"memberId" binding:"required"`
 	Capability string `json:"capability" binding:"required"`
 }
 
-// promoteLocal starts the upload of a local source because a browser joined
-// that cannot play the app's cache. The room keeps its generation and its
+// promoteLocal starts the upload of a local source because someone joined
+// who cannot play the producer's cache. The room keeps its generation and its
 // clock, and the app gets the same claim a browser remux does, to publish
 // regions from wherever the room is.
 func promoteLocal(store *room.Store, cfg config.Config, authorizer stageAuthorizer, hooks SourceHooks) gin.HandlerFunc {
@@ -183,7 +200,7 @@ func promoteLocal(store *room.Store, cfg config.Config, authorizer stageAuthoriz
 			return
 		}
 		storedRoom, ok := loadLiveRoom(c, store, roomID)
-		if !ok || !authorizeController(c, authorizer, storedRoom, req.MemberID, req.Capability) {
+		if !ok || !authorizeProducer(c, authorizer, storedRoom, req.MemberID, req.Capability) {
 			return
 		}
 		claim, err := mintSecret("client:")

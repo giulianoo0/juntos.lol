@@ -8,7 +8,7 @@ pub fn parse_range(value: Option<&HeaderValue>, size: u64) -> Result<(u64, u64),
     let (a, b) = spec.split_once('-').ok_or(())?;
     if a.is_empty() {
         let n: u64 = b.parse().map_err(|_| ())?;
-        if n == 0 {
+        if n == 0 || size == 0 {
             return Err(());
         }
         return Ok((size.saturating_sub(n), size.saturating_sub(1)));
@@ -22,4 +22,25 @@ pub fn parse_range(value: Option<&HeaderValue>, size: u64) -> Result<(u64, u64),
         return Err(());
     }
     Ok((start, end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn h(value: &str) -> HeaderValue {
+        HeaderValue::from_str(value).unwrap()
+    }
+
+    #[test]
+    fn a_tail_range_reads_the_last_bytes() {
+        assert_eq!(parse_range(Some(&h("bytes=-100")), 1000), Ok((900, 999)));
+        assert_eq!(parse_range(Some(&h("bytes=-5000")), 1000), Ok((0, 999)));
+    }
+
+    #[test]
+    fn nothing_in_an_empty_file_satisfies_a_range() {
+        assert_eq!(parse_range(Some(&h("bytes=-100")), 0), Err(()));
+        assert_eq!(parse_range(Some(&h("bytes=0-")), 0), Err(()));
+    }
 }

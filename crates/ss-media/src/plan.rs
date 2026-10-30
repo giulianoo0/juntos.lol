@@ -37,6 +37,8 @@ pub struct SourcePlan {
     /// sample entry but not av01/vp09, and without CODECS in the master it
     /// opens the SourceBuffers wrong and fails on the first audio append.
     pub video_codecs: Option<String>,
+    /// The video's width and height, when the source says.
+    pub video_size: Option<(u32, u32)>,
     pub audios: Vec<AudioTrack>,
     pub duration_ms: u64,
     pub subtitles: Vec<SubtitleTrack>,

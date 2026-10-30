@@ -154,10 +154,11 @@ func (w *linkWatch) thin() bool {
 }
 
 // watchLink folds one report into the viewer's link and, the first time a
-// browser's link proves thin for this media, asks the room for a lighter
-// rendition. An app playing its own cache has no link to judge.
+// viewer's link proves thin for this media, asks the room for a lighter
+// rendition. The app producing the source plays its own cache and has no
+// link to judge.
 func (r *roomConn) watchLink(c *client, m Inbound, stallStarted bool) {
-	if c.localSource || r.thinAsked || r.hub.onThinLink == nil {
+	if r.produces(c) || r.thinAsked.Load() || r.hub.onThinLink == nil {
 		return
 	}
 	w := &c.link
@@ -172,15 +173,20 @@ func (r *roomConn) watchLink(c *client, m Inbound, stallStarted bool) {
 	if !w.thin() {
 		return
 	}
-	r.thinAsked = true
+	r.thinAsked.Store(true)
 	slog.Info("viewer link thin for the media", "room_id", r.id, "member", c.member.Nickname,
 		"readings", w.readings, "stalls", w.stalls, "media_kbps", w.mediaKbps)
-	go r.hub.onThinLink(r.id)
+	go func() {
+		// Not turned on: the next thin reading asks again.
+		if err := r.hub.onThinLink(r.id); err != nil {
+			r.thinAsked.Store(false)
+		}
+	}()
 }
 
 // forgetLinks starts every viewer's link over, for media that just changed.
 func (r *roomConn) forgetLinks() {
-	r.thinAsked = false
+	r.thinAsked.Store(false)
 	for _, seat := range r.seats() {
 		seat.link = linkWatch{}
 	}
