@@ -16,11 +16,12 @@ import { displayCaptureAvailable, screenShareSupported } from '../screenshare'
 import { ScreenStage, screenStartedNotice, useScreenShareNotices } from '../screen/ScreenStage'
 import { useScreenShare } from '../screen/useScreenShare'
 import { JlocalPicker } from '../screen/JlocalPicker'
+import { AppScreenPicker } from '../screen/AppScreenPicker'
+import { encodedPicker } from '../screen/encodedOrigin'
 import { setLocalRenditions, useLocalRoomMedia } from '../desktop/localRoom'
 import { openDownloadApp } from '../components/DownloadApp'
 import { isDesktop } from '../platform'
 import { localStatus, playableRoom } from '../desktop/localView'
-import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
 import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
 import { useStageHosts } from '../room/stageHosts'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
@@ -903,7 +904,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         if (source === 'file') fileInputRef.current?.click()
         if (source === 'screen') {
           if (!screenShareSupported()) { setSourceError('error.screenUnsupported'); return }
-          if (!isJLocalCaptureAvailable()) screenShare.start()
+          if (!encodedPicker()) screenShare.start()
         }
       },
       react: (emoji) => { sendChat(emoji) },
@@ -965,7 +966,26 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         if (source === 'youtube') {
           return <YoutubePicker t={t} onExit={close} onPicked={(session) => { close(); chooseYoutube(session) }} />
         }
-        if (source === 'screen' && isJLocalCaptureAvailable()) {
+        const picker = source === 'screen' ? encodedPicker() : null
+        if (picker === 'app') {
+          return (
+            <AppScreenPicker
+              t={t}
+              busy={screenShare.state === 'starting'}
+              error={jlocalPickError}
+              mode="start"
+              onPick={(pick) => {
+                setJlocalPickError(null)
+                screenShare.startWithJlocal(pick).then(close).catch((failure: unknown) => {
+                  const message = failure instanceof Error ? failure.message : ''
+                  setJlocalPickError(t(message.includes('permission') ? 'appScreen.permission' : 'appScreen.failed'))
+                })
+              }}
+              onExit={close}
+            />
+          )
+        }
+        if (picker === 'jlocal') {
           return (
             <JlocalPicker
               t={t}

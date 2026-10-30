@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
 import { changeRoomSource, startUrlUpload } from '../upload'
+import { requestScreenStream } from '../screenshare'
+import { desktop, resetDesktopForTests } from '../platform'
 
 vi.mock('../screenshare', () => ({
   screenShareSupported: vi.fn().mockReturnValue(true),
@@ -20,6 +22,7 @@ vi.mock('../screenshare', () => ({
   loadScreenQuality: vi.fn().mockReturnValue('auto'),
   saveScreenQuality: vi.fn(),
   SCREEN_QUALITIES: [{ id: 'auto' }],
+  screenQuality: (id: string) => ({ id, label: id }),
   requestScreenStream: vi.fn(),
   stashScreenStream: vi.fn(),
   takeScreenStream: vi.fn().mockReturnValue(null),
@@ -388,5 +391,32 @@ describe('preparo', () => {
     await act(() => vi.advanceTimersByTimeAsync(3_000))
 
     await waitFor(() => expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40'))
+  })
+})
+
+describe('tela pelo app', () => {
+  afterEach(() => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    resetDesktopForTests()
+  })
+
+  it('no app que captura, Tela abre o seletor do app e não o do navegador', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string) => {
+        if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.2.0', compatible: true, features: ['screenCapture'], mediaRoot: 'juntos-media://localhost' }
+        if (cmd === 'screen_sources') return { displays: [{ id: 'd1', name: 'Tela 1', width: 1920, height: 1080 }], windows: [] }
+        if (cmd === 'audio_apps') return [{ id: 'discord', name: 'Discord' }]
+        return null
+      },
+    }
+    resetDesktopForTests()
+    await desktop()
+    serve()
+    await joined()
+
+    await pickShare('Tela')
+    expect(await screen.findByRole('switch', { name: 'Discord' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('region', { name: 'Som' })).toBeInTheDocument()
+    expect(requestScreenStream).not.toHaveBeenCalled()
   })
 })

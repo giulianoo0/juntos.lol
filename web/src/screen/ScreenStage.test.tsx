@@ -1,10 +1,13 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ScreenStage } from './ScreenStage'
 import { useScreenShare } from './useScreenShare'
 import { ToastProvider } from '../ui/Toast'
 import { en } from '../i18n/en'
 import { fetchScreenRelay, loadScreenQuality, watchScreen } from '../screenshare'
+import { desktop, resetDesktopForTests } from '../platform'
+import { startAppFeed } from '../desktop/screen'
+import { resetSoundChoiceForTests } from '../jlocal/soundChoice'
 
 vi.mock('../screenshare', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../screenshare')>()),
@@ -21,6 +24,34 @@ vi.mock('../screenshare', async (importOriginal) => ({
   requestScreenStream: vi.fn(),
   takeScreenStream: vi.fn().mockReturnValue(null),
   setScreenLive: vi.fn().mockResolvedValue(undefined),
+  publishEncodedScreen: vi.fn().mockResolvedValue({
+    status: { peek: () => 'connected', subscribe: () => () => undefined },
+    ready: Promise.resolve(),
+    setQuality: vi.fn(),
+    switchStream: vi.fn(),
+    switchSource: vi.fn().mockResolvedValue(undefined),
+    setAudio: vi.fn(),
+    sample: () => null,
+    close: vi.fn(),
+  }),
+}))
+
+const appAudio = { track: {} as MediaStreamTrack, setMuted: vi.fn(), stop: vi.fn() }
+
+vi.mock('../desktop/screen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../desktop/screen')>()),
+  startAppFeed: vi.fn(async () => ({
+    captureId: null, width: 1920, height: 1080, fps: 60, bitrate: 10_000_000,
+    open: () => () => undefined, stop: vi.fn(), retarget: vi.fn(async () => undefined),
+  })),
+  appAudioTrack: vi.fn(() => appAudio),
+  appSources: vi.fn(async () => ({ displays: [{ id: 'd1', name: 'Display 1', width: 2560, height: 1440 }], windows: [] })),
+  appThumbnail: vi.fn(async () => null),
+  appAudioApps: vi.fn(async () => [
+    { id: 'chrome', name: 'Google Chrome', icon: '' },
+    { id: 'discord', name: 'Discord', icon: '' },
+    { id: 'system', name: 'System sounds', icon: '' },
+  ]),
 }))
 
 const t = Object.assign((key: string) => en[key] ?? key, {
@@ -123,4 +154,59 @@ it('puts the shared screen in fullscreen, and pins it over the page on a phone w
   renderStage({ memberId: 'm3', isController: false, screens })
   fireEvent.click(await screen.findByRole('button', { name: en['room.fullscreen'] }))
   expect(document.querySelector('.screen-stage')).toHaveClass('is-pseudo-fullscreen')
+})
+
+describe('through the desktop app', () => {
+  beforeEach(async () => {
+    resetSoundChoiceForTests()
+    vi.stubGlobal('MediaStream', class { getTracks() { return [] } })
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string) => (cmd === 'app_hello' ? { protocolVersion: 1, version: '0.2.0', compatible: true, features: ['screenCapture'], mediaRoot: 'juntos-media://localhost' } : null),
+    }
+    resetDesktopForTests()
+    await desktop()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    resetDesktopForTests()
+  })
+
+  const findBar = () => waitFor(() => {
+    const bar = document.querySelector<HTMLElement>('.screen-bar')
+    if (!bar) throw new Error('the live bar is not up')
+    return bar
+  })
+
+  async function shareThroughApp() {
+    renderStage()
+    fireEvent.click(screen.getByRole('button', { name: en['room.screenStart'] }))
+    const dialog = await screen.findByRole('dialog', { name: en['appScreen.title'] })
+    await within(dialog).findByRole('switch', { name: 'Discord' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Display 1' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: en['appScreen.share'] }))
+    await waitFor(() => expect(startAppFeed).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  }
+
+  it('opens the app picker, and the live bar carries the sound app by app, the quality and stop', async () => {
+    await shareThroughApp()
+    const bar = await findBar()
+    const sound = within(bar).getByRole('button', { name: en['appScreen.sound'] })
+    await waitFor(() => expect(sound).toHaveTextContent('2 apps'))
+    expect(within(bar).getByRole('button', { name: en['room.screenQuality'] })).toBeInTheDocument()
+    expect(within(bar).getByRole('button', { name: en['room.screenStop'] })).toBeInTheDocument()
+    fireEvent.click(sound)
+    fireEvent.click(await screen.findByRole('switch', { name: 'Google Chrome' }))
+    expect(appAudio.setMuted).toHaveBeenLastCalledWith(['discord', 'chrome'])
+  })
+
+  it('switching the source reopens the app picker to swap on the same share', async () => {
+    await shareThroughApp()
+    const bar = await findBar()
+    fireEvent.click(within(bar).getByRole('button', { name: en['room.screenSwitch'] }))
+    const dialog = await screen.findByRole('dialog', { name: en['room.screenSwitch'] })
+    expect(within(dialog).getByRole('button', { name: en['appScreen.switch'] })).toBeInTheDocument()
+  })
 })

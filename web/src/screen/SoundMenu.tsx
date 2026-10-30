@@ -5,13 +5,48 @@ import { fetchJLocalSoundApps, type JLocalAudioApp } from '../jlocal/audio'
 import { setAppMuted, setSoundEnabled, useSoundChoice } from '../jlocal/soundChoice'
 import { MorphingMenu } from '../ui/MorphingMenu'
 import { Loading, Skeleton } from '../ui/Shimmer'
+import { soundSummary, useAppSoundApps } from './appShare'
+import { AppSoundSwitches, MuteAllButton } from './AppSound'
 
 /**
  * Which sounds go out with a companion share: one switch for all of it, then
  * an app per row to leave out. The app list is asked for when the menu
  * opens, so it shows what is running now, not what was when the share began.
+ * A desktop-app share (`app`) gets the picker's own switches instead, with
+ * the apps' icons, and its trigger counts the apps going out.
  */
-export function SoundMenu({ t }: { t: Translator }) {
+export function SoundMenu({ t, app = false }: { t: Translator; app?: boolean }) {
+  return app ? <AppSoundMenu t={t} /> : <CompanionSoundMenu t={t} />
+}
+
+function AppSoundMenu({ t }: { t: Translator }) {
+  const choice = useSoundChoice()
+  const apps = useAppSoundApps(true)
+  const summary = soundSummary(choice, apps, t)
+  const silent = summary === t('jlocal.soundNone')
+  return (
+    <MorphingMenu
+      align="start"
+      haspopup="menu"
+      minWidth={260}
+      ariaLabel={t('appScreen.sound')}
+      triggerClassName={`screen-quality-pill ${silent ? '' : 'is-on'}`}
+      trigger={() => <>{silent ? <VolumeX size={14} aria-hidden="true" /> : <Volume2 size={14} aria-hidden="true" />}{summary}</>}
+    >
+      {() => (
+        <div className="sound-menu app-sound-menu" role="group" aria-label={t('appScreen.sound')}>
+          <div className="app-sound-menu-head">
+            <strong>{t('appScreen.sound')}</strong>
+            <MuteAllButton apps={apps} t={t} />
+          </div>
+          <AppSoundSwitches apps={apps} t={t} />
+        </div>
+      )}
+    </MorphingMenu>
+  )
+}
+
+function CompanionSoundMenu({ t }: { t: Translator }) {
   const choice = useSoundChoice()
   const [apps, setApps] = useState<JLocalAudioApp[] | null>(null)
   const load = () => {
