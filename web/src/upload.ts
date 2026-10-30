@@ -10,6 +10,7 @@ import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
 import { mockCreateRoom, mocksEnabled } from './mocks'
 import { ensureHuman, forgetHuman } from './human'
 import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
+import type { LocalCopy } from './types'
 import type { ClientRemuxHandle } from './pipeline/clientMedia'
 // From the leaf module, never from remuxJob: a value import of remuxJob here
 // pulls mediabunny into the first-paint chunk and defeats the dynamic import.
@@ -244,13 +245,30 @@ export async function changeRoomSource(
   kind: MediaSourceKind,
   fileName?: string,
   durationMs?: number,
+  localCopy?: LocalCopy,
 ): Promise<RoomSource> {
-  return postRoomSource(roomID, { memberId, capability, kind, fileName, ...localFields(kind, fileName, durationMs) })
+  return postRoomSource(roomID, { memberId, capability, kind, fileName, ...localFields(kind, fileName, durationMs, localCopy) })
 }
 
-function localFields(kind: MediaSourceKind, fileName?: string, durationMs?: number): Record<string, unknown> {
+function localFields(kind: MediaSourceKind, fileName?: string, durationMs?: number, localCopy?: LocalCopy): Record<string, unknown> {
   if (kind !== 'local') return {}
-  return { title: fileName ?? '', ...(durationMs && durationMs > 0 ? { durationMs } : {}) }
+  return {
+    title: fileName ?? '',
+    ...(durationMs && durationMs > 0 ? { durationMs } : {}),
+    ...(localCopy ? { localCopy } : {}),
+  }
+}
+
+/** What another member's app opens to play its own copy of a torrent the app holds. */
+export function torrentCopy(session: TorrentSession, file: TorrentVideoFile): LocalCopy | undefined {
+  if (session.backend !== 'desktop' || !session.magnet?.startsWith('magnet:?')) return undefined
+  return { kind: 'torrent', magnet: session.magnet, index: file.index }
+}
+
+/** The same for a video the app downloads. */
+export function youtubeCopy(session: YoutubeSession): LocalCopy | undefined {
+  if (session.backend !== 'desktop' || !session.videoId || !session.url.startsWith('https://')) return undefined
+  return { kind: 'youtube', url: session.url, videoId: session.videoId }
 }
 
 // The creator opens the first media before the room has seated them.

@@ -155,6 +155,9 @@ type Room struct {
 	// from its own cache and uploads only while a browser needs it. It stays
 	// true through uploading and ready, until the source is swapped.
 	LocalSource bool `json:"localSource,omitempty"`
+	// LocalCopy is how a member on the app makes its own copy of a local
+	// source, so a room where everyone is on the app never needs the bucket.
+	LocalCopy *LocalCopy `json:"localCopy,omitempty"`
 	// Renditions the producer adds beside the source's own, such as "480p"
 	// once a viewer's link proved too thin for it.
 	Renditions          []string       `json:"renditions,omitempty"`
@@ -234,4 +237,14 @@ type SwarmStats struct {
 	HaveBytes     int64 `json:"haveBytes"`
 	SelectedBytes int64 `json:"selectedBytes"`
 	DiskBytes     int64 `json:"diskBytes"`
+}
+
+// LocalCopy names a local source the way the app opens it: the torrent and
+// the file in it, or the video's page.
+type LocalCopy struct {
+	Kind    string `json:"kind"`
+	Magnet  string `json:"magnet,omitempty"`
+	Index   int    `json:"index,omitempty"`
+	URL     string `json:"url,omitempty"`
+	VideoID string `json:"videoId,omitempty"`
 }

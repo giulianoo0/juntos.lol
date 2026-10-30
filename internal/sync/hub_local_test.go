@@ -93,6 +93,47 @@ func TestMembersSayWhoIsOnTheApp(t *testing.T) {
 
 // Only the seat that produces the source plays it from its own cache: a
 // friend on the app plays the bucket like a browser does.
+func helloCopyingApp(t *testing.T, conn *websocket.Conn, nickname string) {
+	t.Helper()
+	require.NoError(t, conn.WriteJSON(Inbound{
+		Type: "hello", Nickname: nickname, ClientTimeMs: 1, Client: "desktop",
+		Features: []string{"localSource", "localCopy"},
+	}))
+	require.Equal(t, "welcome", readHubEvent(t, conn).Type)
+}
+
+func TestARoomOfAppsThatOpenTheSourceThemselvesAsksForNoUpload(t *testing.T) {
+	_, _, server, generation := localRoom(t)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	friend := dialHubWS(t, server)
+	helloCopyingApp(t, friend, "friend")
+	nextOf(t, host, "members")
+	requireNoEvent(t, host, 100*time.Millisecond)
+
+	browser := dialHubWS(t, server)
+	helloHubClient(t, browser, "browser", 3)
+	require.Equal(t, generation, nextOf(t, host, "needBrowserMedia").Generation)
+	require.NoError(t, browser.Close())
+	nextOf(t, host, "browserMediaIdle")
+}
+
+func TestAnAppThatCannotOpenTheSourceAsksForTheBucket(t *testing.T) {
+	_, _, server, generation := localRoom(t)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	friend := dialHubWS(t, server)
+	helloCopyingApp(t, friend, "friend")
+	nextOf(t, host, "members")
+	requireNoEvent(t, host, 100*time.Millisecond)
+
+	require.NoError(t, friend.WriteJSON(Inbound{Type: "localCopyFailed", Generation: generation + 1}))
+	requireNoEvent(t, host, 100*time.Millisecond)
+	require.NoError(t, friend.WriteJSON(Inbound{Type: "localCopyFailed", Generation: generation}))
+	require.Equal(t, generation, nextOf(t, host, "needBrowserMedia").Generation)
+}
+
+// An app too old to open the source itself plays the bucket.
 func TestAGuestOnTheAppAlsoNeedsTheBucket(t *testing.T) {
 	_, _, server, generation := localRoom(t)
 	host := dialHubWS(t, server)
@@ -292,4 +333,94 @@ func TestAGuestAtTheEdgeWaitsWhileTheProducerIsIn(t *testing.T) {
 			return
 		}
 	}
+}
+
+func gateReadiness(t *testing.T, host *websocket.Conn) map[string]MemberReadiness {
+	t.Helper()
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 60_000, Rate: 1}))
+	nextOf(t, host, "waiting")
+	require.NoError(t, host.WriteJSON(Inbound{Type: "ready", PositionMs: 60_000, BufferAheadMs: 5_000}))
+	byMember := map[string]MemberReadiness{}
+	for _, member := range nextOf(t, host, "waiting").Readiness {
+		byMember[member.MemberID] = member
+	}
+	return byMember
+}
+
+// An app with its own copy loads the media however bare the bucket is.
+func TestAnAppWithItsOwnCopyHoldsTheGateBeforeTheBucketHasAnything(t *testing.T) {
+	_, _, server, _ := localRoom(t)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	friend := dialHubWS(t, server)
+	helloCopyingApp(t, friend, "friend")
+
+	require.False(t, gateReadiness(t, host)["m2"].Ready, "an app loading its own copy was skipped")
+	require.NoError(t, friend.WriteJSON(Inbound{Type: "ready", PositionMs: 60_000, BufferAheadMs: 4_000}))
+	for {
+		event := readHubEvent(t, host)
+		if event.Type == "state" {
+			require.True(t, event.State.Playing)
+			return
+		}
+	}
+}
+
+// One that gave up waits on the bucket like a browser: while it is bare, the
+// room plays without it.
+func TestAnAppWhoseCopyFailedStopsHoldingTheGate(t *testing.T) {
+	_, _, server, generation := localRoom(t)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	friend := dialHubWS(t, server)
+	helloCopyingApp(t, friend, "friend")
+	require.False(t, gateReadiness(t, host)["m2"].Ready)
+
+	require.NoError(t, friend.WriteJSON(Inbound{Type: "localCopyFailed", Generation: generation}))
+	for {
+		event := readHubEvent(t, host)
+		if event.Type == "state" {
+			require.True(t, event.State.Playing, "the room kept waiting for an app with nothing to load")
+			return
+		}
+	}
+}
+
+// A copy that failed for one source says nothing of the next.
+func TestTheNextSourceIsCopiedAgainAfterAFailure(t *testing.T) {
+	hub, store, server, generation := localRoom(t)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	friend := dialHubWS(t, server)
+	helloCopyingApp(t, friend, "friend")
+	nextOf(t, host, "members")
+	require.NoError(t, friend.WriteJSON(Inbound{Type: "localCopyFailed", Generation: generation}))
+	nextOf(t, host, "needBrowserMedia")
+
+	_, next, err := store.SwapSource(t.Context(), "r1", "m1", "Outro", room.StatusLocal, time.Now())
+	require.NoError(t, err)
+	hub.NotifyStatus("r1", room.StatusLocal)
+
+	nextOf(t, host, "browserMediaIdle")
+	require.NotEqual(t, generation, next)
+}
+
+// Only a member that claimed to copy, and only for the source in the room,
+// can move the room to the bucket.
+func TestAStrayCopyFailureMovesNothing(t *testing.T) {
+	_, _, server, generation := localRoom(t)
+	host := dialHubWS(t, server)
+	helloApp(t, host, "host")
+	browser := dialHubWS(t, server)
+	helloHubClient(t, browser, "browser", 2)
+	nextOf(t, host, "needBrowserMedia")
+	require.NoError(t, browser.Close())
+	nextOf(t, host, "browserMediaIdle")
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "localCopyFailed", Generation: generation}))
+	old := dialHubWS(t, server)
+	helloApp(t, old, "old")
+	nextOf(t, host, "members")
+	require.NoError(t, old.WriteJSON(Inbound{Type: "localCopyFailed", Generation: generation}))
+	nextOf(t, host, "needBrowserMedia")
 }

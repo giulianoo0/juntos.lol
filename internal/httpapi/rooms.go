@@ -204,6 +204,8 @@ func getRoom(store *room.Store, mediaBaseURL string, authorizer memberAuthorizer
 			"controllerId":        r.ControllerID,
 			"sourceMemberId":      r.SourceMemberID,
 			"sourceOrigin":        r.SourceOrigin,
+			"localSource":         r.LocalSource,
+			"localCopy":           r.LocalCopy,
 			"audioTracks":         r.AudioTracks,
 			"subtitleTracks":      r.SubtitleTracks,
 			"chapters":            r.Chapters,

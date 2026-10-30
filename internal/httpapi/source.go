@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,7 +17,7 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
-const maxSourceBodyBytes = 4 << 10
+const maxSourceBodyBytes = 16 << 10
 
 // SourceHooks lets a room change what its stages play without httpapi
 // depending on the media pipeline. All are nil-safe. CancelMedia stops the
@@ -46,6 +47,9 @@ type changeSourceRequest struct {
 	FileName   string `json:"fileName"`
 	Title      string `json:"title"`
 	DurationMs int64  `json:"durationMs"`
+	// LocalCopy, on a local source, lets members on the app open it
+	// themselves.
+	LocalCopy *room.LocalCopy `json:"localCopy"`
 }
 
 // RegisterSourceRoute mounts the endpoints that repoint the room's media
@@ -74,6 +78,9 @@ func changeSource(store *room.Store, cfg config.Config, authorizer stageAuthoriz
 		}
 
 		status, fileName, ok := sourceTarget(req)
+		if ok && req.LocalCopy != nil && (status != room.StatusLocal || !validLocalCopy(*req.LocalCopy)) {
+			ok = false
+		}
 		if !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
@@ -99,7 +106,7 @@ func changeSource(store *room.Store, cfg config.Config, authorizer stageAuthoriz
 			return
 		}
 
-		generation, err := swapMedia(c.Request.Context(), store, cfg, hooks, roomID, holder, fileName, status, localDuration(status, req))
+		generation, err := swapMedia(c.Request.Context(), store, cfg, hooks, roomID, holder, fileName, status, localDuration(status, req), req.LocalCopy)
 		if errors.Is(err, room.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
 			return
@@ -121,7 +128,7 @@ func changeSource(store *room.Store, cfg config.Config, authorizer stageAuthoriz
 // none, in the order members depend on: production stops before its files
 // go, and the clock resets before the status is announced.
 func swapMedia(ctx context.Context, store *room.Store, cfg config.Config, hooks SourceHooks,
-	roomID, holder, fileName, status string, durationMs int64) (int, error) {
+	roomID, holder, fileName, status string, durationMs int64, localCopy *room.LocalCopy) (int, error) {
 	if hooks.CancelMedia != nil {
 		hooks.CancelMedia(roomID)
 	}
@@ -135,6 +142,13 @@ func swapMedia(ctx context.Context, store *room.Store, cfg config.Config, hooks 
 	if durationMs > 0 {
 		if err := store.SetMediaDuration(ctx, roomID, durationMs); err != nil {
 			slog.WarnContext(ctx, "store local source duration", "room_id", roomID, "error", err)
+		}
+	}
+	// Before the clock resets and the status goes out: a member on the app
+	// reads it the moment it hears of the new source.
+	if localCopy != nil {
+		if err := store.SetLocalCopy(ctx, roomID, *localCopy); err != nil {
+			slog.WarnContext(ctx, "store local copy", "room_id", roomID, "error", err)
 		}
 	}
 	if hooks.ResetPlayback != nil {
@@ -239,7 +253,7 @@ func promoteLocal(store *room.Store, cfg config.Config, authorizer stageAuthoriz
 func CloseStage(ctx context.Context, store *room.Store, cfg config.Config, hooks SourceHooks, roomID, kind string) error {
 	switch kind {
 	case room.StageMedia:
-		if _, err := swapMedia(ctx, store, cfg, hooks, roomID, "", "", room.StatusEmpty, 0); err != nil {
+		if _, err := swapMedia(ctx, store, cfg, hooks, roomID, "", "", room.StatusEmpty, 0, nil); err != nil {
 			return err
 		}
 	case room.StageLive:
@@ -258,6 +272,20 @@ func CloseStage(ctx context.Context, store *room.Store, cfg config.Config, hooks
 
 // localDuration is the length the app read from its file; the other kinds
 // learn theirs from the producer.
+// validLocalCopy accepts a torrent's magnet and file, or a video's page, and
+// nothing a member's app would not open as one of those.
+func validLocalCopy(local room.LocalCopy) bool {
+	switch local.Kind {
+	case "torrent":
+		return strings.HasPrefix(local.Magnet, "magnet:?") && len(local.Magnet) <= 4096 && local.Index >= 0 &&
+			local.URL == "" && local.VideoID == ""
+	case "youtube":
+		return strings.HasPrefix(local.URL, "https://") && len(local.URL) <= 2048 && local.VideoID != "" &&
+			len(local.VideoID) <= 64 && local.Magnet == ""
+	}
+	return false
+}
+
 func localDuration(status string, req changeSourceRequest) int64 {
 	if status != room.StatusLocal {
 		return 0

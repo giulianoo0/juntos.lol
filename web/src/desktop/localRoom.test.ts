@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDesktopForTests } from '../platform'
 import { remuxHandleFor } from '../upload'
-import { attachLocalRoom, browserMediaIdle, localMediaFor, needBrowserMedia, refreshLocalMedia, resetLocalRoomsForTests, setLocalRenditions } from './localRoom'
+import {
+  attachLocalRoom, browserMediaIdle, closeLocalCopy, followLocalCopy, localMediaFor, needBrowserMedia, openLocalCopy,
+  refreshLocalMedia, resetLocalRoomsForTests, setLocalRenditions,
+} from './localRoom'
 
 const regions = [{ n: 0, startMs: 0, producedMs: 8000, growing: true }]
 const meta = { key: 't-abc-0', title: 'Filme', durationMs: 600000, audioLangs: ['eng'], videoCodecs: null, regions: [] }
@@ -14,6 +17,7 @@ beforeEach(() => {
     if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }
     if (cmd === 'local_prepare') return meta
     if (cmd === 'local_regions') return regions
+    if (cmd === 'torrent_open') return { id: 'abc', name: 'Filme', files: [] }
     return null
   })
   ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = { invoke }
@@ -152,5 +156,81 @@ describe('a room played from the desktop cache', () => {
     })
     expect(await attachLocalRoom('ROOM1', 4, source)).toContain('torrent not live')
     expect(localMediaFor('ROOM1')).toBeNull()
+  })
+})
+
+describe('a guest on the app playing its own copy', () => {
+  const magnet = 'magnet:?xt=urn:btih:abc&dn=A%20Viagem%20de%20Chihiro%20%E2%80%93%20Dublado'
+  const torrentCopy = { kind: 'torrent' as const, magnet, index: 2 }
+  const calls = (name: string) => invoke.mock.calls.filter(([cmd]) => cmd === name).map(([, args]) => args)
+
+  it('opens the same torrent, picks the same file and plays its own cache', async () => {
+    expect(await openLocalCopy('ROOM1', 4, torrentCopy, 'A Viagem de Chihiro – 千と千尋')).toBeNull()
+    expect(calls('torrent_open')).toEqual([{ magnet }])
+    expect(calls('torrent_select')).toEqual([{ id: 'abc', index: 2 }])
+    expect(calls('local_prepare')).toEqual([{ source: { kind: 'torrent', id: 'abc', index: 2, title: 'A Viagem de Chihiro – 千と千尋' } }])
+    await refreshLocalMedia('ROOM1')
+    expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, regions })
+  })
+
+  it('opens the same video', async () => {
+    const copy = { kind: 'youtube' as const, url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', videoId: 'dQw4w9WgXcQ' }
+    expect(await openLocalCopy('ROOM1', 4, copy, 'Clipe')).toBeNull()
+    expect(calls('local_prepare')).toEqual([{ source: { ...copy, title: 'Clipe' } }])
+    expect(calls('torrent_open')).toEqual([])
+  })
+
+  it('is no producer: the room never asks it to upload', async () => {
+    await openLocalCopy('GUEST1', 4, torrentCopy, 'Filme')
+    expect(remuxHandleFor('GUEST1')).toBeUndefined()
+    await needBrowserMedia('GUEST1', { memberId: 'm2', capability: 'cap' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(calls('upload_start')).toEqual([])
+  })
+
+  it('follows the room in its own cache', async () => {
+    await openLocalCopy('ROOM1', 4, torrentCopy, 'Filme')
+    followLocalCopy('ROOM1', 42_000)
+    expect(calls('local_follow')).toEqual([{ key: 't-abc-0', positionMs: 42_000 }])
+  })
+
+  it('a swarm that will not open, or a prepare that fails, is the reason and attaches nothing', async () => {
+    invoke.mockImplementationOnce(async () => ({ protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }))
+    invoke.mockImplementationOnce(async () => { throw new Error('no peers') })
+    expect(await openLocalCopy('ROOM1', 4, torrentCopy, 'Filme')).toBe('torrent open failed: no peers')
+    expect(localMediaFor('ROOM1')).toBeNull()
+
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'local_prepare') throw new Error('ffprobe failed')
+      return { id: 'abc' }
+    })
+    expect(await openLocalCopy('ROOM1', 4, torrentCopy, 'Filme')).toMatch(/^local prepare failed: ffprobe failed/)
+    expect(localMediaFor('ROOM1')).toBeNull()
+  })
+
+  it('closing stops its production and keeps the cache; an old generation closes nothing', async () => {
+    await openLocalCopy('ROOM1', 4, torrentCopy, 'Filme')
+    closeLocalCopy('ROOM1', 3)
+    expect(localMediaFor('ROOM1')).not.toBeNull()
+    closeLocalCopy('ROOM1', 4)
+    expect(localMediaFor('ROOM1')).toBeNull()
+    await vi.waitFor(() => expect(calls('local_stop')).toEqual([{ key: 't-abc-0' }]))
+  })
+
+  it('closing never touches a room this app produces', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    closeLocalCopy('ROOM1', 4)
+    expect(localMediaFor('ROOM1')).not.toBeNull()
+    expect(remuxHandleFor('ROOM1')).toBeDefined()
+  })
+
+  it('opening a source of its own stops the copy it was playing', async () => {
+    await openLocalCopy('ROOM1', 4, torrentCopy, 'Filme')
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'local_prepare' ? { ...meta, key: 'y-xyz-0' } : null))
+    expect(await attachLocalRoom('ROOM1', 5, { kind: 'youtube', url: 'https://youtu.be/xyz', videoId: 'xyz', title: 'Outro' })).toBeNull()
+    expect(calls('local_stop')).toEqual([{ key: 't-abc-0' }])
+    expect(remuxHandleFor('ROOM1')).toBeDefined()
+    followLocalCopy('ROOM1', 9_000)
+    expect(calls('local_follow')).toEqual([])
   })
 })

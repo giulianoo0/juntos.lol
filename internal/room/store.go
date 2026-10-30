@@ -320,6 +320,13 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	r.SourceMemberID = fields["source_member_id"]
 	r.SourceOrigin = fields["source_origin"]
 	r.LocalSource = fields["local_source"] == "1"
+	if v := fields["local_copy"]; v != "" && r.LocalSource {
+		var local LocalCopy
+		if err := json.Unmarshal([]byte(v), &local); err != nil {
+			return nil, fmt.Errorf("unmarshal local copy: %w", err)
+		}
+		r.LocalCopy = &local
+	}
 	if v := fields["renditions"]; v != "" {
 		r.Renditions = strings.Split(v, ",")
 	}
@@ -747,6 +754,16 @@ func (s *Store) SetMediaDuration(ctx context.Context, id string, durationMs int6
 	return s.mutateRoom(ctx, id, false, "duration_ms", strconv.FormatInt(durationMs, 10))
 }
 
+// SetLocalCopy stores how members on the app open the local source
+// themselves; the next swap clears it.
+func (s *Store) SetLocalCopy(ctx context.Context, id string, local LocalCopy) error {
+	encoded, err := json.Marshal(local)
+	if err != nil {
+		return fmt.Errorf("marshal local copy: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "local_copy", string(encoded))
+}
+
 // SetMediaOffset stores where the current region's media timeline begins and
 // bumps the media version in the same atomic step, so a player never reloads
 // into an offset whose playlists are not the ones behind the URL.
@@ -886,7 +903,7 @@ redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapte
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token',
-  'source_origin', 'source_kind', 'renditions')
+  'source_origin', 'source_kind', 'renditions', 'local_copy')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

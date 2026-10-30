@@ -420,3 +420,110 @@ describe('tela pelo app', () => {
     expect(requestScreenStream).not.toHaveBeenCalled()
   })
 })
+
+describe('cópia própria no app', () => {
+  const magnet = 'magnet:?xt=urn:btih:abc&dn=Ma%C3%A7%C3%A3'
+  const meta = { key: 't-abc-2', title: 'Maçã', durationMs: 600000, audioLangs: ['por'], videoCodecs: null, regions: [] }
+  let invoke: ReturnType<typeof vi.fn>
+  let produced: number
+
+  const localRoom = (extra: Record<string, unknown> = {}) => roomBody({
+    fileName: 'Maçã', status: 'local', mediaGeneration: 3, localSource: true, sourceMemberId: 'm1',
+    localCopy: { kind: 'torrent', magnet, index: 2 }, ...extra,
+  })
+  const calls = (name: string) => invoke.mock.calls.filter(([cmd]) => cmd === name).map(([, args]) => args)
+  const failures = () => sent().filter((message) => message.type === 'localCopyFailed')
+
+  beforeEach(async () => {
+    produced = 0
+    invoke = vi.fn(async (cmd: string) => {
+      if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.2.1', compatible: true, features: [], mediaRoot: 'juntos-media://localhost' }
+      if (cmd === 'torrent_open') return { id: 'abc', name: 'Maçã', files: [] }
+      if (cmd === 'local_prepare') return meta
+      if (cmd === 'local_regions') return [{ n: 0, startMs: 0, producedMs: produced, growing: true }]
+      return null
+    })
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke }
+    resetDesktopForTests()
+    await desktop()
+  })
+
+  afterEach(() => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    resetDesktopForTests()
+  })
+
+  it('o convidado no app abre o mesmo torrent e o mesmo arquivo, sem pedir o bucket', async () => {
+    serve({ room: localRoom() })
+    await joined('m2')
+
+    await waitFor(() => expect(calls('local_prepare')).toEqual([{ source: { kind: 'torrent', id: 'abc', index: 2, title: 'Maçã' } }]))
+    expect(calls('torrent_open')).toEqual([{ magnet }])
+    expect(failures()).toEqual([])
+  })
+
+  it('quem abriu a fonte não abre uma cópia dela', async () => {
+    serve({ room: localRoom({ sourceMemberId: 'm1' }) })
+    await joined('m1')
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(calls('torrent_open')).toEqual([])
+    expect(failures()).toEqual([])
+  })
+
+  it('sem o que abrir, o convidado avisa a sala e fica com o bucket', async () => {
+    serve({ room: localRoom({ localCopy: null }) })
+    await joined('m2')
+
+    await waitFor(() => expect(failures()).toEqual([{ type: 'localCopyFailed', generation: 3 }]))
+    expect(calls('torrent_open')).toEqual([])
+  })
+
+  it('um torrent que não abre vira o bucket', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'torrent_open') throw new Error('invalid magnet')
+      return null
+    })
+    serve({ room: localRoom() })
+    await joined('m2')
+
+    await waitFor(() => expect(failures()).toEqual([{ type: 'localCopyFailed', generation: 3 }]))
+    expect(calls('local_prepare')).toEqual([])
+  })
+
+  it('uma cópia que não mostra imagem em 30 s é largada', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    serve({ room: localRoom() })
+    await joined('m2')
+    await waitFor(() => expect(calls('local_prepare')).toHaveLength(1))
+
+    await act(() => vi.advanceTimersByTimeAsync(30_000))
+
+    await waitFor(() => expect(failures()).toEqual([{ type: 'localCopyFailed', generation: 3 }]))
+    expect(calls('local_stop')).toEqual([{ key: 't-abc-2' }])
+  })
+
+  it('uma cópia que já mostra imagem segue depois dos 30 s', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    produced = 8000
+    serve({ room: localRoom() })
+    await joined('m2')
+    await waitFor(() => expect(calls('local_regions').length).toBeGreaterThan(0))
+
+    await act(() => vi.advanceTimersByTimeAsync(30_000))
+
+    expect(failures()).toEqual([])
+    expect(calls('local_stop')).toEqual([])
+  })
+
+  it('no navegador nada se abre', async () => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    resetDesktopForTests()
+    serve({ room: localRoom() })
+    await joined('m2')
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(invoke).not.toHaveBeenCalledWith('torrent_open', expect.anything())
+    expect(failures()).toEqual([])
+  })
+})

@@ -317,6 +317,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		telemetry:   syncTelemetry{device: deviceClass(c.Request.UserAgent())},
 		identity:    identity,
 		localSource: playsLocally(hello),
+		localCopy:   copiesLocally(hello),
 		kind:        clientKind(hello),
 	}
 	result := make(chan string, 1)
@@ -1051,6 +1052,8 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.handleCall(event.client, message)
 	case "admit", "deny":
 		r.handleAdmission(event.client, message)
+	case "localCopyFailed":
+		r.handleLocalCopyFailed(event.client, message)
 	}
 }
 

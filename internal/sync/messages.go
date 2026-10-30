@@ -52,9 +52,12 @@ type Inbound struct {
 	Avatar string `json:"avatar,omitempty"`
 	// Client and Features on a hello say what is on the other end: "desktop"
 	// for the app, and "localSource" when it can play a source it opened
-	// from its own cache. They change what the room asks of it, never what it may do.
+	// from its own cache, "localCopy" when it opens a local source someone else
+	// shared on its own. They change what the room asks of it, never what it may do.
 	Client   string   `json:"client,omitempty"`
 	Features []string `json:"features,omitempty"`
+	// Generation on a localCopyFailed: the media the app could not open.
+	Generation int `json:"generation,omitempty"`
 }
 
 // decodeHello reads the first message of a socket, which must be a hello

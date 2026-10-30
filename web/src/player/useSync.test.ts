@@ -88,7 +88,7 @@ describe('useSync', () => {
     localStorage.clear()
   })
 
-  it('says in the hello that the desktop app can play a local source, and a browser says nothing', () => {
+  it('says in the hello that the desktop app plays a local source and opens its own copy, and a browser says nothing', () => {
     const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
     const browser = renderHook(() => useSync('r1', 'giuli', videoRef))
     act(() => FakeWebSocket.instances[0].onopen?.())
@@ -100,7 +100,7 @@ describe('useSync', () => {
     ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke: vi.fn() }
     const app = renderHook(() => useSync('r1', 'giuli', videoRef))
     act(() => FakeWebSocket.instances[1].onopen?.())
-    expect(JSON.parse(FakeWebSocket.instances[1].send.mock.calls[0][0] as string)).toMatchObject({ client: 'desktop', features: ['localSource'] })
+    expect(JSON.parse(FakeWebSocket.instances[1].send.mock.calls[0][0] as string)).toMatchObject({ client: 'desktop', features: ['localSource', 'localCopy'] })
     app.unmount()
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })

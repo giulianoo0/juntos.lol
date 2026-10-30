@@ -18,7 +18,7 @@ import { useScreenShare } from '../screen/useScreenShare'
 import { JlocalPicker } from '../screen/JlocalPicker'
 import { AppScreenPicker } from '../screen/AppScreenPicker'
 import { encodedPicker } from '../screen/encodedOrigin'
-import { setLocalRenditions, useLocalRoomMedia } from '../desktop/localRoom'
+import { closeLocalCopy, followLocalCopy, localMediaFor, openLocalCopy, setLocalRenditions, useLocalRoomMedia } from '../desktop/localRoom'
 import { openDownloadApp } from '../components/DownloadApp'
 import { isDesktop } from '../platform'
 import { localStatus, playableRoom } from '../desktop/localView'
@@ -42,7 +42,7 @@ import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
 import { playJoinChime } from '../ui/chime'
-import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
+import type { ChatEntry, LocalCopy, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import type { OverlayFocus } from '../catalog/CatalogOverlay'
 const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
 import { openCatalogStream } from '../catalog/openStream'
@@ -68,6 +68,8 @@ import {
   REMUX_UNAVAILABLE,
   assertReadable,
   changeRoomSource,
+  torrentCopy,
+  youtubeCopy,
   lastUploadFailureDetail,
   subscribeUploadDone,
   subscribeUploadProgress,
@@ -93,6 +95,8 @@ import { isReaction, splitReactions } from '../room/reactions'
 import type { TorrentStats } from '../torrent'
 
 const PREPARING_POLL_MS = 3_000
+/** How long a guest's own copy has to show its first frame before the bucket takes over. */
+const LOCAL_COPY_START_MS = 30_000
 // How long a pipeline may go quiet before the room counts as unproduced: long
 // enough to outlast a cold seek, well short of the server's claim sweep.
 const PRODUCER_ALIVE_MS = 90_000
@@ -450,7 +454,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         if (source.kind === 'youtube') {
           const session = await openYoutube(source.url ?? '')
           try {
-            const next = await changeRoomSource(room.id, sync.memberId, sync.capability, sourceKindFor(session.backend, 'youtube'), youtubeFileName(session), session.summary.durationMs)
+            const next = await changeRoomSource(room.id, sync.memberId, sync.capability, sourceKindFor(session.backend, 'youtube'), youtubeFileName(session), session.summary.durationMs, youtubeCopy(session))
             startYoutubeUpload(room.id, next.mediaGeneration, session, { memberId: sync.memberId, capability: sync.capability })
           } catch (error) {
             session.destroy()
@@ -466,7 +470,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         }
         await session.select(file.path)
         try {
-          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, sourceKindFor(session.backend, 'upload'), file.name)
+          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, sourceKindFor(session.backend, 'upload'), file.name, undefined, torrentCopy(session, file))
           startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
         } catch (error) {
           session.destroy()
@@ -486,8 +490,53 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const localMedia = useLocalRoomMedia(room.id)
   const mediaStatus = localStatus(sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status, localMedia, liveRoom.mediaGeneration)
   const played = useMemo(() => playableRoom(liveRoom, localMedia), [liveRoom, localMedia])
+  // A guest on the app opens the source the host's app shared and plays its
+  // own copy; one that cannot tells the room, which has the host upload.
+  const copySource = isDesktop() && liveRoom.localSource && liveRoom.status !== 'empty' && liveRoom.status !== 'error'
+    && !!sync.memberId && liveRoom.sourceMemberId !== sync.memberId
+  const copyKey = copySource ? JSON.stringify(liveRoom.localCopy ?? null) : ''
+  const copyFailed = useRef<number | null>(null)
+  const { send: sendSync } = sync
+  useEffect(() => {
+    if (!copyKey) return
+    const generation = liveRoom.mediaGeneration
+    const copy = JSON.parse(copyKey) as LocalCopy | null
+    let gone = false
+    const fail = (why: string) => {
+      if (gone) return
+      console.warn('local copy unavailable, playing the bucket', why)
+      copyFailed.current = generation
+      sendSync('localCopyFailed', { generation })
+    }
+    copyFailed.current = null
+    // A swarm with no one to give it the file never says no; past this long
+    // without a frame of its own, the copy is given up.
+    const deadline = window.setTimeout(() => {
+      if (localMediaFor(room.id)?.regions.some((region) => region.producedMs > 0)) return
+      closeLocalCopy(room.id, generation)
+      fail('the copy did not start in time')
+    }, LOCAL_COPY_START_MS)
+    if (!copy) fail('the host shared no copy')
+    else {
+      void openLocalCopy(room.id, generation, copy, liveRoom.fileName).then((refusal) => {
+        if (refusal !== null) fail(refusal)
+        // Opened after the room gave up on it, or moved on: let it go.
+        else if (gone || copyFailed.current === generation) closeLocalCopy(room.id, generation)
+      })
+    }
+    return () => {
+      gone = true
+      window.clearTimeout(deadline)
+      closeLocalCopy(room.id, generation)
+    }
+    // The title is only the cache's label; a new one is no new source.
+  }, [copyKey, liveRoom.mediaGeneration, room.id, sendSync])
+  // A socket that came back is a new seat to the room, which has forgotten.
+  useEffect(() => {
+    if (sync.connected && copyFailed.current === liveRoom.mediaGeneration) sendSync('localCopyFailed', { generation: copyFailed.current })
+  }, [sync.connected, liveRoom.mediaGeneration, sendSync])
   const renditions = liveRoom.renditions?.join(',') ?? ''
-  const producesLocally = localMedia !== null
+  const producesLocally = localMedia !== null && liveRoom.sourceMemberId === sync.memberId
   useEffect(() => {
     if (producesLocally) void setLocalRenditions(room.id, renditions ? renditions.split(',') : [])
   }, [producesLocally, renditions, room.id])
@@ -569,8 +618,8 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const { shown: shownOpening } = useMorphingStep(openingGate)
 
   // Opening media spends a guest's grant; the host and the media's owner have none to spend.
-  const openMedia = async (kind: MediaSourceKind, fileName: string, durationMs?: number) => {
-    const next = await changeRoomSource(room.id, sync.memberId, sync.capability, kind, fileName, durationMs)
+  const openMedia = async (kind: MediaSourceKind, fileName: string, durationMs?: number, localCopy?: LocalCopy) => {
+    const next = await changeRoomSource(room.id, sync.memberId, sync.capability, kind, fileName, durationMs, localCopy)
     stageUsed('media')
     return next
   }
@@ -612,7 +661,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     void swapSource(async () => {
       let next
       try {
-        next = await openMedia(sourceKindFor(session.backend, 'upload'), file.name)
+        next = await openMedia(sourceKindFor(session.backend, 'upload'), file.name, undefined, torrentCopy(session, file))
       } catch (error) {
         session.destroy()
         throw error
@@ -634,7 +683,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       }
       let next
       try {
-        next = await openMedia(sourceKindFor(session.backend, 'youtube'), youtubeFileName(session), session.summary.durationMs)
+        next = await openMedia(sourceKindFor(session.backend, 'youtube'), youtubeFileName(session), session.summary.durationMs, youtubeCopy(session))
       } catch (error) {
         session.destroy()
         throw error
@@ -661,7 +710,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       }
       const opened = await openCatalogStream(pick.stream, pick.target, undefined, { onProbe: setSwapProbes })
       try {
-        const next = await openMedia(sourceKindFor(opened.session.backend, 'upload'), pick.displayName)
+        const next = await openMedia(sourceKindFor(opened.session.backend, 'upload'), pick.displayName, undefined, torrentCopy(opened.session, opened.file))
         startTorrentUpload(room.id, next.mediaGeneration, opened, undefined, { memberId: sync.memberId, capability: sync.capability })
       } catch (error) {
         opened.session.destroy()
@@ -694,7 +743,9 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
 
   const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
   useEffect(() => {
-    remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs))
+    const positionMs = expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs)
+    remuxHandleFor(room.id)?.follow(positionMs)
+    followLocalCopy(room.id, positionMs)
   }, [room.id, sync.state, sync.serverOffsetMs])
 
   const { mediaPatch, refreshRoom } = sync

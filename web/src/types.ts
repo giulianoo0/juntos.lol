@@ -144,6 +144,11 @@ export interface Spotlight {
   memberId?: string
 }
 
+/** A local source the way another member's app opens it: the torrent and its file, or the video's page. */
+export type LocalCopy =
+  | { kind: 'torrent'; magnet: string; index: number }
+  | { kind: 'youtube'; url: string; videoId: string }
+
 export interface RoomInfo {
   id: string
   name?: string
@@ -181,6 +186,8 @@ export interface RoomInfo {
   mediaKey?: string
   /** The host's desktop app produces the media; the bucket gets it only for browser guests. */
   localSource?: boolean
+  /** Set when every other app in the room can open the source itself. */
+  localCopy?: LocalCopy | null
   /** Extra variants the server asked of the producer (`480p` for a slow browser guest). */
   renditions?: string[]
 }

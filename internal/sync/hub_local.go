@@ -9,11 +9,12 @@ import (
 )
 
 // A source can live in the desktop app of the member who opened it, which
-// plays it from its own cache and fills the bucket only while someone else is
-// in the room: a browser or another app, both play the bucket. The room asks
-// that producer for the media with needBrowserMedia and lets it go with
-// browserMediaIdle; until the bucket holds something, everyone else waits on
-// their own and holds no one back.
+// plays it from its own cache and fills the bucket only while someone else
+// needs it: a browser, or an app that cannot open the source itself. Any
+// other app opens the same torrent or video on its own and plays its own
+// copy. The room asks that producer for the media with needBrowserMedia and
+// lets it go with browserMediaIdle; until the bucket holds something, those
+// waiting on it wait on their own and hold no one back.
 
 // ClientDesktop on a hello is the desktop app; the room lists the member
 // with it, and a browser with nothing.
@@ -55,8 +56,16 @@ func mediaOf(r *room.Room) roomMedia {
 	return roomMedia{}
 }
 
+// featureLocalCopy on a hello is an app that opens a local source someone
+// else shared on its own, from the room's localCopy.
+const featureLocalCopy = "localCopy"
+
 func playsLocally(hello Inbound) bool {
 	return slices.Contains(hello.Features, featureLocalSource)
+}
+
+func copiesLocally(hello Inbound) bool {
+	return hello.Client == ClientDesktop && slices.Contains(hello.Features, featureLocalCopy)
 }
 
 // refreshMedia rereads the media stage after its status moved.
@@ -76,14 +85,36 @@ func (r *roomConn) produces(member *client) bool {
 	return r.media.local && member.localSource && member.id == r.media.producer
 }
 
+// copies reports whether the member is an app playing its own copy of the
+// local source someone else opened.
+func (r *roomConn) copies(member *client) bool {
+	return r.media.local && member.localCopy && member.copyFailed != r.media.generation &&
+		member.id != r.media.producer
+}
+
 // waitsFor reports whether the room holds its playback for this member: one
 // with no media to load yet is not waited on.
 func (r *roomConn) waitsFor(member *client) bool {
-	return !r.media.bare || r.produces(member)
+	return !r.media.bare || r.produces(member) || r.copies(member)
 }
 
 func (r *roomConn) needsBucket() bool {
-	return slices.ContainsFunc(r.seats(), func(seat *client) bool { return !r.produces(seat) })
+	return slices.ContainsFunc(r.seats(), func(seat *client) bool { return !r.produces(seat) && !r.copies(seat) })
+}
+
+// handleLocalCopyFailed moves an app that could not open the room's source
+// to the bucket, asking the producer for it if no one else had.
+func (r *roomConn) handleLocalCopyFailed(sender *client, message Inbound) {
+	if !r.copies(sender) || message.Generation != r.media.generation {
+		return
+	}
+	sender.copyFailed = message.Generation
+	slog.Info("app could not open the room's source itself", "room_id", r.id, "member_id", sender.id,
+		"generation", message.Generation)
+	r.syncBrowserMedia(nil)
+	if r.gate != nil && !r.evaluateGate() {
+		r.broadcastWaiting()
+	}
 }
 
 // syncBrowserMedia tells the producer whether someone needs the media in the

@@ -40,7 +40,12 @@ type client struct {
 	// The hello said it can play a local source it opened from its own
 	// cache; only the seat that produces the room's source does.
 	localSource bool
-	link        linkWatch
+	// The hello said it opens a local source someone else shared on its own;
+	// copyFailed is the generation it could not, which it plays from the
+	// bucket after all.
+	localCopy  bool
+	copyFailed int
+	link       linkWatch
 }
 
 func (c *client) readPump() {

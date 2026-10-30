@@ -1,16 +1,17 @@
 /**
  * A room the desktop app produces on the host's machine (`kind: "local"`).
  * The app writes the source into its cache as regions; the host's player
- * reads them from there. Nothing reaches the bucket until the server says a
- * guest needs it (`needBrowserMedia`), on a browser or on the app: then the
+ * reads them from there. A guest on the app opens the same torrent or video
+ * from the room's `localCopy` and plays a cache of its own the same way.
+ * Nothing reaches the bucket until the server says someone needs it
+ * (`needBrowserMedia`): a browser, or an app whose own copy failed. Then the
  * room is promoted and the app uploads from the cache, playhead first, until
- * the last guest leaves (`browserMediaIdle`). Only the tab that prepared the
- * source plays the cache; a guest on the app plays the bucket.
+ * the last of them leaves (`browserMediaIdle`).
  */
 import { useSyncExternalStore } from 'react'
 import { desktop } from '../platform'
 import { registerRemuxHandle, unregisterRemuxHandle } from '../upload'
-import type { MediaRegion } from '../types'
+import type { LocalCopy, MediaRegion } from '../types'
 
 export type LocalSource =
   | { kind: 'torrent'; id: string; index: number; title: string }
@@ -60,6 +61,8 @@ const FOLLOW_DEBOUNCE_MS = 3_000
  */
 const SAME_PLACE_MS = 2_000
 const rooms = new Map<string, Attached>()
+/** The follow of a room this tab plays its own copy of, as a guest. */
+const copies = new Map<string, (absoluteMs: number) => void>()
 const listeners = new Set<() => void>()
 
 function emit(): void {
@@ -75,6 +78,46 @@ function reason(error: unknown): string {
  * local producer. Resolves null when it took, or with why it did not.
  */
 export async function attachLocalRoom(roomId: string, generation: number, source: LocalSource): Promise<string | null> {
+  return await attach(roomId, generation, source, true)
+}
+
+/**
+ * Opens the source another member shared in this app and plays it from a
+ * cache of its own. Resolves null when it took, or with why it did not; the
+ * caller then plays the bucket and tells the room so.
+ */
+export async function openLocalCopy(roomId: string, generation: number, copy: LocalCopy, title: string): Promise<string | null> {
+  const app = await desktop()
+  if (!app) return 'desktop app unavailable'
+  let source: LocalSource
+  if (copy.kind === 'torrent') {
+    try {
+      const torrent = await app.invoke<{ id: string }>('torrent_open', { magnet: copy.magnet })
+      await app.invoke('torrent_select', { id: torrent.id, index: copy.index })
+      source = { kind: 'torrent', id: torrent.id, index: copy.index, title }
+    } catch (error) {
+      return `torrent open failed: ${reason(error)}`
+    }
+  } else {
+    source = { kind: 'youtube', url: copy.url, videoId: copy.videoId, title }
+  }
+  return await attach(roomId, generation, source, false)
+}
+
+/** The room moved on from the copy this tab played: its production stops, the cache stays. */
+export function closeLocalCopy(roomId: string, generation: number): void {
+  const attached = rooms.get(roomId)
+  if (!attached || !copies.has(roomId) || attached.media.generation !== generation) return
+  detach(roomId)
+  void desktop().then((app) => app?.invoke('local_stop', { key: attached.key })).catch(() => undefined)
+}
+
+/** Where the room is now, for the copy this tab plays as a guest. */
+export function followLocalCopy(roomId: string, absoluteMs: number): void {
+  copies.get(roomId)?.(absoluteMs)
+}
+
+async function attach(roomId: string, generation: number, source: LocalSource, produce: boolean): Promise<string | null> {
   const app = await desktop()
   if (!app) return 'desktop app unavailable'
   let meta: Meta
@@ -83,6 +126,8 @@ export async function attachLocalRoom(roomId: string, generation: number, source
   } catch (error) {
     return `local prepare failed: ${reason(error)}`
   }
+  const copied = copies.has(roomId) ? rooms.get(roomId) : undefined
+  if (copied && copied.key !== meta.key) void app.invoke('local_stop', { key: copied.key }).catch(() => undefined)
   detach(roomId)
   const attached: Attached = {
     key: meta.key,
@@ -118,6 +163,12 @@ export async function attachLocalRoom(roomId: string, generation: number, source
       }, FOLLOW_DEBOUNCE_MS - since)
     },
   }
+  if (!produce) {
+    copies.set(roomId, handle.follow)
+    emit()
+    void refreshLocalMedia(roomId)
+    return null
+  }
   registerRemuxHandle(roomId, handle, () => {
     unregisterRemuxHandle(roomId, handle)
     if (rooms.get(roomId) !== attached) return
@@ -137,6 +188,7 @@ function detach(roomId: string): void {
   if (attached.followTimer !== null) clearTimeout(attached.followTimer)
   stopWatching(attached)
   rooms.delete(roomId)
+  copies.delete(roomId)
   emit()
 }
 
@@ -171,7 +223,7 @@ function stopWatching(attached: Attached): void {
  */
 export async function needBrowserMedia(roomId: string, auth: ControllerAuth): Promise<void> {
   const attached = rooms.get(roomId)
-  if (!attached) return
+  if (!attached || copies.has(roomId)) return
   attached.wanted = auth
   if (attached.uploadWatch === null) {
     attached.uploadWatch = setInterval(() => { void reviveUpload(roomId) }, UPLOAD_WATCH_MS)

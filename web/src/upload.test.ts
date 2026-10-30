@@ -8,6 +8,8 @@ import {
   createRoomAndUpload,
   createRoomAndUploadTorrent,
   sourceKindFor,
+  torrentCopy,
+  youtubeCopy,
   isUnreadableFile,
   startUrlUpload,
   subscribeUploadDone,
@@ -328,5 +330,29 @@ describe('a local source', () => {
     expect(JSON.parse(String(init.body))).toEqual({ memberId: 'm1', capability: 'cap', kind: 'local', fileName: 'Filme', title: 'Filme', durationMs: 600000 })
     expect(sourceKindFor('desktop', 'upload')).toBe('local')
     expect(sourceKindFor('fleet', 'youtube')).toBe('youtube')
+  })
+
+  it('carries what the other apps open, and never on a source the server holds', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: 'local', fileName: 'Filme', mediaGeneration: 2 }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const copy = { kind: 'torrent' as const, magnet: 'magnet:?xt=urn:btih:abc&dn=Ma%C3%A7%C3%A3', index: 0 }
+    await changeRoomSource('ROOM1', 'm1', 'cap', 'local', 'Maçã', undefined, copy)
+    await changeRoomSource('ROOM1', 'm1', 'cap', 'upload', 'Maçã', undefined, copy)
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String((call as unknown as [string, RequestInit])[1].body)))
+    expect(bodies[0]).toEqual({ memberId: 'm1', capability: 'cap', kind: 'local', fileName: 'Maçã', title: 'Maçã', localCopy: copy })
+    expect(bodies[1]).toEqual({ memberId: 'm1', capability: 'cap', kind: 'upload', fileName: 'Maçã' })
+  })
+
+  it('names the copy only for a source the app holds', () => {
+    const file = { name: 'b.mkv', path: 'Show/b.mkv', index: 3, size: 1, type: '', progress: 0, downloaded: 0 }
+    const session = { name: 'Show', magnet: 'magnet:?xt=urn:btih:abc', backend: 'desktop' as const, files: [file], subtitleFiles: [], stats: () => ({ peers: 0, downloadSpeed: 0, downloaded: 0, progress: 0 }), select: async () => undefined, destroy: () => undefined }
+    expect(torrentCopy(session, file)).toEqual({ kind: 'torrent', magnet: 'magnet:?xt=urn:btih:abc', index: 3 })
+    expect(torrentCopy({ ...session, backend: 'fleet' }, file)).toBeUndefined()
+    expect(torrentCopy({ ...session, magnet: undefined }, file)).toBeUndefined()
+
+    const video = { url: 'https://www.youtube.com/watch?v=x1', videoId: 'x1', backend: 'desktop' as const, summary: { title: 'Clipe', durationMs: 1, live: false }, destroy: () => undefined }
+    expect(youtubeCopy(video as never)).toEqual({ kind: 'youtube', url: 'https://www.youtube.com/watch?v=x1', videoId: 'x1' })
+    expect(youtubeCopy({ ...video, backend: 'fleet' } as never)).toBeUndefined()
+    expect(youtubeCopy({ ...video, videoId: '' } as never)).toBeUndefined()
   })
 })

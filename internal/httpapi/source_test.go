@@ -392,3 +392,100 @@ func TestChangeSourceMissingRoom(t *testing.T) {
 	w := postSource(t, e, "r1", `{"memberId":"m1","capability":"secret-capability","kind":"upload","fileName":"x.mkv"}`)
 	require.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestALocalSourceCarriesWhatTheAppsOpenThemselves(t *testing.T) {
+	// A magnet keeps its percent-encoding and an accented name, byte for byte.
+	magnet := "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=A%20Viagem%20de%20Chihiro%20%E2%80%93%20Dublado&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce"
+	tests := []struct {
+		name  string
+		local room.LocalCopy
+	}{
+		{name: "a torrent's file", local: room.LocalCopy{Kind: "torrent", Magnet: magnet, Index: 3}},
+		{name: "the first file of a torrent", local: room.LocalCopy{Kind: "torrent", Magnet: magnet}},
+		{name: "a video's page", local: room.LocalCopy{Kind: "youtube", URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42", VideoID: "dQw4w9WgXcQ"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testCfg(t)
+			store := newTestStore(t)
+			e := sourceRoom(t, cfg, store)
+			RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
+			RegisterRoomRoutes(e.Group("/api"), store, cfg, nil)
+			body, err := json.Marshal(map[string]any{
+				"memberId": "m1", "capability": "secret-capability", "kind": "local",
+				"title": "A Viagem de Chihiro – 千と千尋", "localCopy": tt.local,
+			})
+			require.NoError(t, err)
+
+			require.Equal(t, http.StatusOK, postSource(t, e, "r1", string(body)).Code)
+
+			got, err := store.Get(t.Context(), "r1")
+			require.NoError(t, err)
+			require.Equal(t, &tt.local, got.LocalCopy)
+			require.Equal(t, "A Viagem de Chihiro – 千と千尋", got.FileName)
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/rooms/r1", nil))
+			require.Equal(t, http.StatusOK, w.Code)
+			var info struct {
+				LocalSource bool            `json:"localSource"`
+				LocalCopy   *room.LocalCopy `json:"localCopy"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &info))
+			require.True(t, info.LocalSource)
+			require.Equal(t, &tt.local, info.LocalCopy)
+		})
+	}
+}
+
+func TestTheNextSourceDropsTheLastOnesLocalCopy(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
+	first := `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Um","localCopy":{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc","index":1}}`
+	require.Equal(t, http.StatusOK, postSource(t, e, "r1", first).Code)
+
+	// An app too old to send one opens the next.
+	second := `{"memberId":"m1","capability":"secret-capability","kind":"local","title":"Dois"}`
+	require.Equal(t, http.StatusOK, postSource(t, e, "r1", second).Code)
+
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Nil(t, got.LocalCopy)
+	require.Equal(t, "Dois", got.FileName)
+}
+
+func TestALocalCopyNoAppWouldOpenIsRefused(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	RegisterSourceRoute(e.Group("/api"), store, cfg, testMemberAuthorizer{allowed: true}, SourceHooks{})
+
+	long := "magnet:?xt=urn:btih:abc&dn=" + strings.Repeat("a", 4096)
+	tests := []struct {
+		name string
+		kind string
+		copy string
+	}{
+		{name: "on a file the server holds", kind: "file", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc"}`},
+		{name: "of an unknown kind", kind: "local", copy: `{"kind":"file","url":"https://example.com/a.mkv"}`},
+		{name: "a torrent without a magnet", kind: "local", copy: `{"kind":"torrent","magnet":"https://example.com/a.torrent"}`},
+		{name: "a torrent with a negative file", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc","index":-1}`},
+		{name: "a magnet past the limit", kind: "local", copy: `{"kind":"torrent","magnet":"` + long + `"}`},
+		{name: "a torrent that also names a page", kind: "local", copy: `{"kind":"torrent","magnet":"magnet:?xt=urn:btih:abc","url":"https://youtu.be/x"}`},
+		{name: "a video over plain http", kind: "local", copy: `{"kind":"youtube","url":"http://www.youtube.com/watch?v=x","videoId":"x"}`},
+		{name: "a video without its id", kind: "local", copy: `{"kind":"youtube","url":"https://www.youtube.com/watch?v=x"}`},
+		{name: "a video id past the limit", kind: "local", copy: `{"kind":"youtube","url":"https://youtu.be/x","videoId":"` + strings.Repeat("x", 65) + `"}`},
+		{name: "a video that also names a magnet", kind: "local", copy: `{"kind":"youtube","url":"https://youtu.be/x","videoId":"x","magnet":"magnet:?xt=urn:btih:abc"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"memberId":"m1","capability":"secret-capability","kind":"` + tt.kind + `","title":"Filme","fileName":"a.mkv","localCopy":` + tt.copy + `}`
+			require.Equal(t, http.StatusBadRequest, postSource(t, e, "r1", body).Code)
+		})
+	}
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "first.mkv", got.FileName)
+	require.Nil(t, got.LocalCopy)
+}

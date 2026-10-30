@@ -345,7 +345,7 @@ export function useSync(
           ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
           ...(deviceId() ? { device: deviceId() } : {}),
           ...(picked ? { avatar: picked } : {}),
-          ...(isDesktop() ? { client: 'desktop', features: ['localSource'] } : {}),
+          ...(isDesktop() ? { client: 'desktop', features: ['localSource', 'localCopy'] } : {}),
         }))
       }
       socket.onclose = () => {
