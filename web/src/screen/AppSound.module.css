@@ -1,0 +1,135 @@
+.bulk {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition-button);
+}
+
+.bulk:active {
+  transform: scale(var(--press-scale));
+}
+
+.apps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: var(--transition-tint);
+}
+
+.icon {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--text-muted);
+  object-fit: contain;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app[aria-checked="false"] .name,
+.app[aria-checked="false"] .icon {
+  opacity: 0.55;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1rem;
+  border-radius: var(--radius-full);
+  background: var(--line-strong);
+  transition: background-color var(--duration-base) var(--ease-out);
+}
+
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: var(--radius-full);
+  background: var(--white);
+  box-shadow: var(--shadow-chip);
+  transition: translate var(--duration-spring-settle) var(--ease-spring-settle);
+}
+
+.app[aria-checked="true"] .switch {
+  background: var(--primary);
+}
+
+.app[aria-checked="true"] .knob {
+  translate: 0.75rem 0;
+}
+
+.app:focus-visible,
+.bulk:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.loading {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bulk:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+
+  .app:hover {
+    background: var(--hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knob,
+  .switch {
+    transition: none;
+  }
+}
