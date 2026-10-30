@@ -1235,14 +1235,16 @@ const (
 // reclaiming it destroys nothing. Status is not enough on its own: the room
 // flips to ready while the source is still arriving.
 func unfinishedWork(r *room.Room, now time.Time) string {
-	if r.Status == "error" || r.ErrorMessage != "" {
+	// A local source is the host's app, gone with everyone else: nothing
+	// here keeps producing it.
+	if r.Status == room.StatusError || r.ErrorMessage != "" || r.LocalSource {
 		return ""
 	}
 	if now.Sub(r.CreatedAt) > preparingGrace {
 		return ""
 	}
 	switch {
-	case r.Status == "uploading" || r.Status == "processing":
+	case r.Status == room.StatusUploading || r.Status == room.StatusProcessing:
 		return "upload in progress"
 	case r.Preparation.SourceBytes > 0 && r.Preparation.ReceivedBytes < r.Preparation.SourceBytes:
 		return "source still arriving"

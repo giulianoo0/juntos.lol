@@ -134,25 +134,25 @@ type LiveInfo struct {
 
 // Room is the aggregate stored under room:{id}.
 type Room struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name,omitempty"`
-	FileName            string         `json:"fileName"`
-	Status              string         `json:"status"`
-	MediaGeneration     int            `json:"mediaGeneration"`
-	MediaVersion        int            `json:"mediaVersion"`
-	SubsVersion         int            `json:"subsVersion"`
-	GatingEnabled       bool           `json:"gatingEnabled"`
-	DurationMs          int64          `json:"durationMs,omitempty"`
-	MediaOffsetMs       int64          `json:"mediaOffsetMs,omitempty"`
-	MediaRegions        []MediaRegion  `json:"mediaRegions,omitempty"`
-	ErrorMessage        string         `json:"errorMessage,omitempty"`
-	ControllerID        string         `json:"controllerId"`
-	SourceMemberID      string         `json:"sourceMemberId,omitempty"`
-	SourceOrigin        string         `json:"sourceOrigin,omitempty"`
+	ID              string        `json:"id"`
+	Name            string        `json:"name,omitempty"`
+	FileName        string        `json:"fileName"`
+	Status          string        `json:"status"`
+	MediaGeneration int           `json:"mediaGeneration"`
+	MediaVersion    int           `json:"mediaVersion"`
+	SubsVersion     int           `json:"subsVersion"`
+	GatingEnabled   bool          `json:"gatingEnabled"`
+	DurationMs      int64         `json:"durationMs,omitempty"`
+	MediaOffsetMs   int64         `json:"mediaOffsetMs,omitempty"`
+	MediaRegions    []MediaRegion `json:"mediaRegions,omitempty"`
+	ErrorMessage    string        `json:"errorMessage,omitempty"`
+	ControllerID    string        `json:"controllerId"`
+	SourceMemberID  string        `json:"sourceMemberId,omitempty"`
+	SourceOrigin    string        `json:"sourceOrigin,omitempty"`
 	// LocalSource: the media lives in the host's desktop app, which plays it
 	// from its own cache and uploads only while a browser needs it. It stays
 	// true through uploading and ready, until the source is swapped.
-	LocalSource bool `json:"localSource,omitempty"`
+	LocalSource         bool           `json:"localSource,omitempty"`
 	OwnerToken          string         `json:"-"`
 	AudioTracks         []TrackInfo    `json:"audioTracks"`
 	SubtitleTracks      []TrackInfo    `json:"subtitleTracks"`
