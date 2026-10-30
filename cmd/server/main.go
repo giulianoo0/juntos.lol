@@ -11,7 +11,6 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -96,15 +95,10 @@ func main() {
 		JobTTL:    time.Duration(cfg.RoomTTLHours) * time.Hour,
 		Usage:     counter,
 	}
-	var swarmMu sync.Mutex
-	lastSwarm := map[string]worker.SwarmStats{}
+	swarms := newSwarmReports()
 	torrents.OnLive = httpapi.LiveReporter(store, hub.NotifyRoomUpdated)
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
-		swarmMu.Lock()
-		same := lastSwarm[roomID] == stats
-		lastSwarm[roomID] = stats
-		swarmMu.Unlock()
-		if same {
+		if !swarms.changed(roomID, stats) {
 			return
 		}
 		swarmCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -122,6 +116,7 @@ func main() {
 	hub.OnRoomReclaimed(func(roomID string) {
 		remuxOrch.CancelRoom(roomID)
 		torrents.CancelRoom(roomID)
+		swarms.forget(roomID)
 	})
 	hub.OnPosition(remuxOrch.Follow)
 	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
@@ -136,6 +131,7 @@ func main() {
 		CancelMedia: func(roomID string) {
 			remuxOrch.CancelRoom(roomID)
 			torrents.CancelRoomMedia(roomID)
+			swarms.forget(roomID)
 		},
 		CancelLive: torrents.CancelRoomLive,
 	}
