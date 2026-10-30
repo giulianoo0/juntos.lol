@@ -122,6 +122,9 @@ type roomConn struct {
 	inbound    chan clientInbound
 	updates    chan Outbound
 	dropped    atomic.Bool
+	// Closed when run returns: whoever would still hand the room something
+	// gives up instead of waiting on a loop that is gone.
+	done chan struct{}
 }
 
 type joinRequest struct {
@@ -330,6 +333,10 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	}
 	select {
 	case roomConnection.register <- request:
+	case <-roomConnection.done:
+		// The room ended between the lookup and the join; the client's
+		// reconnect finds out whether it is still there.
+		return
 	case <-h.ctx.Done():
 		writeHandshakeError(conn, "server_stopping")
 		return
@@ -453,6 +460,7 @@ func (h *Hub) getOrCreateRoom(stored *room.Room) *roomConn {
 		unregister:   make(chan *client),
 		inbound:      make(chan clientInbound),
 		updates:      make(chan Outbound, 32),
+		done:         make(chan struct{}),
 	}
 	h.rooms[roomID] = connection
 	h.wg.Go(connection.run)
@@ -476,6 +484,7 @@ func (h *Hub) removeRoom(roomID string, connection *roomConn) {
 }
 
 func (r *roomConn) run() {
+	defer close(r.done)
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Error("room goroutine panicked", "room_id", r.id, "panic", p, "stack", string(debug.Stack()))
@@ -1249,7 +1258,8 @@ func (r *roomConn) send(target *client, event Outbound) {
 
 const preparingGrace = 10 * time.Minute
 
-const (
+// Variables so tests can shrink them.
+var (
 	idleAsk   = 15 * time.Minute
 	idleClose = 20 * time.Minute
 	idleTick  = 15 * time.Second
@@ -1300,7 +1310,11 @@ func (r *roomConn) sweepIdle() bool {
 	}
 	quiet := time.Since(r.lastActivity)
 	if quiet >= idleClose {
-		r.cleanupIdle()
+		if r.hub.reclaimIdle(r.id) {
+			// Said before the sockets close, so a tab stops instead of
+			// knocking on a room that is gone.
+			r.broadcast(Outbound{Type: "error", ErrCode: "room_gone", closeAfter: true})
+		}
 		return true
 	}
 	if quiet >= idleAsk && !r.asked {
