@@ -143,6 +143,12 @@ pub struct RunStatus {
 
 impl Remux {
     pub async fn new(cfg: RemuxConfig) -> Arc<Self> {
+        // No run outlives the process: a spool on disk now is a leftover.
+        if let Err(e) = std::fs::remove_dir_all(cfg.data_dir.join("remux")) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(error = %e, "could not clear leftover remux spools");
+            }
+        }
         let ffmpeg_version = if cfg.slots > 0 { process::detect_version(&cfg.ffmpeg_path).await } else { None };
         if cfg.slots > 0 && ffmpeg_version.is_none() {
             tracing::warn!(path = %cfg.ffmpeg_path, "ffmpeg not found; remux capability void");
@@ -253,6 +259,12 @@ impl Remux {
         let run_id = spec.run_id.clone();
         tokio::spawn(async move {
             let outcome = this.execute(input, &spec, &entry).await;
+            // However the run ended, its spool and subtitle pass go with it:
+            // a run cut short in its drain used to leave them on disk.
+            if let Some(handle) = entry.subtitles.lock().take() {
+                handle.abort();
+            }
+            let _ = tokio::fs::remove_dir_all(this.cfg.data_dir.join("remux").join(&spec.run_id)).await;
             let mut status = entry.status.lock();
             match outcome {
                 Ok(()) => {
@@ -484,6 +496,8 @@ impl Remux {
 
         const STALL: Duration = Duration::from_secs(90);
         const UPLOAD_STALL: Duration = Duration::from_secs(600);
+        /// How long a first finished upload waits for the rest of its batch.
+        const FIRST_PUBLISH_BATCH: Duration = Duration::from_millis(100);
         let slab = object_cap.min(16 * 1024 * 1024);
         let mut attempts = 0u32;
         let exit = 'attempts: loop {
@@ -498,6 +512,7 @@ impl Remux {
             let mut last_move = (0u64, std::time::Instant::now());
             let mut last_closed = run_sink.closed_count();
             let mut starved_since: Option<std::time::Instant> = None;
+            let mut uploads_open = true;
             loop {
                 if Self::cancelled(entry) {
                     cleanup(&bridge);
@@ -514,7 +529,20 @@ impl Remux {
                 if let Some(status) = process_done? {
                     break 'attempts Some((status, stderr_tail.clone()));
                 }
-                ticker.tick().await;
+                // Until the region shows its first frames, a finished upload
+                // is published at once (the rest of its batch a beat later)
+                // instead of on the next tick: that is the seek's wait.
+                let cold = uploads_open && publisher.produced_ms(&run_sink) == 0;
+                tokio::select! {
+                    _ = ticker.tick() => {}
+                    object = uploaded_rx.recv(), if cold => match object {
+                        Some(object) => {
+                            publisher.take(object);
+                            tokio::time::sleep(FIRST_PUBLISH_BATCH).await;
+                        }
+                        None => uploads_open = false,
+                    },
+                }
                 publisher.absorb(&mut uploaded_rx);
                 match publisher.round(&run_sink, true, false).await {
                     Ok(_) => {}
@@ -590,6 +618,12 @@ impl Remux {
             tokio::select! {
                 result = &mut upload_task => break result,
                 _ = ticker.tick() => {
+                    if Self::cancelled(entry) {
+                        upload_task.abort();
+                        cleanup(&bridge);
+                        run_sink.destroy().await;
+                        return Ok(());
+                    }
                     publisher.absorb(&mut uploaded_rx);
                     match publisher.round(&run_sink, true, false).await {
                         Ok(_) => {}

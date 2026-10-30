@@ -43,12 +43,14 @@ impl Fill {
 pub struct Reader {
     pub quiet: bool,
     pub window_have: bool,
+    /// Someone still holds the file: with nobody, filling it is for no one.
+    pub leased: bool,
 }
 
 /// The next state, from the current one and what the sweep observed.
 /// `fits` is whether the whole file could be reserved right now.
 pub fn decide(now: Fill, reader: Reader, fits: bool) -> Fill {
-    if !fits {
+    if !fits || !reader.leased {
         return Fill::Off;
     }
     if reader.quiet && reader.window_have {
@@ -64,9 +66,10 @@ pub fn decide(now: Fill, reader: Reader, fits: bool) -> Fill {
 mod tests {
     use super::*;
 
-    const QUIET_AND_HAVE: Reader = Reader { quiet: true, window_have: true };
-    const BUSY: Reader = Reader { quiet: false, window_have: true };
-    const WAITING: Reader = Reader { quiet: true, window_have: false };
+    const QUIET_AND_HAVE: Reader = Reader { quiet: true, window_have: true, leased: true };
+    const BUSY: Reader = Reader { quiet: false, window_have: true, leased: true };
+    const WAITING: Reader = Reader { quiet: true, window_have: false, leased: true };
+    const LEFT: Reader = Reader { quiet: true, window_have: true, leased: false };
 
     #[test]
     fn starts_only_when_the_reader_is_quiet_and_served() {
@@ -86,5 +89,12 @@ mod tests {
     fn disk_pressure_ends_everything() {
         assert_eq!(decide(Fill::Filling, QUIET_AND_HAVE, false), Fill::Off);
         assert_eq!(decide(Fill::Holding, BUSY, false), Fill::Off);
+    }
+
+    #[test]
+    fn nobody_left_holding_the_file_ends_everything() {
+        assert_eq!(decide(Fill::Off, LEFT, true), Fill::Off);
+        assert_eq!(decide(Fill::Filling, LEFT, true), Fill::Off);
+        assert_eq!(decide(Fill::Holding, LEFT, true), Fill::Off);
     }
 }

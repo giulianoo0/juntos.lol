@@ -149,9 +149,13 @@ impl Publisher {
 
     pub fn absorb(&mut self, uploaded: &mut mpsc::UnboundedReceiver<ClosedObject>) {
         while let Ok(object) = uploaded.try_recv() {
-            self.uploaded_bytes += object.size;
-            self.pending.push(object);
+            self.take(object);
         }
+    }
+
+    pub fn take(&mut self, object: ClosedObject) {
+        self.uploaded_bytes += object.size;
+        self.pending.push(object);
     }
 
     pub fn drained(&self) -> bool {

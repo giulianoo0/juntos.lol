@@ -316,9 +316,14 @@ impl Engine {
     }
 
     pub fn snapshot(&self) -> EngineSnapshot {
-        let map = self.torrents.lock();
-        let torrents = map.iter().map(|(id, e)| e.digest(id)).collect::<Vec<_>>();
-        let leases = map.values().map(|e| e.leases.len()).sum();
+        // Only the copying happens under the lock: a slow disk under the
+        // stats would hold every reader of the map with it.
+        let (parts, leases) = {
+            let map = self.torrents.lock();
+            let parts = map.iter().map(|(id, e)| e.digest_parts(id)).collect::<Vec<_>>();
+            (parts, map.values().map(|e| e.leases.len()).sum())
+        };
+        let torrents = parts.into_iter().map(|p| p.digest()).collect::<Vec<_>>();
         EngineSnapshot {
             disk_used: self.disk.used().max(self.disk.real_used()),
             disk_real: self.disk.real_used(),
@@ -760,11 +765,12 @@ impl Engine {
         if release {
             self.sweep_fill(infohash, &handle);
         }
-        let (index, mut cursors, fill) = {
+        let (index, mut cursors, fill, leased) = {
             let map = self.torrents.lock();
             let Some(entry) = map.get(infohash) else {
                 return;
             };
+            let leased = !entry.leases.is_empty();
             let Some(index) = entry.selected_file else {
                 return;
             };
@@ -792,7 +798,7 @@ impl Engine {
                     Some(window::Cursor { at, ahead, behind: window::BEHIND })
                 })
                 .collect();
-            (index, cursors, entry.fill)
+            (index, cursors, entry.fill, leased)
         };
         let guard = handle.metadata.load();
         let Some(meta) = guard.as_ref() else { return };
@@ -821,22 +827,31 @@ impl Engine {
         if cursors.is_empty() || !release || fill != Fill::Off {
             return;
         }
+        // A file that fits whole stays whole while someone holds it: the
+        // next seek behind the window reads it from disk, not the swarm.
+        // Disk pressure or the last lease leaving turns this back off.
+        if leased && self.disk.fits_replacing(infohash, info.len) {
+            let footprint = window::footprint(info.len, window::AHEAD, window::BEHIND, window::PIN);
+            self.set_fill(infohash, Fill::Holding, info.len, footprint);
+            return;
+        }
         self.release_behind_window(infohash, &handle, info, &pieces, piece_len);
     }
 
     /// The sweep's look at whether the swarm should be filling the file
     /// behind the readers, and the bookkeeping when the answer changes.
     fn sweep_fill(&self, infohash: &str, handle: &Handle) {
-        let (index, now, playhead, quiet) = {
+        let (index, now, playhead, quiet, leased) = {
             let map = self.torrents.lock();
             let Some(entry) = map.get(infohash) else { return };
             let Some(index) = entry.selected_file else { return };
+            let leased = !entry.leases.is_empty();
             let playhead = entry.slots.get(&(index, Prio::Playhead)).cloned();
             let quiet = match &playhead {
                 Some(slot) => slot.since_moved() >= fill::QUIET && slot.idle_for() >= fill::QUIET,
                 None => entry.last_active.elapsed() >= fill::QUIET,
             };
-            (index, entry.fill, playhead, quiet)
+            (index, entry.fill, playhead, quiet, leased)
         };
         let guard = handle.metadata.load();
         let Some(meta) = guard.as_ref() else { return };
@@ -860,7 +875,7 @@ impl Engine {
             }
         };
         let fits = self.disk.fits_replacing(infohash, full);
-        let next = fill::decide(now, fill::Reader { quiet, window_have }, fits);
+        let next = fill::decide(now, fill::Reader { quiet, window_have, leased }, fits);
         if next == now {
             return;
         }

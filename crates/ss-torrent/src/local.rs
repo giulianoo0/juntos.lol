@@ -254,7 +254,7 @@ impl Focus {
         if let Some(window_have) = self.playhead_window_have() {
             let (from, next) = {
                 let mut state = self.state.lock();
-                let next = fill::decide(state.fill, fill::Reader { quiet, window_have }, true);
+                let next = fill::decide(state.fill, fill::Reader { quiet, window_have, leased: true }, true);
                 (std::mem::replace(&mut state.fill, next), next)
             };
             if from != next {
