@@ -3,7 +3,9 @@ pub mod hls;
 pub mod local;
 pub mod serve;
 pub mod site;
+pub mod torrent;
 pub mod upload_plan;
+pub mod uploader;
 
 pub fn run() {
     tauri::Builder::default()
