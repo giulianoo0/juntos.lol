@@ -55,7 +55,7 @@ import androidx.compose.animation.core.tween
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun JuntosSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun JuntosSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val c = Juntos.colors
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -154,43 +154,6 @@ fun PeopleSheet(members: List<Member>, me: String?, controllerId: String?, pinne
                         modifier = Modifier.size(16.dp),
                     )
                     IconPill(if (m.id == pinned) "Desafixar ${m.nickname}" else "Fixar ${m.nickname}", JuntosIcons.Pin, onClick = { onPin(m.id) }, active = m.id == pinned, size = 32.dp)
-                }
-            }
-        }
-    }
-}
-
-private enum class Tab(val label: String) { Audio("Áudio"), Subtitles("Legendas"), Quality("Qualidade") }
-
-@Composable
-fun SettingsSheet(player: JuntosPlayer, onDismiss: () -> Unit) {
-    val snapshot by player.snapshot.collectAsState()
-    val tabs = listOfNotNull(Tab.Audio, Tab.Subtitles, Tab.Quality.takeIf { snapshot.qualities.isNotEmpty() })
-    var tab by remember { mutableStateOf(Tab.Audio) }
-    JuntosSheet(onDismiss) {
-        Segmented(tabs, tab, onSelect = { tab = it }, label = { it.label }, fill = true, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
-        AnimatedContent(
-            tab,
-            transitionSpec = { fadeIn(tween(JuntosMotion.BASE_MS)) togetherWith fadeOut(tween(JuntosMotion.FAST_MS)) },
-            label = "settings-tab",
-        ) { current ->
-            Column(Modifier.fillMaxWidth().heightIn(min = 160.dp).padding(top = 4.dp)) {
-                when (current) {
-                    Tab.Audio -> snapshot.audio.forEach { track ->
-                        SpringRow(track.label, onClick = { player.selectAudio(track.index) }, checked = track.selected)
-                    }
-                    Tab.Subtitles -> {
-                        SpringRow("Desligadas", onClick = { player.selectSubtitle(null) }, checked = snapshot.subtitles.none { it.selected })
-                        snapshot.subtitles.forEach { track ->
-                            SpringRow(track.label, onClick = { player.selectSubtitle(track.index) }, checked = track.selected)
-                        }
-                    }
-                    Tab.Quality -> {
-                        SpringRow("Automática", onClick = { player.selectQuality(null) }, checked = snapshot.qualities.none { it.selected })
-                        snapshot.qualities.forEach { q ->
-                            SpringRow(q.label, onClick = { player.selectQuality(q.index) }, checked = q.selected)
-                        }
-                    }
                 }
             }
         }
