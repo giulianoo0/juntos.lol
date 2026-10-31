@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.sp
 import lol.juntos.app.BuildConfig
 import lol.juntos.design.IconPill
 import lol.juntos.design.JuntosIcons
+import lol.juntos.design.Pill
+import lol.juntos.design.PillSize
 import lol.juntos.design.PillTone
 import lol.juntos.design.SpringPopover
 import lol.juntos.design.SpringRow
@@ -34,33 +36,18 @@ private val REACTIONS = listOf("😂", "❤️", "👏", "😮", "🔥", "🎉")
 
 @Composable
 fun Dock(
-    roomId: String,
     sheet: Sheet?,
     onSheet: (Sheet) -> Unit,
-    canHost: Boolean,
+    canShare: Boolean,
     onReact: (String) -> Unit,
-    onCopied: () -> Unit,
     onLeave: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val link = "${BuildConfig.BASE_URL}/room/$roomId"
     Row(
         Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SpringPopover(trigger = { open -> IconPill("Compartilhar", JuntosIcons.Share, onClick = open, tone = PillTone.Primary) }) { close ->
-            SpringRow("Copiar link da sala", icon = JuntosIcons.Link, onClick = {
-                close()
-                context.copy(link)
-                onCopied()
-            })
-            SpringRow("Enviar o link", icon = JuntosIcons.Send, onClick = {
-                close()
-                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link)
-                context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            })
-        }
+        if (canShare) Pill("Compartilhar", onClick = { onSheet(Sheet.Share) }, tone = PillTone.Primary, size = PillSize.Lg, icon = JuntosIcons.Share)
         SpringPopover(
             width = 300.dp,
             trigger = { open -> IconPill("Reações", JuntosIcons.Smile, onClick = open) },
@@ -77,14 +64,31 @@ fun Dock(
                 }
             }
         }
-        if (canHost) IconPill("Vídeo", JuntosIcons.Film, onClick = { onSheet(Sheet.Source) }, active = sheet == Sheet.Source)
         IconPill("Chat", JuntosIcons.Chat, onClick = { onSheet(Sheet.Chat) }, active = sheet == Sheet.Chat)
-        IconPill("Pessoas", JuntosIcons.People, onClick = { onSheet(Sheet.People) }, active = sheet == Sheet.People)
         Spacer(Modifier.weight(1f))
         SpringPopover(trigger = { open -> IconPill("Sair", JuntosIcons.Leave, onClick = open, tone = PillTone.Danger) }) { close ->
             SpringRow("Sair da sala", icon = JuntosIcons.Leave, danger = true, onClick = { close(); onLeave() })
             SpringRow("Cancelar", icon = JuntosIcons.Close, onClick = close)
         }
+    }
+}
+
+/** The room's link, to copy or hand to another app. */
+@Composable
+internal fun Invite(roomId: String, onCopied: () -> Unit) {
+    val context = LocalContext.current
+    val link = "${BuildConfig.BASE_URL}/room/$roomId"
+    SpringPopover(trigger = { open -> IconPill("Convidar", JuntosIcons.Link, onClick = open, size = 36.dp) }) { close ->
+        SpringRow("Copiar link da sala", icon = JuntosIcons.Link, onClick = {
+            close()
+            context.copy(link)
+            onCopied()
+        })
+        SpringRow("Enviar o link", icon = JuntosIcons.Send, onClick = {
+            close()
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link)
+            context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        })
     }
 }
 

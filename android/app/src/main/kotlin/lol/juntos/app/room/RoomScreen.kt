@@ -3,7 +3,6 @@ package lol.juntos.app.room
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
@@ -12,10 +11,21 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.movableContentOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.window.layout.FoldingFeature
+import androidx.window.layout.WindowInfoTracker
+import kotlinx.coroutines.flow.flowOf
+import lol.juntos.design.settle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,12 +67,13 @@ import lol.juntos.player.PlayerControls
 import lol.juntos.player.PlayerIntents
 import lol.juntos.player.PlayerSurface
 
-enum class Sheet { Chat, People, Settings, Source }
+enum class Sheet { Chat, People, Settings, Share }
 
 /**
- * The room on a phone. Upright: header, the video in 16:9, the people, the dock. Lying
- * down (or full screen): the same stage grows to the whole screen and the bars hide.
- * Everything comes from the [AppGraph]'s session and player.
+ * The room. Upright: header, the video in 16:9 when there is one, the gallery, the dock.
+ * Lying down the video takes the screen; a tablet sets it beside the gallery and a
+ * foldable on a table above the fold (see [roomLayout]). Everything comes from the
+ * [AppGraph]'s session and player.
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -110,12 +121,16 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
         }
     }
 
-    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val immersive = landscape || fullscreen
+    val config = LocalConfiguration.current
+    val hosted by (host?.media ?: flowOf(null)).collectAsState(null)
+    val status = state.room?.status.orEmpty()
+    val hasMedia = (status.isNotEmpty() && status != "empty") || hosted != null
+    LaunchedEffect(hasMedia) { if (!hasMedia) fullscreen = false }
+    val fold = rememberFold()
+    val layout = roomLayout(config.screenWidthDp, config.screenHeightDp, config.smallestScreenWidthDp, hasMedia, fullscreen, fold?.hinge)
+    val immersive = layout == RoomLayout.Immersive
     ImmersiveBars(immersive)
-
-    val corner by animateDpAsState(if (immersive) 0.dp else 18.dp, pop(), label = "stage-corner")
-    val inset by animateDpAsState(if (immersive) 0.dp else 8.dp, pop(), label = "stage-inset")
+    val density = LocalDensity.current
 
     Box(
         Modifier
@@ -124,61 +139,91 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
             .background(if (immersive) Color.Black else c.frameGround),
     ) {
         LookaheadScope {
-            Column(Modifier.fillMaxSize()) {
-                AnimatedVisibility(
-                    visible = !immersive,
-                    enter = expandVertically(pop()) + fadeIn(),
-                    exit = shrinkVertically(pop()) + fadeOut(),
-                ) {
-                    RoomHeader(
-                        state = state,
-                        modifier = Modifier.statusBarsPadding(),
-                        onPeople = { sheet = Sheet.People },
-                        onSettings = { sheet = Sheet.Settings },
-                    )
-                }
-                Box(
-                    Modifier
-                        .animateBounds(this@LookaheadScope, boundsTransform = BoundsSpring())
-                        .then(if (immersive) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                        .padding(horizontal = inset.coerceAtLeast(0.dp))
-                        .clip(RoundedCornerShape(corner.coerceAtLeast(0.dp)))
-                        .background(Color.Black),
-                ) {
-                    PlayerSurface(player, Modifier.fillMaxSize())
-                    PlayerControls(
-                        player = player,
-                        intents = intents,
-                        fullscreen = immersive,
-                        onFullscreenChange = { fullscreen = it },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    BurstLayer(bursts, Modifier.fillMaxSize())
-                }
-                AnimatedVisibility(
-                    visible = !immersive,
-                    modifier = Modifier.weight(1f),
-                    enter = slideInVertically(pop()) { it / 3 } + fadeIn(),
-                    exit = slideOutVertically(pop()) { it / 3 } + fadeOut(),
-                ) {
-                    Column(Modifier.fillMaxSize()) {
-                        PeopleGrid(
-                            members = state.members,
-                            controllerId = state.controllerId,
-                            pinned = pinned,
-                            onPin = { id -> pinned = if (pinned == id) null else id },
-                            modifier = Modifier.weight(1f),
+            val corner by animateDpAsState(if (immersive) 0.dp else 18.dp, pop(), label = "stage-corner")
+            val stage = remember {
+                movableContentOf { modifier: Modifier, full: Boolean ->
+                    Box(
+                        modifier
+                            .animateBounds(this@LookaheadScope, boundsTransform = BoundsSpring())
+                            .clip(RoundedCornerShape(corner.coerceAtLeast(0.dp)))
+                            .background(Color.Black),
+                    ) {
+                        PlayerSurface(player, Modifier.fillMaxSize())
+                        PlayerControls(
+                            player = player,
+                            intents = intents,
+                            fullscreen = full,
+                            onFullscreenChange = { fullscreen = it },
+                            onSettings = { sheet = Sheet.Settings },
+                            modifier = Modifier.fillMaxSize(),
                         )
-                        Dock(
-                            roomId = entry.roomId,
-                            sheet = sheet,
-                            onSheet = { sheet = if (sheet == it) null else it },
-                            canHost = host != null && state.isController,
-                            onReact = { bursts.add(it) },
-                            onCopied = { scope.launch { toasts.show("Link copiado") } },
-                            onLeave = leave,
-                        )
+                        BurstLayer(bursts, Modifier.fillMaxSize())
                     }
+                }
+            }
+            val header = @Composable { modifier: Modifier ->
+                RoomHeader(
+                    state = state,
+                    roomId = entry.roomId,
+                    modifier = modifier,
+                    onPeople = { sheet = Sheet.People },
+                    onCopied = { scope.launch { toasts.show("Link copiado") } },
+                )
+            }
+            val gallery = @Composable { modifier: Modifier ->
+                Gallery(
+                    members = state.members,
+                    controllerId = state.controllerId,
+                    pinned = pinned,
+                    onPin = { id -> pinned = if (pinned == id) null else id },
+                    modifier = modifier,
+                )
+            }
+            val dock = @Composable {
+                Dock(
+                    sheet = sheet,
+                    onSheet = { sheet = if (sheet == it) null else it },
+                    canShare = host != null && state.isController,
+                    onReact = { bursts.add(it) },
+                    onLeave = leave,
+                )
+            }
+            when (layout) {
+                RoomLayout.Immersive -> stage(Modifier.fillMaxSize(), true)
+                RoomLayout.Column -> Column(Modifier.fillMaxSize()) {
+                    header(Modifier.statusBarsPadding())
+                    AnimatedVisibility(
+                        visible = hasMedia,
+                        enter = expandVertically(pop()) + fadeIn(pop()),
+                        exit = shrinkVertically(settle()) + fadeOut(settle()),
+                    ) {
+                        stage(Modifier.padding(horizontal = 8.dp).fillMaxWidth().aspectRatio(16f / 9f), false)
+                    }
+                    gallery(Modifier.weight(1f))
+                    dock()
+                }
+                RoomLayout.Split -> Column(Modifier.fillMaxSize()) {
+                    header(Modifier.statusBarsPadding())
+                    Row(Modifier.weight(1f).fillMaxWidth()) {
+                        val hinge = fold?.takeIf { !it.hinge.horizontal }
+                        val pane = if (hinge != null) Modifier.width(with(density) { hinge.bounds.left.toDp() }) else Modifier.weight(2f)
+                        Box(pane.fillMaxHeight().padding(start = 8.dp), contentAlignment = Alignment.Center) {
+                            stage(Modifier.fillMaxWidth().aspectRatio(16f / 9f), false)
+                        }
+                        if (hinge != null) Spacer(Modifier.width(with(density) { hinge.bounds.width().toDp() }))
+                        gallery(Modifier.weight(1f).fillMaxHeight())
+                    }
+                    dock()
+                }
+                RoomLayout.Tabletop -> Column(Modifier.fillMaxSize()) {
+                    val bounds = fold!!.bounds
+                    Box(Modifier.fillMaxWidth().height(with(density) { bounds.top.toDp() }).background(Color.Black), contentAlignment = Alignment.Center) {
+                        stage(Modifier.statusBarsPadding().fillMaxSize(), true)
+                    }
+                    Spacer(Modifier.height(with(density) { bounds.height().toDp() }))
+                    header(Modifier)
+                    gallery(Modifier.weight(1f))
+                    dock()
                 }
             }
         }
@@ -200,14 +245,31 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
         Sheet.Chat -> ChatSheet(state.chat, state.members, onSend = session::chat, onDismiss = { sheet = null })
         Sheet.People -> PeopleSheet(state.members, state.memberId, state.controllerId, pinned, onPin = { pinned = if (pinned == it) null else it }, onDismiss = { sheet = null })
         Sheet.Settings -> SettingsSheet(player, onDismiss = { sheet = null })
-        Sheet.Source -> host?.let {
-            SourceSheet(it, onHost = { source ->
+        Sheet.Share -> host?.let {
+            ShareSheet(it, onHost = { source ->
                 val seat = session.state.value.seat() ?: error("no seat")
                 it.host(seat, source)
             }, onDismiss = { sheet = null })
         }
         null -> Unit
     }
+}
+
+/** The fold of a foldable, in window pixels, as the WindowManager reports it. */
+private class Fold(val hinge: Hinge, val bounds: android.graphics.Rect)
+
+@Composable
+private fun rememberFold(): Fold? {
+    val activity = LocalContext.current.findActivity() ?: return null
+    val layouts = remember(activity) { WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity) }
+    val info by layouts.collectAsState(null)
+    val feature = info?.displayFeatures?.filterIsInstance<FoldingFeature>()?.firstOrNull() ?: return null
+    val hinge = Hinge(
+        horizontal = feature.orientation == FoldingFeature.Orientation.HORIZONTAL,
+        halfOpened = feature.state == FoldingFeature.State.HALF_OPENED,
+        separating = feature.isSeparating,
+    )
+    return Fold(hinge, feature.bounds)
 }
 
 /** Lying down the video takes the screen: the system bars hide and come back with a swipe. */

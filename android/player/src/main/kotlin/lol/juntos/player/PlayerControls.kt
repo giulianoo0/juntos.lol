@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material3.CircularProgressIndicator
@@ -104,6 +105,7 @@ fun PlayerControls(
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onSettings: (() -> Unit)? = null,
 ) {
     val snap by player.snapshot.collectAsState()
     val latest by rememberUpdatedState(snap)
@@ -229,6 +231,17 @@ fun PlayerControls(
                             modifier = Modifier.padding(start = JuntosSpacing.s1),
                         )
                         Spacer(Modifier.weight(1f))
+                        if (onSettings != null) {
+                            ControlButton(
+                                label = "Configurações",
+                                onClick = {
+                                    touches++
+                                    onSettings()
+                                },
+                            ) {
+                                Icon(Icons.Outlined.Settings, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            }
+                        }
                         ControlButton(
                             label = if (fullscreen) "Sair da tela cheia" else "Tela cheia",
                             onClick = {
