@@ -1,5 +1,7 @@
 package lol.juntos.core.human
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import lol.juntos.core.api.JuntosApi
 import lol.juntos.core.api.PersistentCookieJar
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -18,13 +20,16 @@ class TurnstileGate(
 ) : HumanGate {
     private val site = baseUrl.toHttpUrl()
 
-    override suspend fun ensure(): Boolean {
-        if (cookies.has(site, HUMAN_COOKIE)) return true
+    // Creating a room and opening its socket both ask: the second waits for the first's widget.
+    private val checking = Mutex()
+
+    override suspend fun ensure(): Boolean = checking.withLock {
+        if (cookies.has(site, HUMAN_COOKIE)) return@withLock true
         val siteKey = api.config().turnstileSiteKey
-        if (siteKey.isNullOrEmpty()) return true
-        val token = solve(siteKey) ?: return false
+        if (siteKey.isNullOrEmpty()) return@withLock true
+        val token = solve(siteKey) ?: return@withLock false
         api.verifyHuman(token)
-        return cookies.has(site, HUMAN_COOKIE)
+        cookies.has(site, HUMAN_COOKIE)
     }
 
     override fun forget() = cookies.remove(site, HUMAN_COOKIE)
