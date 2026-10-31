@@ -25,4 +25,9 @@ class HumanPageTest {
         assertTrue(page.contains("JuntosHuman.token("))
         assertTrue(page.contains("theme: 'dark'"))
     }
+
+    @Test
+    fun `the widget asks for the action the server checks, which refuses tokens without it`() {
+        assertTrue(turnstilePage("0x4AAA-key", dark = false).contains("action: 'human'"))
+    }
 }

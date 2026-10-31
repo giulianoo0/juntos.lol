@@ -6,6 +6,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,9 +42,11 @@ fun turnstilePage(siteKey: String, dark: Boolean): String = """
 function ready() {
   turnstile.render('#gate', {
     sitekey: ${'"'}${siteKey.replace("\"", "")}${'"'},
+    action: 'human',
     theme: '${if (dark) "dark" else "light"}',
     callback: function (token) { JuntosHuman.token(token) },
     'error-callback': function () { JuntosHuman.failed() },
+    'timeout-callback': function () { JuntosHuman.failed() },
   })
 }
 </script></head><body><div id="gate"></div></body></html>
@@ -87,7 +90,7 @@ fun HumanGateHost(gate: WebHumanGate, baseUrl: String = BuildConfig.BASE_URL) {
                 .background(Juntos.colors.surface)
                 .padding(12.dp),
         ) {
-            AndroidView(factory = { context ->
+            AndroidView(modifier = Modifier.fillMaxSize(), factory = { context ->
                 WebView(context).apply {
                     setBackgroundColor(Color.TRANSPARENT)
                     settings.javaScriptEnabled = true
