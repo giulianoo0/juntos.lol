@@ -732,6 +732,8 @@ impl Resolver {
             let refresh = Arc::new(RefreshVia { resolver: self.clone(), page: request.url.clone(), itag: format.format_id.clone() });
             streams.push(Arc::new(http::HttpSource::new(self.client.clone(), format.format_id.clone(), url, size, refresh)));
         }
+        // FFmpeg opens its inputs one by one: their heads come in together instead of a round trip per dub.
+        futures::future::join_all(streams.iter().map(|stream| stream.prefetch())).await;
         Ok(Materialized { plan: plan_for(selection), streams, subtitles: selection.subtitles.clone() })
     }
 }
