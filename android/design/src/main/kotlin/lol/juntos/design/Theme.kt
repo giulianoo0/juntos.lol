@@ -33,7 +33,9 @@ fun JuntosTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -
         lightColorScheme(primary = colors.primary, background = colors.frameGround, surface = colors.surface, onBackground = colors.text, onSurface = colors.text, error = colors.danger)
     }
     CompositionLocalProvider(LocalJuntosColors provides colors, LocalMotionEnabled provides systemMotionEnabled()) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        MaterialTheme(colorScheme = scheme, typography = JuntosTypography) {
+            androidx.compose.material3.ProvideTextStyle(JuntosType.body.copy(color = colors.text), content)
+        }
     }
 }
 
@@ -44,6 +46,7 @@ fun BetaBadge(modifier: Modifier = Modifier) {
         text = "beta",
         color = Juntos.colors.primary,
         fontWeight = FontWeight.SemiBold,
+        fontFamily = JuntosFonts.sans,
         fontSize = JuntosTextSize.xs2,
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
