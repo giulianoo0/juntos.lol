@@ -1,1 +1,1 @@
-Correções: o convidado não fica mais travado para sempre quando o envio de um trecho falha ou depois de um avanço curto, e as legendas do YouTube não aparecem mais com cada linha repetida.
+Torrent funciona em redes que bloqueiam UDP: o app agora acha peers por tracker HTTP, sem depender do DHT, e quando o próprio PC não alcança o swarm o torrent passa para os servidores do juntos.
