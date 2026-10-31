@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "lol.juntos.app",
+      "sha256_cert_fingerprints": ["4D:8C:D9:17:1F:19:34:A2:E0:B1:7D:FE:50:92:71:EA:8F:C8:D9:56:B8:EB:E7:EB:F2:BE:5B:9A:7B:1F:2C:14"]
+    }
+  }
+]

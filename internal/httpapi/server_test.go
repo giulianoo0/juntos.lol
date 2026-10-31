@@ -19,6 +19,8 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "assets", "app.js"), []byte("ready"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "oembed.json"), []byte(`{"type":"link"}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(webDir, "matroska-subtitles.min.js"), []byte("parser"), 0o644))
+	require.NoError(t, os.Mkdir(filepath.Join(webDir, ".well-known"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(webDir, ".well-known", "assetlinks.json"), []byte(`[{"relation":[]}]`), 0o644))
 
 	cfg := testCfg(t)
 	cfg.WebDir = webDir
@@ -33,6 +35,7 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 		{path: "/assets/app.js", statusCode: http.StatusOK, body: "ready"},
 		{path: "/oembed.json", statusCode: http.StatusOK, body: `{"type":"link"}`},
 		{path: "/matroska-subtitles.min.js", statusCode: http.StatusOK, body: "parser"},
+		{path: "/.well-known/assetlinks.json", statusCode: http.StatusOK, body: `[{"relation":[]}]`},
 		{path: "/api/missing", statusCode: http.StatusNotFound},
 		{path: "/media/missing", statusCode: http.StatusNotFound},
 		{path: "/ws/missing", statusCode: http.StatusNotFound},
