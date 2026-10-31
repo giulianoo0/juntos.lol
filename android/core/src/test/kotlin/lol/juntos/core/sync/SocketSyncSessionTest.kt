@@ -11,6 +11,7 @@ import kotlinx.serialization.json.long
 import lol.juntos.core.api.ApiException
 import lol.juntos.core.api.JuntosApi
 import lol.juntos.core.fake.FakeJuntosApi
+import lol.juntos.core.human.HumanGate
 import lol.juntos.core.model.MediaRegion
 import lol.juntos.core.model.PlayState
 import lol.juntos.core.model.RoomInfo
@@ -30,6 +31,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -216,6 +218,21 @@ class SocketSyncSessionTest {
         await(session) { it.connection == Connection.Reconnecting }
         session.reconnectNow()
         assertEquals("m1", frame("hello").text("memberId"))
+    }
+
+    @Test
+    fun `a refused upgrade forgets the day's check, so the next try solves it again`() {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = MockResponse().setResponseCode(403).setBody("""{"error":"human_required"}""")
+        }
+        val forgotten = CountDownLatch(1)
+        val gate = object : HumanGate {
+            override suspend fun ensure() = true
+            override fun forget() = forgotten.countDown()
+        }
+        val timing = SyncTiming(reconnectMinMs = 10, reconnectMaxMs = 40)
+        sessions += SocketSyncSession(SessionRequest("ROOM1", "Ana"), server.url("/").toString(), OkHttpClient(), FakeJuntosApi(rooms), gate, timing)
+        assertTrue(forgotten.await(5, TimeUnit.SECONDS))
     }
 
     @Test
