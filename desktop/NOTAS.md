@@ -1,1 +1,1 @@
-Correções: com upload lento, o convidado no navegador não fica mais com o vídeo parado enquanto o app sobe o trecho do seek.
+Novidades: o YouTube traz todas as dublagens do vídeo, não só oito, e abre em poucos segundos mesmo com muitas. Correções: o convidado no navegador volta a ver vídeos com muitas dublagens, e uma fila grande de envio não trava mais a sala.
