@@ -140,4 +140,49 @@ describe('openTorrent inside the desktop app', () => {
     expect(session.backend).toBe('desktop')
     expect(fleet).not.toHaveBeenCalled()
   })
+
+  const appWith = (open: () => Promise<unknown>) => {
+    const invoke = vi.fn(async (cmd: string) => {
+      if (cmd === 'app_hello') return { protocolVersion: 1, version: '0.1.0', compatible: true, mediaRoot: 'juntos-media://localhost' }
+      if (cmd === 'torrent_open') return open()
+      return null
+    })
+    ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = { invoke }
+    resetDesktopForTests()
+  }
+  const fleetListing = () => fleetFetch({
+    'GET /api/torrents/workers': () => json({ workers: [] }),
+    'POST /api/torrents': () => json({ jobId: 'j9', state: 'resolving' }, 202),
+    'GET /api/torrents/j9': () => json({ jobId: 'j9', state: 'listed', name: 'Show', files: [{ index: 0, name: 'Show.mkv', path: 'Show.mkv', size: 10 }] }),
+  })
+
+  it('hands the magnet to the fleet when the app cannot open it', async () => {
+    appWith(async () => { throw new Error('torrent metadata timed out') })
+    vi.stubGlobal('fetch', fleetListing().fn)
+    const session = await openTorrent(MAGNET)
+    expect(session.jobId).toBe('j9')
+    expect(session.backend).not.toBe('desktop')
+  })
+
+  it("hands it to the fleet when the app's swarm stays silent for 25 seconds", async () => {
+    vi.useFakeTimers()
+    try {
+      appWith(() => new Promise(() => {}))
+      vi.stubGlobal('fetch', fleetListing().fn)
+      const opening = openTorrent(MAGNET)
+      await vi.advanceTimersByTimeAsync(25_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect((await opening).jobId).toBe('j9')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a magnet the app rejects is not tried on the fleet', async () => {
+    const fleet = vi.fn(async () => { throw new Error('the fleet was asked') })
+    vi.stubGlobal('fetch', fleet)
+    appWith(async () => null)
+    await expect(openTorrent('magnet:?dn=nothing')).rejects.toBeInstanceOf(TorrentRejectedError)
+    expect(fleet).not.toHaveBeenCalled()
+  })
 })

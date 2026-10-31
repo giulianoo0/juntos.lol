@@ -72,6 +72,18 @@ export interface TorrentSession {
   detach?(): void
 }
 
+const APP_SWARM_DEADLINE_MS = 25_000
+
+function withinDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('torrent metadata timed out')), ms)
+    work.then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (error: unknown) => { clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 /**
  * Opens the magnet where it will be prepared: the desktop app when it carries
  * the page, the companion app when it can take it, the fleet otherwise. An app
@@ -83,8 +95,17 @@ export async function openTorrent(
   options?: OpenTorrentOptions,
 ): Promise<TorrentSession> {
   if (mocksEnabled) return mockOpenTorrent(onStats)
-  // Inside the desktop app the swarm is the host's own, and so is the room.
-  if (await desktop()) return await openDesktopTorrent(magnet, onStats)
+  // Inside the desktop app the swarm is the host's own, and so is the room; a network that
+  // drops UDP leaves it without DHT or most trackers, and then the fleet opens it instead.
+  if (await desktop()) {
+    try {
+      return await withinDeadline(openDesktopTorrent(magnet, onStats), APP_SWARM_DEADLINE_MS)
+    } catch (error) {
+      if (error instanceof TorrentRejectedError) throw error
+      console.warn('the app could not reach the swarm; trying the fleet', error)
+    }
+    return await openRemoteTorrent(magnet, onStats, options)
+  }
   if (await jlocalTorrentUsable()) {
     try {
       return await openJlocalTorrent(magnet, onStats)
