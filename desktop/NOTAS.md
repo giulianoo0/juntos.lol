@@ -1,1 +1,1 @@
-Novidades: o YouTube traz todas as dublagens do vídeo, não só oito, e abre em poucos segundos mesmo com muitas. Correções: o convidado no navegador volta a ver vídeos com muitas dublagens, e uma fila grande de envio não trava mais a sala.
+Correções: o convidado não fica mais travado para sempre quando o envio de um trecho falha ou depois de um avanço curto, e as legendas do YouTube não aparecem mais com cada linha repetida.
