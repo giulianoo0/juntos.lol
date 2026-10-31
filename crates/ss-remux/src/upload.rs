@@ -145,7 +145,9 @@ pub async fn put_with_retry(
             .put(url)
             .header(reqwest::header::CONTENT_LENGTH, object.size)
             .body(reqwest::Body::from(file));
-        for (name, value) in headers {
+        // The presign pins Content-Length too, and a second copy of it is a
+        // 400 at Cloudflare's edge before R2 ever checks the signature.
+        for (name, value) in headers.iter().filter(|(name, _)| !name.eq_ignore_ascii_case("content-length")) {
             request = request.header(name, value);
         }
         match request.send().await {
@@ -169,14 +171,10 @@ mod tests {
 
     use super::*;
 
-    /// Name, Content-Length, Transfer-Encoding and body length of each PUT.
-    type Put = (String, Option<String>, Option<String>, usize);
-
     #[derive(Clone, Default)]
     pub(crate) struct Api {
         pub base: Arc<parking_lot::Mutex<String>>,
         pub presigns: Arc<AtomicUsize>,
-        pub puts: Arc<parking_lot::Mutex<Vec<Put>>>,
     }
 
     async fn sign(State(api): State<Api>, axum::Json(body): axum::Json<serde_json::Value>) -> axum::Json<serde_json::Value> {
@@ -186,25 +184,48 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|o| serde_json::json!({ "name": o["name"], "url": format!("{base}/put/{}", o["name"].as_str().unwrap()) }))
+            .map(|o| serde_json::json!({ "name": o["name"], "url": format!("{base}/put/{}", o["name"].as_str().unwrap()), "headers": signed_headers(o["size"].as_u64().unwrap()) }))
             .collect();
         axum::Json(serde_json::json!({ "objects": objects }))
     }
 
-    async fn store(
-        State(api): State<Api>,
-        axum::extract::Path(name): axum::extract::Path<String>,
-        headers: axum::http::HeaderMap,
-        body: axum::body::Bytes,
-    ) -> axum::http::StatusCode {
-        let header = |h: axum::http::HeaderName| headers.get(h).map(|v| v.to_str().unwrap().to_string());
-        api.puts.lock().push((
-            name,
-            header(axum::http::header::CONTENT_LENGTH),
-            header(axum::http::header::TRANSFER_ENCODING),
-            body.len(),
-        ));
+    /// What the server's presign pins into the signature (R2.PresignPut).
+    fn signed_headers(size: u64) -> serde_json::Value {
+        serde_json::json!({ "Content-Type": "video/iso.segment", "Cache-Control": "public, max-age=31536000, immutable", "Content-Length": size.to_string() })
+    }
+
+    async fn store(_body: axum::body::Bytes) -> axum::http::StatusCode {
         axum::http::StatusCode::OK
+    }
+
+    /// The bucket as the wire carries it. hyper's server folds a repeated
+    /// Content-Length into one; Cloudflare's edge answers it with a 400.
+    async fn raw_bucket() -> (String, tokio::sync::oneshot::Receiver<(Vec<String>, usize)>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let url = format!("http://{}/put/x", listener.local_addr().unwrap());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = vec![0u8; 64 << 10];
+            let end = loop {
+                let n = socket.read(&mut chunk).await.unwrap();
+                seen.extend_from_slice(&chunk[..n]);
+                if let Some(at) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break at + 4;
+                }
+            };
+            let head: Vec<String> = String::from_utf8_lossy(&seen[..end]).lines().map(str::to_ascii_lowercase).collect();
+            let declared = head.iter().find_map(|l| l.strip_prefix("content-length: ")).map_or(0, |n| n.parse().unwrap());
+            while seen.len() < end + declared {
+                let n = socket.read(&mut chunk).await.unwrap();
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n").await.unwrap();
+            tx.send((head, seen.len() - end)).unwrap();
+        });
+        (url, rx)
     }
 
     pub(crate) async fn fake_api() -> Api {
@@ -265,14 +286,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_put_declares_its_length_as_the_bucket_requires() {
-        let api = fake_api().await;
+    async fn a_put_declares_its_length_once_as_the_bucket_requires() {
+        let (url, received) = raw_bucket().await;
         let dir = crate::run_tests::scratch("put");
         let object = object(&dir, 0, 1 << 20);
-        let url = format!("{}/put/{}", api.base.lock(), object.name);
-        put_with_retry(&reqwest::Client::new(), &url, &Default::default(), &object).await.unwrap();
-        let puts = api.puts.lock().clone();
-        assert_eq!(puts, vec![(object.name.clone(), Some((1usize << 20).to_string()), None, 1 << 20)]);
+        let signed = serde_json::from_value(signed_headers(object.size)).unwrap();
+        put_with_retry(&reqwest::Client::new(), &url, &signed, &object).await.unwrap();
+        let (head, body) = received.await.unwrap();
+        let framing: Vec<&String> =
+            head.iter().filter(|l| l.starts_with("content-length:") || l.starts_with("transfer-encoding:")).collect();
+        assert_eq!(framing, [&format!("content-length: {}", 1 << 20)]);
+        assert_eq!(body, 1 << 20);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
