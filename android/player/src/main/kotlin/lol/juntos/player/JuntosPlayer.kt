@@ -31,6 +31,8 @@ data class PlayerSnapshot(
     val qualities: List<TrackOption> = emptyList(),
     val droppedFrames: Long = 0,
     val decodedFrames: Long = 0,
+    /** This viewer's shift of the subtitles: positive shows them later. */
+    val subtitleDelayMs: Long = 0,
 )
 
 /** The room's player. Positions are room time; [load] takes care of the region offset. */
@@ -39,8 +41,14 @@ interface JuntosPlayer : PlaybackTarget {
     fun load(source: MediaSource, startAtMs: Long = source.offsetMs)
     fun selectAudio(index: Int)
 
-    /** Null turns subtitles off. */
+    /** Null turns subtitles off. The pick and the delay outlive a [load] of another region. */
     fun selectSubtitle(index: Int?)
+
+    /** Per viewer, in steps of 250 ms up to ±600 s, as on the site: positive shows the subtitles later, negative sooner. */
+    fun setSubtitleDelay(ms: Long)
+
+    /** A file the viewer picked (SRT, VTT, ASS or SSA), for them alone: its index among the subtitles, selected, or null when it holds no cue. */
+    fun importSubtitle(name: String, text: String): Int?
 
     /** Null is automatic. */
     fun selectQuality(index: Int?)
