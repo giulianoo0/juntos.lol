@@ -67,6 +67,32 @@ impl Publisher {
         if !text.trim_start_matches('\u{feff}').starts_with("WEBVTT") {
             anyhow::bail!("not a WebVTT document");
         }
-        Ok(text)
+        Ok(without_repeats(&text))
+    }
+}
+
+/// YouTube writes many cues twice, same time and same text, and every player
+/// then shows the line twice; the copy goes.
+fn without_repeats(vtt: &str) -> String {
+    let normalized = vtt.replace("\r\n", "\n");
+    let mut seen = std::collections::HashSet::new();
+    let blocks: Vec<&str> = normalized
+        .split("\n\n")
+        .filter(|block| !block.contains("-->") || seen.insert(block.trim()))
+        .collect();
+    blocks.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cue_youtube_wrote_twice_is_kept_once() {
+        let vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n\n00:00:01.000 --> 00:00:02.000\nOi\n\n00:00:02.000 --> 00:00:03.000\nOi\n";
+        assert_eq!(
+            without_repeats(vtt),
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOi\n\n00:00:02.000 --> 00:00:03.000\nOi\n"
+        );
     }
 }

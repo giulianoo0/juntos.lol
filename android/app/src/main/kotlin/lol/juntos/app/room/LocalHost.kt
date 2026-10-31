@@ -193,6 +193,19 @@ class LocalHost(
         }.onFailure { Log.w(TAG, "upload_start", it) }
     }
 
+    private var low = false
+
+    /** The room wants (or stops wanting) the 480p variant for thin links. */
+    fun low(on: Boolean) {
+        val media = _media.value ?: return
+        if (on == low) return
+        low = on
+        scope.launch {
+            runCatching { producer.call("local_low", mapOf("key" to media.key, "on" to on, "positionMs" to positionMs)) }
+                .onFailure { Log.w(TAG, "low", it) }
+        }
+    }
+
     /** browserMediaIdle: nobody needs the bucket; what went up stays. */
     fun idle() {
         Log.i(TAG, "browserMediaIdle")
@@ -238,6 +251,7 @@ class LocalHost(
         _media.value = null
         sentMs = null
         uploading = false
+        low = false
         runCatching { producer.call("upload_stop", mapOf("roomId" to roomId)) }
         runCatching { producer.call("local_stop", mapOf("key" to media.key)) }
     }

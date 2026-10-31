@@ -96,6 +96,8 @@ data class RoomInfo(
     val mediaBaseUrl: String? = null,
     val mediaKey: String? = null,
     val localSource: Boolean? = null,
+    /** Variants the producer adds beside the source's own, such as "480p" for thin links. */
+    val renditions: List<String>? = null,
 )
 
 /** GET /api/config: what the server names for the client. */

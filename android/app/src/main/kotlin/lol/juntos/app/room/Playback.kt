@@ -29,7 +29,14 @@ import lol.juntos.player.languageLabel
 
 /** The room's subtitles as the player fetches them: always the bucket's WebVTT. */
 internal fun roomSubtitles(room: RoomInfo): List<SidecarSubtitle> = room.subtitleTracks.orEmpty().mapNotNull { track ->
-    subtitleUrl(room, track)?.let { SidecarSubtitle(it, track.language, track.title.ifBlank { languageLabel(track.language) ?: track.language }, "text/vtt") }
+    subtitleUrl(room, track)?.let { SidecarSubtitle(it, track.language, subtitleLabel(track.title, track.language), "text/vtt") }
+}
+
+/** YouTube names a track by its language in English ("Portuguese"): that reads in Portuguese here; any other title stays. */
+internal fun subtitleLabel(title: String, language: String): String {
+    val english = java.util.Locale.forLanguageTag(language).getDisplayLanguage(java.util.Locale.ENGLISH)
+    val plain = title.isBlank() || title.equals(english, ignoreCase = true)
+    return if (plain) languageLabel(language) ?: title.ifBlank { language } else title
 }
 
 /** Where the room is now, on its own clock. */
@@ -60,6 +67,7 @@ internal fun FollowRoom(baseUrl: String, session: SyncSession, player: JuntosPla
                 // The host plays its own cache, not the bucket.
                 val position = roomPositionMs(now)
                 host.follow(position)
+                host.low(ownRoom.renditions.orEmpty().contains("480p"))
                 val subtitles = roomSubtitles(ownRoom)
                 val local = host.master(position, loaded?.regionN)
                 if (local != null) {
