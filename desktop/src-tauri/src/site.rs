@@ -57,6 +57,18 @@ pub fn navigation(target: &Url, site: &Url) -> Navigation {
     Navigation::External
 }
 
+/// The room a link opens in the window: `juntos://room/{id}`, or the site's own
+/// `/room/{id}` handed over by the system; anything else is ignored.
+pub fn room_link(link: &Url, site: &Url) -> Option<Url> {
+    let id = match link.scheme() {
+        "juntos" if link.host_str() == Some("room") => link.path().trim_start_matches('/').to_string(),
+        "https" if link.origin() == site.origin() => link.path().strip_prefix("/room/")?.to_string(),
+        _ => return None,
+    };
+    let valid = (4..=32).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric());
+    if valid { site.join(&format!("room/{id}")).ok() } else { None }
+}
+
 /// The app's answer to the site's hello.
 #[derive(Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,5 +179,17 @@ mod tests {
     fn about_blank_stays() {
         let site = site_origin(None);
         assert_eq!(navigation(&Url::parse("about:blank").unwrap(), &site), Navigation::Allow);
+    }
+
+    #[test]
+    fn a_room_link_opens_that_room_on_the_site() {
+        let site = Url::parse("https://juntos.lol/").unwrap();
+        let room = |raw: &str| room_link(&Url::parse(raw).unwrap(), &site).map(|u| u.to_string());
+        assert_eq!(room("juntos://room/ABCD1234").as_deref(), Some("https://juntos.lol/room/ABCD1234"));
+        assert_eq!(room("https://juntos.lol/room/ABCD1234").as_deref(), Some("https://juntos.lol/room/ABCD1234"));
+        assert_eq!(room("juntos://room/AB"), None);
+        assert_eq!(room("juntos://room/ABCD%2F1234"), None);
+        assert_eq!(room("juntos://other/ABCD1234"), None);
+        assert_eq!(room("https://evil.example/room/ABCD1234"), None);
     }
 }

@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use tauri::ipc::CapabilityBuilder;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 
 use commands::{AppState, Tools};
@@ -76,6 +77,14 @@ pub fn run() {
     let site = site::site_origin(std::env::var("JUNTOS_URL").ok().as_deref());
 
     tauri::Builder::default()
+        // A second launch (a room link clicked while the app runs) hands its link to this one.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(serve::SCHEME, |ctx, request, responder| {
@@ -164,8 +173,19 @@ pub fn run() {
                 .traffic_light_position(tauri::LogicalPosition::new(20.0, 32.0));
             #[cfg(windows)]
             let window = window.decorations(false);
+            // Windows and Linux learn the scheme when the app runs; macOS from the bundle.
+            #[cfg(any(windows, target_os = "linux"))]
+            if !e2e {
+                let _ = app.deep_link().register_all();
+            }
+            // Opened by a room link: the window goes straight to that room.
+            let opening = app.deep_link().get_current().ok().flatten().and_then(|urls| urls.iter().find_map(|url| site::room_link(url, &site)));
             #[allow(unused_mut)]
-            let mut init = format!("window.__JUNTOS_SITE__ = {};", serde_json::to_string(site.as_str())?);
+            let mut init = format!(
+                "window.__JUNTOS_SITE__ = {}; window.__JUNTOS_OPEN__ = {};",
+                serde_json::to_string(site.as_str())?,
+                serde_json::to_string(&opening.as_ref().map(|url| url.as_str()))?,
+            );
             // Debug builds only: a script the end-to-end tests drive the page with.
             #[cfg(debug_assertions)]
             if let Some(extra) = std::env::var("JUNTOS_E2E_SCRIPT").ok().and_then(|path| std::fs::read_to_string(path).ok()) {
@@ -193,6 +213,18 @@ pub fn run() {
                 })
                 .build()?
                 .with_webview(serve::mark_secure)?;
+
+            let linked = app.handle().clone();
+            let link_site = site.clone();
+            app.deep_link().on_open_url(move |event| {
+                let Some(room) = event.urls().iter().find_map(|url| site::room_link(url, &link_site)) else { return };
+                if let Some(window) = linked.get_webview_window("main") {
+                    tracing::info!(%room, "room link");
+                    let _ = window.navigate(room);
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            });
 
             app.manage(updates::AppUpdates::default());
             if !cfg!(debug_assertions) || std::env::var("JUNTOS_UPDATE_URL").is_ok() {

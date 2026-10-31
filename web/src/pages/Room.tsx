@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { openRoomInApp } from '../openInApp'
 import { ensureHuman } from '../human'
 import { NotFoundPage } from '../components/LostPage'
 import { useMessageChime } from '../chat/useMessageChime'
@@ -106,6 +107,7 @@ const PRODUCER_ALIVE_MS = 90_000
     once you are in the call, waiting in the corner while you browse. */
 export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: boolean) => void }) {
   const t = useT()
+  useEffect(() => { openRoomInApp(id) }, [id])
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [preview, setPreview] = useState<RoomPreview | null>(null)
   const [missing, setMissing] = useState(false)

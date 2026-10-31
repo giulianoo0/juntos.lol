@@ -191,7 +191,7 @@
     probing = false
     retry.removeAttribute('aria-busy')
     if (up) {
-      location.replace(site)
+      location.replace(window.__JUNTOS_OPEN__ || site)
       return
     }
     document.body.dataset.state = 'offline'

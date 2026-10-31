@@ -2,6 +2,7 @@ import { Cpu, Download, Zap } from 'lucide-react'
 import { useEffect, useState, useSyncExternalStore, type ComponentType } from 'react'
 import { useT } from '../i18n/useT'
 import { isDesktop } from '../platform'
+import { markAppDownloaded } from '../openInApp'
 import { GITHUB_URL } from '../ui/GithubGlyph'
 import { Modal } from '../ui/Modal'
 import { AppleGlyph, LinuxGlyph, WindowsGlyph } from '../ui/PlatformGlyphs'
@@ -83,7 +84,7 @@ function AndroidDownload() {
   }, [])
   if (!apk) return null
   return (
-    <a className={`${toggle.toggle} ${styles.apk}`} href={apk.url} download aria-label={t('site.download')}>
+    <a className={`${toggle.toggle} ${styles.apk}`} href={apk.url} download aria-label={t('site.download')} onClick={markAppDownloaded}>
       <Download size={18} aria-hidden="true" />
       <span className={styles.beta}>{t('site.beta')}</span>
     </a>
@@ -156,7 +157,7 @@ export function DownloadAppHost() {
               </>
             )
             return href ? (
-              <a key={id} className={styles.platform} data-mine={id === mine || undefined} href={href} download onClick={() => setOpen(false)}>
+              <a key={id} className={styles.platform} data-mine={id === mine || undefined} href={href} download onClick={() => { markAppDownloaded(); setOpen(false) }}>
                 {face}
               </a>
             ) : (
