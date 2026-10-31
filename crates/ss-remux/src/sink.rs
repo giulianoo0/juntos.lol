@@ -48,7 +48,7 @@ fn digits(s: &str, max: usize) -> bool {
 }
 
 /// Spool budget and temp file held by one in-flight body, given back on any
-/// exit — including the future being dropped by a dying connection.
+/// exit, including the future being dropped by a dying connection.
 struct SpoolHold<'a> {
     sink: &'a Sink,
     amount: u64,

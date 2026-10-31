@@ -13,7 +13,6 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Publisher {
     /// Fetches the documents through the same exit as the video.
     pub client: reqwest::Client,
-    /// Talks to the API.
     pub api: reqwest::Client,
     pub api_base: String,
     pub room_id: String,

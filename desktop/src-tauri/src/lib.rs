@@ -20,7 +20,6 @@ use tauri_plugin_opener::OpenerExt;
 use commands::{AppState, Tools};
 use site::Navigation;
 
-/// The permission of each command build.rs declares from commands.txt.
 /// What the drawn title bar needs: drag, double-click to zoom, and the buttons.
 const WINDOW_PERMISSIONS: &[&str] = &[
     "core:window:allow-start-dragging",
@@ -30,6 +29,7 @@ const WINDOW_PERMISSIONS: &[&str] = &[
     "core:window:allow-close",
 ];
 
+/// The permission of each command build.rs declares from commands.txt.
 fn site_permissions() -> impl Iterator<Item = String> {
     include_str!("../commands.txt").lines().filter(|line| !line.is_empty()).map(|name| format!("allow-{}", name.replace('_', "-")))
 }

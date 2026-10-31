@@ -98,7 +98,7 @@ const LOW_VIDEO_BITRATE: &str = "1200k";
 const LOW_VIDEO_MAXRATE: &str = "1500k";
 const LOW_VIDEO_BUFSIZE: &str = "3000k";
 
-/// None means the track is dropped from the output — a codec outside the
+/// None means the track is dropped from the output: a codec outside the
 /// matrix or a layout we don't take never costs the whole file, since a
 /// BluRay rip carries its lossless track next to a usable AC3 one.
 fn audio_action(codec: &str, channels: u32) -> Option<AudioAction> {

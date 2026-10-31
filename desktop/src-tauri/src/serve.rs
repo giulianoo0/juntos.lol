@@ -69,7 +69,6 @@ fn local_master(path: &Path) -> Option<String> {
     Some(crate::hls::master(&prefix, &info, None))
 }
 
-/// Answers one request against the cache at `root`.
 pub fn serve(root: &Path, request_path: &str, range: Option<&HeaderValue>) -> Response<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
 

@@ -32,10 +32,8 @@ pub struct SubtitleTrack {
 #[allow(dead_code)]
 pub struct SourcePlan {
     pub video_codec: String,
-    /// The RFC 6381 string for the video track, when the player cannot read
-    /// it off the init segment itself: hls.js infers avc1/hvc1 from the
-    /// sample entry but not av01/vp09, and without CODECS in the master it
-    /// opens the SourceBuffers wrong and fails on the first audio append.
+    /// The RFC 6381 string for the video track: hls.js infers avc1/hvc1 but
+    /// not av01/vp09, and without CODECS it fails on the first audio append.
     pub video_codecs: Option<String>,
     /// The video's width and height, when the source says.
     pub video_size: Option<(u32, u32)>,

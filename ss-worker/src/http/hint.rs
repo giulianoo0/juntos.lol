@@ -18,6 +18,8 @@ pub struct Hint {
 }
 
 /// POST /v1/hint/{ticket}: the remux's read offset moved. Carries the
+/// reader's offset, not the playhead: the remux runs ahead of playback. The
+/// body is text so the browser sends it without a preflight.
 pub async fn post(State(state): State<Arc<AppState>>, Path(ticket): Path<String>, body: String) -> Response {
     let ticket = match state.verify(&ticket) {
         Ok(t) => t,
