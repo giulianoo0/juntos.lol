@@ -1006,19 +1006,15 @@ impl Engine {
             }
         };
         let path = handle.output_folder().join(&info.relative_filename);
-        let (offset, len, infohash) = (info.offset_in_torrent, info.len, infohash.to_string());
-        // A slow disk under fallocate must not hold a runtime thread.
-        tokio::task::spawn_blocking(move || {
-            let freed = punch_holes(&path, offset, len, &dropped, piece_len);
-            if freed > 0 {
-                tracing::info!(
-                    infohash,
-                    pieces = dropped.len(),
-                    freed_mib = freed / (1024 * 1024),
-                    "released pieces behind the window",
-                );
-            }
-        });
+        let freed = punch_holes(&path, info.offset_in_torrent, info.len, &dropped, piece_len);
+        if freed > 0 {
+            tracing::info!(
+                infohash,
+                pieces = dropped.len(),
+                freed_mib = freed / (1024 * 1024),
+                "released pieces behind the window",
+            );
+        }
     }
 
     /// A slot nobody has read through recently is a stale priority window
