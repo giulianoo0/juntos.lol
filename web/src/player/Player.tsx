@@ -42,6 +42,7 @@ import { lastUploadFailureDetail } from '../upload'
 import type { TorrentStats } from '../torrent'
 import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
+import { REGION_BEHIND_MS, regionHolds } from './regions'
 
 interface PlayerProps {
   room: RoomInfo
@@ -71,20 +72,10 @@ interface PlayerProps {
   onWait?: (wait: { secondsLeft: number | null; cold: boolean }) => void
 }
 
-const REGION_AHEAD_MS = 30_000
 const PLAY_INTENT_TTL_MS = 5_000
 const REMOTE_ECHO_MS = 500
-// The server's followBehindMs (internal/worker/remux.go) must not exceed
-// this: a position it calls covered that no region here holds is a room that
-// waits forever.
-const REGION_BEHIND_MS = 1_000
 // Boxes that change no layout on the page, around what a PiP window takes.
 const PIP_SLOT_STYLE = { display: 'contents' } as const
-
-export function regionHolds(region: MediaRegion, ms: number): boolean {
-  const end = region.startMs + region.producedMs + (region.growing ? REGION_AHEAD_MS : 0)
-  return ms >= region.startMs - REGION_BEHIND_MS && ms <= end
-}
 
 /**
  * The region to load for a position: the one already loaded if it still

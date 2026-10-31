@@ -12,6 +12,7 @@ import { useSyncExternalStore } from 'react'
 import { desktop } from '../platform'
 import { registerRemuxHandle, unregisterRemuxHandle } from '../upload'
 import { parseMagnet } from '../remoteTorrent'
+import { regionHolds } from '../player/regions'
 import { canonicalYoutubeUrl } from '../youtube'
 import type { LocalCopy, MediaRegion } from '../types'
 
@@ -203,16 +204,24 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
     uploadWatch: null,
   }
   rooms.set(roomId, attached)
-  const send = () => {
-    attached.lastFollow = Date.now()
+  const tell = () => {
     attached.sentMs = attached.positionMs
     void app.invoke('local_follow', { key: attached.key, positionMs: attached.positionMs }).catch(() => undefined)
+  }
+  const send = () => {
+    attached.lastFollow = Date.now()
+    tell()
   }
   const handle = {
     follow: (absoluteMs: number) => {
       attached.positionMs = Math.max(0, Math.round(absoluteMs))
       if (attached.followTimer !== null) return
       if (attached.sentMs !== null && Math.abs(attached.positionMs - attached.sentMs) < SAME_PLACE_MS) return
+      // A place the cache already holds starts no region: it goes now and holds no seek back.
+      if (attached.media.regions.some((region) => regionHolds(region, attached.positionMs))) {
+        tell()
+        return
+      }
       const since = Date.now() - attached.lastFollow
       if (since >= FOLLOW_DEBOUNCE_MS) {
         send()
