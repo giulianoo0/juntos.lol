@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -131,6 +132,21 @@ class AppFlowTest {
         rule.onNodeWithContentDescription("Sair").assertDoesNotExist()
         landscape = false
         waitFor("Sala de teste")
+    }
+
+    @Test
+    fun pinningSomeoneBringsThemToTheTopInView() {
+        launch(linked = "LINK0001")
+        waitFor("Sala de teste")
+        rule.runOnIdle {
+            session.join(Member(id = "ana", nickname = "Ana"))
+            session.join(Member(id = "bia", nickname = "Bia"))
+            session.join(Member(id = "caio", nickname = "Caio"))
+        }
+        rule.onAllNodes(hasContentDescription("Fixar"))[3].performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Caio").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Desafixar").assertIsDisplayed()
     }
 
     @Test

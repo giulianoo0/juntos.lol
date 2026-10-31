@@ -120,8 +120,12 @@ fun PeopleGrid(members: List<Member>, controllerId: String?, pinned: String?, on
     val place = pop<IntOffset>()
     val fadeIn = pop<Float>()
     val motion = LocalMotionEnabled.current
+    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    // The grid anchors on the first visible key, so a pin would land above the fold.
+    LaunchedEffect(pinned) { if (pinned != null) grid.animateScrollToItem(0) }
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
+        state = grid,
         modifier = modifier,
         contentPadding = PaddingValues(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

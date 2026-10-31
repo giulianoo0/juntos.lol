@@ -62,7 +62,7 @@ internal fun JuntosSheet(onDismiss: () -> Unit, content: @Composable ColumnScope
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = c.surface,
         contentColor = c.text,
-        scrimColor = c.text.copy(alpha = if (c.isDark) 0.5f else 0.25f),
+        scrimColor = androidx.compose.ui.graphics.Color.Black.copy(alpha = if (c.isDark) 0.55f else 0.4f),
         shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
         dragHandle = {
             Box(Modifier.padding(top = 10.dp, bottom = 6.dp).size(width = 36.dp, height = 4.dp).background(c.line, CircleShape))
