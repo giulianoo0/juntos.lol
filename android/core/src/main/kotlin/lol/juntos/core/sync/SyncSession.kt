@@ -3,6 +3,7 @@ package lol.juntos.core.sync
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import lol.juntos.core.model.ChatMessage
+import lol.juntos.core.model.HostSubtitles
 import lol.juntos.core.model.Member
 import lol.juntos.core.model.PlayState
 import lol.juntos.core.model.RoomInfo
@@ -28,6 +29,15 @@ data class SyncState(
     val room: RoomInfo? = null,
     val waiting: RoomWaiting? = null,
     val spotlight: Spotlight? = null,
+    /** Signs the member's own calls to the room's HTTP routes, with [memberId]. */
+    val capability: String? = null,
+    /** Whether play waits for everyone to buffer. */
+    val gating: Boolean = true,
+    val hostSubtitles: HostSubtitles? = null,
+    /** Set while the server asks whether anyone is still watching; [SyncSession.stillHere] answers. */
+    val stillThereDeadlineMs: Long? = null,
+    /** Why the session ended for good: [SyncEvent.Kicked], [SyncEvent.Replaced] or [SyncEvent.RoomGone]. */
+    val ended: SyncEvent? = null,
 ) {
     val isController: Boolean get() = memberId != null && memberId == controllerId
 }
@@ -57,6 +67,8 @@ data class SessionRequest(
     val ticket: String? = null,
     val ownerToken: String? = null,
     val avatar: String? = null,
+    /** Stable per install, so a second socket from this phone takes the seat over instead of doubling it. */
+    val device: String? = null,
 )
 
 /** One member's socket to /ws/rooms/{id}, reconnecting on its own until closed. */
@@ -69,6 +81,7 @@ interface SyncSession {
     fun seek(positionMs: Long)
     fun chat(text: String)
     fun ready(report: ReadyReport)
+    fun stillHere() {}
 
     /** Leaves on purpose: the seat is not kept. */
     fun leave()

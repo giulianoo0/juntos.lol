@@ -4,6 +4,7 @@ import lol.juntos.core.model.CreatedRoom
 import lol.juntos.core.model.PublicConfig
 import lol.juntos.core.model.RoomInfo
 import lol.juntos.core.model.RoomPreview
+import lol.juntos.core.model.Seat
 
 /** The HTTP side of juntos.lol. Calls throw [ApiException] with the server's error code. */
 interface JuntosApi {
@@ -16,9 +17,12 @@ interface JuntosApi {
 
     suspend fun room(roomId: String): RoomInfo
 
+    /** The room as a member reads it: behind a password or approval, only a seat gets an answer. */
+    suspend fun room(roomId: String, seat: Seat): RoomInfo = room(roomId)
+
     suspend fun preview(roomId: String): RoomPreview
 
-    /** The ticket a password room asks for on the socket's hello; null for an open room. */
+    /** The ticket the socket's hello carries into a password room (the server mints one for any room). */
     suspend fun join(roomId: String, password: String? = null): String?
 }
 

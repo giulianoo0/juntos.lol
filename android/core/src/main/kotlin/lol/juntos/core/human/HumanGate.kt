@@ -7,4 +7,7 @@ package lol.juntos.core.human
  */
 fun interface HumanGate {
     suspend fun ensure(): Boolean
+
+    /** The server refused the cookie anyway (expired, or signed with an old key): solve it again next time. */
+    fun forget() {}
 }

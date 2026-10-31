@@ -22,3 +22,8 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
 }
+
+tasks.test {
+    // LiveRoomTest runs only with JUNTOS_LIVE=1: the flag is an input, so a cached skip is never reused.
+    inputs.property("live", providers.environmentVariable("JUNTOS_LIVE").orElse(""))
+}

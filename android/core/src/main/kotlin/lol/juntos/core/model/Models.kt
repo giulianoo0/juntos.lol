@@ -121,4 +121,12 @@ data class RoomPreview(
     val fileName: String = "",
     val joinMode: String? = null,
     val memberCount: Int = 0,
+    val nicknames: List<String> = emptyList(),
 )
+
+/** The seat the socket's welcome hands out: it reads a locked room and takes the seat back on a reconnect. */
+data class Seat(val memberId: String, val capability: String)
+
+/** The controller's subtitle pick, for a viewer to copy. */
+@Serializable
+data class HostSubtitles(val track: Int, val delayMs: Long = 0)
