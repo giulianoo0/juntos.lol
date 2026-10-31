@@ -178,7 +178,8 @@ func TestDiscordLoginJoinsTheServerWithItsRole(t *testing.T) {
 		DiscordAPIBase: discord.URL, DiscordBotToken: "bot-token", DiscordGuildID: "G1", DiscordMemberRoleID: "R1",
 	}
 	router := gin.New()
-	RegisterAccountRoutes(router.Group("/api"), cfg, account.NewStore(dbtest.New(t)), room.NewStore(rdb, 5*time.Hour), nil)
+	accounts := account.NewStore(dbtest.New(t))
+	RegisterAccountRoutes(router.Group("/api"), cfg, accounts, room.NewStore(rdb, 5*time.Hour), nil)
 	rig := accountRig{router: router}
 
 	start := rig.do(http.MethodGet, "/api/auth/discord", "")
@@ -191,6 +192,112 @@ func TestDiscordLoginJoinsTheServerWithItsRole(t *testing.T) {
 
 	require.Equal(t, "Bot bot-token G1 80351110224678912 user-token R1", <-joined)
 	require.Equal(t, "role R1", <-joined, "quem já estava no servidor também ganha o cargo")
+	require.Eventually(t, func() bool {
+		signed, err := accounts.ByDiscord(t.Context(), "80351110224678912")
+		return err == nil && signed.GuildJoined
+	}, 5*time.Second, 10*time.Millisecond, "o servidor grava que a conta entrou")
+	me := rig.do(http.MethodGet, "/api/me", "", cookieNamed(back, accountCookie))
+	require.JSONEq(t, `false`, jsonField(t, me, "guildPending"), "quem acabou de entrar com guilds.join não é levado de novo")
+}
+
+// guildRig is the account API with the bot and the server configured, over a
+// fake Discord where members are the users already in the server.
+type guildRig struct {
+	accountRig
+	// roles gets each role the bot hands out, as "user role".
+	roles chan string
+}
+
+func newGuildRig(t *testing.T, members ...string) guildRig {
+	t.Helper()
+	discord := fakeDiscord(t)
+	mux := discord.Config.Handler.(*http.ServeMux)
+	roles := make(chan string, 4)
+	mux.HandleFunc("GET /guilds/G1/members/{user}", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "Bot bot-token", r.Header.Get("Authorization"))
+		for _, member := range members {
+			if member == r.PathValue("user") {
+				_, _ = w.Write([]byte(`{"roles":[]}`))
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Unknown Member","code":10007}`))
+	})
+	mux.HandleFunc("PUT /guilds/G1/members/{user}/roles/{role}", func(w http.ResponseWriter, r *http.Request) {
+		roles <- r.PathValue("user") + " " + r.PathValue("role")
+		w.WriteHeader(http.StatusNoContent)
+	})
+	_, rdb := newRedis(t)
+	rooms := room.NewStore(rdb, 5*time.Hour)
+	accounts := account.NewStore(dbtest.New(t))
+	cfg := config.Config{
+		PublicOrigin: "https://juntos.test", DiscordClientID: "client", DiscordClientSecret: "secret",
+		DiscordAPIBase: discord.URL, DiscordBotToken: "bot-token", DiscordGuildID: "G1", DiscordMemberRoleID: "R1",
+	}
+	router := gin.New()
+	RegisterAccountRoutes(router.Group("/api"), cfg, accounts, rooms, nil)
+	return guildRig{accountRig: accountRig{router: router, accounts: accounts, rooms: rooms}, roles: roles}
+}
+
+func TestOldAccountIsSentToJoinTheServerOnce(t *testing.T) {
+	rig := newGuildRig(t)
+	_, session := rig.signIn(t, "80351110224678912", "Ana")
+
+	require.JSONEq(t, `true`, jsonField(t, rig.do(http.MethodGet, "/api/me", "", session), "guildPending"))
+	first := rig.do(http.MethodPost, "/api/me/discord-guild", "", session)
+	second := rig.do(http.MethodPost, "/api/me/discord-guild", "", session)
+
+	require.Equal(t, http.StatusOK, first.Code)
+	require.JSONEq(t, `true`, jsonField(t, first, "authorize"))
+	require.JSONEq(t, `false`, jsonField(t, second, "authorize"), "o pedido é marcado antes do redirecionamento e não se repete")
+	require.JSONEq(t, `false`, jsonField(t, rig.do(http.MethodGet, "/api/me", "", session), "guildPending"))
+}
+
+func TestGuildAskForSomeoneAlreadyInTheServerJustGivesTheRole(t *testing.T) {
+	rig := newGuildRig(t, "80351110224678912")
+	ana, session := rig.signIn(t, "80351110224678912", "Ana")
+
+	w := rig.do(http.MethodPost, "/api/me/discord-guild", "", session)
+
+	require.JSONEq(t, `false`, jsonField(t, w, "authorize"), "quem já está no servidor não passa pelo Discord")
+	require.Equal(t, "80351110224678912 R1", <-rig.roles)
+	stored, err := rig.accounts.Get(t.Context(), ana.ID)
+	require.NoError(t, err)
+	require.True(t, stored.GuildJoined)
+}
+
+func TestGuildAskNeedsAnAccountAndTheServerConfigured(t *testing.T) {
+	t.Run("anônimo não é pedido", func(t *testing.T) {
+		rig := newGuildRig(t)
+		require.Equal(t, http.StatusUnauthorized, rig.do(http.MethodPost, "/api/me/discord-guild", "").Code)
+	})
+	t.Run("sem servidor configurado nada é pedido", func(t *testing.T) {
+		rig := newAccountRig(t, nil)
+		_, session := rig.signIn(t, "1", "Ana")
+
+		require.JSONEq(t, `false`, jsonField(t, rig.do(http.MethodGet, "/api/me", "", session), "guildPending"))
+		require.JSONEq(t, `false`, jsonField(t, rig.do(http.MethodPost, "/api/me/discord-guild", "", session), "authorize"))
+	})
+}
+
+func TestDiscordRefusingTheGuildAskKeepsTheSignInAndAsksNoMore(t *testing.T) {
+	rig := newGuildRig(t)
+	_, session := rig.signIn(t, "80351110224678912", "Ana")
+	require.JSONEq(t, `true`, jsonField(t, rig.do(http.MethodPost, "/api/me/discord-guild", "", session), "authorize"))
+
+	start := rig.do(http.MethodGet, "/api/auth/discord?next=%2Fconta", "", session)
+	authorize, err := url.Parse(start.Header().Get("Location"))
+	require.NoError(t, err)
+	refused := rig.do(http.MethodGet, "/api/auth/discord/callback?error=access_denied&state="+url.QueryEscape(authorize.Query().Get("state")), "",
+		cookieNamed(start, oauthStateCookie), session)
+
+	require.Equal(t, http.StatusFound, refused.Code)
+	require.Equal(t, "/conta", refused.Header().Get("Location"))
+	me := rig.do(http.MethodGet, "/api/me", "", session)
+	require.Equal(t, http.StatusOK, me.Code, "negar no Discord não desfaz o login")
+	require.JSONEq(t, `false`, jsonField(t, me, "guildPending"))
+	require.JSONEq(t, `false`, jsonField(t, rig.do(http.MethodPost, "/api/me/discord-guild", "", session), "authorize"))
 }
 
 func TestDiscordCallbackRefusesABadState(t *testing.T) {

@@ -45,6 +45,9 @@ const (
 	// askDMsPerPairPerHour caps the friend request DMs between two accounts,
 	// so asking, withdrawing and asking again doesn't ring on and on.
 	askDMsPerPairPerHour = 2
+	// guildChecksPerHour caps how often one account has the bot ask Discord
+	// whether it is in the server, while Discord keeps failing to answer.
+	guildChecksPerHour = 3
 )
 
 // PresenceSource says which room each account is in right now.
@@ -74,6 +77,8 @@ type accountRoutes struct {
 	invitesTo *windowLimiter
 	// askDMs is keyed by asker and asked.
 	askDMs *windowLimiter
+	// guildChecks is keyed by account.
+	guildChecks *windowLimiter
 }
 
 // RegisterAccountRoutes mounts the account API. Without a Discord secret the
@@ -88,6 +93,8 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 		invitesTo: newWindowLimiter(invitesPerFriendPerHour, time.Hour),
 		askDMs:    newWindowLimiter(askDMsPerPairPerHour, time.Hour),
 		roomCards: NewDiscordRooms(rooms, cfg),
+
+		guildChecks: newWindowLimiter(guildChecksPerHour, time.Hour),
 	}
 	if cfg.DiscordBotToken != "" && cfg.PublicOrigin != "" {
 		routes.bot = &discord.API{Base: cfg.DiscordAPIBase, BotToken: cfg.DiscordBotToken, Client: &http.Client{Timeout: 10 * time.Second}}
@@ -105,6 +112,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	rg.POST("/auth/logout", routes.logout)
 	rg.GET("/me", routes.me)
 	rg.PATCH("/me", routes.patchMe)
+	rg.POST("/me/discord-guild", routes.askGuild)
 	rg.GET("/friends", routes.friends)
 	rg.DELETE("/friends/:id", routes.removeFriend)
 	rg.POST("/friends/:id/invite", routes.inviteFriend)
@@ -209,7 +217,11 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 		return
 	}
 	if a.login.JoinGuild {
-		go a.joinGuild(user.ID, discordToken)
+		// This sign-in carried guilds.join, so it is the account's ask.
+		if _, err := a.accounts.MarkGuildAsked(ctx, signed.ID); err != nil {
+			slog.WarnContext(ctx, "mark discord guild asked", "error", err)
+		}
+		go a.joinGuild(signed.ID, user.ID, discordToken)
 	}
 	token, err := a.accounts.StartSession(ctx, signed.ID)
 	if err != nil {
@@ -226,12 +238,66 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 
 // joinGuild puts the person who just signed in in the juntos server with its
 // role. It runs beside the sign-in, which never waits for it nor fails by it.
-func (a *accountRoutes) joinGuild(discordID, accessToken string) {
+func (a *accountRoutes) joinGuild(accountID int64, discordID, accessToken string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := a.bot.AddGuildMember(ctx, a.cfg.DiscordGuildID, discordID, accessToken, a.cfg.DiscordMemberRoleID); err != nil {
 		slog.WarnContext(ctx, "discord guild join failed", "error", err)
+		return
 	}
+	if err := a.accounts.MarkGuildJoined(ctx, accountID); err != nil {
+		slog.WarnContext(ctx, "mark discord guild joined", "error", err)
+	}
+}
+
+// guildPending is an account that signed in before the server was asked for
+// and was never sent to join it.
+func (a *accountRoutes) guildPending(me account.Account) bool {
+	return a.login != nil && a.login.JoinGuild && !me.GuildAsked
+}
+
+// askGuild spends the viewer's one ask to join the server. Someone already
+// in it just gets the role from the bot; anyone else is told to go through
+// Discord's authorization, whose callback makes the join. The ask is marked
+// here, before the page leaves, so saying no or closing the tab never brings
+// it back. Nobody else's account can be named: it is always the viewer's.
+func (a *accountRoutes) askGuild(c *gin.Context) {
+	me, ok := a.viewer(c, true)
+	if !ok {
+		return
+	}
+	if !a.guildPending(me) || !a.guildChecks.allow(strconv.FormatInt(me.ID, 10)) {
+		c.JSON(http.StatusOK, gin.H{"authorize": false})
+		return
+	}
+	ctx := c.Request.Context()
+	member, err := a.bot.IsGuildMember(ctx, a.cfg.DiscordGuildID, me.DiscordID)
+	if err != nil {
+		slog.WarnContext(ctx, "discord guild member check failed", "error", err)
+		c.JSON(http.StatusOK, gin.H{"authorize": false})
+		return
+	}
+	if member {
+		if a.cfg.DiscordMemberRoleID != "" {
+			if err := a.bot.AddGuildMemberRole(ctx, a.cfg.DiscordGuildID, me.DiscordID, a.cfg.DiscordMemberRoleID); err != nil {
+				slog.WarnContext(ctx, "discord guild role failed", "error", err)
+				c.JSON(http.StatusOK, gin.H{"authorize": false})
+				return
+			}
+		}
+		if err := a.accounts.MarkGuildJoined(ctx, me.ID); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"authorize": false})
+		return
+	}
+	spent, err := a.accounts.MarkGuildAsked(ctx, me.ID)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"authorize": spent})
 }
 
 // safeNext keeps a same-site path to come back to, and turns anything that
@@ -333,7 +399,7 @@ func (a *accountRoutes) writeMe(c *gin.Context, me account.Account) {
 	c.JSON(http.StatusOK, gin.H{
 		"id": me.ID, "nickname": me.Nickname, "avatar": me.Avatar, "visibility": me.Visibility,
 		"discord": discordNamesOf(me), "discordVisibility": me.DiscordVisibility,
-		"createdAt": me.CreatedAt, "stats": stats,
+		"createdAt": me.CreatedAt, "stats": stats, "guildPending": a.guildPending(me),
 	})
 }
 
