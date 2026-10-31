@@ -25,7 +25,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Remove
@@ -47,6 +49,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -95,14 +98,16 @@ fun SettingsPanel(player: JuntosPlayer, onNotice: (String) -> Unit) {
     val snapshot by player.snapshot.collectAsState()
     val tabs = listOfNotNull(Tab.Audio, Tab.Subtitles, Tab.Quality.takeIf { snapshot.qualities.isNotEmpty() })
     var tab by remember { mutableStateOf(Tab.Audio) }
-    Column {
+    // A video with two dozen dubs would push the tabs under the status bar: the list scrolls below them instead.
+    Column(Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.8f).dp)) {
         Segmented(tabs, tab, onSelect = { tab = it }, label = { it.label }, fill = true, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
         AnimatedContent(
             tab,
+            modifier = Modifier.weight(1f, fill = false),
             transitionSpec = { fadeIn(tween(JuntosMotion.BASE_MS)) togetherWith fadeOut(tween(JuntosMotion.FAST_MS)) },
             label = "settings-tab",
         ) { current ->
-            Column(Modifier.fillMaxWidth().heightIn(min = 160.dp).padding(top = 4.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(min = 160.dp).verticalScroll(rememberScrollState()).padding(top = 4.dp)) {
                 when (current) {
                     Tab.Audio -> snapshot.audio.forEach { track ->
                         SpringRow(track.label, onClick = { player.selectAudio(track.index) }, checked = track.selected)

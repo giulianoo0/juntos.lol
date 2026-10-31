@@ -5,11 +5,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 
 /** A player without media, for screens built before :player lands. */
-class FakePlayer(durationMs: Long = 596_000) : JuntosPlayer {
+class FakePlayer(
+    durationMs: Long = 596_000,
+    audio: List<TrackOption> = listOf(TrackOption(0, "Inglês", "en", selected = true), TrackOption(1, "Português", "pt")),
+) : JuntosPlayer {
     private val _snapshot = MutableStateFlow(
         PlayerSnapshot(
             durationMs = durationMs,
-            audio = listOf(TrackOption(0, "Inglês", "en", selected = true), TrackOption(1, "Português", "pt")),
+            audio = audio,
             subtitles = listOf(TrackOption(0, "Português", "pt")),
         ),
     )

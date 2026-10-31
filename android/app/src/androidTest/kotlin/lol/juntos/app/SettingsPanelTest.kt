@@ -7,6 +7,7 @@ import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.core.app.ActivityOptionsCompat
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -14,12 +15,14 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.platform.app.InstrumentationRegistry
 import lol.juntos.app.room.SettingsPanel
 import lol.juntos.design.JuntosTheme
 import lol.juntos.player.FakePlayer
+import lol.juntos.player.TrackOption
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -39,7 +42,7 @@ class SettingsPanelTest {
         }
     }
 
-    private fun show() = rule.setContent {
+    private fun show(player: FakePlayer = this.player) = rule.setContent {
         CompositionLocalProvider(LocalActivityResultRegistryOwner provides object : ActivityResultRegistryOwner {
             override val activityResultRegistry = registry
         }) {
@@ -50,6 +53,16 @@ class SettingsPanelTest {
     private fun file(name: String, text: String): Uri {
         val dir = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
         return Uri.fromFile(File(dir, name).apply { writeText(text) })
+    }
+
+    @Test
+    fun aVideoWithTwentyFourDubsScrollsItsListAndKeepsTheTabsInReach() {
+        val dubbed = FakePlayer(audio = List(24) { TrackOption(it, "Dublagem $it", null, selected = it == 0) })
+        show(dubbed)
+        rule.onNodeWithText("Dublagem 23").performScrollTo().performClick()
+        assertEquals(23, dubbed.snapshot.value.audio.single { it.selected }.index)
+        rule.onNodeWithText("Legendas").performClick()
+        rule.onNodeWithText("Desligadas").assertIsDisplayed()
     }
 
     @Test
