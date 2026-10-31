@@ -397,7 +397,8 @@ private fun OffScreen(
  */
 @Composable
 private fun rememberPictureInPicture(autoEnter: Boolean): Boolean {
-    val activity = LocalContext.current.findActivity() as? androidx.activity.ComponentActivity ?: return false
+    // Only MainActivity declares picture-in-picture; any other activity throws on the params.
+    val activity = LocalContext.current.findActivity() as? lol.juntos.app.MainActivity ?: return false
     var inPip by remember { mutableStateOf(activity.isInPictureInPictureMode) }
     DisposableEffect(activity) {
         val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { inPip = it.isInPictureInPictureMode }

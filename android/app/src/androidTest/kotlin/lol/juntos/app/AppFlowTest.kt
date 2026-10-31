@@ -1,11 +1,15 @@
 package lol.juntos.app
 
+import android.Manifest
 import android.content.res.Configuration
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
@@ -18,6 +22,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.test.platform.app.InstrumentationRegistry
 import lol.juntos.app.entry.Me
 import lol.juntos.app.entry.MeStore
 import lol.juntos.core.fake.FakeSyncSession
@@ -34,11 +39,19 @@ import lol.juntos.update.Updater
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
+import org.junit.Before
 import org.junit.Test
 
 class AppFlowTest {
     @get:Rule
     val rule = createComposeRule()
+
+    /** The room asks for notifications on entry, and the system dialog would cover the test. */
+    @Before
+    fun allowNotifications() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     private val player = FakePlayer()
     private val fakes = FakeSyncSessionFactory()
@@ -53,13 +66,16 @@ class AppFlowTest {
         JuntosTheme { JuntosNavHost(graph = graph, linkedRoom = linked, onLinkedRoomOpened = {}) }
     }
 
+    /** The home's "Entrar" tab shares the text with the button. */
+    private fun hasRole(role: Role) = SemanticsMatcher.expectValue(SemanticsProperties.Role, role)
+
     private fun waitFor(text: String) = rule.waitUntil(5_000) { rule.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
 
     /** The door before every room: waits for it to settle, then Entrar. */
     private fun throughTheDoor() {
         rule.waitUntil(5_000) { rule.onAllNodes(hasContentDescription("Seu nome")).fetchSemanticsNodes().isNotEmpty() }
         rule.waitForIdle()
-        rule.onNodeWithText("Entrar").performClick()
+        rule.onNode(hasText("Entrar") and hasRole(Role.Button)).performClick()
         waitFor("Sala de teste")
     }
 
@@ -108,7 +124,7 @@ class AppFlowTest {
     fun aCodeTypedOnTheHomeEntersThatRoom() {
         launch()
         rule.onNodeWithContentDescription("Código da sala").performTextInput("abcd1234")
-        rule.onNodeWithText("Entrar").performClick()
+        rule.onNode(hasText("Entrar") and hasRole(Role.Button)).performClick()
         throughTheDoor()
         assertEquals("ABCD1234", requests.single().roomId)
     }
@@ -166,6 +182,7 @@ class AppFlowTest {
             val base = LocalConfiguration.current
             val config = Configuration(base).apply {
                 orientation = if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
+                if (landscape) screenWidthDp = base.screenHeightDp.also { screenHeightDp = base.screenWidthDp }
             }
             CompositionLocalProvider(LocalConfiguration provides config) {
                 JuntosTheme { JuntosNavHost(graph = graph, linkedRoom = "LINK0001", onLinkedRoomOpened = {}) }
@@ -180,7 +197,7 @@ class AppFlowTest {
     }
 
     @Test
-    fun pinningSomeoneBringsThemToTheTopInView() {
+    fun pinningSomeoneFromThePeopleSheetMarksThemPinned() {
         launch(linked = "LINK0001")
         throughTheDoor()
         rule.runOnIdle {
@@ -188,10 +205,9 @@ class AppFlowTest {
             session.join(Member(id = "bia", nickname = "Bia"))
             session.join(Member(id = "caio", nickname = "Caio"))
         }
-        rule.onAllNodes(hasContentDescription("Fixar"))[3].performClick()
-        rule.waitForIdle()
-        rule.onNodeWithText("Caio").assertIsDisplayed()
-        rule.onNodeWithContentDescription("Desafixar").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Pessoas na sala").performClick()
+        rule.onNodeWithContentDescription("Fixar Caio").performClick()
+        rule.onNodeWithContentDescription("Desafixar Caio").assertIsDisplayed()
     }
 
     @Test
