@@ -309,13 +309,7 @@ impl Producer {
         if position_ms > 0 {
             let target = position_ms as f64 / 1000.0;
             let (url, cap) = bridge.register_input(InputTarget { source: production.sources[0].clone(), reader: format!("key:{key}") });
-            let args: Vec<String> = [
-                "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey", "-show_entries", "frame=pts_time",
-                "-print_format", "json", "-read_intervals", &format!("{target:.3}%+#1"), &url,
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+            let args = plan::keyframe_args(&url, target);
             keyframe = process::run_capture(&self.ffprobe, &args, Duration::from_secs(120)).await.ok().and_then(|out| plan::first_frame_pts(&out));
             bridge.revoke(&cap, "");
         }
