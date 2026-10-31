@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.view.SurfaceView
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -69,6 +70,7 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
         .build()
 
     private var offsetMs = 0L
+    private var released = false
     private var decoder: String? = null
     private var error: String? = null
     private var audioRefs = emptyList<TrackRef>()
@@ -182,8 +184,18 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
     }
 
     override fun release() {
+        released = true
         handler.removeCallbacks(tick)
         exo.release()
+    }
+
+    internal fun attach(view: SurfaceView) {
+        if (!released) exo.setVideoSurfaceView(view)
+    }
+
+    /** The surface can outlive the player when the screen tears down after the room let go. */
+    internal fun detach(view: SurfaceView) {
+        if (!released) exo.clearVideoSurfaceView(view)
     }
 
     private fun indexTracks(tracks: Tracks) {
