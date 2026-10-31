@@ -26,6 +26,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Text
@@ -34,14 +35,14 @@ import lol.juntos.design.settle
 
 /** Where the video draws, letterboxed in black, with the subtitles on the picture. Any player but [Media3Player] draws only black. */
 @Composable
-fun PlayerSurface(player: JuntosPlayer, modifier: Modifier = Modifier) {
+fun PlayerSurface(player: JuntosPlayer, modifier: Modifier = Modifier, pictureInPicture: Boolean = false) {
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
-        if (player is Media3Player) Media3Surface(player)
+        if (player is Media3Player) Media3Surface(player, pictureInPicture)
     }
 }
 
 @Composable
-private fun Media3Surface(player: Media3Player) {
+private fun Media3Surface(player: Media3Player, pictureInPicture: Boolean) {
     val size by player.videoSize.collectAsState()
     val snapshot by player.snapshot.collectAsState()
     val aspect = if (size.width > 0 && size.height > 0) size.width * size.pixelWidthHeightRatio / size.height else 16f / 9f
@@ -53,41 +54,49 @@ private fun Media3Surface(player: Media3Player) {
             onRelease = player::detach,
             modifier = Modifier.fillMaxSize(),
         )
-        Subtitles(player)
+        Subtitles(player, pictureInPicture)
     }
 }
 
 /** As the site's SubtitleLayer: 4.5 % of the picture's height, white over a dark outline, above the controls when they show. */
 @Composable
-private fun Subtitles(player: Media3Player) {
+private fun Subtitles(player: Media3Player, pictureInPicture: Boolean) {
     val cues by player.cues.collectAsState()
     val raised by player.controlsShown.collectAsState()
-    val lift by animateDpAsState(if (raised) 72.dp else 12.dp, if (raised) pop() else settle())
-    BoxWithConstraints(
-        Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, bottom = lift),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        // A picture-in-picture window is too short for the site's 13 px floor.
-        val floor = if (maxHeight < 240.dp) 8.dp else 13.dp
-        val fontSize = with(LocalDensity.current) { maxOf(floor.toPx(), maxHeight.toPx() * 0.045f).toSp() }
-        val stroke = with(LocalDensity.current) { fontSize.toPx() * 0.16f }
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
-            for (cue in cues) {
-                val base = TextStyle(fontSize = fontSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, lineHeight = fontSize * 1.2f)
-                Box(Modifier.testTag("player-subtitle"), contentAlignment = Alignment.Center) {
-                    Text(
-                        withoutColors(cue.text),
-                        style = base.copy(color = Color.Black.copy(alpha = 0.85f), drawStyle = Stroke(stroke, join = StrokeJoin.Round)),
-                    )
-                    Text(
-                        cue.text,
-                        style = base.copy(color = Color.White, shadow = Shadow(Color.Black.copy(alpha = 0.6f), Offset(0f, 1f), 4f)),
-                    )
+    val lift by animateDpAsState(if (raised) RAISED_LIFT else 12.dp, if (raised) pop() else settle())
+    // Sized by the whole picture, as the site does: the lift above the controls must not shrink it.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val fontSize = with(LocalDensity.current) { subtitleFontSize(maxHeight, pictureInPicture).toSp() }
+        Box(
+            Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, bottom = lift),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            val stroke = with(LocalDensity.current) { fontSize.toPx() * 0.16f }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
+                for (cue in cues) {
+                    val base = TextStyle(fontSize = fontSize, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, lineHeight = fontSize * 1.2f)
+                    Box(Modifier.testTag("player-subtitle"), contentAlignment = Alignment.Center) {
+                        Text(
+                            withoutColors(cue.text),
+                            style = base.copy(color = Color.Black.copy(alpha = 0.85f), drawStyle = Stroke(stroke, join = StrokeJoin.Round)),
+                        )
+                        Text(
+                            cue.text,
+                            style = base.copy(color = Color.White, shadow = Shadow(Color.Black.copy(alpha = 0.6f), Offset(0f, 1f), 4f)),
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+/** Clears the seek bar, which sits about 73 dp above the picture's bottom with the controls up. */
+private val RAISED_LIFT = 96.dp
+
+/** As the site's subtitleFontSize: 4.5 % of the picture, 13 dp at least; a picture-in-picture window is too small for that floor. */
+internal fun subtitleFontSize(pictureHeight: Dp, pictureInPicture: Boolean = false): Dp =
+    maxOf(if (pictureInPicture) 8.dp else 13.dp, pictureHeight * 0.045f)
 
 /** The outline copy keeps the glyphs' shape (italic, bold) but not their color. */
 private fun withoutColors(text: AnnotatedString) = AnnotatedString(

@@ -202,7 +202,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                             .clip(RoundedCornerShape(corner.coerceAtLeast(0.dp)))
                             .background(Color.Black),
                     ) {
-                        PlayerSurface(player, Modifier.fillMaxSize())
+                        PlayerSurface(player, Modifier.fillMaxSize(), pictureInPicture = !now.controls)
                         if (now.controls) PlayerControls(
                             player = player,
                             intents = intents,
