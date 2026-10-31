@@ -24,6 +24,18 @@ class Media3PlayerTest {
     }
 
     @Test
+    fun aDecoderThatTakesTheStreamAndGivesNothingBackIsSwappedForTheNext() {
+        // Past its first segment the clip opens each one on an I-frame that is not an IDR, as YouTube's H.264 does.
+        onMain {
+            player.load(MediaSource("$clipsBase/h264-open-gop/master.m3u8"), startAtMs = 4_500)
+            player.play()
+        }
+        val playing = player.awaitPlaying(timeoutMs = 30_000)
+        assertNull(playing.error)
+        assertTrue("at ${playing.positionMs}", playing.positionMs >= 4_500)
+    }
+
+    @Test
     fun roomTimeIsPlayerTimePlusTheRegionOffset() {
         loadRich(MediaSource("$rich/master.m3u8", offsetMs = 60_000), startAtMs = 63_000)
         val position = onMain { player.positionMs }

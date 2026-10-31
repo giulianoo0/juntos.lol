@@ -3,6 +3,8 @@ package lol.juntos.player
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.view.SurfaceView
 import androidx.annotation.OptIn
 import androidx.media3.common.C
@@ -17,6 +19,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -36,9 +39,13 @@ import kotlin.math.roundToLong
 
 /** Hardware first, then the platform's software decoder (c2.android.*): what the phone's browser won't do for HEVC. */
 @OptIn(UnstableApi::class)
-private val preferHardware = MediaCodecSelector { mimeType, secure, tunneling ->
-    MediaCodecUtil.getDecoderInfos(mimeType, secure, tunneling).sortedBy { !it.hardwareAccelerated }
+private fun preferHardware(skip: Set<String>) = MediaCodecSelector { mimeType, secure, tunneling ->
+    MediaCodecUtil.getDecoderInfos(mimeType, secure, tunneling).filterNot { it.name in skip }.sortedBy { !it.hardwareAccelerated }
 }
+
+// Buffering with this much in hand and no frame out for this long is the decoder, not the network.
+private const val STALL_BUFFER_MS = 5_000L
+private const val STALL_MS = 2_500L
 
 private const val TICK_MS = 100L
 private const val IMPORTED_FROM = 1000
@@ -78,9 +85,12 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
     /** The rendition playing now: what a pinned quality is checked against. */
     val videoFormat: Format? get() = exo.videoFormat
 
+    /** Decoders that took the stream and gave no frame back, like the emulator's H.264 one on a segment opening with an I-frame that is not an IDR. */
+    private val stalled = HashSet<String>()
+
     internal val exo: ExoPlayer = ExoPlayer.Builder(
         context,
-        DefaultRenderersFactory(context).setEnableDecoderFallback(true).setMediaCodecSelector(preferHardware),
+        DefaultRenderersFactory(context).setEnableDecoderFallback(true).setMediaCodecSelector(preferHardware(stalled)),
     )
         .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(client)))
         .setLooper(Looper.getMainLooper())
@@ -100,6 +110,11 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
     private var subtitleIndex: Int? = null
     private var subtitlePick: Pair<String?, String>? = null
     private var delayMs = 0L
+
+    private var markCounters: DecoderCounters? = null
+    private var markInputs = 0
+    private var markFrames = 0
+    private var stallSince = 0L
 
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
@@ -147,7 +162,10 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
     override val playing: Boolean get() = exo.playWhenReady
     override val buffering: Boolean get() = exo.playbackState == Player.STATE_BUFFERING
 
-    override fun seekTo(positionMs: Long) = exo.seekTo((positionMs - offsetMs).coerceAtLeast(0))
+    override fun seekTo(positionMs: Long) {
+        exo.seekTo((positionMs - offsetMs).coerceAtLeast(0))
+        mark()
+    }
     override fun play() = exo.play()
     override fun pause() = exo.pause()
     override fun setRate(rate: Float) = exo.setPlaybackSpeed(rate)
@@ -160,7 +178,39 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
         val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).build()
         exo.setMediaItem(item, (startAtMs - offsetMs).coerceAtLeast(0))
         exo.prepare()
+        mark()
         publish()
+    }
+
+    /** What the video decoder had taken and given back when the position last jumped. */
+    private fun mark() {
+        val counters = exo.videoDecoderCounters?.apply { ensureUpdated() }
+        markCounters = counters
+        markInputs = counters?.queuedInputBufferCount ?: 0
+        markFrames = counters?.frames ?: 0
+    }
+
+    /** Swaps a video decoder that keeps taking samples without a frame since the last jump for the next one. */
+    private fun watchDecoder(counters: DecoderCounters?) {
+        val name = decoder
+        val fresh = counters !== markCounters
+        val stuck = name != null && counters != null && exo.playbackState == Player.STATE_BUFFERING &&
+            (exo.totalBufferedDuration >= STALL_BUFFER_MS || !exo.isLoading) &&
+            counters.queuedInputBufferCount > (if (fresh) 0 else markInputs) &&
+            counters.frames == (if (fresh) 0 else markFrames)
+        if (!stuck) {
+            stallSince = 0
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (stallSince == 0L) stallSince = now
+        if (now - stallSince < STALL_MS) return
+        Log.w("JuntosPlayer", "$name gave no frame back, trying the next decoder")
+        stallSince = 0
+        stalled += name!!
+        decoder = null
+        exo.stop()
+        exo.prepare()
     }
 
     override fun setSidecarSubtitles(subtitles: List<SidecarSubtitle>) {
@@ -270,7 +320,8 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
 
     private fun publish() {
         val overrides = exo.trackSelectionParameters.overrides
-        val counters = exo.videoDecoderCounters
+        val counters = exo.videoDecoderCounters?.apply { ensureUpdated() }
+        watchDecoder(counters)
         val duration = exo.duration
         val position = positionMs
         val subtitles = subtitleTracks()
@@ -297,11 +348,12 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
                 TrackOption(i, label, selected = overrides[ref.group.mediaTrackGroup]?.trackIndices?.contains(ref.track) == true)
             },
             droppedFrames = counters?.droppedBufferCount?.toLong() ?: 0,
-            decodedFrames = counters?.let { it.renderedOutputBufferCount + it.skippedOutputBufferCount + it.droppedBufferCount }?.toLong() ?: 0,
+            decodedFrames = counters?.frames?.toLong() ?: 0,
             subtitleDelayMs = delayMs,
         )
     }
 
+    private val DecoderCounters.frames get() = renderedOutputBufferCount + skippedOutputBufferCount + droppedBufferCount
     private val TrackRef.format get() = group.getTrackFormat(track)
     private val TrackRef.selected get() = group.isTrackSelected(track)
 }
