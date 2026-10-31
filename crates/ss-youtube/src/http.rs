@@ -15,7 +15,11 @@ use parking_lot::{Mutex, RwLock};
 use ss_media::{ByteSource, SourceReader};
 
 const PIECE: u64 = 10 * 1024 * 1024;
-const EDGE: u64 = 4 * 1024 * 1024;
+/// Each edge is a 64th of the stream within these bounds. The demuxer reads a
+/// few KB of header, and a dub's full 4 MiB is minutes of audio fetched
+/// before FFmpeg opens the next input.
+const EDGE_MIN: u64 = 256 * 1024;
+const EDGE_MAX: u64 = 4 * 1024 * 1024;
 const ATTEMPTS: usize = 4;
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(45);
 
@@ -34,6 +38,7 @@ struct Inner {
     itag: String,
     url: RwLock<String>,
     size: u64,
+    edge: u64,
     refresh: Arc<dyn Refresh>,
     last_refresh: Mutex<Option<Instant>>,
     head: tokio::sync::OnceCell<Bytes>,
@@ -48,6 +53,7 @@ impl HttpSource {
                 itag,
                 url: RwLock::new(url),
                 size,
+                edge: (size / 64).clamp(EDGE_MIN, EDGE_MAX),
                 refresh,
                 last_refresh: Mutex::new(None),
                 head: tokio::sync::OnceCell::new(),
@@ -58,6 +64,14 @@ impl HttpSource {
 
     pub fn itag(&self) -> &str {
         &self.inner.itag
+    }
+
+    /// Fetches the head ahead of the first read. A failure is left for that
+    /// read to meet again.
+    pub async fn prefetch(&self) {
+        if let Err(e) = self.inner.edge(0).await {
+            tracing::warn!(itag = %self.inner.itag, error = %e, "youtube head prefetch failed");
+        }
     }
 }
 
@@ -115,15 +129,15 @@ impl Inner {
     }
 
     async fn edge(&self, position: u64) -> anyhow::Result<Option<(Bytes, u64)>> {
-        if self.size <= 2 * EDGE {
+        if self.size <= 2 * self.edge {
             let all = self.head.get_or_try_init(|| self.whole(0, self.size - 1)).await?;
             return Ok(Some((all.clone(), 0)));
         }
-        if position < EDGE {
-            let head = self.head.get_or_try_init(|| self.whole(0, EDGE - 1)).await?;
+        if position < self.edge {
+            let head = self.head.get_or_try_init(|| self.whole(0, self.edge - 1)).await?;
             return Ok(Some((head.clone(), 0)));
         }
-        let tail_start = self.size - EDGE;
+        let tail_start = self.size - self.edge;
         if position >= tail_start {
             let tail = self.tail.get_or_try_init(|| self.whole(tail_start, self.size - 1)).await?;
             return Ok(Some((tail.clone(), tail_start)));
@@ -238,6 +252,7 @@ mod tests {
     struct Served {
         data: Arc<Vec<u8>>,
         hits: Arc<AtomicUsize>,
+        bytes: Arc<AtomicUsize>,
     }
 
     async fn serve(State(s): State<Served>, Query(q): Query<HashMap<String, String>>) -> axum::response::Response {
@@ -251,19 +266,21 @@ mod tests {
         };
         let (a, b) = range.split_once('-').unwrap();
         let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
+        s.bytes.fetch_add(b - a + 1, Ordering::SeqCst);
         s.data[a..=b].to_vec().into_response()
     }
 
-    async fn start(data: Vec<u8>) -> (String, Arc<AtomicUsize>) {
+    async fn start(data: Vec<u8>) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let hits = Arc::new(AtomicUsize::new(0));
-        let served = Served { data: Arc::new(data), hits: hits.clone() };
+        let bytes = Arc::new(AtomicUsize::new(0));
+        let served = Served { data: Arc::new(data), hits: hits.clone(), bytes: bytes.clone() };
         let app = axum::Router::new().route("/v", get(serve)).with_state(served);
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        (format!("http://{addr}/v?key=good"), hits)
+        (format!("http://{addr}/v?key=good"), hits, bytes)
     }
 
     async fn read_all(source: &HttpSource, from: u64, len: usize) -> Vec<u8> {
@@ -283,10 +300,11 @@ mod tests {
 
     #[tokio::test]
     async fn reads_by_range_parameter_across_pieces_and_edges() {
-        let data: Vec<u8> = (0..(EDGE * 3 + 12345) as usize).map(|i| (i % 251) as u8).collect();
-        let (url, hits) = start(data.clone()).await;
+        let data: Vec<u8> = (0..(PIECE + 12345) as usize).map(|i| (i % 251) as u8).collect();
+        let (url, hits, _bytes) = start(data.clone()).await;
         let source = HttpSource::new(reqwest::Client::new(), "1".into(), url, data.len() as u64, Arc::new(NoRefresh));
-        let mid = EDGE + 100;
+        let edge = EDGE_MIN;
+        let mid = edge + 100;
         let got = read_all(&source, mid, 50_000).await;
         assert_eq!(got, data[mid as usize..mid as usize + 50_000].to_vec());
         let head = read_all(&source, 10, 100).await;
@@ -298,14 +316,28 @@ mod tests {
         let tail_from = data.len() as u64 - 300;
         let tail = read_all(&source, tail_from, 300).await;
         assert_eq!(tail, data[tail_from as usize..].to_vec());
-        let crossing = read_all(&source, EDGE - 10, 40).await;
-        assert_eq!(crossing, data[(EDGE - 10) as usize..(EDGE + 30) as usize].to_vec());
+        let crossing = read_all(&source, edge - 10, 40).await;
+        assert_eq!(crossing, data[(edge - 10) as usize..(edge + 30) as usize].to_vec());
+        let across_pieces = read_all(&source, PIECE - 10, 40).await;
+        assert_eq!(across_pieces, data[(PIECE - 10) as usize..(PIECE + 30) as usize].to_vec());
+    }
+
+    #[tokio::test]
+    async fn a_long_dub_opens_on_a_64th_of_itself_fetched_ahead() {
+        let data: Vec<u8> = (0..40 * 1024 * 1024).map(|i| (i % 7) as u8).collect();
+        let (url, hits, bytes) = start(data.clone()).await;
+        let source = HttpSource::new(reqwest::Client::new(), "140".into(), url, data.len() as u64, Arc::new(NoRefresh));
+        source.prefetch().await;
+        assert_eq!(bytes.load(Ordering::SeqCst), data.len() / 64);
+        let before = hits.load(Ordering::SeqCst);
+        assert_eq!(read_all(&source, 0, 4439).await, data[..4439].to_vec());
+        assert_eq!(hits.load(Ordering::SeqCst), before, "the header comes from the prefetched head");
     }
 
     #[tokio::test]
     async fn a_refused_url_is_refreshed_once_and_the_read_goes_on() {
-        let data: Vec<u8> = (0..(EDGE * 3) as usize).map(|i| (i % 13) as u8).collect();
-        let (url, _hits) = start(data.clone()).await;
+        let data: Vec<u8> = (0..(EDGE_MIN * 3) as usize).map(|i| (i % 13) as u8).collect();
+        let (url, _hits, _bytes) = start(data.clone()).await;
         let refreshes = Arc::new(AtomicUsize::new(0));
         let stale = url.replace("key=good", "key=stale");
         let source = HttpSource::new(
@@ -315,8 +347,8 @@ mod tests {
             data.len() as u64,
             Arc::new(Counting(refreshes.clone(), url)),
         );
-        let got = read_all(&source, EDGE + 5, 100).await;
-        assert_eq!(got, data[(EDGE + 5) as usize..(EDGE + 105) as usize].to_vec());
+        let got = read_all(&source, EDGE_MIN + 5, 100).await;
+        assert_eq!(got, data[(EDGE_MIN + 5) as usize..(EDGE_MIN + 105) as usize].to_vec());
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
     }
 }

@@ -26,9 +26,9 @@ describe('DownloadApp', () => {
 
   it('on an Android phone, downloads the apk with a beta mark once one is published', async () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14; Pixel 8) Mobile')
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json([
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(
       { tag_name: 'android', name: 'Android 0.1.0 beta', draft: false, prerelease: true, assets: [{ name: 'juntos.apk', browser_download_url: 'https://github.com/x/juntos.apk' }] },
-    ])))
+    )))
     render(<DownloadApp />)
     const link = await screen.findByRole('link', { name: 'Baixar o app' })
     expect(link.getAttribute('href')).toBe('https://github.com/x/juntos.apk')

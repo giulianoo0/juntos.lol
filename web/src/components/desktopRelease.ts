@@ -6,6 +6,7 @@ export type DesktopRelease = {
 }
 
 const RELEASES_API = 'https://api.github.com/repos/giulianoo0/juntos.lol/releases?per_page=20'
+const ANDROID_API = 'https://api.github.com/repos/giulianoo0/juntos.lol/releases/tags/android'
 const TAG = /^desktop-v(\d+\.\d+\.\d+.*)$/
 
 const FILES: Record<Platform, RegExp> = {
@@ -63,13 +64,16 @@ export type AndroidRelease = {
 }
 
 /** The apk lives in one prerelease of fixed tag, replaced at each version, so the app's updater has a stable address. */
-export function pickAndroid(releases: GithubRelease[]): AndroidRelease | null {
-  const release = releases.find(({ tag_name, draft }) => tag_name === 'android' && !draft)
-  const apk = release?.assets.find(({ name }) => name === 'juntos.apk')
-  if (!release || !apk) return null
+export function pickAndroid(release: GithubRelease): AndroidRelease | null {
+  const apk = release.assets.find(({ name }) => name === 'juntos.apk')
+  if (release.draft || !apk) return null
   return { version: /\d+\.\d+\.\d+/.exec(release.name ?? '')?.[0] ?? null, url: apk.browser_download_url }
 }
 
-export function latestAndroidRelease(fetcher: typeof fetch = fetch): Promise<AndroidRelease | null> {
-  return githubReleases(fetcher).then(pickAndroid)
+/** Asked by its tag: an old release, it would fall off the newest desktop ones. */
+export async function latestAndroidRelease(fetcher: typeof fetch = fetch): Promise<AndroidRelease | null> {
+  const response = await fetcher(ANDROID_API, { headers: { Accept: 'application/vnd.github+json' } })
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`github ${response.status}`)
+  return pickAndroid(await response.json() as GithubRelease)
 }
