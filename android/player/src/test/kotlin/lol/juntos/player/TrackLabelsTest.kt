@@ -31,6 +31,7 @@ class TrackLabelsTest {
     fun `a name ffmpeg or the browser pipeline invented gives way to the language`() {
         assertEquals("Português", audioTrackLabel("audio_6", "por", 6))
         assertEquals("Inglês", audioTrackLabel("eng-2", "eng", 1))
+        assertEquals("Português", audioTrackLabel("por-1", "pt", 0))
     }
 
     @Test

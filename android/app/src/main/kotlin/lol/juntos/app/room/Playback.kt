@@ -1,5 +1,6 @@
 package lol.juntos.app.room
 
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -9,6 +10,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import lol.juntos.app.BuildConfig
 import lol.juntos.core.media.MediaPick
 import lol.juntos.core.media.mediaPick
 import lol.juntos.core.media.subtitleUrl
@@ -23,10 +25,11 @@ import lol.juntos.core.sync.reportReadiness
 import lol.juntos.player.JuntosPlayer
 import lol.juntos.player.MediaSource
 import lol.juntos.player.SidecarSubtitle
+import lol.juntos.player.languageLabel
 
 /** The room's subtitles as the player fetches them: always the bucket's WebVTT. */
 internal fun roomSubtitles(room: RoomInfo): List<SidecarSubtitle> = room.subtitleTracks.orEmpty().mapNotNull { track ->
-    subtitleUrl(room, track)?.let { SidecarSubtitle(it, track.language, track.title.ifBlank { track.language }, "text/vtt") }
+    subtitleUrl(room, track)?.let { SidecarSubtitle(it, track.language, track.title.ifBlank { languageLabel(track.language) ?: track.language }, "text/vtt") }
 }
 
 /** Where the room is now, on its own clock. */
@@ -66,6 +69,7 @@ internal fun FollowRoom(baseUrl: String, session: SyncSession, player: JuntosPla
         session.reportReadiness({
             if (loaded == null) return@reportReadiness null
             val snapshot = player.snapshot.value
+            if (BuildConfig.DEBUG && snapshot.playing) Log.d("JuntosSync", "drift=${snapshot.positionMs - roomPositionMs(session.state.value)} buffer=${snapshot.bufferedAheadMs}")
             ReadyReport(
                 positionMs = snapshot.positionMs,
                 bufferAheadMs = snapshot.bufferedAheadMs,

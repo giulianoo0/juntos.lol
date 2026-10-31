@@ -21,9 +21,17 @@ private val THREE_TO_TWO = mapOf(
 
 private val FFMPEG_PLACEHOLDER = Regex("^audio_\\d+$")
 
-/** The browser's pipeline names a rendition after its language and place, "por-1": no more a name than ffmpeg's. */
-private fun numberedLanguage(name: String, language: String?): Boolean =
-    !language.isNullOrEmpty() && name.startsWith("$language-", ignoreCase = true) && name.drop(language.length + 1).let { it.isNotEmpty() && it.all(Char::isDigit) }
+/**
+ * The browser's pipeline names a rendition after its language and place, "por-1": no more a name
+ * than ffmpeg's. Media3 hands the language over as "pt", so the two are compared by what they name.
+ */
+private fun numberedLanguage(name: String, language: String?): Boolean {
+    if (language.isNullOrEmpty()) return false
+    val prefix = name.substringBeforeLast('-', "")
+    val place = name.substringAfterLast('-', "")
+    if (prefix.isEmpty() || place.isEmpty() || !place.all(Char::isDigit)) return false
+    return prefix.equals(language, ignoreCase = true) || languageLabel(prefix)?.let { it == languageLabel(language) } == true
+}
 
 private val PT_BR: Locale = Locale.forLanguageTag("pt-BR")
 
