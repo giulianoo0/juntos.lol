@@ -416,6 +416,7 @@ export const ptBR: Record<string, string> = {
   "app.maximize": "Maximizar",
   "app.close": "Fechar",
   "site.download": "Baixar o app",
+  "site.beta": "beta",
   "app.updateReady": "Nova versão pronta",
   "app.restart": "Reiniciar",
   "app.updateFailed": "Não deu para atualizar",

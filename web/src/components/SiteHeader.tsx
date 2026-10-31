@@ -42,7 +42,7 @@ export function SiteHeader({ logo = true, you = true }: {
       ) : <span />}
       <div className={styles.you}>
         <DownloadApp />
-        <GithubLink />
+        <span className={styles.github}><GithubLink /></span>
         <ThemeToggle />
         {me ? (
           <>
@@ -55,9 +55,9 @@ export function SiteHeader({ logo = true, you = true }: {
             ) : null}
           </>
         ) : !you ? null : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
-          <a className={`${styles.discord} ${arrive}`} href={discordLoginUrl(location.pathname)}>
+          <a className={`${styles.discord} ${arrive}`} href={discordLoginUrl(location.pathname)} aria-label={t('landing.signIn')}>
             <DiscordGlyph size={18} />
-            {t('landing.signIn')}
+            <span className={styles.discordLabel}>{t('landing.signIn')}</span>
           </a>
         )}
       </div>

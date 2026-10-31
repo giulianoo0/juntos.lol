@@ -416,6 +416,7 @@ export const en: Record<string, string> = {
   "app.maximize": "Maximize",
   "app.close": "Close",
   "site.download": "Download the app",
+  "site.beta": "beta",
   "app.updateReady": "New version ready",
   "app.restart": "Restart",
   "app.updateFailed": "Couldn't update",

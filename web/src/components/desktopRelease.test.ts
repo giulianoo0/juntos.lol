@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { latestDesktopRelease, pickRelease } from './desktopRelease'
+import { latestDesktopRelease, pickAndroid, pickRelease } from './desktopRelease'
 
 const asset = (name: string) => ({ name, browser_download_url: `https://github.com/x/${name}` })
 
@@ -29,6 +29,20 @@ describe('pickRelease', () => {
 
   it('is null before the first desktop release', () => {
     expect(pickRelease([{ tag_name: 'v1', draft: false, prerelease: false, assets: [] }])).toBeNull()
+  })
+})
+
+describe('pickAndroid', () => {
+  it('takes the apk of the fixed android prerelease, beside the desktop ones', () => {
+    expect(pickAndroid([
+      { tag_name: 'desktop-v0.2.5', draft: false, prerelease: false, assets: [asset('Juntos.dmg')] },
+      { tag_name: 'android', name: 'Android 0.1.0 beta', draft: false, prerelease: true, assets: [asset('latest.json'), asset('juntos.apk')] },
+    ])).toEqual({ version: '0.1.0', url: 'https://github.com/x/juntos.apk' })
+  })
+
+  it('is null before the first apk, or while the release is a draft', () => {
+    expect(pickAndroid([{ tag_name: 'android', draft: false, prerelease: true, assets: [asset('latest.json')] }])).toBeNull()
+    expect(pickAndroid([{ tag_name: 'android', draft: true, prerelease: true, assets: [asset('juntos.apk')] }])).toBeNull()
   })
 })
 
