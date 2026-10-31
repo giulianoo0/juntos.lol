@@ -99,6 +99,9 @@ const REACH_MS: u64 = 10_000;
 const HELD_CONFIRMS: usize = 32;
 /// The longest a held region keeps the rounds back: a slow uplink never piles up the confirmations.
 const HELD_ROUND_EVERY: Duration = Duration::from_secs(4);
+/// The most confirmations the server takes in one publish (maxConfirmObjects);
+/// past it the round is refused whole, and a refused round only grows.
+const MAX_CONFIRMS: usize = 128;
 /// What playback and the room's drift corrections move the playhead by,
 /// past the time between two looks, short of a seek.
 const JUMP_SLACK_MS: u64 = 5_000;
@@ -293,13 +296,14 @@ impl Upload {
                     low_resolution: meta.low_resolution,
                 };
                 seq += 1;
+                let sending = confirming(&confirm).len();
                 let body = round_body(
                     target,
-                    Round { seq, confirm: &confirm, playlists: planner.playlists(&local), regions: &regions, duration_ms: meta.duration_ms, master: &master },
+                    Round { seq, confirm: &confirm[..sending], playlists: planner.playlists(&local), regions: &regions, duration_ms: meta.duration_ms, master: &master },
                 );
                 match publish(&client, target, &body).await {
                     Ok(()) => {
-                        confirm.clear();
+                        confirm.drain(..sending);
                         for region in regions.iter().filter(|r| r.produced_ms > 0 && announced.insert(r.n)) {
                             tracing::info!(n = region.n, start_ms = region.start_ms, "remote region published");
                         }
@@ -329,6 +333,11 @@ pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64
         .max_by_key(|r| r.start_ms)?;
     let ready = !region.growing || region.start_ms + region.produced_ms >= playhead_ms + READY_AHEAD_MS;
     (!ready && !announced.contains(&region.n)).then_some(region.n)
+}
+
+/// What one round confirms: the oldest first, as many as the server takes.
+fn confirming(pending: &[String]) -> &[String] {
+    &pending[..pending.len().min(MAX_CONFIRMS)]
 }
 
 /// Whether a round goes out now. While the playhead's region is held, one
@@ -384,6 +393,18 @@ mod tests {
 
     fn info() -> MasterInfo {
         MasterInfo { audio_langs: vec!["eng".into()], video_codecs: None, bandwidth: 0, low_resolution: None }
+    }
+
+    #[test]
+    fn a_backlog_past_what_the_server_takes_goes_out_over_rounds_oldest_first() {
+        let mut pending: Vec<String> = (0..300).map(|k| format!("cs_1_{k}.m4s")).collect();
+        let mut rounds = Vec::new();
+        while !pending.is_empty() {
+            let sending = confirming(&pending).len();
+            rounds.push((sending, pending[0].clone()));
+            pending.drain(..sending);
+        }
+        assert_eq!(rounds, vec![(128, "cs_1_0.m4s".to_string()), (128, "cs_1_128.m4s".to_string()), (44, "cs_1_256.m4s".to_string())]);
     }
 
     #[test]
