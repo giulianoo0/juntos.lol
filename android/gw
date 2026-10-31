@@ -1,0 +1,11 @@
+#!/bin/sh
+# The Gradle wrapper on a JDK 17: Android Studio's JBR (25) is too new for Gradle 8.11.
+if [ -z "$JAVA_HOME" ] || ! "$JAVA_HOME/bin/java" -version 2>&1 | grep -q '"17\.'; then
+  for home in "$HOME"/.gradle/jdks/*17*/jdk-17*/Contents/Home; do
+    [ -x "$home/bin/java" ] && JAVA_HOME="$home"
+  done
+fi
+export JAVA_HOME
+export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+dir=$(cd "$(dirname "$0")" && pwd)
+exec "$dir/gradlew" -p "$dir" --console=plain "$@"

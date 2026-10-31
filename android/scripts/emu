@@ -1,0 +1,32 @@
+#!/bin/sh
+# Boots a headless emulator of our own and waits for it: never a window, never the user's AVDs.
+#   android/scripts/emu <api> <port>     e.g. emu 36 5554, emu 31 5556
+# Prints the adb serial (emulator-<port>). Downloads the system image the first time.
+set -e
+api=${1:?api}
+port=${2:?port}
+sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+name="juntos_api${api}_${port}"
+image="system-images;android-${api};google_apis;arm64-v8a"
+if [ -z "$JAVA_HOME" ] || ! "$JAVA_HOME/bin/java" -version 2>&1 | grep -q '"17\.'; then
+  for home in "$HOME"/.gradle/jdks/*17*/jdk-17*/Contents/Home; do
+    [ -x "$home/bin/java" ] && JAVA_HOME="$home"
+  done
+fi
+export JAVA_HOME
+tools="$sdk/cmdline-tools/latest/bin"
+if [ ! -d "$sdk/system-images/android-${api}/google_apis/arm64-v8a" ]; then
+  yes | "$tools/sdkmanager" "$image" >/dev/null
+fi
+if [ ! -d "$HOME/.android/avd/${name}.avd" ]; then
+  echo no | "$tools/avdmanager" create avd -n "$name" -k "$image" -d pixel_7 >/dev/null
+fi
+adb="$sdk/platform-tools/adb"
+serial="emulator-${port}"
+if ! "$adb" devices | grep -q "^${serial}"; then
+  nohup "$sdk/emulator/emulator" -avd "$name" -port "$port" -no-window -no-audio -no-boot-anim \
+    -no-snapshot-save -memory 2048 -gpu swiftshader_indirect >"/tmp/${name}.log" 2>&1 &
+fi
+"$adb" -s "$serial" wait-for-device
+until [ "$("$adb" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do sleep 2; done
+echo "$serial"
