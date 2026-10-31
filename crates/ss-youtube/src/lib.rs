@@ -27,6 +27,9 @@ const PREFERRED_LANGUAGES: &[&str] = &["pt", "en", "es", "ja"];
 #[derive(Clone, Debug)]
 pub struct Config {
     pub ytdlp_path: String,
+    /// Arguments that come before any other: on Android `ytdlp_path` is the
+    /// Python interpreter and these name the yt-dlp zip and its JS runtime.
+    pub ytdlp_args: Vec<String>,
     pub proxy: Option<String>,
     pub cookies_file: Option<PathBuf>,
     /// A PEM bundle FFmpeg verifies HTTPS against when its build carries no
@@ -620,7 +623,7 @@ impl Resolver {
             }
         }
         let client = builder.build().expect("reqwest client");
-        let version = detect_version(&cfg.ytdlp_path).await;
+        let version = detect_version(&cfg).await;
         Self {
             cfg,
             version,
@@ -644,12 +647,7 @@ impl Resolver {
     }
 
     fn command(&self) -> tokio::process::Command {
-        let mut cmd = tokio::process::Command::new(&self.cfg.ytdlp_path);
-        cmd.env_clear()
-            .envs(ss_media::tools::tool_env())
-            .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
-            .stdin(std::process::Stdio::null())
-            .kill_on_drop(true);
+        let mut cmd = ytdlp(&self.cfg);
         if let Some(proxy) = &self.cfg.proxy {
             cmd.arg("--proxy").arg(proxy);
         }
@@ -681,8 +679,8 @@ impl Resolver {
             return false;
         }
         *self.last_update.lock() = Some(Instant::now());
-        let mut cmd = tokio::process::Command::new(&self.cfg.ytdlp_path);
-        cmd.arg("-U").stdin(std::process::Stdio::null()).kill_on_drop(true);
+        let mut cmd = ytdlp(&self.cfg);
+        cmd.arg("-U");
         match tokio::time::timeout(Duration::from_secs(120), cmd.output()).await {
             Ok(Ok(output)) => {
                 tracing::info!(ok = output.status.success(), "yt-dlp self-update ran");
@@ -759,10 +757,21 @@ impl http::Refresh for RefreshVia {
     }
 }
 
-pub async fn detect_version(path: &str) -> Option<String> {
+fn ytdlp(cfg: &Config) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(&cfg.ytdlp_path);
+    cmd.args(&cfg.ytdlp_args)
+        .env_clear()
+        .envs(ss_media::tools::tool_env())
+        .env("HOME", std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    cmd
+}
+
+pub async fn detect_version(cfg: &Config) -> Option<String> {
     let output = tokio::time::timeout(
         Duration::from_secs(20),
-        tokio::process::Command::new(path).arg("--version").stdin(std::process::Stdio::null()).kill_on_drop(true).output(),
+        ytdlp(cfg).arg("--version").output(),
     )
     .await
     .ok()?

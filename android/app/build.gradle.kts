@@ -48,6 +48,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // The producer runs Python and FFmpeg from nativeLibraryDir: the .so files must be extracted.
+    packaging { jniLibs.useLegacyPackaging = true }
     buildFeatures {
         compose = true
         buildConfig = true

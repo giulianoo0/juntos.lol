@@ -4,8 +4,22 @@ use std::ffi::OsString;
 
 /// PATH, plus what Windows needs to start a process that opens sockets
 /// (Winsock fails with error 10106 without `SystemRoot`) and that unpacks
-/// itself into a temp folder (yt-dlp).
-const KEPT: &[&str] = &["PATH", "SystemRoot", "windir", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA"];
+/// itself into a temp folder (yt-dlp); and on Android, what the bundled
+/// Python, FFmpeg and their libraries need to load at all.
+const KEPT: &[&str] = &[
+    "PATH",
+    "SystemRoot",
+    "windir",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "LD_LIBRARY_PATH",
+    "PYTHONHOME",
+    "SSL_CERT_FILE",
+    "TMPDIR",
+];
 
 /// The kept variables this process has, to pass after `env_clear`.
 pub fn tool_env() -> Vec<(&'static str, OsString)> {

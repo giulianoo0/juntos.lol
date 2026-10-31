@@ -55,6 +55,7 @@ impl AppState {
             .get_or_init(|| async {
                 let resolver = youtube::Resolver::new(youtube::Config {
                     ytdlp_path: self.tools.ytdlp.clone(),
+                    ytdlp_args: Vec::new(),
                     proxy: None,
                     cookies_file: None,
                     ca_file: None,

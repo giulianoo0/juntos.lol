@@ -1,0 +1,40 @@
+[package]
+name = "juntos-producer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The desktop's producer modules call tauri::async_runtime::spawn; the shim runs it on our runtime.
+tauri = { path = "tauri-shim", package = "juntos-tauri-shim" }
+ss-remux = { path = "../../../crates/ss-remux" }
+librqbit = { path = "../../../crates/librqbit" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# Without a subscriber, tracing events go out as log records, which reach logcat.
+tracing = { version = "0.1", features = ["log"] }
+rand = "0.8"
+jni = "0.21"
+# librqbit's sha1 pulls OpenSSL; Android has none to link, so it is built in.
+openssl = { version = "0.10", features = ["vendored"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.14"
+log = "0.4"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 4
+# AGP strips the .so when it packages it; rustup's own objcopy cannot run here.
+strip = false
+
+# Its own workspace, like the desktop app: the root one never builds for Android.
+[workspace]

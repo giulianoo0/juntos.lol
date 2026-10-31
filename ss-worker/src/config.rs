@@ -233,6 +233,7 @@ impl WorkerConfig {
             rendition_encoder: ss_remux::plan::Encoder::X264,
             youtube: Some(ss_remux::youtube::Config {
                 ytdlp_path: self.ytdlp_path.clone(),
+                ytdlp_args: Vec::new(),
                 proxy: self.youtube_proxy.clone(),
                 cookies_file: self.youtube_cookies.clone(),
                 ca_file: None,

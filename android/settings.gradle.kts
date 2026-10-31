@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "Juntos"
-include(":core", ":design", ":player", ":update", ":app")
+include(":core", ":design", ":player", ":update", ":producer", ":app")

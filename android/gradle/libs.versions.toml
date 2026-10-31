@@ -15,8 +15,11 @@ junit = "4.13.2"
 testRunner = "1.6.2"
 testExtJunit = "1.2.1"
 espresso = "3.5.0"
+youtubedl = "0.18.1"
 
 [libraries]
+youtubedl-android = { module = "io.github.junkfood02.youtubedl-android:library", version.ref = "youtubedl" }
+youtubedl-ffmpeg = { module = "io.github.junkfood02.youtubedl-android:ffmpeg", version.ref = "youtubedl" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
