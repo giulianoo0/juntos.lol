@@ -21,6 +21,10 @@ private val THREE_TO_TWO = mapOf(
 
 private val FFMPEG_PLACEHOLDER = Regex("^audio_\\d+$")
 
+/** The browser's pipeline names a rendition after its language and place, "por-1": no more a name than ffmpeg's. */
+private fun numberedLanguage(name: String, language: String?): Boolean =
+    !language.isNullOrEmpty() && name.startsWith("$language-", ignoreCase = true) && name.drop(language.length + 1).let { it.isNotEmpty() && it.all(Char::isDigit) }
+
 private val PT_BR: Locale = Locale.forLanguageTag("pt-BR")
 
 /** "por" → "Português". Null when nothing can name it. */
@@ -36,7 +40,7 @@ fun languageLabel(code: String): String? {
 /** The language wins over a name the encoder invented; the position is the last resort. */
 fun audioTrackLabel(name: String?, language: String?, index: Int): String {
     val trimmed = name?.trim()
-    if (!trimmed.isNullOrEmpty() && !FFMPEG_PLACEHOLDER.matches(trimmed)) return trimmed
+    if (!trimmed.isNullOrEmpty() && !FFMPEG_PLACEHOLDER.matches(trimmed) && !numberedLanguage(trimmed, language)) return trimmed
     if (!language.isNullOrBlank()) return languageLabel(language) ?: language
     return (index + 1).toString()
 }

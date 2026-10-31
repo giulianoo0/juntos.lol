@@ -26,6 +26,11 @@ const THREE_TO_TWO: Record<string, string> = {
  */
 const FFMPEG_PLACEHOLDER = /^audio_\d+$/
 
+/** The browser's pipeline names a rendition after its language and place, "por-1": no more a name than ffmpeg's. */
+function numberedLanguage(name: string, lang?: string): boolean {
+  return !!lang && name.toLowerCase().startsWith(`${lang.toLowerCase()}-`) && /^\d+$/.test(name.slice(lang.length + 1))
+}
+
 /** "por" + "pt-BR" → "Português". Returns null when nothing can name it. */
 export function languageLabel(code: string, locale: string): string | null {
   const normalized = code.trim().toLowerCase().replace(/_/g, '-')
@@ -52,7 +57,7 @@ export function audioTrackLabel(
   index: number,
 ): string {
   const name = track.name?.trim()
-  if (name && !FFMPEG_PLACEHOLDER.test(name)) return name
+  if (name && !FFMPEG_PLACEHOLDER.test(name) && !numberedLanguage(name, track.lang)) return name
   if (track.lang) return languageLabel(track.lang, locale) ?? track.lang
   return String(index + 1)
 }

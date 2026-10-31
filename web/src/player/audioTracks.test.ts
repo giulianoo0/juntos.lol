@@ -28,9 +28,10 @@ describe('languageLabel', () => {
 })
 
 describe('audioTrackLabel', () => {
-  it('drops ffmpeg placeholder names in favour of the language', () => {
+  it('drops the names ffmpeg and the browser pipeline invent in favour of the language', () => {
     expect(audioTrackLabel({ name: 'audio_6', lang: 'por' }, 'pt-BR', 6)).toBe('Português')
     expect(audioTrackLabel({ name: 'audio_0', lang: 'jpn' }, 'pt-BR', 0)).toBe('Japonês')
+    expect(audioTrackLabel({ name: 'eng-2', lang: 'eng' }, 'pt-BR', 1)).toBe('Inglês')
   })
 
   it('keeps a name the encoder did not invent', () => {
