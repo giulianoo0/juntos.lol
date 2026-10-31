@@ -25,19 +25,11 @@ import lol.juntos.core.sync.reportReadiness
 import lol.juntos.player.JuntosPlayer
 import lol.juntos.player.MediaSource
 import lol.juntos.player.SidecarSubtitle
-import lol.juntos.player.languageLabel
 
-/** The room's subtitles as the player fetches them: always the bucket's WebVTT. */
-internal fun roomSubtitles(room: RoomInfo): List<SidecarSubtitle> = room.subtitleTracks.orEmpty().mapNotNull { track ->
-    subtitleUrl(room, track)?.let { SidecarSubtitle(it, track.language, subtitleLabel(track.title, track.language), "text/vtt") }
-}
-
-/** YouTube names a track by its language in English ("Portuguese"): that reads in Portuguese here; any other title stays. */
-internal fun subtitleLabel(title: String, language: String): String {
-    val english = java.util.Locale.forLanguageTag(language).getDisplayLanguage(java.util.Locale.ENGLISH)
-    val plain = title.isBlank() || title.equals(english, ignoreCase = true)
-    return if (plain) languageLabel(language) ?: title.ifBlank { language } else title
-}
+/** The room's subtitles as the player fetches them, always the bucket's WebVTT: Portuguese on top. */
+internal fun roomSubtitles(room: RoomInfo): List<SidecarSubtitle> = room.subtitleTracks.orEmpty()
+    .sortedBy { subtitleRank(it.language, it.title) }
+    .mapNotNull { track -> subtitleUrl(room, track)?.let { SidecarSubtitle(it, track.language, subtitleLabel(track.title, track.language), "text/vtt") } }
 
 /** Where the room is now, on its own clock. */
 internal fun roomPositionMs(state: SyncState, nowMs: Long = System.currentTimeMillis()): Long =

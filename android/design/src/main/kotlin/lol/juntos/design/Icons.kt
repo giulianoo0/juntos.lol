@@ -57,6 +57,9 @@ object JuntosIcons {
     val FullscreenExit: ImageVector get() = Icons.Rounded.FullscreenExit
     val Back: ImageVector get() = Icons.AutoMirrored.Rounded.ArrowBack
     val Youtube: ImageVector get() = Icons.Outlined.SmartDisplay
+    val RotateCw: ImageVector by lazy { lucide("RotateCw", "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5") }
+    val Maximize: ImageVector by lazy { lucide("Maximize", "M8 3H5a2 2 0 0 0-2 2v3", "M21 8V5a2 2 0 0 0-2-2h-3", "M3 16v3a2 2 0 0 0 2 2h3", "M16 21h3a2 2 0 0 0 2-2v-3") }
+    val Minimize: ImageVector by lazy { lucide("Minimize", "M8 3v3a2 2 0 0 1-2 2H3", "M21 8h-3a2 2 0 0 1-2-2V3", "M3 16h3a2 2 0 0 1 2 2v3", "M16 21v-3a2 2 0 0 1 2-2h3") }
     val Magnet: ImageVector by lazy { lucide("Magnet", "m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15", "m5 8 4 4", "m12 15 4 4") }
 }
 

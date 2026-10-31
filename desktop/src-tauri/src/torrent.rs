@@ -109,6 +109,17 @@ impl Torrents {
         Ok(Opened { id, name: handle.name().unwrap_or_default(), files })
     }
 
+    /// Every torrent but `keep` leaves with what it downloaded: the phone keeps none past its room.
+    #[allow(dead_code)]
+    pub async fn purge(&self, keep: Option<&str>) {
+        let all: Vec<String> = self.local.session().with_torrents(|torrents| torrents.map(|(_, t)| t.info_hash().as_string()).collect());
+        for hash in all.into_iter().filter(|hash| Some(hash.as_str()) != keep) {
+            if let Err(e) = self.local.forget(&hash).await {
+                tracing::warn!(hash, error = %format!("{e:#}"), "torrent purge");
+            }
+        }
+    }
+
     pub async fn select(&self, id: &str, index: usize) -> anyhow::Result<()> {
         self.local.select(id, index).await
     }

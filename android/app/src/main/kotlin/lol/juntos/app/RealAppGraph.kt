@@ -2,6 +2,9 @@ package lol.juntos.app
 
 import android.content.Context
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import lol.juntos.app.human.WebHumanGate
 import lol.juntos.core.api.CookieStorage
 import lol.juntos.core.api.HttpJuntosApi
@@ -50,4 +53,9 @@ class RealAppGraph(context: Context, override val baseUrl: String = BuildConfig.
     override val players = PlayerFactory { Media3Player(app, client) }
     override val updater: Updater = GithubUpdater(app, client)
     override val producer: Producer = Producer(app, baseUrl)
+
+    init {
+        // Starting the producer at launch clears what a killed run left on the phone.
+        CoroutineScope(Dispatchers.IO).launch { runCatching { producer.start() } }
+    }
 }

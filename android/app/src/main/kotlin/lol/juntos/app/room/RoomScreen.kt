@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -123,8 +125,30 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
 
     val config = LocalConfiguration.current
     val hosted by (host?.media ?: flowOf(null)).collectAsState(null)
-    val status = state.room?.status.orEmpty()
-    val hasMedia = (status.isNotEmpty() && status != "empty") || hosted != null
+    val room = state.room
+    val mine = hosted?.takeIf { room != null && room.sourceMemberId == state.memberId && it.generation == room.mediaGeneration }
+    val stageStatus = stageStatus(room, mine?.regions)
+    val hasMedia = stageStatus != StageStatus.Empty || hosted != null
+    val snap by player.snapshot.collectAsState()
+    val bufferingFor by produceState(0L, snap.buffering) {
+        value = 0L
+        if (snap.buffering) {
+            val start = System.currentTimeMillis()
+            while (true) {
+                delay(500)
+                value = System.currentTimeMillis() - start
+            }
+        }
+    }
+    val view = StageView(
+        status = stageStatus,
+        durationMs = timelineMs(room, mine?.durationMs),
+        canControl = state.isController,
+        chaptersMs = room?.chapters.orEmpty().map { it.startMs },
+        waitText = if (stageStatus == StageStatus.Ready) waitText(snap.positionMs, mine?.regions ?: room?.mediaRegions.orEmpty(), bufferingFor, snap.bufferedAheadMs) else null,
+        preparation = room?.preparation,
+        failure = room?.errorMessage?.takeIf { stageStatus == StageStatus.Failed }.orEmpty(),
+    )
     LaunchedEffect(hasMedia) { if (!hasMedia) fullscreen = false }
     val fold = rememberFold()
     val layout = roomLayout(config.screenWidthDp, config.screenHeightDp, config.smallestScreenWidthDp, hasMedia, fullscreen, fold?.hinge)
@@ -140,8 +164,9 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     ) {
         LookaheadScope {
             val corner by animateDpAsState(if (immersive) 0.dp else 18.dp, pop(), label = "stage-corner")
-            val stage = remember {
-                movableContentOf { modifier: Modifier, full: Boolean ->
+            // Movable content keeps the surface across layouts; what changes comes in by argument.
+            val stageContent = remember {
+                movableContentOf { modifier: Modifier, full: Boolean, now: StageView ->
                     Box(
                         modifier
                             .animateBounds(this@LookaheadScope, boundsTransform = BoundsSpring())
@@ -155,12 +180,24 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                             fullscreen = full,
                             onFullscreenChange = { fullscreen = it },
                             onSettings = { sheet = Sheet.Settings },
+                            durationMs = now.durationMs,
+                            canControl = now.canControl,
+                            chaptersMs = now.chaptersMs,
+                            waitText = now.waitText,
                             modifier = Modifier.fillMaxSize(),
                         )
+                        AnimatedVisibility(
+                            visible = now.status == StageStatus.Preparing || now.status == StageStatus.Failed,
+                            enter = fadeIn(pop()),
+                            exit = fadeOut(settle()),
+                        ) {
+                            PreparingCard(now.preparation, now.failure.takeIf { now.status == StageStatus.Failed })
+                        }
                         BurstLayer(bursts, Modifier.fillMaxSize())
                     }
                 }
             }
+            val stage = @Composable { modifier: Modifier, full: Boolean -> stageContent(modifier, full, view) }
             val header = @Composable { modifier: Modifier ->
                 RoomHeader(
                     state = state,
@@ -254,6 +291,17 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
         null -> Unit
     }
 }
+
+/** What the stage draws this frame, handed to the movable content that keeps the surface. */
+internal data class StageView(
+    val status: StageStatus,
+    val durationMs: Long,
+    val canControl: Boolean,
+    val chaptersMs: List<Long>,
+    val waitText: String?,
+    val preparation: lol.juntos.core.model.RoomPreparation?,
+    val failure: String,
+)
 
 /** The fold of a foldable, in window pixels, as the WindowManager reports it. */
 private class Fold(val hinge: Hinge, val bounds: android.graphics.Rect)

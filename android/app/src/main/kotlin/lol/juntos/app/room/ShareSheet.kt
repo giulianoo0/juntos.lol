@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -64,7 +65,7 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
         step = next
     }
 
-    fun run(block: suspend () -> Unit) {
+    fun run(fallback: String, block: suspend () -> Unit) {
         if (busy) return
         busy = true
         error = null
@@ -72,11 +73,8 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
             try {
                 block()
             } catch (e: Exception) {
-                error = when (e.message) {
-                    "live" -> "Transmissão ao vivo ainda não roda no celular."
-                    "tools_missing" -> "Não deu para preparar o YouTube neste celular."
-                    else -> "Não deu para abrir esse link."
-                }
+                android.util.Log.w("ShareSheet", fallback, e)
+                error = shareError(e.message, fallback)
             } finally {
                 busy = false
             }
@@ -86,8 +84,8 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
     fun open(torrent: Boolean) {
         val text = link.trim()
         when {
-            torrent && text.startsWith("magnet:?") -> run { go(Step.Files(host.openTorrent(text))) }
-            !torrent && text.contains("youtu") -> run {
+            torrent && text.startsWith("magnet:?") -> run("Não deu para abrir esse magnet.") { go(Step.Files(host.openTorrent(text))) }
+            !torrent && text.contains("youtu") -> run("Não deu para abrir esse link.") {
                 onHost(host.resolveYoutube(text))
                 onDismiss()
             }
@@ -99,7 +97,10 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
         Column(Modifier.fillMaxWidth().animateContentSize(pop())) {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (step != Step.Menu) IconPill("Voltar", JuntosIcons.Back, onClick = { go(Step.Menu) }, size = 36.dp)
-                Text(titleOf(step), color = c.text, fontSize = JuntosTextSize.lg, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(titleOf(step), color = c.text, fontSize = JuntosTextSize.lg, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
+                if (busy && step is Step.Files) {
+                    androidx.compose.material3.CircularProgressIndicator(color = c.textMuted, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                }
             }
             val enter = pop<Float>()
             val exit = settle<Float>()
@@ -131,7 +132,7 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
                             videos.sortedBy { it.path }.forEach { file ->
                                 val name = file.path.substringAfterLast('/')
                                 SpringRow(name, icon = JuntosIcons.Film, onClick = {
-                                    run {
+                                    run("Não deu para começar esse arquivo.") {
                                         onHost(LocalSource.Torrent(opened.id, file.index, name.substringBeforeLast('.'), opened.magnet))
                                         onDismiss()
                                     }
@@ -143,6 +144,19 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
             }
             error?.let { Text(it, color = c.danger, fontSize = JuntosTextSize.xs, modifier = Modifier.padding(top = 8.dp, start = 4.dp)) }
         }
+    }
+}
+
+/** What went wrong, in words: the producer's codes and the usual failures, else [fallback]. */
+internal fun shareError(message: String?, fallback: String): String {
+    val m = message.orEmpty()
+    return when {
+        m == "live" -> "Transmissão ao vivo ainda não roda no celular."
+        m == "tools_missing" -> "Não deu para preparar o YouTube neste celular."
+        m == "invalid_magnet" -> "Esse magnet não é válido."
+        m.contains("metadata timed out") || m.contains("initialization timed out") -> "O torrent não respondeu. Tente de novo ou use outro magnet."
+        m.contains("No space", ignoreCase = true) || m.contains("ENOSPC") -> "O celular está sem espaço."
+        else -> fallback
     }
 }
 

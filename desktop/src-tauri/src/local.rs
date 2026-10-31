@@ -435,6 +435,24 @@ impl Producer {
         }
     }
 
+    /// Stops every source but `keep` and deletes its cache, with whatever an
+    /// earlier run left: the phone keeps nothing past its room.
+    #[allow(dead_code)]
+    pub async fn purge(&self, keep: Option<&str>) {
+        let keys: Vec<String> = self.entries.lock().keys().filter(|key| Some(key.as_str()) != keep).cloned().collect();
+        for key in &keys {
+            self.stop(key).await;
+            self.entries.lock().remove(key);
+        }
+        let Ok(dirs) = std::fs::read_dir(&self.root) else { return };
+        for dir in dirs.filter_map(Result::ok) {
+            let name = dir.file_name().to_string_lossy().into_owned();
+            if Some(name.as_str()) != keep && !self.entries.lock().contains_key(&name) {
+                let _ = std::fs::remove_dir_all(dir.path());
+            }
+        }
+    }
+
     /// Publishes the source's subtitles to the room, where every member reads
     /// them: the page's, or the container's own tracks from the region the
     /// room plays now and from every region it starts after. Once per room

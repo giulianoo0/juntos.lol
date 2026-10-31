@@ -68,6 +68,15 @@ data class MediaSnapshot(
     val mediaRegions: List<MediaRegion>? = null,
 )
 
+/** How far the room is from being playable, as the server sees it. */
+@Serializable
+data class RoomPreparation(
+    val sourceBytes: Long? = null,
+    val receivedBytes: Long? = null,
+    val previewPhase: String? = null,
+    val previewTargetBytes: Long? = null,
+)
+
 /** GET /api/rooms/{id}. */
 @Serializable
 data class RoomInfo(
@@ -98,6 +107,7 @@ data class RoomInfo(
     val localSource: Boolean? = null,
     /** Variants the producer adds beside the source's own, such as "480p" for thin links. */
     val renditions: List<String>? = null,
+    val preparation: RoomPreparation? = null,
 )
 
 /** GET /api/config: what the server names for the client. */

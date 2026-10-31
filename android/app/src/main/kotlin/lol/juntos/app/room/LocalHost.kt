@@ -108,6 +108,7 @@ class LocalHost(
             val key = meta["key"]!!.jsonPrimitive.content
             val hls = File(producer.call("hls_dir", mapOf("key" to key)).jsonPrimitive.content)
             _media.value = LocalMedia(key, generation, meta["durationMs"]?.jsonPrimitive?.longOrNull ?: duration, emptyList(), hls)
+            purge(keepKey = key, keepTorrent = (source as? LocalSource.Torrent)?.id)
             session.announceSource(if (source is LocalSource.Youtube) "youtube" else "torrent")
             scope.launch {
                 runCatching {
@@ -256,11 +257,20 @@ class LocalHost(
         runCatching { producer.call("local_stop", mapOf("key" to media.key)) }
     }
 
-    /** Leaving the room: the cache stops filling and nothing more goes up. */
+    /** Everything but what plays now leaves the phone: downloads and cache alike. */
+    private suspend fun purge(keepKey: String?, keepTorrent: String?) {
+        runCatching { producer.call("purge", mapOf("keepKey" to keepKey, "keepTorrent" to keepTorrent)) }
+            .onFailure { Log.w(TAG, "purge", it) }
+    }
+
+    /** Leaving the room: the cache stops filling, nothing more goes up, and what it downloaded is deleted. */
     fun close() {
         session.announceSource(null)
         // The room's scope goes with the screen; the stop must outlive it.
-        CoroutineScope(kotlinx.coroutines.Dispatchers.IO + NonCancellable).launch { stopCurrent() }
+        CoroutineScope(kotlinx.coroutines.Dispatchers.IO + NonCancellable).launch {
+            stopCurrent()
+            purge(keepKey = null, keepTorrent = null)
+        }
     }
 
     private companion object {

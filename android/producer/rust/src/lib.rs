@@ -51,16 +51,37 @@ pub struct State {
 
 static STATE: OnceLock<State> = OnceLock::new();
 
+/// The phone's cache ceiling: a few episodes' worth, far under the desktop's.
+const CACHE_CAP_BYTES: u64 = 4 << 30;
+
 pub fn init(data_dir: PathBuf, site: String, tools: Tools) {
-    STATE.get_or_init(|| State {
+    STATE.get_or_init(|| {
+        clear_leftovers(&data_dir);
+        State {
         site: site.trim_end_matches('/').to_string(),
         data_dir: data_dir.clone(),
         torrents: tokio::sync::OnceCell::new(),
-        producer: Producer::new(data_dir.join("cache"), tools.ffmpeg, tools.ffprobe, cache::DEFAULT_CAP_BYTES),
+        producer: Producer::new(data_dir.join("cache"), tools.ffmpeg, tools.ffprobe, CACHE_CAP_BYTES),
         ytdlp: tools.ytdlp,
         resolver: tokio::sync::OnceCell::new(),
         uploads: Mutex::new(HashMap::new()),
+        }
     });
+}
+
+/// What a run before this one left (the app killed in a room): the cache and the
+/// downloads go, the DHT's table stays.
+fn clear_leftovers(data_dir: &std::path::Path) {
+    for (dir, keep) in [(data_dir.join("cache"), None), (data_dir.join("torrents"), Some("dht.json"))] {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.filter_map(Result::ok) {
+            if keep.is_some_and(|keep| entry.file_name() == keep) {
+                continue;
+            }
+            let path = entry.path();
+            let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        }
+    }
 }
 
 /// Runs one call by name with its JSON arguments; the answer is `{"ok": …}` or `{"error": "…"}`.
@@ -168,6 +189,15 @@ async fn dispatch(state: &State, method: &str, args: Value) -> Result<Value, Str
                 }
             }
             state.producer.follow(&key, position_ms).await.map_err(err)?;
+            Ok(Value::Null)
+        }
+        "purge" => {
+            let keep_key: Option<String> = arg(&args, "keepKey")?;
+            let keep_torrent: Option<String> = arg(&args, "keepTorrent")?;
+            state.producer.purge(keep_key.as_deref()).await;
+            if let Some(torrents) = state.torrents.get() {
+                torrents.purge(keep_torrent.as_deref()).await;
+            }
             Ok(Value::Null)
         }
         "local_stop" => {

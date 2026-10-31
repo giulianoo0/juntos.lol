@@ -47,6 +47,15 @@ impl Local {
         &self.session
     }
 
+    /// Deletes the torrent and what it downloaded; its readers go with it.
+    pub async fn forget(&self, infohash: &str) -> anyhow::Result<()> {
+        let infohash = infohash.to_ascii_lowercase();
+        self.files.lock().retain(|(hash, _), _| *hash != infohash);
+        self.selected.lock().remove(&infohash);
+        let id = Id20::from_str(&infohash).context("bad infohash")?;
+        self.session.delete(TorrentIdOrHash::Hash(id), true).await
+    }
+
     fn handle(&self, infohash: &str) -> anyhow::Result<Arc<ManagedTorrent>> {
         let id = Id20::from_str(&infohash.to_ascii_lowercase()).context("bad infohash")?;
         self.session.get(TorrentIdOrHash::Hash(id)).context("unknown torrent")
