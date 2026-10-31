@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
@@ -30,6 +31,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+
+/** Room inside the popup window for the float shadow, which the window would otherwise cut square. */
+private val INSET = 28.dp
 
 /**
  * Places the popup under its trigger (over it when there is no room), centred on it and
@@ -71,7 +75,7 @@ fun SpringPopover(
     val state = remember { MutableTransitionState(false) }
     state.targetState = isOpen
     val density = LocalDensity.current
-    val placement = remember(density) { with(density) { SpringPlacement(8.dp.roundToPx(), 16.dp.roundToPx()) } }
+    val placement = remember(density) { with(density) { SpringPlacement((8.dp - INSET).roundToPx(), (16.dp - INSET).roundToPx()) } }
 
     Box(modifier) {
         trigger { set(true) }
@@ -109,8 +113,8 @@ private fun SpringSurface(state: MutableTransitionState<Boolean>, placement: Spr
                 alpha = if (motion) 1f else progress
             }
             .springBlur(blur)
-            .padding(12.dp)
-            .shadow(24.dp, shape, ambientColor = c.text.copy(alpha = 0.2f), spotColor = c.text.copy(alpha = 0.2f))
+            .padding(INSET)
+            .shadow(14.dp, shape, ambientColor = Color.Black.copy(alpha = 0.25f), spotColor = Color.Black.copy(alpha = 0.25f))
             .width(width)
             .background(c.overlay, shape)
             .border(1.dp, c.line, shape)
