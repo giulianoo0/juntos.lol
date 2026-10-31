@@ -275,6 +275,7 @@ private fun JoinByCode(onJoin: (String) -> Unit) {
             label = "Código da sala",
             placeholder = "Tenho um código",
             mono = true,
+            filled = false,
             modifier = Modifier.width(196.dp),
             onSubmit = { room?.let(onJoin) },
         )

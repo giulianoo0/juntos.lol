@@ -52,6 +52,7 @@ fun Field(
     placeholder: String = label,
     password: Boolean = false,
     mono: Boolean = false,
+    filled: Boolean = true,
     imeAction: ImeAction = ImeAction.Done,
     onSubmit: () -> Unit = {},
     trailing: (@Composable BoxScope.() -> Unit)? = null,
@@ -85,7 +86,7 @@ fun Field(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .background(c.field, CircleShape)
+                    .background(if (filled) c.field else c.field.copy(alpha = 0f), CircleShape)
                     .border(1.dp, line, CircleShape)
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.CenterStart,
