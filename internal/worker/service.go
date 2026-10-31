@@ -90,7 +90,7 @@ type ProbeTarget struct {
 
 // ProbeList hands the page every healthy worker with a short-lived probe
 // ticket each, so it can measure reachability itself: the server cannot know
-// which worker is fast from THIS browser.
+// which worker is fast from this browser.
 func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
 	now := time.Now()
 	var out []ProbeTarget
