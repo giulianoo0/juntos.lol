@@ -76,7 +76,9 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     DisposableEffect(session) { onDispose { session.close() } }
     val player = remember { graph.players.create() }
     DisposableEffect(player) { onDispose { player.release() } }
-    val state by session.state.collectAsState()
+    val raw by session.state.collectAsState()
+    // Until the socket echoes it, this viewer wears the avatar they came in with.
+    val state = raw.copy(members = raw.members.map { if (it.id == raw.memberId && it.avatar == null) it.copy(avatar = entry.avatar) else it })
     val toasts = rememberToastState()
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var pinned by remember { mutableStateOf<String?>(null) }
@@ -134,8 +136,8 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                     Modifier
                         .animateBounds(this@LookaheadScope, boundsTransform = BoundsSpring())
                         .then(if (immersive) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                        .padding(horizontal = inset)
-                        .clip(RoundedCornerShape(corner))
+                        .padding(horizontal = inset.coerceAtLeast(0.dp))
+                        .clip(RoundedCornerShape(corner.coerceAtLeast(0.dp)))
                         .background(Color.Black),
                 ) {
                     PlayerSurface(player, Modifier.fillMaxSize())

@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
@@ -75,6 +76,7 @@ import lol.juntos.design.PillTone
 import lol.juntos.design.SpringPopover
 import lol.juntos.design.pop
 import lol.juntos.design.pressScale
+import lol.juntos.design.springBlur
 import lol.juntos.design.settle
 
 private val WORDS = listOf("assistir", "conversar", "maratonar", "jogar", "ouvir", "zoar", "rir")
@@ -153,7 +155,7 @@ private fun Arrive(content: @Composable () -> Unit) {
                 scaleX = s; scaleY = s
                 alpha = p.value.coerceIn(0f, 1f)
             }
-            .blur((8f * (1f - p.value).coerceIn(0f, 1f)).dp),
+            .springBlur((8f * (1f - p.value).coerceIn(0f, 1f)).dp),
         contentAlignment = Alignment.Center,
     ) { content() }
 }
@@ -233,7 +235,15 @@ private fun CreateForm(busy: Boolean, error: String?, onCreate: (String, String?
     val submit = { onCreate(name, if (locked && password.isNotEmpty()) password else null) }
     Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Field(value = name, onValueChange = { name = it.take(80) }, label = "Nome da sala", modifier = Modifier.weight(1f), onSubmit = submit)
+            val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+            Field(
+                value = name,
+                onValueChange = { name = it.take(80) },
+                label = "Nome da sala",
+                modifier = Modifier.weight(1f).focusRequester(focus),
+                onSubmit = submit,
+            )
             IconPill(label = "Senha", icon = JuntosIcons.Lock, active = locked, onClick = { locked = !locked })
         }
         AnimatedVisibility(

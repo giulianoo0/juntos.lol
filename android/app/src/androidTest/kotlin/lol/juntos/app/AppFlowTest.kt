@@ -1,5 +1,11 @@
 package lol.juntos.app
 
+import android.content.res.Configuration
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -105,6 +111,26 @@ class AppFlowTest {
         rule.onNodeWithText("Ana").assertExists()
         rule.runOnIdle { session.drop("ana") }
         rule.waitUntil(3_000) { rule.onAllNodes(hasText("Ana")).fetchSemanticsNodes().isEmpty() }
+    }
+
+    @Test
+    fun lyingThePhoneDownGivesTheWholeScreenToTheVideo() {
+        var landscape by mutableStateOf(false)
+        rule.setContent {
+            val base = LocalConfiguration.current
+            val config = Configuration(base).apply {
+                orientation = if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
+            }
+            CompositionLocalProvider(LocalConfiguration provides config) {
+                JuntosTheme { JuntosNavHost(graph = graph, linkedRoom = "LINK0001", onLinkedRoomOpened = {}) }
+            }
+        }
+        waitFor("Sala de teste")
+        landscape = true
+        rule.waitUntil(3_000) { rule.onAllNodes(hasText("Sala de teste")).fetchSemanticsNodes().isEmpty() }
+        rule.onNodeWithContentDescription("Sair").assertDoesNotExist()
+        landscape = false
+        waitFor("Sala de teste")
     }
 
     @Test

@@ -141,7 +141,7 @@ fun ToastHost(state: ToastState, modifier: Modifier = Modifier) {
                         transformOrigin = TransformOrigin(0.5f, 1f)
                         alpha = if (motion) 1f else p
                     }
-                    .blur(if (motion) (8f * (1f - p).coerceIn(0f, 1f)).dp else 0.dp)
+                    .springBlur(if (motion) (8f * (1f - p).coerceIn(0f, 1f)).dp else 0.dp)
                     .shadow(16.dp, CircleShape)
                     .background(c.overlay, CircleShape)
                     .padding(horizontal = 16.dp, vertical = 10.dp),

@@ -108,11 +108,11 @@ private fun SpringSurface(state: MutableTransitionState<Boolean>, placement: Spr
                 transformOrigin = placement.origin
                 alpha = if (motion) 1f else progress
             }
-            .blur(blur)
+            .springBlur(blur)
             .padding(12.dp)
             .shadow(24.dp, shape, ambientColor = c.text.copy(alpha = 0.2f), spotColor = c.text.copy(alpha = 0.2f))
             .width(width)
-            .background(c.overlay.copy(alpha = 0.97f), shape)
+            .background(c.overlay, shape)
             .border(1.dp, c.line, shape)
             .padding(JuntosSpacing.s2),
     ) { content() }
