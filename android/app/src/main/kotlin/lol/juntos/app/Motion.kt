@@ -20,14 +20,15 @@ val LocalNavScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
 
 /**
  * The element that opens a room, and the room itself, share these bounds: the room
- * zooms out of the button or card the way an iOS app opens out of its icon.
+ * zooms out of the button or card the way an iOS app opens out of its icon. A closing
+ * room drops them and settles away on its own instead of shrinking back into the button.
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-fun Modifier.door(key: String?, corner: Dp): Modifier {
+fun Modifier.door(key: String?, corner: Dp, closing: Boolean = false): Modifier {
     val shared = LocalSharedScope.current ?: return this
     val nav = LocalNavScope.current ?: return this
-    if (key == null) return this
+    if (key == null || closing) return this
     val motion = LocalMotionEnabled.current
     val transform = BoundsTransform { _, _ ->
         if (motion) tween(JuntosMotion.POP_MS, easing = JuntosMotion.SpringPop) else snap()

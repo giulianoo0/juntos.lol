@@ -57,7 +57,10 @@ import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.launch
 import lol.juntos.app.AppGraph
 import lol.juntos.app.RoomEntry
+import lol.juntos.app.LocalNavScope
 import lol.juntos.app.door
+import lol.juntos.design.JuntosMotion
+import androidx.compose.animation.EnterExitState
 import lol.juntos.core.sync.SessionRequest
 import lol.juntos.core.sync.SyncEvent
 import lol.juntos.design.BoundsSpring
@@ -103,9 +106,17 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     var fullscreen by remember { mutableStateOf(false) }
     val bursts = remember { Bursts() }
 
-    val leave = {
-        session.leave()
-        onLeave()
+    var leaving by remember { mutableStateOf(false) }
+    // The Sair popover settles into its button before the room goes, so it never floats over the home.
+    val leave: () -> Unit = {
+        if (!leaving) {
+            leaving = true
+            session.leave()
+            scope.launch {
+                delay(JuntosMotion.SETTLE_MS / 2L)
+                onLeave()
+            }
+        }
     }
     LaunchedEffect(session) {
         session.events.collect { event ->
@@ -175,7 +186,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .door(entry.door, 36.dp)
+            .door(entry.door, 36.dp, closing = leaving || LocalNavScope.current?.transition?.targetState == EnterExitState.PostExit)
             .background(if (immersive) Color.Black else c.frameGround),
     ) {
         LookaheadScope {

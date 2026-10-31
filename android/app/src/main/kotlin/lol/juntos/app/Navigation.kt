@@ -5,6 +5,8 @@ import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +63,14 @@ fun JuntosNavHost(graph: AppGraph, linkedRoom: String?, onLinkedRoomOpened: () -
                 startDestination = Routes.HOME,
                 enterTransition = { fadeIn(tween(JuntosMotion.SLOW_MS)) },
                 exitTransition = { fadeOut(tween(JuntosMotion.SLOW_MS)) },
+                popEnterTransition = {
+                    fadeIn(tween(JuntosMotion.SETTLE_MS, easing = JuntosMotion.SpringSettle)) +
+                        scaleIn(tween(JuntosMotion.SETTLE_MS, easing = JuntosMotion.SpringSettle), initialScale = 0.97f)
+                },
+                popExitTransition = {
+                    fadeOut(tween(JuntosMotion.SETTLE_MS, easing = JuntosMotion.SpringSettle)) +
+                        scaleOut(tween(JuntosMotion.SETTLE_MS, easing = JuntosMotion.SpringSettle), targetScale = 0.94f)
+                },
             ) {
                 composable(Routes.HOME) {
                     CompositionLocalProvider(LocalNavScope provides this) {
