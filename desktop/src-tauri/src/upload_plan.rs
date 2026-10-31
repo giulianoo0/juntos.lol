@@ -1,9 +1,10 @@
 //! What goes to the bucket next once a browser guest needs the room. The
 //! cache already holds the segments; the plan turns the playhead into the
-//! order they go up in: init and a few segments around it, then the window
-//! ahead, then what was already played, then the rest. A seek moves the
-//! front of the queue. Every remote region is a slice of one local region
-//! starting at some segment, renamed into the server's grammar.
+//! order they go up in: init, what its region still misses behind it and a
+//! few segments around it, then the window ahead, then what was played
+//! before the region, then the rest. A seek moves the front of the queue.
+//! Every remote region is a slice of one local region starting at some
+//! segment, renamed into the server's grammar.
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::hls::{self, Variant};
@@ -101,7 +102,6 @@ impl Planner {
 
     fn plan(&mut self, local: &[LocalRegion], playhead_ms: u64, max: usize, with_inflight: bool) -> Vec<Item> {
         let mut order: Vec<(usize, usize)> = Vec::new();
-        let mut past: Vec<(usize, usize)> = Vec::new();
         let mut rest: Vec<(usize, usize)> = Vec::new();
         let anchor = self.anchor(local, playhead_ms);
         let first = local.iter().find(|l| l.n == 0);
@@ -109,13 +109,13 @@ impl Planner {
         if let Some((remote, kp)) = anchor {
             let at = &self.remotes[remote];
             if at.local == 0 {
-                past_limit = if at.from_ms == 0 { kp } else { first.map_or(0, |l| index_or_len(&l.variants[0], at.from_ms)) };
+                past_limit = if at.from_ms == 0 { 0 } else { first.map_or(0, |l| index_or_len(&l.variants[0], at.from_ms)) };
             }
-            order.extend((kp..kp + AHEAD).map(|k| (remote, k)));
-            // A segment the window passed before it went up would hold the region's span there for good.
-            past.extend((0..kp).map(|k| (remote, k)));
+            // The region plays only up to its first missing object: what the playhead passed goes first.
+            order.extend((0..kp + AHEAD).map(|k| (remote, k)));
             rest.extend((kp + AHEAD..region_len(local, &self.remotes[remote])).map(|k| (remote, k)));
         }
+        let mut past = Vec::new();
         if past_limit > 0 && first.is_some() {
             let back = self.remote_for(0, 0);
             past.extend((0..past_limit).map(|k| (back, k)));
@@ -344,16 +344,14 @@ mod tests {
     }
 
     #[test]
-    fn a_hole_the_playhead_left_behind_in_its_region_is_filled() {
+    fn a_hole_the_playhead_left_behind_in_its_region_goes_up_before_the_window() {
         let local = [region(0, 0, 40, true)];
         let mut planner = Planner::new();
         let first = planner.next(&local, 41_000, 4);
         finish(&mut planner, &first[..3]);
         planner.failed(&first[3].remote);
         // The room played on two segments before that audio segment could go up.
-        let rest = planner.next(&local, 49_000, 1_000);
-        finish(&mut planner, &rest);
-        assert_eq!(planner.regions(&local)[1], RegionReport { n: 1, start_ms: 40_000, produced_ms: 120_000, growing: false });
+        assert_eq!(names(&planner.next(&local, 49_000, 1)), ["r1_cs_1_0.m4s"]);
     }
 
     #[test]
@@ -375,13 +373,13 @@ mod tests {
     }
 
     #[test]
-    fn a_short_seek_ahead_extends_the_region_instead_of_opening_one() {
+    fn a_short_seek_ahead_extends_the_region_and_fills_the_gap_behind_it_first() {
         let local = [region(0, 0, 40, true)];
         let mut planner = Planner::new();
         let first = planner.next(&local, 41_000, 8);
         finish(&mut planner, &first);
         let items = planner.next(&local, 41_000 + 6 * 4_000, 4);
-        assert_eq!(names(&items), ["r1_cs_0_6.m4s", "r1_cs_1_6.m4s", "r1_cs_0_7.m4s", "r1_cs_1_7.m4s"]);
+        assert_eq!(names(&items), ["r1_cs_0_3.m4s", "r1_cs_1_3.m4s", "r1_cs_0_4.m4s", "r1_cs_1_4.m4s"]);
     }
 
     #[test]
@@ -422,16 +420,13 @@ mod tests {
     }
 
     #[test]
-    fn a_seek_displaces_only_what_it_left_behind() {
+    fn a_short_seek_keeps_in_flight_what_the_region_still_needs_behind_it() {
         let local = [region(0, 0, 100, true)];
         let mut planner = Planner::new();
         let first = planner.next(&local, 0, 4);
         finish(&mut planner, &first);
         planner.next(&local, 0, 4);
-        assert!(planner.displaced(&local, 4_100, 4).is_empty());
-        let mut displaced = planner.displaced(&local, 8_100, 4);
-        displaced.sort();
-        assert_eq!(displaced, ["cs_0_1.m4s", "cs_1_1.m4s"]);
+        assert!(planner.displaced(&local, 8_100, 4).is_empty());
         assert_eq!(names(&planner.next(&local, 8_100, 2)), ["cs_0_3.m4s", "cs_1_3.m4s"]);
     }
 
