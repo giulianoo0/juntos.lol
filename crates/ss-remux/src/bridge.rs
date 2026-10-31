@@ -17,7 +17,7 @@ use crate::source::ByteSource;
 use super::sink::{object_kind, ObjectKind, Sink, Storing};
 
 /// The loopback bridge: FFmpeg's whole world. One listener on 127.0.0.1,
-/// an ephemeral port, and per-run random capabilities on both sides —
+/// an ephemeral port, and per-run random capabilities on both sides:
 /// source bytes in, HLS objects out.
 pub struct Bridge {
     pub addr: SocketAddr,

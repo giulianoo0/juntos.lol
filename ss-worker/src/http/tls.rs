@@ -9,6 +9,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 
 /// The certificate the listener presents, swappable under live connections
 /// so a renewal never drops a stream. SNI is ignored on purpose: browsers
+/// send none for an IP-literal URL (RFC 6066).
 #[derive(Default)]
 pub struct CertSlot {
     current: ArcSwapOption<CertifiedKey>,

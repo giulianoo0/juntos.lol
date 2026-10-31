@@ -190,8 +190,6 @@ fn err(context: &str) -> impl Fn(windows::core::Error) -> String + '_ {
     move |e| format!("capture_failed: {context}: {e}")
 }
 
-// ---- the GPU
-
 #[derive(Clone)]
 struct Gpu {
     device: ID3D11Device,
@@ -249,8 +247,6 @@ impl Gpu {
         texture.ok_or_else(|| windows::core::Error::from(HRESULT(0x8000_4005u32 as i32)))
     }
 }
-
-// ---- the capture
 
 struct Latest {
     texture: ID3D11Texture2D,
@@ -352,7 +348,7 @@ impl Capture {
 
 }
 
-// ---- BGRA to NV12 at the output size
+// BGRA to NV12 at the output size.
 
 struct Converter {
     video: ID3D11VideoDevice,
@@ -431,8 +427,6 @@ fn letterbox(input: (u32, u32), output: (u32, u32)) -> RECT {
     let (x, y) = ((output.0 as i32 - w) / 2, (output.1 as i32 - h) / 2);
     RECT { left: x, top: y, right: x + w, bottom: y + h }
 }
-
-// ---- the encoder
 
 struct Encoder {
     transform: IMFTransform,
@@ -741,8 +735,6 @@ fn hardware_encoder() -> WinResult<IMFTransform> {
         found
     }
 }
-
-// ---- the whole chain
 
 struct Pipeline {
     gpu: Gpu,

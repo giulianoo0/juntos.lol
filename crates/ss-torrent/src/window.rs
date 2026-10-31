@@ -1,9 +1,8 @@
 //! Which pieces a streaming read actually needs.
 //!
 //! librqbit selects by whole file, so a reader that wants ten seconds around
-//! its cursor still drags the entire file down behind it — tens of gigabytes
-//! of bandwidth and disk for a 4K release nobody will watch to the end. These
-//! turn a set of read cursors into the piece set worth holding.
+//! its cursor drags the whole file down. These turn read cursors into the
+//! piece set worth holding.
 
 pub const AHEAD: u64 = 256 * 1024 * 1024;
 pub const STARTUP_AHEAD: u64 = 32 * 1024 * 1024;

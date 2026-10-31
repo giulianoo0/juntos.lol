@@ -88,7 +88,7 @@ struct PublishResponse {
 }
 
 /// The room moved on: the claim died, the generation was swapped, or a
-/// newer run took the fence. Not a transport error — nothing to retry.
+/// newer run took the fence. Not a transport error: nothing to retry.
 #[derive(Debug)]
 pub struct Revoked(pub String);
 

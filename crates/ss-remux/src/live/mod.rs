@@ -130,14 +130,8 @@ impl From<anyhow::Error> for Failure {
 /// (and the proxy yt-dlp resolved through, since the URLs are bound to it),
 /// copied into one fragmented MP4 on stdout.
 ///
-/// From MPEG-TS the importer publishes every AAC frame as its own group, one
-/// QUIC stream each, 43 a second; a third of them never reached the viewers
-/// and the audio died in the gaps. From fMP4 a group is a fragment, so audio
-/// travels a quarter second per stream and video still opens one per keyframe.
-///
-/// FFmpeg reads as fast as it downloads, a whole segment at a time; the
-/// [`Pacer`] turns that into a steady stream (see `pace.rs` for why
-/// `-readrate` could not).
+/// fMP4, not MPEG-TS: from TS every AAC frame became its own QUIC stream and
+/// the audio died in the gaps. The [`Pacer`] steadies the output (see `pace.rs`).
 pub fn ffmpeg_args(selection: &Selection, proxy: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = ["-nostdin", "-hide_banner", "-loglevel", "error"]
         .iter()
@@ -263,10 +257,8 @@ async fn run(
     let mut pacer = Pacer::default();
     let mut buf = vec![0u8; READ_BUF];
     let mut decoded: u64 = 0;
-    // The relay keeps a finished group only for a few seconds, and the
-    // catalog is written once: a viewer arriving later (or reopening to jump
-    // to the edge) would subscribe to a track with nothing to serve. Writing
-    // the same catalog again every few seconds keeps a fresh group for them.
+    // The relay keeps a finished group only a few seconds: rewriting the
+    // catalog keeps a fresh one for a viewer who arrives later.
     let mut catalog = catalog;
     let mut refresh = tokio::time::interval(CATALOG_REFRESH);
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

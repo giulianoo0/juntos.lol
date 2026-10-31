@@ -1,18 +1,12 @@
 //! Filling the file behind the readers.
 //!
-//! The window keeps the swarm on what a reader is about to need. Once that
-//! is all here and the reader has gone quiet — the remux is paused on a full
-//! buffer, or nobody has seeked in a while — the peers have nothing left to
-//! do, and every byte they could bring in now is a byte the next cold seek
-//! does not wait for. So, disk allowing, the selection widens to the whole
-//! file. The stream priority still puts the reader's window first; the rest
-//! is only asked for when the window is entirely in flight.
+//! Once the window is all here and the reader has gone quiet (paused on a
+//! full buffer, or no seek in a while), the selection widens to the whole
+//! file, disk allowing; the stream priority still puts the window first.
 //!
-//! What a fill brought in is not thrown away when it stops. The host's own
-//! background remux moves the reader around the file for minutes, and
-//! releasing on every move would discard exactly what it is about to read.
-//! The reservation stays at the file's size — `Holding` — until another
-//! torrent needs the room, and only then is it given back.
+//! A fill is kept when it stops, since the host's background remux moves the
+//! reader around the file: the reservation stays at the file's size
+//! (`Holding`) until another torrent needs the room.
 
 use std::time::Duration;
 

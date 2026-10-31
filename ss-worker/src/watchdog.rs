@@ -1,11 +1,8 @@
 //! Keeps a wedged worker from staying wedged.
 //!
-//! A lock cycle anywhere in the process — the engine, librqbit, a peer task
-//! — parks every runtime thread on a futex within seconds: the data plane
-//! stops answering, the control link goes silent, and the server drops the
-//! worker as gone while the container stays up, so nothing restarts it.
-//! This runs on its own thread, outside the runtime, and turns that into a
-//! logged abort the supervisor recovers from.
+//! A lock cycle parks every runtime thread on a futex: the server drops the
+//! worker while the container stays up, so nothing restarts it. This runs
+//! outside the runtime and turns that into an abort the supervisor recovers from.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

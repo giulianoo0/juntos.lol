@@ -118,10 +118,8 @@ pub struct Proc {
     pub name: String,
 }
 
-/// The apps whose sound stays out, by id: a restarted Discord is the same
-/// Discord. Every Discord (the app, PTB, Canary and the other clients) stays
-/// out unless the sharer turned it on: the call would come back to everyone
-/// in it as an echo.
+/// The apps whose sound stays out, by id, so a restarted app is the same app.
+/// Every Discord client stays out unless turned on: the call would echo back.
 #[derive(Clone, Debug, Default)]
 pub struct Muted {
     muted: HashSet<String>,

@@ -1,12 +1,9 @@
 //! Hands an fMP4 stream on at the pace of its own timestamps.
 //!
-//! FFmpeg reads a live's HLS playlists as fast as it can download them, so
-//! the first segments arrive at once and the rest a whole segment at a time.
-//! Pacing it with `-readrate` stalled the output while each next segment
-//! downloaded and then poured the backlog out in a burst, and the groups the
-//! relay received in those bursts were the ones viewers lost. Here FFmpeg
-//! runs free, the backlog it builds at the start is kept as a cushion, and
-//! each fragment leaves when the media clock reaches it.
+//! FFmpeg reads a live's HLS a whole segment at a time. `-readrate` stalled
+//! and then burst, and viewers lost the groups sent in the bursts. Here FFmpeg
+//! runs free, its startup backlog is a cushion, and each fragment leaves when
+//! the media clock reaches it.
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 

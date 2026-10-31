@@ -17,6 +17,7 @@ use crate::config::WorkerConfig;
 
 /// Certificates without a domain: Let's Encrypt issues for IP addresses on
 /// the short-lived profile, validated over http-01 on port 80. Renewals go
+/// through ARI, which is exempt from the rate limits.
 pub struct Acme {
     cfg: WorkerConfig,
     slot: Arc<CertSlot>,

@@ -86,8 +86,6 @@ pub fn audio_apps() -> Result<Vec<AudioApp>, String> {
         .collect())
 }
 
-// ---- displays and windows
-
 pub(super) fn monitors() -> Vec<(HMONITOR, MONITORINFOEXW)> {
     unsafe extern "system" fn each(monitor: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
         let list = &mut *(data.0 as *mut Vec<(HMONITOR, MONITORINFOEXW)>);
@@ -178,8 +176,6 @@ pub(super) fn exe_path(pid: u32) -> Option<String> {
         ok.then(|| String::from_utf16_lossy(&buf[..len as usize]))
     }
 }
-
-// ---- names and icons
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -301,7 +297,7 @@ fn bgra_to_rgba(mut pixels: Vec<u8>, opaque: bool) -> Vec<u8> {
     pixels
 }
 
-// ---- still pictures for the picker
+// Still pictures for the picker.
 
 fn grab_screen(rect: RECT) -> Option<(Vec<u8>, u32, u32)> {
     let (w, h) = ((rect.right - rect.left) as i32, (rect.bottom - rect.top) as i32);
