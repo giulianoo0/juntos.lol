@@ -268,7 +268,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 	}
 	storedRoom, err := h.store.Get(c.Request.Context(), roomID)
 	if errors.Is(err, room.ErrNotFound) || err == nil && !storedRoom.ExpiresAt.After(time.Now()) {
-		c.Status(http.StatusNotFound)
+		h.refuseGone(c)
 		return
 	}
 	if err != nil {
@@ -1468,6 +1468,21 @@ func (h *Hub) removeMedia(ctx context.Context, roomID string) error {
 		return nil
 	}
 	return h.bucket.RemovePrefix(ctx, objectstore.RoomPrefix(roomID))
+}
+
+// refuseGone says over the socket that the room is gone, then denied: a
+// page from before room_gone existed stops only on denied, never on a 404.
+func (h *Hub) refuseGone(c *gin.Context) {
+	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = conn.WriteJSON(Outbound{Type: "error", ErrCode: "room_gone"})
+	_ = conn.WriteJSON(Outbound{Type: "denied"})
+	_ = conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "room_gone"), time.Now().Add(writeWait))
 }
 
 func writeHandshakeError(conn *websocket.Conn, code string) {

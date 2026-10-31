@@ -253,6 +253,30 @@ func newHubTestServer(t testing.TB, cfg config.Config) (*Hub, *room.Store, *http
 	return hub, store, server
 }
 
+func TestASocketForARoomThatIsGoneHearsSoAndIsTurnedAway(t *testing.T) {
+	_, _, server := newHubTestServer(t, config.Config{})
+	serverURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	serverURL.Scheme = "ws"
+	serverURL.Path = "/ws/rooms/GONE0000"
+
+	conn, response, err := websocket.DefaultDialer.Dial(serverURL.String(), nil)
+	if response != nil {
+		defer response.Body.Close()
+	}
+	require.NoError(t, err, "the socket opens, so even a page from before room_gone hears it")
+	defer conn.Close()
+	var gone, denied Outbound
+	require.NoError(t, conn.ReadJSON(&gone))
+	require.NoError(t, conn.ReadJSON(&denied))
+
+	require.Equal(t, "error", gone.Type)
+	require.Equal(t, "room_gone", gone.ErrCode)
+	require.Equal(t, "denied", denied.Type, "what a page from before room_gone stops on")
+	_, _, err = conn.ReadMessage()
+	require.Error(t, err, "and then it closes")
+}
+
 func dialHubWS(t testing.TB, server *httptest.Server, rawQuery ...string) *websocket.Conn {
 	t.Helper()
 	serverURL, err := url.Parse(server.URL)
