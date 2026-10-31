@@ -376,14 +376,13 @@ const followDebounce = 3 * time.Second
 // earlier gap for the next seek to fill. Buffer reports never reach here —
 // only controller state changes do.
 //
-// A position that arrives inside the debounce window is held, not dropped:
-// the newest one is replayed when the window closes, so a second seek made
-// while the first is still being prepared lands where the room actually is.
+// Only a dispatch opens the debounce window: a play or a seek inside what
+// exists costs nothing and holds no seek back. A position that needs a run
+// inside the window is held, not dropped: the newest one is replayed when
+// the window closes, so a second seek made while the first is still being
+// prepared lands where the room actually is.
 func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 	if positionMs < 0 {
-		return
-	}
-	if !o.admitFollow(roomID, positionMs) {
 		return
 	}
 
@@ -401,6 +400,9 @@ func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
 		return
 	}
 	if coveredByRegions(storedRoom.MediaRegions, run, positionMs) {
+		return
+	}
+	if !o.admitFollow(roomID, positionMs) {
 		return
 	}
 	replaced := *run

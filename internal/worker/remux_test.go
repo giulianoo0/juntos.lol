@@ -235,6 +235,18 @@ func TestFollowInsideTheDebounceLandsWhereTheRoomEndedUp(t *testing.T) {
 	rig.quiet(t, 150*time.Millisecond)
 }
 
+func TestACoveredFollowDoesNotHoldBackTheNextSeek(t *testing.T) {
+	rig := newRemuxRig(t)
+	rig.o.followDebounce = time.Minute
+	rig.regions(t, room.MediaRegion{N: 0, StartMs: 0, ProducedMs: 120_000, Growing: true})
+
+	rig.o.Follow("r1", 60_000)
+	rig.o.Follow("r1", 1_000_000)
+
+	require.Equal(t, "remuxCancel", rig.next(t).Kind)
+	require.Equal(t, int64(1_000_000), rig.next(t).Remux.StartMs)
+}
+
 // A room's locks and debounce live only as long as the room: the process
 // outlives thousands of them.
 func TestCancelRoomForgetsTheRoom(t *testing.T) {
