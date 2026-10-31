@@ -21,6 +21,13 @@ class TrackLabelsTest {
     }
 
     @Test
+    fun `Media3's macrolanguage form reads as the language inside it`() {
+        assertEquals("Indonésio", languageLabel("ms-ind"))
+        assertEquals("Sérvio", languageLabel("hbs-srp"))
+        assertEquals("Espanhol", languageLabel("es-419"))
+    }
+
+    @Test
     fun `an unnameable tag gives no label`() {
         assertNull(languageLabel("und"))
         assertNull(languageLabel(""))
