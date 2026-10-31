@@ -41,6 +41,9 @@ interface JuntosPlayer : PlaybackTarget {
     fun load(source: MediaSource, startAtMs: Long = source.offsetMs)
     fun selectAudio(index: Int)
 
+    /** The room's subtitles changed while the media did not (the host imported one): the media plays on. */
+    fun setSidecarSubtitles(subtitles: List<SidecarSubtitle>)
+
     /** Null turns subtitles off. The pick and the delay outlive a [load] of another region. */
     fun selectSubtitle(index: Int?)
 

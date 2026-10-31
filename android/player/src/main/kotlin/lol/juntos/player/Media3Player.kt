@@ -156,7 +156,21 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
         offsetMs = source.offsetMs
         error = null
         decoder = null
-        sidecars = source.sidecarSubtitles.mapIndexed { i, s -> SubtitleTrack(i, s.label, s.language, s.url, fetched[s.url]) }
+        takeSidecars(source.sidecarSubtitles)
+        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).build()
+        exo.setMediaItem(item, (startAtMs - offsetMs).coerceAtLeast(0))
+        exo.prepare()
+        publish()
+    }
+
+    override fun setSidecarSubtitles(subtitles: List<SidecarSubtitle>) {
+        takeSidecars(subtitles)
+        publish()
+    }
+
+    /** The room's subtitles, fetched once per URL, keeping the pick by language across lists. */
+    private fun takeSidecars(subtitles: List<SidecarSubtitle>) {
+        sidecars = subtitles.mapIndexed { i, s -> SubtitleTrack(i, s.label, s.language, s.url, fetched[s.url]) }
         sidecars.filter { it.cues == null }.forEach { fetch(it.url!!) }
         if ((subtitleIndex ?: IMPORTED_FROM) < IMPORTED_FROM) {
             val (language, label) = subtitlePick!!
@@ -164,10 +178,6 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
                 ?: sidecars.firstOrNull { sameLanguage(it.language, language) }
                 ?: sidecars.firstOrNull { language == null && it.label == label })?.index
         }
-        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).build()
-        exo.setMediaItem(item, (startAtMs - offsetMs).coerceAtLeast(0))
-        exo.prepare()
-        publish()
     }
 
     override fun selectAudio(index: Int) {

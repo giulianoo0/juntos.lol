@@ -48,17 +48,23 @@ internal fun needsReload(loaded: MediaPick?, baseUrl: String, room: RoomInfo, po
  */
 @Composable
 internal fun FollowRoom(baseUrl: String, session: SyncSession, player: JuntosPlayer) {
-    var loaded by remember(session) { mutableStateOf<MediaPick?>(null) }
+    var loaded by remember(session, player) { mutableStateOf<MediaPick?>(null) }
+    var sidecars by remember(session, player) { mutableStateOf<List<SidecarSubtitle>>(emptyList()) }
     LaunchedEffect(session, player) {
         while (true) {
             val now = session.state.value
             val room = now.room?.takeIf { it.status == "ready" }
             if (room != null) {
                 val position = roomPositionMs(now)
-                needsReload(loaded, baseUrl, room, position)?.let { pick ->
-                    player.load(MediaSource(pick.masterUrl, pick.offsetMs, roomSubtitles(room)), startAtMs = position)
+                val subtitles = roomSubtitles(room)
+                val pick = needsReload(loaded, baseUrl, room, position)
+                if (pick != null) {
+                    player.load(MediaSource(pick.masterUrl, pick.offsetMs, subtitles), startAtMs = position)
                     loaded = pick
+                } else if (subtitles != sidecars) {
+                    player.setSidecarSubtitles(subtitles)
                 }
+                sidecars = subtitles
             }
             // The next word from the socket, or a second on, since playing moves the position out of a region by itself.
             withTimeoutOrNull(1_000) { session.state.drop(1).first() }

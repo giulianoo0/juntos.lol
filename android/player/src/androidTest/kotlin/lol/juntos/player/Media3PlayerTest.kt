@@ -72,6 +72,21 @@ class Media3PlayerTest {
     }
 
     @Test
+    fun aSubtitleTheRoomGainsMidwayIsOfferedWithoutReloadingAndThePickStays() {
+        loadRich(MediaSource("$rich/master.m3u8", sidecarSubtitles = sidecars.take(1)))
+        player.snapshot.awaitFirst(5_000) { it.subtitles.size == 1 }
+        onMain { player.selectSubtitle(0); player.play() }
+        showing("Legenda de fora")
+        val playing = player.snapshot.awaitFirst(5_000) { it.playing && it.positionMs > 500 }.positionMs
+
+        onMain { player.setSidecarSubtitles(sidecars) }
+        val offered = player.snapshot.awaitFirst(5_000) { it.subtitles.size == 2 }
+        assertEquals(listOf("Fora", "ASS"), offered.subtitles.map { it.label })
+        assertTrue(offered.subtitles.single { it.label == "Fora" }.selected)
+        assertTrue("kept playing from $playing", player.snapshot.value.positionMs >= playing)
+    }
+
+    @Test
     fun anImportedFileIsSelectedAndShownAboveIndexOneThousand() {
         loadRich()
         val index = onMain { player.importSubtitle("minha.srt", "1\n00:00:00,000 --> 00:00:10,000\n<i>Importada</i>\n") }
