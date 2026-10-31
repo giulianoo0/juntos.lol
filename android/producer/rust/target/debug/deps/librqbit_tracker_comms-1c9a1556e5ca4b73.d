@@ -1,8 +1,0 @@
-/Users/giuli/projects/ss/android/producer/rust/target/debug/deps/librqbit_tracker_comms-1c9a1556e5ca4b73.d: /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/lib.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms_http.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms_udp.rs
-
-/Users/giuli/projects/ss/android/producer/rust/target/debug/deps/liblibrqbit_tracker_comms-1c9a1556e5ca4b73.rmeta: /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/lib.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms_http.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms_udp.rs
-
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/lib.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms_http.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-tracker-comms-9.1.0/src/tracker_comms_udp.rs:

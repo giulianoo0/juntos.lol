@@ -1,9 +1,0 @@
-/Users/giuli/projects/ss/android/producer/rust/target/debug/deps/librqbit_bencode-2dcfdc4cf82b50fc.d: /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/lib.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/bencode_value.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/deserialize.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/raw_value.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/serialize.rs
-
-/Users/giuli/projects/ss/android/producer/rust/target/debug/deps/liblibrqbit_bencode-2dcfdc4cf82b50fc.rmeta: /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/lib.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/bencode_value.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/deserialize.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/raw_value.rs /Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/serialize.rs
-
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/lib.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/bencode_value.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/deserialize.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/raw_value.rs:
-/Users/giuli/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/librqbit-bencode-9.1.0/src/serialize.rs:
