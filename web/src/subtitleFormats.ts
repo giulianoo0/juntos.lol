@@ -1,9 +1,7 @@
 import { convertAssCue, parseAssHeader, positionDialogueCues } from './assvtt'
 
-// Converters for the subtitle files that ship next to the video inside a
-// torrent. Releases commonly carry SubRip or ASS/SSA in a "Subs" folder
-// instead of muxing them into the container, and those files are tiny and
-// complete on their own, so they never need the whole video to be available.
+// Converters for subtitle files shipped beside the video in a torrent (SRT, ASS/SSA):
+// small and complete on their own, so they never wait on the video.
 
 export interface VttTrack {
   language: string

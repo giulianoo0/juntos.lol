@@ -1,12 +1,7 @@
 /**
- * Reads the chapter atoms out of a Matroska file, because mediabunny does
- * not: without this, a room prepared by the client pipeline would silently
- * lose the timeline chapters the server's ffprobe would have found.
- *
- * It is a deliberately small EBML walk, not a Matroska parser: top-level
- * Segment children are scanned for Chapters, with SeekHead followed when the
- * muxer put Chapters elsewhere. Anything unexpected returns no chapters —
- * they are annotations, and a wrong guess is worse than none.
+ * Reads Matroska chapters, which mediabunny does not. A small EBML walk, not a
+ * parser: Segment children are scanned for Chapters, following SeekHead. Anything
+ * unexpected yields no chapters; a wrong guess is worse than none.
  */
 
 export interface MkvChapter {

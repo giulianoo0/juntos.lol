@@ -1,15 +1,6 @@
-/* The codec notice.
- *
- * Kept in its own file rather than in theme.css: it is one screen's worth of
- * styling, and the tokens it borrows are read with fallbacks so it looks right
- * whether or not the theme has grown them yet.
- *
- * It opens the way the rest of the app does — out of focus and settling — and
- * then unfolds its own height, which is the part that says "here is a list of
- * things" rather than "a box appeared". The height travels on a grid row
- * rather than a guessed max-height: 1fr to 0fr interpolates against the real
- * content, so it neither races ahead of the rows nor stalls at the end.
- */
+/* The codec notice, apart from theme.css; its tokens are read with fallbacks.
+ * The height unfolds on a grid row (1fr to 0fr), which follows the real content
+ * where a guessed max-height would race ahead or stall. */
 
 .ui-dialog.codec-dialog {
   width: min(460px, calc(100vw - 32px));

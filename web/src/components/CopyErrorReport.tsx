@@ -1,10 +1,7 @@
 /**
- * The way out of "unsupported media".
- *
- * A verdict with no evidence is not something a person can act on or report.
- * This gathers what actually decided it — the pipeline's own reason, the
- * codecs this browser will decode, the state of the room and its swarm — and
- * puts it on the clipboard in one press.
+ * The way out of "unsupported media": puts what decided it (the pipeline's
+ * reason, the codecs this browser decodes, the room and its swarm) on the
+ * clipboard in one press.
  */
 import { useState } from 'react'
 import { buildDiagnostics } from '../diagnostics'

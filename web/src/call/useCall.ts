@@ -67,14 +67,10 @@ const AUDIO_STALL_MS = 5_000
 const CALL_RETRY = { retryMs: 4_000, loadingRetryMs: 6_000, gapMs: 1_500 }
 
 /**
- * Everything a member's camera and voice need in a room: turning them on and
- * off, publishing them, hearing everyone whose microphone is on, painting the
- * cameras the page shows, and who is speaking.
- *
- * The room list decides the subscriptions: a voice is heard while its member
- * says the microphone is on and the host has not muted them, and a camera is
- * downloaded while it is on, not turned off by the host, and bound to a tile
- * that is on screen.
+ * A member's camera and voice in a room: toggling, publishing, hearing, painting
+ * cameras, and who is speaking. A voice is heard while its member's mic is on and
+ * the host has not muted them; a camera downloads while on, not turned off by
+ * the host, and bound to a tile on screen.
  */
 export function useCall({ roomId, memberId, capability, send, members, initial }: CallOptions): CallApi {
   const local = useLocalMedia(initial)

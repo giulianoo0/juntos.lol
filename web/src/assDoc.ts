@@ -1,9 +1,5 @@
-// Rebuilds a complete ASS document from what a Matroska container stores:
-// the track's CodecPrivate (script info, styles, and usually the [Events]
-// Format line) plus the per-cue dialogue fields the demuxer hands over. The
-// result is byte-faithful enough for libass to render everything the author
-// wrote — karaoke, borders, blur, rotation, vector drawings — which the VTT
-// conversion by design cannot carry.
+// Rebuilds a complete ASS document from Matroska's CodecPrivate plus the per-cue
+// dialogue fields, so libass renders what the VTT conversion drops.
 
 export interface AssCueFields {
   layer?: string

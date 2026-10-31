@@ -1,10 +1,7 @@
 import { loadPublicConfig } from '../publicConfig'
 
-// The TMDB addon, at the address the server's config names, is the metadata
-// source: it speaks the Stremio addon protocol like Cinemeta did, but answers in the viewer's
-// language and knows the IMDb id of everything, which is what the stream
-// plugins need. Every response is CORS-open, so the browser talks to it
-// directly — the server never proxies catalog traffic.
+// The TMDB addon (Stremio protocol, at the address the server config names) answers in
+// the viewer's language with the IMDb ids the stream plugins need. CORS-open, so no proxy.
 async function metadataBase(): Promise<string> {
   const { catalogAddonUrl } = await loadPublicConfig()
   // Mirrors useT: pt-BR unless the viewer picked English.

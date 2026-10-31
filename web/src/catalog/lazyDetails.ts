@@ -1,11 +1,7 @@
 /**
- * The details panel, loaded on demand.
- *
- * It is the heaviest thing behind the board — the season carousel, the stream
- * list, the morph — and it is never on screen when the catalog first draws.
- * The chunk is warmed as soon as the board is idle, well before anyone can
- * read a row and pick a title, so the morph out of the poster still starts on
- * the same frame as the click.
+ * The details panel, loaded on demand: the heaviest thing behind the board and
+ * never on screen at first draw. Warmed once the board is idle, so the morph
+ * out of the poster still starts on the click's frame.
  */
 import { lazy } from 'react'
 

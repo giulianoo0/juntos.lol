@@ -1,22 +1,13 @@
 /**
- * Google Drive paste-to-watch, 100% in the browser.
+ * Google Drive paste-to-watch, all in the browser: Drive v3 lists the link and
+ * the picked video plays through `rangeInput` over the public `alt=media` URL.
  *
- * A pasted Drive link (file or folder) is browsed with the Drive v3 REST API
- * and the picked video plays through the existing client-remux pipeline: byte
- * reads are plain Range GETs on the public `alt=media` download URL, served
- * by the unchanged `rangeInput(url, name, size)` reader.
+ * Auth: anyone-with-link files only, with `VITE_GOOGLE_DRIVE_API_KEY` in the
+ * query string; no OAuth, no proxy, no preflight.
  *
- * Auth: public anyone-with-link files only, via a browser API key read from
- * the `VITE_GOOGLE_DRIVE_API_KEY` env var (Vite exposes it as
- * `import.meta.env.VITE_GOOGLE_DRIVE_API_KEY`). No user OAuth, no proxy: the
- * browser talks only to `https://www.googleapis.com/drive/v3/...` with the
- * key in the query string plus a `Range` header, both preflight-free.
- *
- * Safety: remote bytes are never executed — they flow only into the
- * mediabunny demuxer through the range reader. Drive strings (file names)
- * must be rendered as React text, never innerHTML. File IDs are validated
- * against DRIVE_ID_RE before any fetch, folder walks are depth- and
- * page-capped, and every fetch takes an AbortSignal.
+ * Safety: remote bytes only reach the mediabunny demuxer. File names render as
+ * React text, never innerHTML; IDs are checked against DRIVE_ID_RE before any
+ * fetch, folder walks are depth- and page-capped, and every fetch is abortable.
  */
 import { rangeInput, type MediaInput } from './pipeline/mediaInput'
 import { isSubtitleFileName } from './subtitleFormats'

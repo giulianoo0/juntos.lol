@@ -1,14 +1,7 @@
 /**
- * What the client pipeline reads from. Every source this browser remuxes —
- * a picked file, a url a plugin handed over — is reduced to the same two
- * things: a size, and a way to read any byte range. The remuxer does random
- * access (an MKV's cues sit at the end, an MP4's moov often does), so a
- * sequential stream would not do.
- *
- * Remote reads can also be abandoned: a seek moves the remux somewhere
- * else, and the reads parked on the old region must stop holding the
- * origin's attention. mediabunny hands `read` no signal, so the input owns a
- * gate the seek pulls.
+ * What the client pipeline reads from: a size and random access to any byte
+ * range (MKV cues and MP4 moov often sit at the end). mediabunny gives `read` no
+ * signal, so the input owns a gate a seek pulls to drop reads on the old region.
  */
 import { BlobSource, CustomSource, type Source } from 'mediabunny'
 import { ByteTap, teeInto } from './byteTap'

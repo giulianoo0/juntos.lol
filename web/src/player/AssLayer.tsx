@@ -6,10 +6,8 @@ import jassubWorkerUrl from 'jassub/dist/worker/worker.js?worker&url'
 
 const READY_TIMEOUT_MS = 20_000
 
-// The bundled worker only initialises when a same-origin module imports it:
-// spawned by its own URL, the renderer's constructor fails inside the worker
-// (abslink reports "Unserializable return value") — cause not pinned down,
-// the wrapper is what works in production.
+// The bundled worker only initialises when a same-origin module imports it; spawned by
+// its own URL, the renderer's constructor fails ("Unserializable return value").
 let wrappedWorkerUrl: string | null = null
 function workerUrl(): string {
   if (wrappedWorkerUrl === null) {

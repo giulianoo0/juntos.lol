@@ -4,13 +4,7 @@ import { numbersAnimate } from '../engine'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { Translator } from '../i18n/useT'
 
-/**
- * Idle prompt whose countdown runs against the server's deadline, corrected by
- * the sync layer's offset, so every member watches the same clock. Any member
- * answering keeps the room open for everybody; dismissing it also answers.
- * It mounts inside the fullscreen element when there is one, since a portal to
- * the body would sit behind the player nobody can see past.
- */
+// The prompt mounts inside the fullscreen element: a portal to the body would sit behind the player.
 function useFullscreenElement(): HTMLElement | null {
   const [element, setElement] = useState<HTMLElement | null>(null)
   useEffect(() => {
@@ -22,6 +16,11 @@ function useFullscreenElement(): HTMLElement | null {
   return element
 }
 
+/**
+ * Idle prompt whose countdown runs against the server's deadline, corrected by
+ * the sync layer's offset, so every member watches the same clock. Any member
+ * answering keeps the room open for everybody; dismissing it also answers.
+ */
 export function StillThere({ deadlineMs, serverOffsetMs, onStay, onExpired, t }: {
   deadlineMs: number | null
   serverOffsetMs: number

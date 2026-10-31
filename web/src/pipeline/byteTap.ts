@@ -1,17 +1,8 @@
 /**
- * The remux and the embedded-subtitle scan want the same bytes: one demuxes
- * them, the other walks the EBML for text tracks. Read separately they cost
- * the origin twice, and on a remote worker "twice" is worse than it sounds —
- * `apply_window` gives every read cursor its own 256 MiB piece window, so the
- * scan's window competes with the playhead's for the same swarm, and the
- * cold wait a viewer sits through is roughly doubled.
- *
- * The tap makes the scan a passenger. Every chunk the remux reads is offered
- * here with its absolute offset; the scan pulls from a cursor and only ever
- * sees a contiguous stream, which is what a sequential EBML parser needs.
- * Bytes the remux never reads — the gap a seek leaves behind — the scan
- * fetches itself, so the parser is never handed a hole and never has to
- * resynchronise.
+ * Lets the embedded-subtitle scan ride on the remux's reads instead of reading
+ * the origin twice (on a remote worker each cursor gets its own piece window,
+ * which doubles the cold wait). The scan sees a contiguous stream; gaps the
+ * remux skips over, it fetches itself, so the parser never meets a hole.
  */
 
 const DEFAULT_BUFFER_BYTES = 64 * 1024 * 1024
@@ -25,11 +16,8 @@ export class ByteTap {
   private waiter: ((woken: boolean) => void) | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private done = false
-  // End of the latest relevant offer, rather than the greatest offset ever
-  // seen. Container probes commonly touch the tail and then return to the
-  // head; remembering the maximum forever would make that one probe look
-  // like a permanent gap and force the subtitle pass to download the movie
-  // a second time.
+  // End of the latest relevant offer, not the greatest ever seen: a probe of the tail
+  // must not look like a permanent gap and make the subtitle pass refetch the movie.
   private latestOfferEnd = 0
 
   private readonly bufferBytes: number

@@ -1,13 +1,7 @@
 /**
- * Keeps a text field from swallowing what was typed.
- *
- * Radix's focus scope hands focus back to a field with its whole value
- * selected, and so does the browser on a programmatic focus in some
- * cases — so a re-render that lets focus slip for a frame comes back
- * with everything highlighted, and the next key replaces the name being
- * typed. A selection that spans the entire value at the moment focus
- * arrives is never something the person did with the keyboard mid-word;
- * it collapses to the end, where the next letter belongs.
+ * Keeps a text field from swallowing what was typed: Radix's focus scope (and
+ * some programmatic focus) hands focus back with the whole value selected, so
+ * the next key would replace it. A full selection on focus collapses to the end.
  */
 import type { FocusEvent } from 'react'
 

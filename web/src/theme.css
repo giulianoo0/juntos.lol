@@ -1070,13 +1070,8 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .live-fullscreen { display: inline-flex; align-items: center; padding: 6px 8px; }
 .live-stage:fullscreen canvas { object-fit: contain; }
 
-/* Phones.
- *
- * Upright, the video keeps its own 16:9 shape at the top, the people
- * watching sit under it, and the chat takes the rest of the screen instead
- * of a drawer over the picture. Sideways, the picture takes the height and
- * everything else steps out of the way. jlocal is a desktop app, so its
- * pill has nothing to say on a phone. */
+/* Phones. Upright, the 16:9 video sits on top, the people under it and the chat
+ * takes the rest; sideways, the picture takes the height. No jlocal pill: it is desktop-only. */
 @media (max-width: 620px) {
   .home-shell { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
   .home-header .jlocal-pill, .room-header .jlocal-pill { display: none; }

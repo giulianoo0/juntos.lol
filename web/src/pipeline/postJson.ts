@@ -1,18 +1,8 @@
 /**
- * A POST to one of the client-media endpoints, with the patience a long
- * preparo needs.
- *
- * The pipeline lives in the host's tab for as long as a film takes to
- * prepare, and it publishes every couple of seconds throughout. Over half an
- * hour it will meet a server that blinks: a deploy swapping the container, an
- * upstream hiccup, a proxy answering 502 for the second it takes something to
- * come back. Treating any of those as final threw the whole room away — the
- * work done, the segments already in the bucket, the people waiting — over a
- * blip that had passed by the time anyone read the message.
- *
- * So a transient failure is waited out and retried. What is *not* retried is
- * anything the server said on purpose: a 4xx carries a code (a source swap, a
- * refused claim) and means exactly what it says, immediately.
+ * A POST to a client-media endpoint that outlasts a long preparo: transient
+ * failures (5xx, 429, a dropped connection mid-deploy) are waited out, since
+ * giving up threw the whole room away. A 4xx carries a code the server meant
+ * and comes back at once.
  */
 
 /** Server answers worth trying again; everything else is the server's verdict. */

@@ -1,16 +1,10 @@
 /**
- * Screen sharing over MoQ. A publisher's browser encodes the picked surface
- * with WebCodecs and publishes it to a Cloudflare relay; every viewer
- * subscribes to that publisher's path and decodes it onto a canvas. The relay
- * does the fan-out, so the VPS carries no media and holds no session: it only
- * hands out the relay URL with the token a member's role allows, plus the
- * broadcast base only this room knows.
+ * Screen sharing over MoQ: the publisher encodes with WebCodecs onto a
+ * Cloudflare relay that fans out to viewers. The VPS carries no media; it only
+ * hands out the relay URL, the role's token and the room's broadcast base.
  *
- * Several members can share at once, one broadcast path each, so the room's
- * list of live screens — not the relay — is what tells a viewer which paths
- * exist. The relay keeps no history and announces nothing, so a subscription
- * made before its publisher is up is dead on arrival: viewers subscribe when
- * the room says a screen is live, and try again while they see no frames.
+ * The relay announces nothing and keeps no history, so the room's list of live
+ * screens says which paths exist, and viewers resubscribe while they see no frames.
  */
 import type * as Publish from '@moq/publish'
 import type * as Watch from '@moq/watch'
@@ -616,13 +610,10 @@ function probeCodec(source: EncodedSource): Promise<string> {
 }
 
 /**
- * Publishes access units as they are: no WebCodecs in between. The rendition
- * is registered on the broadcast like the encoder would, and its catalog
- * entry is written before anyone subscribes — a viewer only asks for a track
- * the catalog names, so the entry can never wait on the frames. Frames are
- * appended whenever a subscriber holds the track open; the source is
- * reopened for every new track and for every switch, since each has to start
- * on a keyframe, and timestamps keep climbing across those reopenings.
+ * Publishes access units as they are, with no WebCodecs. The catalog entry is
+ * written before anyone subscribes, since viewers only ask for tracks it names;
+ * the source reopens for each new track or switch (each must start on a
+ * keyframe) and timestamps keep climbing across reopenings.
  */
 export async function publishEncodedScreen(relay: ScreenRelay, initial: EncodedSource, audioTrack?: MediaStreamTrack): Promise<ScreenPublisher> {
   const [Publish, Hang] = await Promise.all([import('@moq/publish'), import('@moq/hang/container')])

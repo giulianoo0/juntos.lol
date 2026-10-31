@@ -74,9 +74,8 @@ export interface TorrentSession {
 
 /**
  * Opens the magnet where it will be prepared: the desktop app when it carries
- * the page, the companion app when it can
- * take it, the fleet otherwise. The app failing for any reason but the
- * magnet itself hands the magnet to the fleet as before.
+ * the page, the companion app when it can take it, the fleet otherwise. An app
+ * failing for any reason but the magnet itself hands it to the fleet.
  */
 export async function openTorrent(
   magnet: string,

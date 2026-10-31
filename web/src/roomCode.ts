@@ -1,14 +1,7 @@
 /**
- * Reading a room code out of whatever someone pasted.
- *
- * A link travels through chats that shorten it, mail that wraps it and phone
- * screens that turn it back into plain text, so what arrives is sometimes the
- * whole url, sometimes juntos.lol/room/XXXX with no scheme, and sometimes just
- * the code. All three name the same room and all three are accepted.
- *
- * Codes are capitals and digits, which is also what makes the lenient part
- * safe: lowercase can be raised without ambiguity, and anything left that is
- * not in the alphabet means this was not a room code at all.
+ * Reads a room code out of a pasted url, a scheme-less juntos.lol/room/XXXX or
+ * the bare code. Codes are capitals and digits, so lowercase is raised safely
+ * and anything else left over means it was not a code.
  */
 const CODE = /^[A-Z0-9]{8}$/
 

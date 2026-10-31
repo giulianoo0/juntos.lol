@@ -1,14 +1,10 @@
 import { JLOCAL_ORIGIN } from './status'
 
 /**
- * Brings the OS screen-recording prompt back up.
- *
- * Nothing the site polls ever prompts: the app answers 503 `permission` from
- * a report-only probe, precisely so the picker's 1s preview poll cannot
- * re-open the system dialog. So the prompt has to come from a click, and the
- * only thing that raises it is a real capture — one tiny session on the first
- * display, stopped as soon as it starts. Resolves true when capture is
- * allowed (the grant is live, or was already there).
+ * Brings the OS screen-recording prompt back up. Polled probes are report-only
+ * (503 `permission`) so the picker's preview poll never reopens it; only a real
+ * capture prompts, so this runs one tiny session from the click and stops it.
+ * Resolves true when capture is allowed.
  */
 export async function askJLocalScreenPermission(): Promise<boolean> {
   try {
@@ -44,14 +40,9 @@ async function firstDisplayId(): Promise<string | null> {
 }
 
 /**
- * Whether the app may capture the screen right now: false is a definite no,
- * null only when the app itself is unreachable.
- *
- * The advertisement is the cheap answer, but builds older than the
- * `permissions` block omit it — and answering null there would hide the retry
- * button from exactly the people who need it. So the fallback asks the thing
- * every build has: one tiny snapshot, which is report-only and comes back 503
- * `permission` while Screen Recording is denied.
+ * Whether the app may capture the screen now: false is a definite no, null only
+ * when the app is unreachable. Builds without the `permissions` block fall back
+ * to one report-only snapshot, which answers 503 `permission` while denied.
  */
 export async function probeJLocalScreenPermission(): Promise<boolean | null> {
   try {

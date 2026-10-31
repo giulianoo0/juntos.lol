@@ -1,15 +1,7 @@
 /**
- * What to hand a person when a preparo fails.
- *
- * "The codec or format is not supported here" is the least actionable
- * sentence in the app: it names a verdict and no evidence. Everything that
- * decided it is known in the browser at that moment — which codec the file
- * carries, which ones this browser will decode, what the worker was doing,
- * how far the download got — and none of it survives into a message someone
- * can paste. This gathers it.
- *
- * It is written to be read by a person and pasted into an issue, so it is
- * plain text with stable headings rather than JSON.
+ * The report handed to a person when a preparo fails: the file's codec, what
+ * this browser decodes, what the worker was doing, how far the download got.
+ * Plain text with stable headings, to paste into an issue.
  */
 import type { RoomInfo } from './types'
 import { recentPlayerLog } from './player/playerLog'
