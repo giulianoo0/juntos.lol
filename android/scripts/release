@@ -2,10 +2,13 @@
 # Signs the release apk and publishes it on the fixed-tag prerelease `android` (never "latest"),
 # then the latest.json the app's updater reads: the apk first, so the manifest never names a file
 # that is not there yet. The keystore and its password stay in ~/.android-juntos.
-#   android/scripts/release <versionCode> <versionName>
+# [minVersionCode] is the oldest build still supported; left out, the published one carries over.
+#   android/scripts/release <versionCode> <versionName> [minVersionCode]
 set -eu
 code=${1:?versionCode}
 name=${2:?versionName}
+min=${3:-$(curl -fsL "https://github.com/giulianoo0/juntos.lol/releases/download/android/latest.json" | sed -n 's/.*"minVersionCode":\([0-9]*\).*/\1/p')}
+min=${min:-0}
 here=$(cd "$(dirname "$0")/.." && pwd)
 keys="$HOME/.android-juntos"
 repo=giulianoo0/juntos.lol
@@ -18,12 +21,12 @@ export JUNTOS_KEYSTORE JUNTOS_KEY_ALIAS JUNTOS_KEYSTORE_PASSWORD JUNTOS_KEY_PASS
 out=$(mktemp -d)
 cp "$here/app/build/outputs/apk/release/app-release.apk" "$out/juntos.apk"
 sha=$(shasum -a 256 "$out/juntos.apk" | cut -d' ' -f1)
-printf '{"versionCode":%s,"versionName":"%s","url":"https://github.com/%s/releases/download/android/juntos.apk","sha256":"%s"}\n' \
-  "$code" "$name" "$repo" "$sha" > "$out/latest.json"
+printf '{"versionCode":%s,"versionName":"%s","url":"https://github.com/%s/releases/download/android/juntos.apk","sha256":"%s","minVersionCode":%s}\n' \
+  "$code" "$name" "$repo" "$sha" "$min" > "$out/latest.json"
 if ! gh release view android --repo "$repo" >/dev/null 2>&1; then
   gh release create android --repo "$repo" --prerelease --latest=false --title "Android $name" --notes "Beta"
 fi
 gh release edit android --repo "$repo" --prerelease --title "Android $name"
 gh release upload android --repo "$repo" --clobber "$out/juntos.apk"
 gh release upload android --repo "$repo" --clobber "$out/latest.json"
-echo "Android $name ($code) publicado, sha256 $sha"
+echo "Android $name ($code, mínimo $min) publicado, sha256 $sha"

@@ -45,7 +45,7 @@ class GithubUpdater(
         _state.value = UpdateState.Checking
         _state.value = attempt("manifest") {
             val release = manifest()
-            if (release.versionCode > installed) UpdateState.Available(release) else UpdateState.UpToDate
+            if (release.versionCode > installed) UpdateState.Available(release, required = installed < release.minVersionCode) else UpdateState.UpToDate
         }
     }
 

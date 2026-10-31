@@ -7,14 +7,15 @@ import kotlinx.serialization.Serializable
 /** The prerelease of fixed tag `android`; never "latest", which the desktop links use. */
 const val MANIFEST_URL = "https://github.com/giulianoo0/juntos.lol/releases/download/android/latest.json"
 
+/** [minVersionCode]: anything older may not work with the server any more, and is asked to update. */
 @Serializable
-data class Release(val versionCode: Int, val versionName: String, val url: String, val sha256: String)
+data class Release(val versionCode: Int, val versionName: String, val url: String, val sha256: String, val minVersionCode: Int = 0)
 
 sealed interface UpdateState {
     data object Idle : UpdateState
     data object Checking : UpdateState
     data object UpToDate : UpdateState
-    data class Available(val release: Release) : UpdateState
+    data class Available(val release: Release, val required: Boolean = false) : UpdateState
     data class Downloading(val release: Release, val fraction: Float) : UpdateState
     data class Installing(val release: Release) : UpdateState
     data class Failed(val reason: String) : UpdateState

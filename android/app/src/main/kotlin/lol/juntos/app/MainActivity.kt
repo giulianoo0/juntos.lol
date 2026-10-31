@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
             JuntosTheme {
                 JuntosNavHost(graph = graph, linkedRoom = openRoom.value, onLinkedRoomOpened = { openRoom.value = null })
                 (graph as? RealAppGraph)?.let { HumanGateHost(it.turnstile, graph.baseUrl) }
+                RequiredUpdate(graph.updater)
             }
         }
     }
