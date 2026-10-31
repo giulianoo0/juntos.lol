@@ -61,11 +61,15 @@ class WebHumanGate(private val api: JuntosApi, private val siteKey: suspend () -
     override suspend fun ensure(): Boolean {
         if (verified) return true
         val key = siteKey() ?: return true
+        val token = token(key) ?: return false
+        return runCatching { api.verifyHuman(token) }.isSuccess.also { verified = it }
+    }
+
+    /** The widget's token for [key], or null when the person closes it. */
+    suspend fun token(key: String): String? {
         val answer = CompletableDeferred<String?>()
         pending = key to answer
-        val token = try { answer.await() } finally { pending = null }
-        if (token == null) return false
-        return runCatching { api.verifyHuman(token) }.isSuccess.also { verified = it }
+        return try { answer.await() } finally { pending = null }
     }
 }
 

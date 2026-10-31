@@ -8,7 +8,7 @@ class JuntosApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        graph = FakeAppGraph()
+        graph = RealAppGraph(this)
     }
 }
 

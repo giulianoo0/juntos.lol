@@ -76,6 +76,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     DisposableEffect(session) { onDispose { session.close() } }
     val player = remember { graph.players.create() }
     DisposableEffect(player) { onDispose { player.release() } }
+    FollowRoom(graph.baseUrl, session, player)
     val raw by session.state.collectAsState()
     // Until the socket echoes it, this viewer wears the avatar they came in with.
     val state = raw.copy(members = raw.members.map { if (it.id == raw.memberId && it.avatar == null) it.copy(avatar = entry.avatar) else it })

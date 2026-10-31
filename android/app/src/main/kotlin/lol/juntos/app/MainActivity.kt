@@ -6,7 +6,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
+import lol.juntos.app.human.HumanGateHost
 import lol.juntos.design.JuntosTheme
+import lol.juntos.update.keepChecking
 
 class MainActivity : ComponentActivity() {
     private val openRoom = mutableStateOf<String?>(null)
@@ -16,9 +22,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         openRoom.value = roomIdFrom(intent?.data)
         val graph = (application as JuntosApplication).graph
+        lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { graph.updater.keepChecking() } }
         setContent {
             JuntosTheme {
                 JuntosNavHost(graph = graph, linkedRoom = openRoom.value, onLinkedRoomOpened = { openRoom.value = null })
+                (graph as? RealAppGraph)?.let { HumanGateHost(it.turnstile, graph.baseUrl) }
             }
         }
     }
