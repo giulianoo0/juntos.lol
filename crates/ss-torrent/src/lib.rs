@@ -14,8 +14,10 @@ pub use librqbit;
 
 pub use ss_media::{range, source, ByteSource, SourceReader};
 
+// The HTTP one keeps peers coming on networks that drop UDP, where DHT and the rest go quiet.
 pub const TRACKERS: &[&str] = &[
     "udp://tracker.opentrackr.org:1337/announce",
+    "http://tracker.opentrackr.org:1337/announce",
     "udp://open.tracker.cl:1337/announce",
     "udp://open.demonii.com:1337/announce",
     "udp://tracker.torrent.eu.org:451/announce",

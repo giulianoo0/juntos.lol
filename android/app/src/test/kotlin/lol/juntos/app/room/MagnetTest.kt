@@ -17,4 +17,11 @@ class MagnetTest {
         val pasted = "magnet:?xt=urn:btih:$hash&dn=Meu+Filme&tr=udp://10.0.0.2:6969&tr=http://tracker.lan/a&tr=https://t.example.com/a&ws=http://evil.example.com/f"
         assertEquals("magnet:?xt=urn:btih:$hash&dn=Meu%20Filme&tr=https%3A%2F%2Ft.example.com%2Fa", roomMagnet(hash, pasted))
     }
+
+    @Test
+    fun `a base32 hash reads as hex, and a magnet without a hash is not one`() {
+        val parsed = parseMagnet("magnet:?xt=urn:btih:XW5Z7GIVGFY42DZHQ5XGW7LA3VSPT72L&dn=x")!!
+        assertEquals(hash, parsed.infoHash)
+        assertEquals(null, parseMagnet("magnet:?dn=x"))
+    }
 }

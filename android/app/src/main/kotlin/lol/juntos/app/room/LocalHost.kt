@@ -5,6 +5,8 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,12 +36,16 @@ sealed interface LocalSource {
 
     data class Youtube(val url: String, val videoId: String, override val title: String, val durationMs: Long) : LocalSource
     data class Torrent(val id: String, val index: Int, override val title: String, val magnet: String, val size: Long = 0) : LocalSource
+
+    /** A file of a torrent the fleet holds: this phone never downloads it, it watches like a guest. */
+    data class Fleet(val jobId: String, val index: Int, override val title: String, val fileName: String) : LocalSource
 }
 
 /** One file a magnet holds, to pick from. */
 data class TorrentFile(val index: Int, val path: String, val size: Long)
 
-data class OpenedTorrent(val id: String, val name: String, val magnet: String, val files: List<TorrentFile>)
+/** [fleetJob] set when this phone could not reach the swarm and handed the magnet to the fleet. */
+data class OpenedTorrent(val id: String, val name: String, val magnet: String, val files: List<TorrentFile>, val fleetJob: String? = null)
 
 /** The cache the host plays: regions as the room's, read from the producer every second. */
 data class LocalMedia(val key: String, val generation: Int, val durationMs: Long, val regions: List<MediaRegion>, val hlsDir: File)
@@ -85,7 +91,24 @@ class LocalHost(
         return LocalSource.Youtube(url, videoId, title, summary["durationMs"]?.jsonPrimitive?.longOrNull ?: 0)
     }
 
+    /**
+     * Opens the magnet on this phone; when the swarm does not answer in time (a network that
+     * drops UDP has neither DHT nor most trackers), the fleet opens it instead, as on the site.
+     */
     suspend fun openTorrent(magnet: String): OpenedTorrent {
+        val here = scope.async { runCatching { openHere(magnet) } }
+        val local = withTimeoutOrNull(LOCAL_OPEN_MS) { here.await() }
+        local?.getOrNull()?.let { return it }
+        val failure = local?.exceptionOrNull() ?: IllegalStateException("torrent metadata timed out")
+        val parsed = parseMagnet(magnet)
+        if (parsed == null || failure.message?.contains("invalid", ignoreCase = true) == true) throw failure
+        Log.w(TAG, "the swarm did not answer here; handing the magnet to the fleet", failure)
+        // The attempt here may still land; what it adds goes with the next purge.
+        scope.launch { if (here.await().isSuccess) purge(_media.value?.key, null) }
+        return openOnFleet(parsed, magnet)
+    }
+
+    private suspend fun openHere(magnet: String): OpenedTorrent {
         val opened = producer.call("torrent_open", mapOf("magnet" to magnet)).jsonObject
         val files = opened["files"]!!.jsonArray.map {
             val file = it.jsonObject
@@ -95,13 +118,45 @@ class LocalHost(
         return OpenedTorrent(id, opened["name"]!!.jsonPrimitive.content, roomMagnet(id, magnet), files)
     }
 
+    private suspend fun openOnFleet(parsed: ParsedMagnet, pasted: String): OpenedTorrent {
+        val job = api.startFleetTorrent(parsed.infoHash, publicTrackers(parsed.trackers), parsed.dn)
+        val listed = withTimeoutOrNull(FLEET_LIST_MS) {
+            var status = api.fleetTorrent(job)
+            while (status.state != "listed") {
+                if (status.state == "failed") throw IllegalStateException("fleet: ${status.error ?: "failed"}")
+                delay(FLEET_POLL_MS)
+                status = api.fleetTorrent(job)
+            }
+            status
+        } ?: throw IllegalStateException("torrent metadata timed out")
+        return OpenedTorrent(
+            parsed.infoHash,
+            listed.name ?: parsed.dn.ifEmpty { parsed.infoHash },
+            roomMagnet(parsed.infoHash, pasted),
+            listed.files.map { TorrentFile(it.index, it.path, it.size) },
+            fleetJob = job,
+        )
+    }
+
+    /** The fleet's worker produces [source] into the room; this phone plays it from the bucket like any guest. */
+    private suspend fun hostOnFleet(seat: Seat, source: LocalSource.Fleet) {
+        stopCurrent()
+        api.selectFleetFile(source.jobId, source.index)
+        val generation = api.changeUploadSource(roomId, seat, source.fileName)
+        api.startFleetRemux(source.jobId, roomId, generation, seat)
+        purge(keepKey = null, keepTorrent = null)
+        session.announceSource("torrent")
+    }
+
     /** Points the room at [source] and starts writing it into the cache; the previous one stops. */
     suspend fun host(seat: Seat, source: LocalSource) {
         _preparing.value = true
         try {
+            if (source is LocalSource.Fleet) return hostOnFleet(seat, source)
             val copy = when (source) {
                 is LocalSource.Youtube -> LocalCopy(kind = "youtube", url = source.url, videoId = source.videoId)
                 is LocalSource.Torrent -> LocalCopy(kind = "torrent", magnet = source.magnet, index = source.index)
+                is LocalSource.Fleet -> error("the fleet hosts it")
             }
             val duration = (source as? LocalSource.Youtube)?.durationMs ?: 0
             stopCurrent()
@@ -109,6 +164,7 @@ class LocalHost(
             val prepare = when (source) {
                 is LocalSource.Youtube -> mapOf("kind" to "youtube", "url" to source.url, "videoId" to source.videoId, "title" to source.title)
                 is LocalSource.Torrent -> mapOf("kind" to "torrent", "id" to source.id, "index" to source.index, "title" to source.title)
+                is LocalSource.Fleet -> error("the fleet hosts it")
             }
             val meta = producer.call("local_prepare", mapOf("source" to prepare)).jsonObject
             val key = meta["key"]!!.jsonPrimitive.content
@@ -292,6 +348,9 @@ class LocalHost(
 
     private companion object {
         const val TAG = "LocalHost"
+        const val LOCAL_OPEN_MS = 25_000L
+        const val FLEET_LIST_MS = 150_000L
+        const val FLEET_POLL_MS = 1_500L
         const val POLL_MS = 1_000L
         const val UPLOAD_WATCH_MS = 5_000L
         const val FOLLOW_DEBOUNCE_MS = 3_000L

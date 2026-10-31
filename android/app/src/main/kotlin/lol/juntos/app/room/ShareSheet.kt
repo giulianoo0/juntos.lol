@@ -133,7 +133,11 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
                                 val name = file.path.substringAfterLast('/')
                                 SpringRow(name, icon = JuntosIcons.Film, onClick = {
                                     run("Não deu para começar esse arquivo.") {
-                                        onHost(LocalSource.Torrent(opened.id, file.index, name.substringBeforeLast('.'), opened.magnet, file.size))
+                                        val title = name.substringBeforeLast('.')
+                                        onHost(
+                                            opened.fleetJob?.let { LocalSource.Fleet(it, file.index, title, name) }
+                                                ?: LocalSource.Torrent(opened.id, file.index, title, opened.magnet, file.size),
+                                        )
                                         onDismiss()
                                     }
                                 })
@@ -156,6 +160,9 @@ internal fun shareError(message: String?, fallback: String): String {
         m == "invalid_magnet" -> "Esse magnet não é válido."
         m.contains("metadata timed out") || m.contains("initialization timed out") -> "O torrent não respondeu. Tente de novo ou use outro magnet."
         m.contains("No space", ignoreCase = true) || m.contains("ENOSPC") -> "O celular está sem espaço."
+        m == "quota_exceeded" || m == "concurrent_jobs" -> "Muitos torrents abertos agora. Tente daqui a pouco."
+        m == "no_workers" || m == "workers_busy" -> "Os servidores de torrent estão cheios. Tente daqui a pouco."
+        m == "blocked" -> "Esse torrent não pode ser aberto aqui."
         else -> fallback
     }
 }

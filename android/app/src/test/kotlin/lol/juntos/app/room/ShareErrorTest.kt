@@ -9,6 +9,8 @@ class ShareErrorTest {
         assertEquals("O torrent não respondeu. Tente de novo ou use outro magnet.", shareError("torrent metadata timed out: deadline has elapsed", "x"))
         assertEquals("O celular está sem espaço.", shareError("write: No space left on device (os error 28)", "x"))
         assertEquals("Esse magnet não é válido.", shareError("invalid_magnet", "x"))
+        assertEquals("Muitos torrents abertos agora. Tente daqui a pouco.", shareError("quota_exceeded", "x"))
+        assertEquals("Os servidores de torrent estão cheios. Tente daqui a pouco.", shareError("workers_busy", "x"))
     }
 
     @Test

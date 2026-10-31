@@ -31,7 +31,27 @@ interface JuntosApi {
 
     /** Someone needs the bucket: the claim to upload this phone's cache with. */
     suspend fun promoteLocal(roomId: String, seat: Seat): Promotion = throw UnsupportedOperationException()
+
+    /** Hands a magnet to the fleet, as the site does with every torrent: answers the job's id. */
+    suspend fun startFleetTorrent(infoHash: String, trackers: List<String>, dn: String): String = throw UnsupportedOperationException()
+
+    suspend fun fleetTorrent(jobId: String): FleetJob = throw UnsupportedOperationException()
+
+    suspend fun selectFleetFile(jobId: String, fileIndex: Int): Unit = throw UnsupportedOperationException()
+
+    /** Points the room at a file the fleet produces (`kind: "upload"`); answers the new media generation. */
+    suspend fun changeUploadSource(roomId: String, seat: Seat, fileName: String): Int = throw UnsupportedOperationException()
+
+    /** The job's worker remuxes into the room; progress arrives through the room as any guest's. */
+    suspend fun startFleetRemux(jobId: String, roomId: String, mediaGeneration: Int, seat: Seat): Unit = throw UnsupportedOperationException()
 }
+
+/** A fleet job: `listed` once the worker has the torrent's files. */
+@kotlinx.serialization.Serializable
+data class FleetJob(val state: String, val error: String? = null, val name: String? = null, val files: List<FleetFile> = emptyList())
+
+@kotlinx.serialization.Serializable
+data class FleetFile(val index: Int, val name: String, val path: String, val size: Long)
 
 /** What another app opens to play its own copy of a source this phone produces. */
 @kotlinx.serialization.Serializable

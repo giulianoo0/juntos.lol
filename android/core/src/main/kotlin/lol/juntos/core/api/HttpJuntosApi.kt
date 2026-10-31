@@ -53,6 +53,26 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
     override suspend fun promoteLocal(roomId: String, seat: Seat): Promotion =
         read(post(url("api", "rooms", roomId, "local", "promote"), SeatBody(seat.memberId, seat.capability)))
 
+    override suspend fun startFleetTorrent(infoHash: String, trackers: List<String>, dn: String): String =
+        read<FleetStarted>(post(url("api", "torrents"), FleetStartBody(infoHash, trackers.take(20), dn))).jobId
+
+    override suspend fun fleetTorrent(jobId: String): FleetJob = read(get(url("api", "torrents", jobId)))
+
+    override suspend fun selectFleetFile(jobId: String, fileIndex: Int) {
+        send(post(url("api", "torrents", jobId, "select"), FleetSelectBody(fileIndex)))
+    }
+
+    override suspend fun changeUploadSource(roomId: String, seat: Seat, fileName: String): Int {
+        val name = fileName.trim().take(200)
+        val body = SourceBody(seat.memberId, seat.capability, "upload", name, name)
+        return read<SourceReply>(post(url("api", "rooms", roomId, "source"), body)).mediaGeneration
+    }
+
+    override suspend fun startFleetRemux(jobId: String, roomId: String, mediaGeneration: Int, seat: Seat) {
+        val body = FleetRemuxBody(roomId, mediaGeneration, java.util.UUID.randomUUID().toString(), 0, SeatBody(seat.memberId, seat.capability))
+        send(post(url("api", "torrents", jobId, "remux"), body))
+    }
+
     private fun url(vararg segments: String): HttpUrl =
         base.newBuilder().apply { segments.forEach(::addPathSegment) }.build()
 
@@ -95,6 +115,14 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
     @Serializable private class SourceReply(val mediaGeneration: Int = 0)
 
     @Serializable private class SeatBody(val memberId: String, val capability: String)
+
+    @Serializable private class FleetStartBody(val infoHash: String, val trackers: List<String>, val dn: String, val preferred: List<String> = emptyList())
+
+    @Serializable private class FleetStarted(val jobId: String)
+
+    @Serializable private class FleetSelectBody(val fileIndex: Int)
+
+    @Serializable private class FleetRemuxBody(val roomId: String, val mediaGeneration: Int, val requestId: String, val startMs: Long, val auth: SeatBody)
 
     @Serializable private class ErrorBody(val error: String? = null)
 
