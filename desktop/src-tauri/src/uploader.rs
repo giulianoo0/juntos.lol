@@ -97,6 +97,8 @@ const READY_AHEAD_MS: u64 = 3_100;
 const REACH_MS: u64 = 10_000;
 /// Objects a held region lets pile up before the rounds go on without it.
 const HELD_CONFIRMS: usize = 32;
+/// The longest a held region keeps the rounds back: a slow uplink never piles up the confirmations.
+const HELD_ROUND_EVERY: Duration = Duration::from_secs(4);
 /// What playback and the room's drift corrections move the playhead by,
 /// past the time between two looks, short of a seek.
 const JUMP_SLACK_MS: u64 = 5_000;
@@ -280,7 +282,7 @@ impl Upload {
             regions.retain(|r| Some(r.n) != hold);
             let fresh = regions.iter().any(|r| r.produced_ms > 0 && !announced.contains(&r.n));
             // While the playhead's region fills, a round would only hold up the one announcing it.
-            let due = last_round.elapsed() >= ROUND_EVERY && (hold.is_none() || confirm.len() >= HELD_CONFIRMS);
+            let due = round_due(last_round.elapsed(), hold.is_some(), confirm.len());
             if (due || fresh) && (!confirm.is_empty() || seq == 0) {
                 last_round = Instant::now();
                 let produced: u64 = regions.iter().map(|r| r.produced_ms).sum();
@@ -327,6 +329,12 @@ pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64
         .max_by_key(|r| r.start_ms)?;
     let ready = !region.growing || region.start_ms + region.produced_ms >= playhead_ms + READY_AHEAD_MS;
     (!ready && !announced.contains(&region.n)).then_some(region.n)
+}
+
+/// Whether a round goes out now. While the playhead's region is held, one
+/// would only delay the round announcing it, until confirmations pile up.
+fn round_due(since_last: Duration, held: bool, confirms: usize) -> bool {
+    since_last >= ROUND_EVERY && (!held || confirms >= HELD_CONFIRMS || since_last >= HELD_ROUND_EVERY)
 }
 
 /// Whether the room's position jumped (a seek) between two looks `since`
@@ -439,6 +447,16 @@ mod tests {
 
     fn report(n: u64, start_ms: u64, produced_ms: u64, growing: bool) -> RegionReport {
         RegionReport { n, start_ms, produced_ms, growing }
+    }
+
+    #[test]
+    fn rounds_go_every_two_seconds_and_a_held_region_delays_them_four_at_most() {
+        let secs = Duration::from_secs;
+        assert!(!round_due(Duration::from_millis(1_999), false, 0));
+        assert!(round_due(secs(2), false, 0));
+        assert!(!round_due(secs(2), true, 0), "the held region's announcement goes first");
+        assert!(round_due(secs(2), true, HELD_CONFIRMS), "a pile of confirmations goes on without it");
+        assert!(round_due(secs(4), true, 0), "on a slow uplink the guest's playlist still moves");
     }
 
     #[test]
