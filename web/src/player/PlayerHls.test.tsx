@@ -24,6 +24,7 @@ vi.mock('hls.js', () => {
       LEVELS_UPDATED: 'hlsLevelsUpdated',
       AUDIO_TRACKS_UPDATED: 'hlsAudioTracksUpdated',
       BUFFER_CREATED: 'hlsBufferCreated',
+      FRAG_BUFFERED: 'hlsFragBuffered',
       ERROR: 'hlsError',
     }
     static DefaultConfig = { loader: FakeLoader }
@@ -79,6 +80,7 @@ interface FakeHlsInstance {
   destroyed: boolean
   loadedSource: string | null
   loadSourceCalls: number
+  startLoadCalls: number
   recoverCalls: number
   emit: (event: string, data: Record<string, unknown>) => void
 }
@@ -165,6 +167,32 @@ describe('Player HLS lifecycle', () => {
     const hls = await fakeHls()
     await waitFor(() => expect(hls.instances.length).toBeGreaterThan(0))
     expect(hls.instances[0].loadedSource).toMatch(/^juntos-media:\/\/localhost\/t-abc-0\/hls\/r0_master\.m3u8\?/)
+  })
+
+  it('asks a failing playlist again less and less often, and quickly again once a fragment lands', async () => {
+    const { hls } = await renderPlayer()
+    const instance = hls.instances[0]
+    const fail = () => act(() => instance.emit('hlsError', { fatal: true, type: 'networkError', details: 'levelLoadError' }))
+    vi.useFakeTimers()
+    try {
+      fail()
+      await act(() => vi.advanceTimersByTimeAsync(499))
+      expect(instance.startLoadCalls).toBe(0)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(instance.startLoadCalls).toBe(1)
+      fail()
+      await act(() => vi.advanceTimersByTimeAsync(999))
+      expect(instance.startLoadCalls).toBe(1)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(instance.startLoadCalls).toBe(2)
+
+      act(() => instance.emit('hlsFragBuffered', {}))
+      fail()
+      await act(() => vi.advanceTimersByTimeAsync(500))
+      expect(instance.startLoadCalls).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('declares the room unplayable when hls.js drops the only video rendition', async () => {

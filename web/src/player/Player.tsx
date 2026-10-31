@@ -138,6 +138,9 @@ const VOLUME_CHASE_MS = 500
 const FEEDBACK_MS = 700
 const FRAME_WATCH_INTERVAL_MS = 1000
 const MANIFEST_RETRY_MS = 2000
+// A playlist or fragment that keeps failing is asked again less and less often.
+const NETWORK_RETRY_MIN_MS = 500
+const NETWORK_RETRY_MAX_MS = 8000
 /** Media hls.js keeps on each side of the playhead. */
 const BUFFER_SEC = 60
 const VIDEO_STARVATION_SECONDS = 5
@@ -445,6 +448,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
         const hls = new HlsClass(config)
         hlsRef.current = hls
         let sourceLoaded = false
+        let networkRetries = 0
         hls.on(HlsClass.Events.MEDIA_ATTACHED, () => {
           if (sourceLoaded) return
           sourceLoaded = true
@@ -462,6 +466,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
           if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('manifestParsed')
         })
         hls.on(HlsClass.Events.FRAG_BUFFERED, () => {
+          networkRetries = 0
           if (viewerTrace.has('coldWaitEnd')) viewerTrace.mark('firstFragBuffered')
           // WebKit's MediaSource fires no progress event, and the opening gate
           // reads what is buffered: read it as each fragment lands.
@@ -518,7 +523,11 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
               }, MANIFEST_RETRY_MS)
               return
             }
-            hls.startLoad()
+            const wait = Math.min(NETWORK_RETRY_MIN_MS * 2 ** networkRetries, NETWORK_RETRY_MAX_MS)
+            networkRetries += 1
+            window.setTimeout(() => {
+              if (!disposed && hlsRef.current === hls) hls.startLoad()
+            }, wait)
             return
           }
           if (data.type === ErrorTypes.MEDIA_ERROR) {
