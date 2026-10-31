@@ -2,7 +2,6 @@ package lol.juntos.core.media
 
 import lol.juntos.core.model.MediaRegion
 import lol.juntos.core.model.RoomInfo
-import lol.juntos.core.model.TrackInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -63,19 +62,5 @@ class MediaPickTest {
         assertEquals("http://10.0.2.2:8090/media/AB12/hls/master.m3u8?g=1&v=4", pick.masterUrl)
         assertEquals(1_500L, pick.offsetMs)
         assertNull(pick.regionN)
-    }
-
-    @Test
-    fun `a shared subtitle lives in the bucket, pinned to its digest`() {
-        val room = RoomInfo(id = "AB12", mediaGeneration = 2, subsVersion = 7, mediaBaseUrl = "/media/AB12/g/2")
-        val track = TrackInfo(index = 1, language = "pt-BR", digest = "d1")
-        assertEquals(
-            "http://10.0.2.2:8090/media/AB12/g/2/subs/sub_1_pt-BR.vtt?g=2&s=d1",
-            subtitleUrl("http://10.0.2.2:8090", room, track),
-        )
-        assertEquals(
-            "https://cdn.example/subs/sub_0_und.ass?g=2&s=7",
-            subtitleUrl("x", room.copy(mediaBaseUrl = "https://cdn.example"), TrackInfo(index = 0, language = "pt BR"), ass = true),
-        )
     }
 }

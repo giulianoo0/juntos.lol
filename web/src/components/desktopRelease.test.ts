@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { latestDesktopRelease, pickRelease } from './desktopRelease'
+import { latestAndroidRelease, latestDesktopRelease, pickRelease } from './desktopRelease'
 
 const asset = (name: string) => ({ name, browser_download_url: `https://github.com/x/${name}` })
 
@@ -29,6 +29,21 @@ describe('pickRelease', () => {
 
   it('is null before the first desktop release', () => {
     expect(pickRelease([{ tag_name: 'v1', draft: false, prerelease: false, assets: [] }])).toBeNull()
+  })
+})
+
+describe('latestAndroidRelease', () => {
+  const answering = (body: unknown, status = 200) => vi.fn(async () => Response.json(body, { status })) as unknown as typeof fetch
+
+  it('takes the apk of the fixed android prerelease', async () => {
+    const release = { tag_name: 'android', name: 'Android 0.1.0 beta', draft: false, prerelease: true, assets: [asset('latest.json'), asset('juntos.apk')] }
+    expect(await latestAndroidRelease(answering(release))).toEqual({ version: '0.1.0', url: 'https://github.com/x/juntos.apk' })
+  })
+
+  it('is null before the first apk, while the release is a draft, or with no release at all', async () => {
+    expect(await latestAndroidRelease(answering({ tag_name: 'android', draft: false, prerelease: true, assets: [asset('latest.json')] }))).toBeNull()
+    expect(await latestAndroidRelease(answering({ tag_name: 'android', draft: true, prerelease: true, assets: [asset('juntos.apk')] }))).toBeNull()
+    expect(await latestAndroidRelease(answering({ message: 'Not Found' }, 404))).toBeNull()
   })
 })
 

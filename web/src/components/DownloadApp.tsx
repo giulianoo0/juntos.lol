@@ -9,7 +9,7 @@ import { DiaText, Loading, Skeleton } from '../ui/Shimmer'
 import { Tip } from '../ui/Tip'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import toggle from '../ui/ThemeToggle.module.css'
-import { latestDesktopRelease, type DesktopRelease, type Platform } from './desktopRelease'
+import { latestAndroidRelease, latestDesktopRelease, type AndroidRelease, type DesktopRelease, type Platform } from './desktopRelease'
 import styles from './DownloadApp.module.css'
 
 /** Stable asset names of every desktop release: the way down when GitHub's API can't answer. */
@@ -67,11 +67,35 @@ function subscribeModal(listener: () => void): () => void {
   return () => { modalListeners.delete(listener) }
 }
 
-/** The round way to the desktop app, beside the GitHub link; gone on phones, which have no app, and in the app. */
+/** An Android browser, not the Android app's own web views, which say so in their user agent. */
+function androidBrowser(userAgent = navigator.userAgent): boolean {
+  return /Android/i.test(userAgent) && !/JuntosApp\//.test(userAgent)
+}
+
+/** The apk straight from GitHub, beta while it is: there once a version is out. */
+function AndroidDownload() {
+  const t = useT()
+  const [apk, setApk] = useState<AndroidRelease | null>(null)
+  useEffect(() => {
+    let live = true
+    latestAndroidRelease().then((release) => { if (live) setApk(release) }, () => {})
+    return () => { live = false }
+  }, [])
+  if (!apk) return null
+  return (
+    <a className={`${toggle.toggle} ${styles.apk}`} href={apk.url} download aria-label={t('site.download')}>
+      <Download size={18} aria-hidden="true" />
+      <span className={styles.beta}>{t('site.beta')}</span>
+    </a>
+  )
+}
+
+/** The round way to the app, beside the GitHub link: the desktop one in a computer's browser, the apk on Android; nothing on an iPhone or inside an app. */
 export function DownloadApp() {
   const t = useT()
-  // Inside the app there is nothing to download.
-  if (!currentPlatform() || isDesktop()) return null
+  if (isDesktop()) return null
+  if (androidBrowser()) return <AndroidDownload />
+  if (!currentPlatform()) return null
   return (
     <Tip
       label={t('site.download')}

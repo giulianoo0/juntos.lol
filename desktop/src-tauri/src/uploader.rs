@@ -83,8 +83,11 @@ pub fn round_body(target: &Target, round: Round) -> Value {
 /// picked then for the room's position. A seek drops the PUTs it left
 /// behind, so what the room now needs has the whole uplink.
 const PUTS: usize = 4;
+const MAX_PUTS: usize = 16;
 /// Objects signed in one request, the ones about to go and those after them.
 const SIGN_AHEAD: usize = 16;
+/// The most objects the server signs in one request (maxPresignObjects).
+const MAX_PRESIGN: usize = 64;
 /// The server signs for 15 minutes; a URL is used well inside that.
 const SIGNED_FOR: Duration = Duration::from_secs(10 * 60);
 const ROUND_EVERY: Duration = Duration::from_secs(2);
@@ -99,6 +102,9 @@ const REACH_MS: u64 = 10_000;
 const HELD_CONFIRMS: usize = 32;
 /// The longest a held region keeps the rounds back: a slow uplink never piles up the confirmations.
 const HELD_ROUND_EVERY: Duration = Duration::from_secs(4);
+/// The most confirmations the server takes in one publish (maxConfirmObjects);
+/// past it the round is refused whole, and a refused round only grows.
+const MAX_CONFIRMS: usize = 128;
 /// What playback and the room's drift corrections move the playhead by,
 /// past the time between two looks, short of a seek.
 const JUMP_SLACK_MS: u64 = 5_000;
@@ -180,6 +186,7 @@ impl Upload {
 
         let meta = producer.meta(key).context("unknown source")?;
         let dir = producer.hls_dir(key);
+        let (puts_at_once, sign_ahead) = upload_slots(1 + meta.audio_langs.len());
         let mut planner = Planner::new();
         let mut signed: HashMap<String, (PresignedObject, Instant)> = HashMap::new();
         let mut puts: JoinSet<anyhow::Result<ClosedObject>> = JoinSet::new();
@@ -212,7 +219,7 @@ impl Upload {
                 let seek = jumped(followed.0, playhead, followed.1.elapsed());
                 followed = (playhead, Instant::now());
                 if seek {
-                    for name in planner.displaced(&local, playhead, PUTS) {
+                    for name in planner.displaced(&local, playhead, puts_at_once) {
                         if let Some((put, sign, at)) = flying.remove(&name) {
                             put.abort();
                             signed.insert(name, (sign, at));
@@ -221,12 +228,12 @@ impl Upload {
                 }
             }
             // A dropped PUT leaves the set only once reaped; its slot is free now.
-            if flying.len() < PUTS {
+            if flying.len() < puts_at_once {
                 signed.retain(|_, (_, at)| at.elapsed() < SIGNED_FOR);
                 // Chosen now, for where the room is now; signed ahead, so a
                 // free slot never waits on the server.
                 let items: Vec<ClosedObject> = planner
-                    .next(&local, playhead, PUTS - flying.len())
+                    .next(&local, playhead, puts_at_once - flying.len())
                     .into_iter()
                     .filter_map(|item| {
                         let path = dir.join(&item.local);
@@ -241,7 +248,7 @@ impl Upload {
                     .collect();
                 if items.iter().any(|object| !signed.contains_key(&object.name)) {
                     let mut batch: Vec<ClosedObject> = items.iter().filter(|o| !signed.contains_key(&o.name)).cloned().collect();
-                    for item in planner.upcoming(&local, playhead, SIGN_AHEAD) {
+                    for item in planner.upcoming(&local, playhead, sign_ahead) {
                         let path = dir.join(&item.local);
                         if signed.contains_key(&item.remote) || batch.iter().any(|o| o.name == item.remote) {
                             continue;
@@ -293,13 +300,14 @@ impl Upload {
                     low_resolution: meta.low_resolution,
                 };
                 seq += 1;
+                let sending = confirming(&confirm).len();
                 let body = round_body(
                     target,
-                    Round { seq, confirm: &confirm, playlists: planner.playlists(&local), regions: &regions, duration_ms: meta.duration_ms, master: &master },
+                    Round { seq, confirm: &confirm[..sending], playlists: planner.playlists(&local), regions: &regions, duration_ms: meta.duration_ms, master: &master },
                 );
                 match publish(&client, target, &body).await {
                     Ok(()) => {
-                        confirm.clear();
+                        confirm.drain(..sending);
                         for region in regions.iter().filter(|r| r.produced_ms > 0 && announced.insert(r.n)) {
                             tracing::info!(n = region.n, start_ms = region.start_ms, "remote region published");
                         }
@@ -329,6 +337,20 @@ pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64
         .max_by_key(|r| r.start_ms)?;
     let ready = !region.growing || region.start_ms + region.produced_ms >= playhead_ms + READY_AHEAD_MS;
     (!ready && !announced.contains(&region.n)).then_some(region.n)
+}
+
+/// PUTs at once and objects signed ahead for a source of `variants`
+/// playlists. Every segment is one object per variant, and a dub's is a few
+/// tens of KB: with many dubs round trips set the pace, not the uplink, and
+/// four at once fall behind playback.
+fn upload_slots(variants: usize) -> (usize, usize) {
+    let puts = (variants / 2).clamp(PUTS, MAX_PUTS);
+    (puts, (2 * variants).clamp(SIGN_AHEAD, MAX_PRESIGN - puts))
+}
+
+/// What one round confirms: the oldest first, as many as the server takes.
+fn confirming(pending: &[String]) -> &[String] {
+    &pending[..pending.len().min(MAX_CONFIRMS)]
 }
 
 /// Whether a round goes out now. While the playhead's region is held, one
@@ -384,6 +406,28 @@ mod tests {
 
     fn info() -> MasterInfo {
         MasterInfo { audio_langs: vec!["eng".into()], video_codecs: None, bandwidth: 0, low_resolution: None }
+    }
+
+    #[test]
+    fn a_backlog_past_what_the_server_takes_goes_out_over_rounds_oldest_first() {
+        let mut pending: Vec<String> = (0..300).map(|k| format!("cs_1_{k}.m4s")).collect();
+        let mut rounds = Vec::new();
+        while !pending.is_empty() {
+            let sending = confirming(&pending).len();
+            rounds.push((sending, pending[0].clone()));
+            pending.drain(..sending);
+        }
+        assert_eq!(rounds, vec![(128, "cs_1_0.m4s".to_string()), (128, "cs_1_128.m4s".to_string()), (44, "cs_1_256.m4s".to_string())]);
+    }
+
+    #[test]
+    fn a_source_with_many_dubs_sends_more_at_once_and_never_asks_more_signatures_than_the_server_gives() {
+        assert_eq!(upload_slots(2), (4, 16), "a film with one audio keeps four PUTs");
+        assert_eq!(upload_slots(25).0, 12, "a video with 24 dubs sends a segment in a couple of round trips");
+        for variants in 1..=80 {
+            let (puts, ahead) = upload_slots(variants);
+            assert!(puts <= MAX_PUTS && puts + ahead <= MAX_PRESIGN, "{variants} variants: {puts} PUTs, {ahead} signed ahead");
+        }
     }
 
     #[test]

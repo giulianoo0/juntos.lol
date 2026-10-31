@@ -105,8 +105,27 @@
   outline-offset: 4px;
 }
 
+.github {
+  display: contents;
+}
+
 @media (max-width: 40rem) {
   .header {
     padding: var(--space-4);
+  }
+
+  /* The footer keeps the GitHub link; the top keeps its room for what a phone uses. */
+  .github {
+    display: none;
+  }
+
+  .discord {
+    justify-content: center;
+    width: var(--round-button);
+    padding: 0;
+  }
+
+  .discordLabel {
+    display: none;
   }
 }

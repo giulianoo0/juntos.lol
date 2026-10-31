@@ -105,3 +105,56 @@
     -webkit-text-fill-color: currentColor;
   }
 }
+
+/* The apk on Android: the brand's colour, born on the popover's spring, with one soft ring to be noticed. */
+.apk {
+  position: relative;
+  background: var(--brand);
+  color: var(--on-brand);
+  text-decoration: none;
+  animation: apk-in var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+.apk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 var(--brand);
+  animation: apk-ring 1.6s ease-out 0.6s 2;
+  pointer-events: none;
+}
+
+.beta {
+  position: absolute;
+  top: -0.375rem;
+  right: -0.5rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--radius-full);
+  background: var(--text);
+  color: var(--background);
+  font-size: 0.625rem;
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+@keyframes apk-in {
+  from {
+    scale: 0;
+    filter: blur(var(--blur-sm));
+  }
+}
+
+@keyframes apk-ring {
+  to {
+    box-shadow: 0 0 0 0.625rem transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apk,
+  .apk::after {
+    animation: none;
+  }
+}

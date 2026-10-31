@@ -58,17 +58,11 @@ fun mediaPick(baseUrl: String, room: RoomInfo, positionMs: Long, currentRegion: 
     return MediaPick(url, region?.startMs ?: room.mediaOffsetMs ?: 0, region?.n)
 }
 
-/** A shared subtitle track in the room's bucket, or null while the room has no bucket. */
-fun subtitleUrl(baseUrl: String, room: RoomInfo, track: TrackInfo, ass: Boolean = false): String? {
-    val bucket = room.mediaBaseUrl ?: return null
-    val base = if (bucket.startsWith("/")) baseUrl.trimEnd('/') + bucket else bucket
-    val version = "g=${room.mediaGeneration}&s=${track.digest ?: room.subsVersion ?: 0}"
-    return "$base/subs/sub_${track.index}_${safeLanguage(track.language)}.${if (ass) "ass" else "vtt"}?$version"
-}
-
-private val languageTag = Regex("^[A-Za-z0-9_-]+$")
-
-private fun safeLanguage(language: String) =
-    if (language.isNotEmpty() && language.length <= 35 && languageTag.matches(language)) language else "und"
-
 private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
+
+/** A room subtitle as WebVTT, ASS ones included (subtitleSource in web/src/player/Player.tsx); null before the bucket is known. */
+fun subtitleUrl(room: RoomInfo, track: TrackInfo): String? {
+    val base = room.mediaBaseUrl ?: return null
+    val language = track.language.takeIf { it.length in 1..35 && it.all { c -> c.isLetterOrDigit() && c.code < 128 || c == '_' || c == '-' } } ?: "und"
+    return "$base/subs/sub_${track.index}_$language.vtt?g=${room.mediaGeneration}&s=${track.digest ?: room.subsVersion ?: 0}"
+}
