@@ -1,6 +1,6 @@
 [package]
 name = "juntos"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Juntos para desktop: o site em janela própria, com torrent e YouTube preparados na máquina de quem hospeda."
 

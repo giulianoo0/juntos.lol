@@ -1,2 +1,2 @@
-Novidade: quando todo mundo está no app, cada um abre o torrent ou o vídeo do YouTube no próprio computador, e o seek fica mais rápido. Legendas do MKV e do YouTube aparecem para a sala toda.
-Correções: torrent abre mesmo com outro programa usando a porta, e uma atualização que não instala agora avisa.
+Novidade: com convidado no navegador, o seek longe chega mais rápido: o app sobe primeiro o trecho do seek e libera a sala assim que ele dá para tocar.
+Correções: quem entra no meio do filme recebe primeiro o trecho onde a sala está, e o torrent deixa de pedir de novo a um peer uma peça que já estava vindo.
