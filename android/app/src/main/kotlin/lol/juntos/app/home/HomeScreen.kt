@@ -25,7 +25,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,6 +66,7 @@ import kotlin.math.roundToInt
 import lol.juntos.app.AppGraph
 import lol.juntos.app.RoomEntry
 import lol.juntos.app.door
+import lol.juntos.app.room.JuntosSheet
 import lol.juntos.design.Avatar
 import lol.juntos.design.BetaBadge
 import lol.juntos.design.Field
@@ -77,7 +80,6 @@ import lol.juntos.design.LocalMotionEnabled
 import lol.juntos.design.Pill
 import lol.juntos.design.PillSize
 import lol.juntos.design.PillTone
-import lol.juntos.design.SpringPopover
 import lol.juntos.design.pop
 import lol.juntos.design.pressScale
 import lol.juntos.design.springBlur
@@ -151,9 +153,11 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
         }
     }
 
-    Box(Modifier.fillMaxSize().background(c.frameGround)) {
+    var joining by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize().background(c.frameGround)) {
         Column(
-            Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            Modifier.weight(1f).fillMaxWidth().statusBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -166,17 +170,93 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
             Spacer(Modifier.height(32.dp))
             TurningTitle()
             Spacer(Modifier.height(32.dp))
-            SpringPopover(
-                expanded = creating,
-                onExpandedChange = { creating = it; if (!it) error = null },
-                width = 340.dp,
-                trigger = { open -> CreateButton(onClick = open) },
-            ) { CreateForm(busy = busy, error = error, onCreate = ::create) }
+            CreateButton(onClick = { creating = true })
             Spacer(Modifier.height(16.dp))
             JoinByCode(onJoin = ::join)
             Spacer(Modifier.weight(1f).height(48.dp))
             Couch()
         }
+        BottomNav(onCreate = { creating = true }, onJoin = { joining = true })
+    }
+
+    if (creating) {
+        JuntosSheet(onDismiss = { creating = false; error = null }) {
+            SheetHeading("Criar sala")
+            CreateForm(busy = busy, error = error, onCreate = ::create)
+        }
+    }
+    if (joining) {
+        JuntosSheet(onDismiss = { joining = false }) {
+            SheetHeading("Entrar numa sala")
+            JoinForm(onJoin = { joining = false; join(it) })
+        }
+    }
+}
+
+@Composable
+private fun SheetHeading(text: String) {
+    Text(text, color = Juntos.colors.text, fontSize = JuntosTextSize.lg, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 8.dp))
+}
+
+@Composable
+private fun BottomNav(onCreate: () -> Unit, onJoin: () -> Unit) {
+    val c = Juntos.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(c.surface.copy(alpha = if (c.isDark) 0.5f else 0.7f))
+            .navigationBarsPadding()
+            .height(64.dp)
+            .padding(horizontal = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        NavItem("Início", Icons.Rounded.Home, selected = true, onClick = {}, modifier = Modifier.weight(1f))
+        val interaction = remember { MutableInteractionSource() }
+        Box(
+            Modifier
+                .pressScale(interaction)
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(c.brand)
+                .clickable(interaction, indication = null, role = Role.Button, onClickLabel = "Criar sala", onClick = onCreate),
+            contentAlignment = Alignment.Center,
+        ) { Icon(JuntosIcons.Plus, contentDescription = "Criar sala", tint = c.onBrand, modifier = Modifier.size(26.dp)) }
+        NavItem("Entrar", JuntosIcons.Link, selected = false, onClick = onJoin, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun NavItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = Juntos.colors
+    val tint = if (selected) c.text else c.textMuted
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        modifier.pressScale(interaction).clickable(interaction, indication = null, role = Role.Tab, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
+        Text(label, color = tint, fontSize = JuntosTextSize.xs, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun JoinForm(onJoin: (String) -> Unit) {
+    var code by remember { mutableStateOf("") }
+    val room = roomCodeFrom(code)
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Column(Modifier.padding(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Field(
+            value = code,
+            onValueChange = { code = it },
+            label = "Código da sala",
+            placeholder = "Código ou link",
+            mono = true,
+            modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            onSubmit = { room?.let(onJoin) },
+        )
+        Pill("Entrar", onClick = { room?.let(onJoin) }, tone = PillTone.Brand, size = PillSize.Lg, enabled = room != null, modifier = Modifier.fillMaxWidth())
     }
 }
 
