@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use ss_media::plan::{AudioAction, AudioTrack, Chapter, SourcePlan};
 
 const MAX_HEIGHT: u32 = 1080;
-const MAX_AUDIOS: usize = 8;
 const MAX_SUBTITLES: usize = 24;
 const CACHE_TTL: Duration = Duration::from_secs(20 * 60);
 const UPDATE_EVERY: Duration = Duration::from_secs(24 * 3600);
@@ -310,7 +309,7 @@ fn language_rank(language: &str) -> usize {
 }
 
 /// Picks the streams: the tallest video up to 1080p with H.264 preferred at
-/// that height, one audio per language with AAC copied when offered, manual
+/// that height, every dubbed language with AAC copied when offered, manual
 /// subtitles plus the original language's automatic one.
 pub fn select(info: &Info) -> Result<Selection, Error> {
     if info.is_live == Some(true) || matches!(info.live_status.as_deref(), Some("is_live") | Some("is_upcoming")) {
@@ -368,7 +367,6 @@ pub fn select(info: &Info) -> Result<Selection, Error> {
             .then(language_rank(&a.language()).cmp(&language_rank(&b.language())))
             .then(a.language().cmp(&b.language()))
     });
-    audios.truncate(MAX_AUDIOS);
     if audios.is_empty() {
         return Err(Error::Unsupported("no audio stream the player can use".into()));
     }
@@ -807,6 +805,23 @@ mod tests {
         assert!(plan.audios.iter().all(|a| a.action == AudioAction::Copy));
         assert_eq!(plan.audios[1].input_file, 2);
         assert_eq!(plan.audios[1].input_index, 0);
+    }
+
+    #[test]
+    fn every_dubbed_language_comes_along_however_many() {
+        let mut info = fixture();
+        let german = info.formats.iter().find(|f| f.format_id.starts_with("140-") && f.language() == "de").cloned().unwrap();
+        let more = ["ar", "bn", "es", "fr", "hi", "id", "it", "ja", "ko", "ml", "mr", "pa", "pl", "ru", "ta", "te", "th", "tr", "vi", "zh-Hans", "zh-Hant"];
+        for (n, language) in more.iter().enumerate() {
+            let mut dub = german.clone();
+            dub.format_id = format!("140-{}", 100 + n);
+            dub.language = Some(language.to_string());
+            info.formats.push(dub);
+        }
+        let selection = select(&info).unwrap();
+        let langs: Vec<String> = selection.audios.iter().map(|a| a.language()).collect();
+        assert_eq!(langs.len(), 24, "{langs:?}");
+        assert_eq!(&langs[..3], ["en-US", "pt", "es"]);
     }
 
     #[test]
