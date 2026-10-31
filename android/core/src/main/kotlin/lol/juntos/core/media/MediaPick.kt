@@ -1,6 +1,7 @@
 package lol.juntos.core.media
 
 import lol.juntos.core.model.RoomInfo
+import lol.juntos.core.model.TrackInfo
 import java.net.URLEncoder
 
 /** The playlist to load for a position, and where its time zero sits on the room's timeline. */
@@ -26,3 +27,10 @@ fun mediaPick(baseUrl: String, room: RoomInfo, positionMs: Long, currentRegion: 
 }
 
 private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8).replace("+", "%20")
+
+/** A room subtitle as WebVTT, ASS ones included (subtitleSource in web/src/player/Player.tsx); null before the bucket is known. */
+fun subtitleUrl(room: RoomInfo, track: TrackInfo): String? {
+    val base = room.mediaBaseUrl ?: return null
+    val language = track.language.takeIf { it.length in 1..35 && it.all { c -> c.isLetterOrDigit() && c.code < 128 || c == '_' || c == '-' } } ?: "und"
+    return "$base/subs/sub_${track.index}_$language.vtt?g=${room.mediaGeneration}&s=${track.digest ?: room.subsVersion ?: 0}"
+}
