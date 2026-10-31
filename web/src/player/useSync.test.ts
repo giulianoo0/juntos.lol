@@ -159,8 +159,11 @@ describe('useSync', () => {
     expect(result.current.left).toBe(true)
     act(() => { socket.onclose?.() })
     act(() => { vi.advanceTimersByTime(30_000) })
-    expect(FakeWebSocket.instances).toHaveLength(1)
     unmount()
+    // Neither coming back to the tab nor to the network takes the seat back, not even after the page is gone.
+    act(() => { window.dispatchEvent(new Event('online')) })
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(FakeWebSocket.instances).toHaveLength(1)
     vi.useRealTimers()
   })
 
@@ -416,6 +419,9 @@ describe('useSync', () => {
     act(() => socket.receive({ type: 'error', error: 'room_gone' }))
     act(() => { socket.onclose?.() })
     act(() => { vi.advanceTimersByTime(30_000) })
+    // Coming back to the tab or to the network opens nothing either.
+    act(() => { window.dispatchEvent(new Event('online')) })
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
 
     expect(result.current.gone).toBe(true)
     expect(FakeWebSocket.instances).toHaveLength(1)

@@ -272,6 +272,8 @@ export function useSync(
   useEffect(() => sayGoodbye, [roomId, sayGoodbye])
 
   useEffect(() => {
+    // Gone from the room: nothing listens for the tab or the network to come back.
+    if (left) return
     let disposed = false
     let attempt = 0
     let retry: number | null = null
@@ -536,7 +538,7 @@ export function useSync(
     }
 
     const wakeUp = () => {
-      if (disposed || socketRef.current?.readyState === WebSocket.OPEN) return
+      if (disposed || halted || socketRef.current?.readyState === WebSocket.OPEN) return
       if (document.visibilityState === 'hidden') return
       if (retry !== null) window.clearTimeout(retry)
       attempt = 0
@@ -569,7 +571,6 @@ export function useSync(
       })
     }, HEARTBEAT_MS)
 
-    if (left) return
     connect()
 
     return () => {
