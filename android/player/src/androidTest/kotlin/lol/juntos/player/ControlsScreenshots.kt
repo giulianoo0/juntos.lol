@@ -58,6 +58,7 @@ class ControlsScreenshots {
     private fun pausedThreeSecondsIn() {
         onMain {
             player.load(MediaSource("$clipsBase/rich/master.m3u8"))
+            player.importSubtitle("prints.srt", "1\n00:00:00,000 --> 00:01:00,000\nTodo mundo <i>junto</i>,\n<font color=\"#ffd400\">no mesmo segundo</font>\n")
             player.play()
         }
         player.snapshot.awaitFirst(20_000) { it.positionMs >= 3_000 }

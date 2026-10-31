@@ -115,6 +115,7 @@ fun PlayerControls(
     var skip by remember { mutableStateOf<Skip?>(null) }
 
     LaunchedEffect(snap.playing) { playingShown = snap.playing }
+    LaunchedEffect(visible) { (player as? Media3Player)?.controlsShown?.value = visible }
     LaunchedEffect(visible, playingShown, touches, scrubbing) {
         if (visible && playingShown && !scrubbing) {
             delay(HIDE_AFTER_MS)

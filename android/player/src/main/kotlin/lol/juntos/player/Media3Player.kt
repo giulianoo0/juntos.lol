@@ -1,7 +1,6 @@
 package lol.juntos.player
 
 import android.content.Context
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.SurfaceView
@@ -16,8 +15,6 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
-import androidx.media3.common.text.Cue
-import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DecoderReuseEvaluation
@@ -29,7 +26,13 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
+import kotlin.math.roundToLong
 
 /** Hardware first, then the platform's software decoder (c2.android.*): what the phone's browser won't do for HEVC. */
 @OptIn(UnstableApi::class)
@@ -37,26 +40,40 @@ private val preferHardware = MediaCodecSelector { mimeType, secure, tunneling ->
     MediaCodecUtil.getDecoderInfos(mimeType, secure, tunneling).sortedBy { !it.hardwareAccelerated }
 }
 
-private const val TICK_MS = 200L
+private const val TICK_MS = 100L
+private const val IMPORTED_FROM = 1000
+private const val DELAY_STEP_MS = 250L
+private const val DELAY_MAX_MS = 600_000L
 
 private data class TrackRef(val group: Tracks.Group, val track: Int)
 
+/** A subtitle we draw ourselves: the room's sidecars (fetched) and the viewer's imports. */
+private class SubtitleTrack(val index: Int, val label: String, val language: String?, val url: String?, var cues: List<SubtitleCue>?)
+
+/** "por", "pt" and "pt-BR" pick the same dub or subtitle after a reload. */
+private fun sameLanguage(a: String?, b: String?) =
+    a != null && b != null && (languageLabel(a) ?: a.lowercase()) == (languageLabel(b) ?: b.lowercase())
+
 /**
  * The room's player on Media3: HLS over the app's OkHttp client (its cookie jar included).
+ * Subtitles bypass Media3's text renderer so a viewer's delay can move them either way.
  * Every call belongs on the main thread.
  */
 @OptIn(UnstableApi::class)
-class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : JuntosPlayer {
+class Media3Player(context: Context, private val client: OkHttpClient = OkHttpClient()) : JuntosPlayer {
     private val _snapshot = MutableStateFlow(PlayerSnapshot())
     override val snapshot: StateFlow<PlayerSnapshot> = _snapshot
 
-    private val _cues = MutableStateFlow<List<Cue>>(emptyList())
+    private val _cues = MutableStateFlow<List<SubtitleCue>>(emptyList())
 
-    /** The subtitle lines showing now, for the surface to draw. */
-    val cues: StateFlow<List<Cue>> = _cues
+    /** The subtitle lines showing now, delay applied, for the surface to draw. */
+    val cues: StateFlow<List<SubtitleCue>> = _cues
 
     private val _videoSize = MutableStateFlow(VideoSize.UNKNOWN)
     val videoSize: StateFlow<VideoSize> = _videoSize
+
+    /** Whether the controls are up: the subtitles climb above them. */
+    internal val controlsShown = MutableStateFlow(false)
 
     /** The rendition playing now: what a pinned quality is checked against. */
     val videoFormat: Format? get() = exo.videoFormat
@@ -74,8 +91,15 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
     private var decoder: String? = null
     private var error: String? = null
     private var audioRefs = emptyList<TrackRef>()
-    private var subtitleRefs = emptyList<TrackRef>()
     private var qualityRefs = emptyList<TrackRef>()
+    private var audioPick: Pair<String?, String?>? = null
+
+    private var sidecars = emptyList<SubtitleTrack>()
+    private val imported = mutableListOf<SubtitleTrack>()
+    private val fetched = HashMap<String, List<SubtitleCue>>()
+    private var subtitleIndex: Int? = null
+    private var subtitlePick: Pair<String?, String>? = null
+    private var delayMs = 0L
 
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
@@ -93,9 +117,6 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
             override fun onTracksChanged(tracks: Tracks) = indexTracks(tracks)
             override fun onTrackSelectionParametersChanged(parameters: TrackSelectionParameters) = publish()
             override fun onEvents(player: Player, events: Player.Events) = publish()
-            override fun onCues(cueGroup: CueGroup) {
-                _cues.value = cueGroup.cues
-            }
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 _videoSize.value = videoSize
             }
@@ -135,19 +156,15 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
         offsetMs = source.offsetMs
         error = null
         decoder = null
-        val item = MediaItem.Builder()
-            .setUri(source.masterUrl)
-            .setMimeType(MimeTypes.APPLICATION_M3U8)
-            .setSubtitleConfigurations(
-                source.sidecarSubtitles.map {
-                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(it.url))
-                        .setMimeType(it.mimeType)
-                        .setLanguage(it.language)
-                        .setLabel(it.label)
-                        .build()
-                },
-            )
-            .build()
+        sidecars = source.sidecarSubtitles.mapIndexed { i, s -> SubtitleTrack(i, s.label, s.language, s.url, fetched[s.url]) }
+        sidecars.filter { it.cues == null }.forEach { fetch(it.url!!) }
+        if ((subtitleIndex ?: IMPORTED_FROM) < IMPORTED_FROM) {
+            val (language, label) = subtitlePick!!
+            subtitleIndex = (sidecars.firstOrNull { sameLanguage(it.language, language) && it.label == label }
+                ?: sidecars.firstOrNull { sameLanguage(it.language, language) }
+                ?: sidecars.firstOrNull { language == null && it.label == label })?.index
+        }
+        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).build()
         exo.setMediaItem(item, (startAtMs - offsetMs).coerceAtLeast(0))
         exo.prepare()
         publish()
@@ -155,21 +172,31 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
 
     override fun selectAudio(index: Int) {
         val ref = audioRefs.getOrNull(index) ?: return
+        audioPick = ref.format.language to ref.format.label
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setOverrideForType(TrackSelectionOverride(ref.group.mediaTrackGroup, ref.track))
             .build()
     }
 
     override fun selectSubtitle(index: Int?) {
-        val ref = index?.let { subtitleRefs.getOrNull(it) }
-        val params = exo.trackSelectionParameters.buildUpon()
-        if (ref == null) {
-            params.clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-        } else {
-            params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setOverrideForType(TrackSelectionOverride(ref.group.mediaTrackGroup, ref.track))
-        }
-        exo.trackSelectionParameters = params.build()
+        val track = index?.let { i -> subtitleTracks().firstOrNull { it.index == i } }
+        subtitleIndex = track?.index
+        subtitlePick = track?.let { it.language to it.label }
+        publish()
+    }
+
+    override fun setSubtitleDelay(ms: Long) {
+        delayMs = ((ms.toDouble() / DELAY_STEP_MS).roundToLong() * DELAY_STEP_MS).coerceIn(-DELAY_MAX_MS, DELAY_MAX_MS)
+        publish()
+    }
+
+    override fun importSubtitle(name: String, text: String): Int? {
+        val cues = parseSubtitles(text)
+        if (cues.isEmpty()) return null
+        val track = SubtitleTrack(IMPORTED_FROM + imported.size, name, null, null, cues)
+        imported += track
+        selectSubtitle(track.index)
+        return track.index
     }
 
     override fun selectQuality(index: Int?) {
@@ -198,12 +225,36 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
         if (!released) exo.clearVideoSurfaceView(view)
     }
 
+    private fun subtitleTracks() = sidecars + imported
+
+    private fun fetch(url: String) {
+        client.newCall(Request.Builder().url(url).build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+            override fun onResponse(call: Call, response: Response) {
+                val cues = response.use { if (it.isSuccessful) parseSubtitles(it.body!!.string()) else null } ?: return
+                handler.post {
+                    fetched[url] = cues
+                    sidecars.filter { it.url == url }.forEach { it.cues = cues }
+                    publish()
+                }
+            }
+        })
+    }
+
     private fun indexTracks(tracks: Tracks) {
         fun refs(type: Int) = tracks.groups.filter { it.type == type }
             .flatMap { group -> (0 until group.length).filter(group::isTrackSupported).map { TrackRef(group, it) } }
         audioRefs = refs(C.TRACK_TYPE_AUDIO)
-        subtitleRefs = refs(C.TRACK_TYPE_TEXT)
         qualityRefs = refs(C.TRACK_TYPE_VIDEO).sortedByDescending { it.format.height }
+        audioPick?.let { (language, label) ->
+            val again = audioRefs.firstOrNull { sameLanguage(it.format.language, language) && it.format.label == label }
+                ?: audioRefs.firstOrNull { sameLanguage(it.format.language, language) }
+            if (again != null && !again.selected) {
+                exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(again.group.mediaTrackGroup, again.track))
+                    .build()
+            }
+        }
         publish()
     }
 
@@ -211,9 +262,12 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
         val overrides = exo.trackSelectionParameters.overrides
         val counters = exo.videoDecoderCounters
         val duration = exo.duration
+        val position = positionMs
+        val subtitles = subtitleTracks()
+        _cues.value = subtitles.firstOrNull { it.index == subtitleIndex }?.cues?.let { activeCues(it, position - delayMs) }.orEmpty()
         _snapshot.value = PlayerSnapshot(
             durationMs = if (duration == C.TIME_UNSET) 0 else duration + offsetMs,
-            positionMs = positionMs,
+            positionMs = position,
             bufferedAheadMs = exo.totalBufferedDuration,
             playing = playing,
             buffering = buffering,
@@ -223,11 +277,9 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
             audio = audioRefs.mapIndexed { i, ref ->
                 TrackOption(i, audioTrackLabel(ref.format.label, ref.format.language, i), ref.format.language, ref.selected)
             },
-            subtitles = subtitleRefs.mapIndexed { i, ref ->
-                val format = ref.format
-                val label = format.label?.takeIf { it.isNotBlank() }
-                    ?: format.language?.let(::languageLabel) ?: format.language ?: (i + 1).toString()
-                TrackOption(i, label, format.language, ref.selected && !exo.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT))
+            subtitles = subtitles.map { track ->
+                val label = track.label.ifBlank { track.language?.let(::languageLabel) ?: track.language ?: (track.index + 1).toString() }
+                TrackOption(track.index, label, track.language, track.index == subtitleIndex)
             },
             qualities = qualityRefs.mapIndexed { i, ref ->
                 val format = ref.format
@@ -236,6 +288,7 @@ class Media3Player(context: Context, client: OkHttpClient = OkHttpClient()) : Ju
             },
             droppedFrames = counters?.droppedBufferCount?.toLong() ?: 0,
             decodedFrames = counters?.let { it.renderedOutputBufferCount + it.skippedOutputBufferCount + it.droppedBufferCount }?.toLong() ?: 0,
+            subtitleDelayMs = delayMs,
         )
     }
 

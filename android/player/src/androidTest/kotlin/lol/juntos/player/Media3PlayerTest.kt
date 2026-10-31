@@ -4,6 +4,7 @@ import androidx.media3.common.MimeTypes
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,36 +46,78 @@ class Media3PlayerTest {
         assertEquals("en", switched.audio[1].language)
     }
 
+    private fun showing(text: String, timeoutMs: Long = 10_000) =
+        player.cues.awaitFirst(timeoutMs) { cues -> cues.any { it.text.text == text } }
+
+    private val sidecars = listOf(
+        SidecarSubtitle("$rich/side.vtt", "pt", "Fora", MimeTypes.TEXT_VTT),
+        SidecarSubtitle("$rich/side.ass", "en", "ASS", MimeTypes.TEXT_SSA),
+    )
+
     @Test
-    fun subtitlesFromTheMasterAndSidecarsAreOfferedAndShown() {
-        loadRich(
-            MediaSource(
-                "$rich/master.m3u8",
-                sidecarSubtitles = listOf(
-                    SidecarSubtitle("$rich/side.vtt", "pt", "Fora", MimeTypes.TEXT_VTT),
-                    SidecarSubtitle("$rich/side.ass", "pt", "ASS", MimeTypes.TEXT_SSA),
-                ),
-            ),
-        )
-        val offered = player.snapshot.awaitFirst(5_000) { it.subtitles.size == 3 }
-        assertEquals(setOf("Português", "Fora", "ASS"), offered.subtitles.map { it.label }.toSet())
+    fun theRoomSidecarsAreOfferedAndDrawnFromTheirOwnCues() {
+        loadRich(MediaSource("$rich/master.m3u8", sidecarSubtitles = sidecars))
+        val offered = player.snapshot.awaitFirst(5_000) { it.subtitles.size == 2 }
+        assertEquals(listOf("Fora", "ASS"), offered.subtitles.map { it.label })
         assertTrue(offered.subtitles.none { it.selected })
 
-        val sidecar = offered.subtitles.first { it.label == "Fora" }
-        onMain { player.selectSubtitle(sidecar.index) }
-        player.cues.awaitFirst(10_000) { cues -> cues.any { it.text?.toString() == "Legenda de fora" } }
-
-        val master = offered.subtitles.first { it.label == "Português" }
-        onMain { player.selectSubtitle(master.index) }
-        player.cues.awaitFirst(10_000) { cues -> cues.any { it.text?.toString() == "Legenda do master" } }
-
-        val ass = offered.subtitles.first { it.label == "ASS" }
-        onMain { player.selectSubtitle(ass.index) }
-        player.cues.awaitFirst(10_000) { cues -> cues.any { it.text?.toString() == "Legenda ASS" } }
+        onMain { player.selectSubtitle(0) }
+        showing("Legenda de fora")
+        onMain { player.selectSubtitle(1) }
+        showing("Legenda ASS")
 
         onMain { player.selectSubtitle(null) }
         player.cues.awaitFirst(5_000) { it.isEmpty() }
         assertTrue(player.snapshot.value.subtitles.none { it.selected })
+    }
+
+    @Test
+    fun anImportedFileIsSelectedAndShownAboveIndexOneThousand() {
+        loadRich()
+        val index = onMain { player.importSubtitle("minha.srt", "1\n00:00:00,000 --> 00:00:10,000\n<i>Importada</i>\n") }
+        assertEquals(1000, index)
+        val snap = player.snapshot.awaitFirst(2_000) { s -> s.subtitles.any { it.index == 1000 && it.selected } }
+        assertEquals("minha.srt", snap.subtitles.single { it.index == 1000 }.label)
+        showing("Importada")
+    }
+
+    @Test
+    fun aFileWithoutCuesIsNotImported() {
+        loadRich()
+        assertNull(onMain { player.importSubtitle("vazia.srt", "nada aqui") })
+        assertTrue(player.snapshot.value.subtitles.isEmpty())
+    }
+
+    @Test
+    fun withTwoSecondsOfDelayTheCueAppearsTwoSecondsLater() {
+        onMain {
+            player.load(MediaSource("$rich/master.m3u8"))
+            player.importSubtitle("atraso.srt", "1\n00:00:01,000 --> 00:00:02,000\nAgora\n")
+            player.setSubtitleDelay(2_000)
+            player.play()
+        }
+        assertEquals(2_000, player.snapshot.awaitFirst(2_000) { it.subtitleDelayMs == 2_000L }.subtitleDelayMs)
+        showing("Agora")
+        val at = player.snapshot.value.positionMs
+        assertTrue("shown at $at", at in 2_900..4_300)
+    }
+
+    @Test
+    fun audioSubtitleAndDelayOutliveALoadOfAnotherRegion() {
+        loadRich(MediaSource("$rich/master.m3u8", sidecarSubtitles = sidecars))
+        player.snapshot.awaitFirst(5_000) { it.audio.size == 2 && it.subtitles.size == 2 }
+        onMain {
+            player.selectAudio(1)
+            player.selectSubtitle(1)
+            player.setSubtitleDelay(-500)
+        }
+        player.snapshot.awaitFirst(5_000) { it.audio[1].selected }
+
+        val again = sidecars.map { it.copy(url = it.url + "?region=2") }.reversed()
+        loadRich(MediaSource("$rich/master.m3u8", offsetMs = 30_000, sidecarSubtitles = again), startAtMs = 30_000)
+        val after = player.snapshot.awaitFirst(10_000) { s -> s.audio.size == 2 && s.audio[1].selected && s.subtitles.any { it.selected } }
+        assertEquals("en", after.subtitles.single { it.selected }.language)
+        assertEquals(-500L, after.subtitleDelayMs)
     }
 
     @Test
