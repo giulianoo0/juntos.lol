@@ -37,12 +37,8 @@ const SOURCES = [
 ] as const
 
 /**
- * The landing: the shimmering lettering, "Bora <word> junto?", one big
- * "Criar sala" (a name and, behind the lock, a password; without an account
- * it offers Discord and goes on without one), a small field for a code, and
- * the crew on the couch. Signing in from the create panel comes back with
- * `?create=1` (and the name, and whether it had a password, never the
- * password itself) to finish what was started.
+ * The landing. Signing in from the create panel comes back with `?create=1`
+ * (the name and whether it had a password, never the password) to finish it.
  */
 export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => Promise<{ roomID: string }> }) {
   const t = useT()

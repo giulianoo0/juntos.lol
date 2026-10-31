@@ -1,15 +1,7 @@
 /**
- * Where the time of a cold seek goes.
- *
- * A seek passes through a dozen hands — the reads aborted, the old
- * conversion canceled, the keyframe found, the first segment muxed, put,
- * published, seen, buffered, shown — and until now none of them left a
- * timestamp. One trace per seek, marks named for the hand, all relative to
- * the moment the seek was issued; closed into a single log line a person or
- * a rig can read.
- *
- * No clock but the monotonic one, no network, no storage: the cost of a mark
- * is a map write.
+ * Where the time of a cold seek goes: one trace per seek, a mark per hand
+ * (abort, cancel, keyframe, mux, put, publish, buffer, shown) relative to when
+ * it was issued, closed into one log line. Monotonic clock only; a mark is a map write.
  */
 export interface SeekTrace {
   seq: number

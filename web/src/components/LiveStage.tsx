@@ -21,17 +21,13 @@ const LOADING_PATIENCE_MS = 20_000
  */
 const LIVE_LATENCY_MS = { min: 6_000, max: 15_000 }
 
-/**
- * A YouTube live on the relay: the room's broadcast painted on a canvas, the
- * way a shared screen is. There is no timeline and no going back; the one
- * control is jumping to the edge, from the red badge as on YouTube — a fresh
- * subscription, since the relay hands a newcomer its newest group.
- */
 // `Time.Milli` is a branded number; the cast keeps @moq/watch out of this chunk (screenshare loads it lazily).
 function liveLatency(): Watch.Latency {
   return { min: LIVE_LATENCY_MS.min as Watch.Net.Time.Milli, max: LIVE_LATENCY_MS.max as Watch.Net.Time.Milli }
 }
 
+// A YouTube live on the relay, painted on a canvas like a shared screen. No timeline: the red
+// badge jumps to the edge with a fresh subscription, since the relay hands a newcomer its newest group.
 export function LiveStage({ roomId, memberId, capability, broadcast, title, t }: {
   roomId: string
   memberId: string

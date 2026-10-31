@@ -263,16 +263,16 @@ function rankProbes(probes: WorkerProbe[]): WorkerProbe[] {
 
 const rankings = new Map<string, { at: number; probes: WorkerProbe[] }>()
 
-/**
- * Reports progressively through `onProbe` and resolves with the ranking, best
- * first. A recent ranking is reused unless a fresh measurement is asked for.
- */
 /** Files in the order a release lists them: by name, with numbers read as
  * numbers, so episode 2 comes before episode 10. */
 export function orderVideoFiles<T extends { name: string }>(files: T[]): T[] {
   return [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
 }
 
+/**
+ * Reports progressively through `onProbe` and resolves with the ranking, best
+ * first. A recent ranking is reused unless a fresh measurement is asked for.
+ */
 export async function probeWorkers(
   infoHash: string,
   onProbe?: (probes: WorkerProbe[]) => void,

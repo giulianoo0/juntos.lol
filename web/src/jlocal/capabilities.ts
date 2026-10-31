@@ -1,9 +1,7 @@
 import { JLOCAL_ORIGIN, getJLocalSnapshot, subscribeJLocal } from './status'
 
-// Phase 1 of the companion-app contract: the web UI only reads what the app
-// advertises. Every capability stays false until the app implements it, and a
-// missing or malformed payload parses to null rather than throwing, so the
-// native browser flows keep working untouched.
+// The web UI only reads what the companion advertises: every capability defaults to
+// false, and a missing or malformed payload parses to null instead of throwing.
 export interface JLocalCapabilities {
   screen: { available: boolean; capture: boolean; h264: boolean; maxWidth: number; maxHeight: number; maxFps: number }
   audio: { appList: boolean; capture: boolean }
@@ -103,10 +101,8 @@ export function isJLocalCaptureAvailable(): boolean {
   return snapshot.connected && cache.data?.screen.capture === true
 }
 
-// Warm the cache the moment the app connects, so the first share click per
-// page load already sees screen.capture instead of falling through to the
-// native picker while a background refresh is still in flight. One-way
-// dependency (capabilities -> status); the subscription lives for the session.
+// Warm the cache as soon as the app connects, so the first share click already sees
+// screen.capture instead of falling through to the native picker.
 let lastConnected = false
 subscribeJLocal(() => {
   const connected = getJLocalSnapshot().connected

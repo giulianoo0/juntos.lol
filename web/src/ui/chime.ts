@@ -1,12 +1,7 @@
 import { incidentalAudio } from './audioUnlock'
 /**
- * The room's small sounds: a two-note blip for someone arriving and a single
- * softer one for a message from someone else.
- *
- * Synthesised rather than fetched: each is an oscillator or two and an
- * envelope, so a sound file would be a network request, a hosting decision and
- * a licence for something describable in a dozen lines. It also means there is
- * nothing to fail to load at the moment it is supposed to play.
+ * The room's small sounds: a two-note blip for an arrival, a softer one for a
+ * message. Synthesised, so there is no file to host, license or fail to load.
  */
 
 let context: AudioContext | null = null

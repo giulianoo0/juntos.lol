@@ -1,12 +1,6 @@
-// ASS carries styling WebVTT has no vocabulary for. What does map is
-// converted here: alignment and \pos become cue settings, italics and bold
-// become <i>/<b>, and colors snap to the standard VTT color classes that
-// every renderer styles natively. The rest — karaoke, borders, blur,
-// rotation, vector drawings — is dropped.
-//
-// The server-side Go converter (internal/media/assvtt.go) implements the same
-// mapping, so the authoritative pass replaces these files without visibly
-// restyling anything.
+// Maps ASS onto WebVTT: alignment and \pos become cue settings, italics and bold <i>/<b>,
+// colors snap to the standard VTT classes; karaoke, borders, blur and drawings are dropped.
+// Mirrors internal/media/assvtt.go, so the server pass replaces these without restyling.
 
 export interface AssStyleInfo {
   italic: boolean

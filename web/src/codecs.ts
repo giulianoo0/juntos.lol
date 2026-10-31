@@ -1,11 +1,7 @@
 /**
- * What this browser can actually decode.
- *
- * The pipeline stream-copies H.264, HEVC, AV1 and VP9 and refuses everything
- * else outright — there is no transcode fallback — so those four are exactly
- * the answers that decide whether a given room will play. A viewer whose
- * browser cannot decode one of them meets that fact as a video that never
- * starts, which reads as the app being broken.
+ * What this browser can actually decode. The pipeline stream-copies H.264,
+ * HEVC, AV1 and VP9 with no transcode fallback, so a missing decoder is a room
+ * that never starts.
  */
 
 export type CodecID = 'h264' | 'hevc' | 'av1' | 'vp9'

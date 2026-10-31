@@ -1,17 +1,8 @@
 /**
- * The client media pipeline: this browser remuxes the source itself and PUTs
- * segments straight into the bucket through URLs the server signs, so the
- * VPS never spends a byte of disk or a second of ffmpeg on the room.
- *
- * The shape mirrors the server pipeline it replaces: video is copied (the
- * copyable set and the server's are the same four codecs), audio is
- * transcoded to AAC, output is CMAF/HLS in 4-second segments. The server
- * stays the only authority on what gets published — every uploaded segment
- * is confirmed against the bucket before any playlist may name it.
- *
- * This is the only pipeline. A source this browser cannot remux is a room
- * that cannot be opened, and the verdict is told to the host — there is no
- * server to hand the file to.
+ * The client media pipeline, and the only one: this browser remuxes the source
+ * and PUTs segments into the bucket through URLs the server signs. Video is
+ * copied (H.264, HEVC, AV1, VP9), audio goes to AAC, output is 4 s CMAF/HLS, and
+ * the server confirms each segment in the bucket before a playlist may name it.
  */
 import {
   ALL_FORMATS,

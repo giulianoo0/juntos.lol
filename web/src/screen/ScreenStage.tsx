@@ -43,13 +43,6 @@ function formatStats(stats: ScreenSendStats): string {
   return `${stats.width}×${stats.height} · ${Math.round(stats.frameRate)} fps · ${mbps >= 10 ? Math.round(mbps) : mbps.toFixed(1)} Mb/s`
 }
 
-/**
- * The screen room's stage: one tile per live screen in a grid that reflows
- * as people start and stop, a click on any tile to give it the floor, and a
- * bar of controls that keeps out of the way until the pointer comes near.
- * Every decision about publishing and subscribing lives in the hook; this is
- * only how it looks.
- */
 /** The room's toasts about screens, once for all of them. */
 export function useScreenShareNotices(share: ScreenShare, t: T): void {
   const { toast } = useToast()
@@ -70,7 +63,11 @@ export function screenStartedNotice(toast: (node: React.ReactNode) => void, t: T
   }
 }
 
-/** One screen of the room as a stage of its own (`only`), or every screen. */
+/**
+ * One screen of the room as a stage of its own (`only`), or every screen in a
+ * grid where a click gives a tile the floor. Publishing and subscribing live in
+ * the hook; this is only how it looks.
+ */
 export function ScreenStage({ share, only, memberId, viewers, t }: {
   share: ScreenShare
   only?: string

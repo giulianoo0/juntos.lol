@@ -1,13 +1,7 @@
 /**
- * The shape of a preparo, with nothing behind it.
- *
- * These declarations sit apart from remuxJob so the page can name a job
- * without loading one. remuxJob reaches mediabunny and its WASM decoders
- * through clientMedia and mediaInput, and a single value import of
- * `sourceSize` from the upload path was enough to weld that whole engine —
- * over a megabyte of it — into the chunk the browser parses before it can
- * draw anything. Everything here is data and arithmetic; the types it borrows
- * are type-only, which no bundler follows.
+ * The shape of a preparo, with nothing behind it: apart from remuxJob so the
+ * page can name a job without welding mediabunny and its WASM (over a MB) into
+ * the first-paint chunk. Anything borrowed here must stay a type-only import.
  */
 import type { MediaInput } from './mediaInput'
 

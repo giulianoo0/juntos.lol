@@ -125,12 +125,7 @@ export interface ScreenShareApi {
 
 /**
  * The whole screen-sharing machine of a room: who is publishing, what I am
- * publishing, and one subscription per remote screen.
- *
- * The relay announces nothing and keeps no history, so a subscription opened
- * before its publisher is up finds no track and stays silent forever. The
- * room's list of live screens is what says a path exists, and a tile that sees
- * no frames resubscribes until it does.
+ * publishing, and one subscription per remote screen, reopened until it shows frames.
  */
 export function useScreenShare({ roomId, memberId, nickname, capability, isController, shareOpen, screens, onScreenStarted }: {
   roomId: string

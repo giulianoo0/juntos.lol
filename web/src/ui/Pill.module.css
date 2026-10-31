@@ -125,7 +125,6 @@
   background: var(--button-secondary-hover);
 }
 
-/* The round button. */
 .round {
   display: inline-grid;
   place-items: center;
