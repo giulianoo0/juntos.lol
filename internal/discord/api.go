@@ -64,11 +64,15 @@ func (a *API) AddGuildMemberRole(ctx context.Context, guildID, userID, roleID st
 	return err
 }
 
+// unknownMember is Discord's code for someone not in the server; any other
+// 404, like Unknown Guild with the bot outside it, is no answer at all.
+const unknownMember = 10007
+
 // IsGuildMember says whether the user is in the server, as the bot sees it.
 func (a *API) IsGuildMember(ctx context.Context, guildID, userID string) (bool, error) {
 	_, err := a.call(ctx, http.MethodGet, "/guilds/"+url.PathEscape(guildID)+"/members/"+url.PathEscape(userID), true, nil)
 	var refused *APIError
-	if errors.As(err, &refused) && refused.StatusCode == http.StatusNotFound {
+	if errors.As(err, &refused) && refused.Code == unknownMember {
 		return false, nil
 	}
 	return err == nil, err
