@@ -32,10 +32,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +60,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import lol.juntos.app.AppGraph
 import lol.juntos.app.RoomEntry
 import lol.juntos.app.door
@@ -78,6 +82,37 @@ import lol.juntos.design.pop
 import lol.juntos.design.pressScale
 import lol.juntos.design.springBlur
 import lol.juntos.design.settle
+import lol.juntos.update.UpdateState
+import lol.juntos.update.Updater
+
+/** A newer APK on the `android` release: one tap downloads it, checks it and hands it to the installer. */
+@Composable
+private fun UpdatePill(updater: Updater) {
+    val state by updater.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    val label = when (val now = state) {
+        is UpdateState.Available -> "Atualizar para ${now.release.versionName}"
+        is UpdateState.Downloading -> "Baixando ${(now.fraction * 100).roundToInt()}%"
+        is UpdateState.Installing -> "Instalando"
+        else -> null
+    }
+    // The pill leaves with the words it had, not an empty one.
+    var shown by remember { mutableStateOf("") }
+    if (label != null) shown = label
+    AnimatedVisibility(
+        visible = label != null,
+        enter = scaleIn(pop(), initialScale = 0f, transformOrigin = TransformOrigin(1f, 0.5f)) + fadeIn(pop()),
+        exit = scaleOut(settle(), targetScale = 0f, transformOrigin = TransformOrigin(1f, 0.5f)) + fadeOut(settle()),
+    ) {
+        Pill(
+            shown,
+            onClick = { if (state is UpdateState.Available) scope.launch { updater.install() } },
+            tone = PillTone.Brand,
+            size = PillSize.Sm,
+            icon = Icons.Rounded.Download,
+        )
+    }
+}
 
 private val WORDS = listOf("assistir", "conversar", "maratonar", "jogar", "ouvir", "zoar", "rir")
 private val COUCH = listOf("bunny", "robot", "fox", "mushroom", "bear")
@@ -123,6 +158,8 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
         ) {
             Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                 BetaBadge()
+                Spacer(Modifier.weight(1f))
+                UpdatePill(graph.updater)
             }
             Spacer(Modifier.height(36.dp))
             Arrive { Wordmark(ink = c.text, arrow = c.brand, modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(0.82f)) }

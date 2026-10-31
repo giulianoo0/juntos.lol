@@ -23,6 +23,10 @@ import lol.juntos.core.sync.SyncSessionFactory
 import lol.juntos.design.JuntosTheme
 import lol.juntos.player.FakePlayer
 import lol.juntos.player.PlayerFactory
+import lol.juntos.update.Release
+import lol.juntos.update.UpdateState
+import lol.juntos.update.Updater
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -51,6 +55,20 @@ class AppFlowTest {
         rule.onNodeWithContentDescription("Nome da sala").performTextInput("Cinema")
         rule.onNodeWithText("Criar").performClick()
         waitFor("Sala de teste")
+    }
+
+    @Test
+    fun aNewerApkOnTheReleaseIsOneTapFromTheHome() {
+        val updater = object : Updater {
+            override val state = MutableStateFlow<UpdateState>(UpdateState.Available(Release(2, "0.1.1", "https://example.invalid/juntos.apk", "00")))
+            var installs = 0
+            override suspend fun check() {}
+            override suspend fun install() { installs++ }
+        }
+        val updating = object : AppGraph by graph { override val updater: Updater = updater }
+        rule.setContent { JuntosTheme { JuntosNavHost(graph = updating, linkedRoom = null, onLinkedRoomOpened = {}) } }
+        rule.onNodeWithText("Atualizar para 0.1.1").performClick()
+        rule.waitUntil(3_000) { updater.installs == 1 }
     }
 
     @Test
