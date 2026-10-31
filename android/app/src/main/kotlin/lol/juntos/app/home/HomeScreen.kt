@@ -136,7 +136,7 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
                 if (!graph.human.ensure()) error("human")
                 val room = graph.api.createRoom(nickname, name.trim(), password)
                 creating = false
-                onOpen(RoomEntry(room.id, nickname, avatar, ownerToken = room.ownerToken, door = "door-create"))
+                onOpen(RoomEntry(room.id, nickname, avatar, ownerToken = room.ownerToken, door = "door-create", roomName = name.trim().ifEmpty { null }))
             } catch (e: Exception) {
                 error = "Não deu para criar a sala. Tente de novo."
             } finally {
@@ -145,13 +145,7 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
         }
     }
 
-    fun join(code: String) {
-        scope.launch {
-            if (!graph.human.ensure()) return@launch
-            val ticket = runCatching { graph.api.join(code) }.getOrNull()
-            onOpen(RoomEntry(code, nickname, avatar, ticket = ticket, door = "door-join"))
-        }
-    }
+    fun join(code: String) = onOpen(RoomEntry(code, nickname, avatar, door = "door-join"))
 
     var joining by remember { mutableStateOf(false) }
 

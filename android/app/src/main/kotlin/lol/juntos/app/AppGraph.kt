@@ -1,5 +1,7 @@
 package lol.juntos.app
 
+import lol.juntos.app.entry.MemoryPrefs
+import lol.juntos.app.entry.Prefs
 import lol.juntos.core.api.JuntosApi
 import lol.juntos.core.fake.FakeJuntosApi
 import lol.juntos.core.fake.FakeSyncSessionFactory
@@ -19,6 +21,7 @@ interface AppGraph {
     val players: PlayerFactory
     val updater: Updater
     val human: HumanGate
+    val prefs: Prefs
     /** The desktop's producer on this phone: what makes it a host of YouTube and torrents. Null in previews. */
     val producer: Producer? get() = null
 }
@@ -29,4 +32,5 @@ class FakeAppGraph(override val baseUrl: String = BuildConfig.BASE_URL) : AppGra
     override val players: PlayerFactory = PlayerFactory { FakePlayer() }
     override val updater: Updater = NoUpdater()
     override val human: HumanGate = HumanGate { true }
+    override val prefs: Prefs = MemoryPrefs()
 }

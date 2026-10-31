@@ -14,7 +14,12 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import lol.juntos.app.entry.Me
+import lol.juntos.app.entry.MeStore
 import lol.juntos.core.fake.FakeSyncSession
 import lol.juntos.core.fake.FakeSyncSessionFactory
 import lol.juntos.core.model.Member
@@ -50,11 +55,19 @@ class AppFlowTest {
 
     private fun waitFor(text: String) = rule.waitUntil(5_000) { rule.onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
 
+    /** The door before every room: waits for it to settle, then Entrar. */
+    private fun throughTheDoor() {
+        rule.waitUntil(5_000) { rule.onAllNodes(hasContentDescription("Seu nome")).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitForIdle()
+        rule.onNodeWithText("Entrar").performClick()
+        waitFor("Sala de teste")
+    }
+
     private fun enterCreatedRoom() {
         rule.onNodeWithText("Criar sala").performClick()
         rule.onNodeWithContentDescription("Nome da sala").performTextInput("Cinema")
         rule.onNodeWithText("Criar").performClick()
-        waitFor("Sala de teste")
+        throughTheDoor()
     }
 
     @Test
@@ -88,7 +101,7 @@ class AppFlowTest {
         rule.onNodeWithContentDescription("Senha").performClick()
         rule.onNode(hasContentDescription("Senha da sala")).performTextInput("1234")
         rule.onNodeWithText("Criar").performClick()
-        waitFor("Sala de teste")
+        throughTheDoor()
     }
 
     @Test
@@ -96,15 +109,29 @@ class AppFlowTest {
         launch()
         rule.onNodeWithContentDescription("Código da sala").performTextInput("abcd1234")
         rule.onNodeWithText("Entrar").performClick()
-        waitFor("Sala de teste")
+        throughTheDoor()
         assertEquals("ABCD1234", requests.single().roomId)
     }
 
     @Test
-    fun aLinkOpensTheRoomStraightAway() {
+    fun aLinkOpensTheRoomAfterTheDoor() {
         launch(linked = "LINK0001")
-        waitFor("Sala de teste")
+        throughTheDoor()
         assertEquals("LINK0001", requests.single().roomId)
+    }
+
+    @Test
+    fun theNameAndFacePickedAtTheDoorGoInAndComeBackNextTime() {
+        launch(linked = "LINK0001")
+        rule.waitUntil(5_000) { rule.onAllNodes(hasContentDescription("Seu nome")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithContentDescription("Seu nome").performTextClearance()
+        rule.onNodeWithContentDescription("Seu nome").performTextInput("Ana")
+        rule.onNodeWithContentDescription("Coruja").performScrollTo().performClick()
+        rule.onNodeWithContentDescription("Acessório").performScrollToNode(hasContentDescription("Coroa"))
+        rule.onNodeWithContentDescription("Coroa").performClick()
+        throughTheDoor()
+        assertEquals("Ana" to "owl.crown", requests.single().let { it.nickname to it.avatar })
+        assertEquals(Me("Ana", "owl.crown"), MeStore(graph.prefs).load())
     }
 
     @Test
@@ -144,7 +171,7 @@ class AppFlowTest {
                 JuntosTheme { JuntosNavHost(graph = graph, linkedRoom = "LINK0001", onLinkedRoomOpened = {}) }
             }
         }
-        waitFor("Sala de teste")
+        throughTheDoor()
         landscape = true
         rule.waitUntil(3_000) { rule.onAllNodes(hasText("Sala de teste")).fetchSemanticsNodes().isEmpty() }
         rule.onNodeWithContentDescription("Sair").assertDoesNotExist()
@@ -155,7 +182,7 @@ class AppFlowTest {
     @Test
     fun pinningSomeoneBringsThemToTheTopInView() {
         launch(linked = "LINK0001")
-        waitFor("Sala de teste")
+        throughTheDoor()
         rule.runOnIdle {
             session.join(Member(id = "ana", nickname = "Ana"))
             session.join(Member(id = "bia", nickname = "Bia"))

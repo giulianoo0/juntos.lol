@@ -5,6 +5,7 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import lol.juntos.app.entry.Prefs
 import lol.juntos.app.human.WebHumanGate
 import lol.juntos.core.api.CookieStorage
 import lol.juntos.core.api.HttpJuntosApi
@@ -26,6 +27,12 @@ private class PreferencesCookieStorage(context: Context) : CookieStorage {
     private val preferences = context.getSharedPreferences("juntos", Context.MODE_PRIVATE)
     override fun read(): String? = preferences.getString("cookies", null)
     override fun write(value: String) = preferences.edit().putString("cookies", value).apply()
+}
+
+private class SharedPrefs(context: Context) : Prefs {
+    private val preferences = context.getSharedPreferences("juntos", Context.MODE_PRIVATE)
+    override fun get(key: String): String? = preferences.getString(key, null)
+    override fun put(key: String, value: String) = preferences.edit().putString(key, value).apply()
 }
 
 /** One per install: a second socket from this phone takes the seat over instead of doubling it. */
@@ -53,6 +60,7 @@ class RealAppGraph(context: Context, override val baseUrl: String = BuildConfig.
     override val players = PlayerFactory { Media3Player(app, client) }
     override val updater: Updater = GithubUpdater(app, client)
     override val producer: Producer = Producer(app, baseUrl)
+    override val prefs: Prefs = SharedPrefs(app)
 
     init {
         // Starting the producer at launch clears what a killed run left on the phone.

@@ -36,25 +36,36 @@ fun initialOf(name: String): String {
     return trimmed.substring(0, end).uppercase()
 }
 
-private val MASCOTS = mapOf(
-    "wolf" to R.drawable.mascot_wolf, "cat" to R.drawable.mascot_cat, "fox" to R.drawable.mascot_fox,
-    "bunny" to R.drawable.mascot_bunny, "bear" to R.drawable.mascot_bear, "frog" to R.drawable.mascot_frog,
-    "penguin" to R.drawable.mascot_penguin, "owl" to R.drawable.mascot_owl, "panda" to R.drawable.mascot_panda,
-    "koala" to R.drawable.mascot_koala, "axolotl" to R.drawable.mascot_axolotl, "octopus" to R.drawable.mascot_octopus,
-    "bee" to R.drawable.mascot_bee, "robot" to R.drawable.mascot_robot, "alien" to R.drawable.mascot_alien,
-    "ghost" to R.drawable.mascot_ghost, "mushroom" to R.drawable.mascot_mushroom, "cactus" to R.drawable.mascot_cactus,
-    "strawberry" to R.drawable.mascot_strawberry, "avocado" to R.drawable.mascot_avocado, "cloud" to R.drawable.mascot_cloud,
-    "drop" to R.drawable.mascot_drop, "flame" to R.drawable.mascot_flame, "planet" to R.drawable.mascot_planet,
-    "slime" to R.drawable.mascot_slime, "popcorn" to R.drawable.mascot_popcorn, "onigiri" to R.drawable.mascot_onigiri,
-    "dice" to R.drawable.mascot_dice,
+val MascotKinds: List<String> = MASCOT_ART.keys.toList()
+
+/** web/src/mascot/types.ts MASCOT_ACCESSORIES, in the site's order; "none" wears nothing. */
+val MascotAccessories: List<String> = listOf(
+    "bowtie", "headphones", "cat-headphones", "sunglasses", "round-glasses", "beanie",
+    "cap", "crown", "bow", "flower", "scarf", "space-helmet", "none",
 )
 
-val MascotKinds: List<String> = MASCOTS.keys.toList()
+/** A mascot the app can draw: the kind and what it wears. The site's colours are not drawn here. */
+data class Mascot(val kind: String, val accessory: String) {
+    /** web/src/mascot/avatar.ts serializeAvatar without a colour: `fox.bowtie`, or `owl` with nothing on. */
+    val avatar: String get() = if (accessory == "none") kind else "$kind.$accessory"
+}
 
-/** The kind in a serialized avatar (`fox.bowtie`, `cat-preto.beanie`); null when the app has no art for it. */
-fun mascotKindOf(avatar: String?): String? {
-    val kind = avatar?.substringBefore('.')?.substringBefore('-') ?: return null
-    return kind.takeIf { it in MASCOTS }
+/**
+ * The mascot in a serialized avatar (`fox.bowtie`, `cat-preto.beanie`, `owl`); null when the
+ * app has no art for its kind. An accessory newer than the app is left off rather than the face.
+ */
+fun mascotOf(avatar: String?): Mascot? {
+    val kind = avatar?.substringBefore('.')?.substringBefore('-')?.takeIf { it in MASCOT_ART } ?: return null
+    val accessory = avatar.substringAfter('.', "none").takeIf { it in MascotAccessories } ?: "none"
+    return Mascot(kind, accessory)
+}
+
+fun mascotKindOf(avatar: String?): String? = mascotOf(avatar)?.kind
+
+@Composable
+fun MascotImage(mascot: Mascot, size: Dp, modifier: Modifier = Modifier) {
+    val art = MASCOT_ART.getValue(mascot.kind)[MascotAccessories.indexOf(mascot.accessory)]
+    Image(painterResource(art), contentDescription = null, modifier = modifier.size(size))
 }
 
 /**
@@ -63,9 +74,9 @@ fun mascotKindOf(avatar: String?): String? {
  */
 @Composable
 fun Avatar(id: String, name: String, avatar: String?, size: Dp, modifier: Modifier = Modifier) {
-    val kind = mascotKindOf(avatar)
-    if (kind != null) {
-        Image(painterResource(MASCOTS.getValue(kind)), contentDescription = null, modifier = modifier.size(size))
+    val mascot = mascotOf(avatar)
+    if (mascot != null) {
+        MascotImage(mascot, size, modifier)
         return
     }
     val colors = Juntos.colors
