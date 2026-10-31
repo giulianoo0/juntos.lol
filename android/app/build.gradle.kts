@@ -12,8 +12,9 @@ android {
         applicationId = "lol.juntos.app"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // A release (and the update test) sets both: -Pjuntos.versionCode=2 -Pjuntos.versionName=0.1.1
+        versionCode = providers.gradleProperty("juntos.versionCode").orNull?.toInt() ?: 1
+        versionName = providers.gradleProperty("juntos.versionName").orNull ?: "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "BASE_URL", "\"https://juntos.lol\"")
     }

@@ -1,7 +1,13 @@
 package lol.juntos.core.sync
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import lol.juntos.core.fake.FakeSyncSession
 import lol.juntos.core.model.PlayState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,5 +34,24 @@ class SyncDriverTest {
         val target = Target(positionMs = 60_300, playing = true)
         SyncDriver(target, now = { 4_000 }).apply(PlayState(playing = true, positionMs = 60_000, serverTimeMs = 4_000), serverOffsetMs = 0)
         assertEquals(emptyList<Long>(), target.seeks)
+    }
+
+    @Test
+    fun `a follower plays and pauses with the room and is pulled back on the next beat when it drifts`() = runTest {
+        val target = Target()
+        val session = FakeSyncSession(SessionRequest("ROOM1", "Ana"), now = { 0 })
+        backgroundScope.launch { SyncDriver(target, now = { 0 }).follow(session) }
+        runCurrent()
+        session.play(10_000)
+        runCurrent()
+        assertTrue(target.playing)
+        assertEquals(10_000L, target.positionMs)
+        target.positionMs = 14_000
+        advanceTimeBy(5_001)
+        assertEquals(10_000L, target.positionMs)
+        session.pause(12_000)
+        runCurrent()
+        assertFalse(target.playing)
+        assertEquals(12_000L, target.positionMs)
     }
 }
