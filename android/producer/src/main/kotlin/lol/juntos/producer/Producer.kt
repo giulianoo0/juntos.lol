@@ -43,6 +43,10 @@ class ProducerException(message: String) : Exception(message)
  * room only while someone there needs it.
  */
 class Producer(private val context: Context, private val site: String) {
+    private companion object {
+        const val YTDLP_EVERY_MS = 24 * 60 * 60 * 1000L
+    }
+
     private val ready = Mutex()
     private var started = false
 
@@ -52,6 +56,7 @@ class Producer(private val context: Context, private val site: String) {
         withContext(Dispatchers.IO) {
             YoutubeDL.getInstance().init(context)
             FFmpeg.getInstance().init(context)
+            refreshYtdlp()
             val libs = context.applicationInfo.nativeLibraryDir
             val packages = File(context.noBackupFilesDir, "youtubedl-android/packages")
             val python = File(packages, "python/usr")
@@ -76,6 +81,19 @@ class Producer(private val context: Context, private val site: String) {
             )
         }
         started = true
+    }
+
+    /**
+     * The yt-dlp the library ships is months old, and YouTube refuses an old one's
+     * challenge answers past the first piece (403). The latest goes in at most once a day.
+     */
+    private fun refreshYtdlp() {
+        val preferences = context.getSharedPreferences("producer", Context.MODE_PRIVATE)
+        val last = preferences.getLong("ytdlpUpdatedAt", 0)
+        if (System.currentTimeMillis() - last < YTDLP_EVERY_MS && YoutubeDL.getInstance().version(context) != null) return
+        runCatching { YoutubeDL.getInstance().updateYoutubeDL(context, YoutubeDL.UpdateChannel.STABLE) }
+            .onSuccess { preferences.edit().putLong("ytdlpUpdatedAt", System.currentTimeMillis()).apply() }
+            .onFailure { android.util.Log.w("Producer", "yt-dlp update", it) }
     }
 
     /** One call by the desktop command's name; the answer's `ok`, or a [ProducerException]. */

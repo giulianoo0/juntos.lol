@@ -7,6 +7,7 @@ import lol.juntos.core.human.HumanGate
 import lol.juntos.core.sync.SyncSessionFactory
 import lol.juntos.player.FakePlayer
 import lol.juntos.player.PlayerFactory
+import lol.juntos.producer.Producer
 import lol.juntos.update.NoUpdater
 import lol.juntos.update.Updater
 
@@ -18,6 +19,8 @@ interface AppGraph {
     val players: PlayerFactory
     val updater: Updater
     val human: HumanGate
+    /** The desktop's producer on this phone: what makes it a host of YouTube and torrents. Null in previews. */
+    val producer: Producer? get() = null
 }
 
 class FakeAppGraph(override val baseUrl: String = BuildConfig.BASE_URL) : AppGraph {

@@ -47,14 +47,33 @@ internal fun needsReload(loaded: MediaPick?, baseUrl: String, room: RoomInfo, po
  * the media or its regions move, follows the play state, and answers the gate with what is buffered.
  */
 @Composable
-internal fun FollowRoom(baseUrl: String, session: SyncSession, player: JuntosPlayer) {
+internal fun FollowRoom(baseUrl: String, session: SyncSession, player: JuntosPlayer, host: LocalHost? = null) {
     var loaded by remember(session, player) { mutableStateOf<MediaPick?>(null) }
     var sidecars by remember(session, player) { mutableStateOf<List<SidecarSubtitle>>(emptyList()) }
     LaunchedEffect(session, player) {
         while (true) {
             val now = session.state.value
+            val own = host?.media?.value
+            val ownRoom = now.room?.takeIf { own != null && it.sourceMemberId == now.memberId && it.mediaGeneration == own.generation }
             val room = now.room?.takeIf { it.status == "ready" }
-            if (room != null) {
+            if (ownRoom != null && host != null) {
+                // The host plays its own cache, not the bucket.
+                val position = roomPositionMs(now)
+                host.follow(position)
+                val subtitles = roomSubtitles(ownRoom)
+                val local = host.master(position, loaded?.regionN)
+                if (local != null) {
+                    val (file, region) = local
+                    val pick = MediaPick("file://${file.path}", region.startMs, region.n)
+                    if (pick != loaded) {
+                        player.load(MediaSource(pick.masterUrl, pick.offsetMs, subtitles), startAtMs = position)
+                        loaded = pick
+                    } else if (subtitles != sidecars) {
+                        player.setSidecarSubtitles(subtitles)
+                    }
+                    sidecars = subtitles
+                }
+            } else if (room != null) {
                 val position = roomPositionMs(now)
                 val subtitles = roomSubtitles(room)
                 val pick = needsReload(loaded, baseUrl, room, position)
@@ -75,7 +94,7 @@ internal fun FollowRoom(baseUrl: String, session: SyncSession, player: JuntosPla
         session.reportReadiness({
             if (loaded == null) return@reportReadiness null
             val snapshot = player.snapshot.value
-            if (BuildConfig.DEBUG && snapshot.playing) Log.d("JuntosSync", "drift=${snapshot.positionMs - roomPositionMs(session.state.value)} buffer=${snapshot.bufferedAheadMs}")
+            if (BuildConfig.DEBUG && snapshot.playing) Log.d("JuntosSync", "at=${snapshot.positionMs} drift=${snapshot.positionMs - roomPositionMs(session.state.value)} buffer=${snapshot.bufferedAheadMs}")
             ReadyReport(
                 positionMs = snapshot.positionMs,
                 bufferAheadMs = snapshot.bufferedAheadMs,

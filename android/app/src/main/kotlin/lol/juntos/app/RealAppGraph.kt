@@ -14,6 +14,7 @@ import lol.juntos.core.sync.SocketSyncSessionFactory
 import lol.juntos.core.sync.SyncSessionFactory
 import lol.juntos.player.Media3Player
 import lol.juntos.player.PlayerFactory
+import lol.juntos.producer.Producer
 import lol.juntos.update.GithubUpdater
 import lol.juntos.update.Updater
 
@@ -48,4 +49,5 @@ class RealAppGraph(context: Context, override val baseUrl: String = BuildConfig.
     override val sessions = SyncSessionFactory { request -> sockets.open(request.copy(device = request.device ?: device)) }
     override val players = PlayerFactory { Media3Player(app, client) }
     override val updater: Updater = GithubUpdater(app, client)
+    override val producer: Producer = Producer(app, baseUrl)
 }

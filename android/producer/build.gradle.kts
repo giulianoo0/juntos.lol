@@ -5,7 +5,8 @@ plugins {
 }
 
 // The Rust producer (the desktop app's cache, regions and upload) built for each ABI with cargo-ndk.
-val rustAbis = listOf("arm64-v8a", "x86_64")
+// Phones are arm64; the emulators here are too. Each ABI adds ~65 MB of Python and FFmpeg.
+val rustAbis = listOf("arm64-v8a")
 val jniOut = layout.buildDirectory.dir("rust/jniLibs")
 val cargoBuild by tasks.registering(Exec::class) {
     val home = System.getProperty("user.home")
@@ -27,6 +28,8 @@ val cargoBuild by tasks.registering(Exec::class) {
 android {
     namespace = "lol.juntos.producer"
     compileSdk = 36
+    // Known to AGP, so it strips the Rust library's symbols when packaging.
+    ndkVersion = "27.1.12297006"
     defaultConfig {
         minSdk = 31
         ndk { abiFilters += rustAbis }
@@ -34,7 +37,11 @@ android {
     }
     sourceSets["main"].jniLibs.srcDir(jniOut)
     // Python and FFmpeg run as executables from nativeLibraryDir, so the .so files must be extracted.
-    packaging { jniLibs.useLegacyPackaging = true }
+    packaging {
+        jniLibs.useLegacyPackaging = true
+        // Python and FFmpeg ship zipped as .so; there is nothing in them to strip.
+        jniLibs.keepDebugSymbols += "**/*.zip.so"
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

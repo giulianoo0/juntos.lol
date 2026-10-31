@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "lol.juntos.app"
     compileSdk = 36
+    ndkVersion = "27.1.12297006"
 
     defaultConfig {
         applicationId = "lol.juntos.app"
@@ -16,6 +17,8 @@ android {
         versionCode = providers.gradleProperty("juntos.versionCode").orNull?.toInt() ?: 1
         versionName = providers.gradleProperty("juntos.versionName").orNull ?: "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // The producer's Python and FFmpeg exist per ABI; only arm64 ships.
+        ndk { abiFilters += "arm64-v8a" }
         buildConfigField("String", "BASE_URL", "\"https://juntos.lol\"")
     }
 
@@ -34,8 +37,9 @@ android {
 
     buildTypes {
         debug {
-            // The local stack seen from the emulator.
-            buildConfigField("String", "BASE_URL", "\"http://10.0.2.2:8090\"")
+            // The local stack seen from the emulator, or another one: -Pjuntos.baseUrl=https://juntos.lol
+            val base = providers.gradleProperty("juntos.baseUrl").orNull ?: "http://10.0.2.2:8090"
+            buildConfigField("String", "BASE_URL", "\"$base\"")
         }
         release {
             signingConfig = signingConfigs.findByName("release")
@@ -49,7 +53,11 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     // The producer runs Python and FFmpeg from nativeLibraryDir: the .so files must be extracted.
-    packaging { jniLibs.useLegacyPackaging = true }
+    packaging {
+        jniLibs.useLegacyPackaging = true
+        // Python and FFmpeg ship zipped as .so; there is nothing in them to strip.
+        jniLibs.keepDebugSymbols += "**/*.zip.so"
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -61,6 +69,7 @@ dependencies {
     implementation(project(":design"))
     implementation(project(":player"))
     implementation(project(":update"))
+    implementation(project(":producer"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

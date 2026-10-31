@@ -37,6 +37,7 @@ fun Dock(
     roomId: String,
     sheet: Sheet?,
     onSheet: (Sheet) -> Unit,
+    canHost: Boolean,
     onReact: (String) -> Unit,
     onCopied: () -> Unit,
     onLeave: () -> Unit,
@@ -76,6 +77,7 @@ fun Dock(
                 }
             }
         }
+        if (canHost) IconPill("Vídeo", JuntosIcons.Film, onClick = { onSheet(Sheet.Source) }, active = sheet == Sheet.Source)
         IconPill("Chat", JuntosIcons.Chat, onClick = { onSheet(Sheet.Chat) }, active = sheet == Sheet.Chat)
         IconPill("Pessoas", JuntosIcons.People, onClick = { onSheet(Sheet.People) }, active = sheet == Sheet.People)
         Spacer(Modifier.weight(1f))

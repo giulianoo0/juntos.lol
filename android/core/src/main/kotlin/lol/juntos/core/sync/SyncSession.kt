@@ -52,6 +52,10 @@ sealed interface SyncEvent {
     data object Kicked : SyncEvent
     data object Replaced : SyncEvent
     data object RoomGone : SyncEvent
+    /** Someone here cannot play this phone's cache: upload generation [generation] to the room. */
+    data class NeedMedia(val generation: Int) : SyncEvent
+    /** Nobody needs the bucket any more: the upload can stop. */
+    data object MediaIdle : SyncEvent
 }
 
 /** What the player measured, sent on ready reports. */
@@ -86,6 +90,9 @@ interface SyncSession {
     fun chat(text: String)
     fun ready(report: ReadyReport)
     fun stillHere() {}
+
+    /** This phone produces the room's source ("youtube", "torrent"); sent again on every reconnect. Null stops. */
+    fun announceSource(origin: String?) {}
     fun admit(requestId: String) {}
     fun deny(requestId: String) {}
 

@@ -24,6 +24,21 @@ interface JuntosApi {
 
     /** The ticket the socket's hello carries into a password room (the server mints one for any room). */
     suspend fun join(roomId: String, password: String? = null): String?
+
+    /** Points the room at a source this phone produces (`kind: "local"`); answers the new media generation. */
+    suspend fun changeLocalSource(roomId: String, seat: Seat, title: String, durationMs: Long, localCopy: LocalCopy?): Int =
+        throw UnsupportedOperationException()
+
+    /** Someone needs the bucket: the claim to upload this phone's cache with. */
+    suspend fun promoteLocal(roomId: String, seat: Seat): Promotion = throw UnsupportedOperationException()
 }
+
+/** What another app opens to play its own copy of a source this phone produces. */
+@kotlinx.serialization.Serializable
+data class LocalCopy(val kind: String, val url: String? = null, val videoId: String? = null, val magnet: String? = null, val index: Int? = null)
+
+/** The upload a promote hands over: the claim the producer signs its runs with. */
+@kotlinx.serialization.Serializable
+data class Promotion(val claim: String, val mediaGeneration: Int)
 
 class ApiException(val status: Int, val code: String) : Exception(code)

@@ -230,6 +230,18 @@ async fn dispatch(state: &State, method: &str, args: Value) -> Result<Value, Str
                 None => json!({ "active": false, "sent": 0, "error": null }),
             })
         }
+        "local_master" => {
+            // A region's master as the desktop serves it (serve.rs local_master): FFmpeg's own leaves the video out.
+            let key: String = arg(&args, "key")?;
+            let n: u64 = arg(&args, "n")?;
+            let meta = state.producer.meta(&key).ok_or("unknown source")?;
+            let prefix = ss_remux::plan::region_prefix(n);
+            if !meta.regions.iter().any(|r| r.n == n) || !state.producer.hls_dir(&key).join(hls::playlist_name(&prefix, 0)).exists() {
+                return Err("region not ready".into());
+            }
+            let info = hls::MasterInfo { audio_langs: meta.audio_langs, video_codecs: meta.video_codecs, bandwidth: 0, low_resolution: None };
+            Ok(json!(hls::master(&prefix, &info, None)))
+        }
         "hls_dir" => {
             let key: String = arg(&args, "key")?;
             Ok(json!(state.producer.hls_dir(&key)))

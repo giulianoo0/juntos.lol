@@ -57,7 +57,7 @@ import lol.juntos.player.PlayerControls
 import lol.juntos.player.PlayerIntents
 import lol.juntos.player.PlayerSurface
 
-enum class Sheet { Chat, People, Settings }
+enum class Sheet { Chat, People, Settings, Source }
 
 /**
  * The room on a phone. Upright: header, the video in 16:9, the people, the dock. Lying
@@ -76,7 +76,9 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     DisposableEffect(session) { onDispose { session.close() } }
     val player = remember { graph.players.create() }
     DisposableEffect(player) { onDispose { player.release() } }
-    FollowRoom(graph.baseUrl, session, player)
+    val host = remember(session) { graph.producer?.let { LocalHost(it, graph.api, session, entry.roomId, scope) } }
+    DisposableEffect(host) { onDispose { host?.close() } }
+    FollowRoom(graph.baseUrl, session, player, host)
     val raw by session.state.collectAsState()
     // Until the socket echoes it, this viewer wears the avatar they came in with.
     val state = raw.copy(members = raw.members.map { if (it.id == raw.memberId && it.avatar == null) it.copy(avatar = entry.avatar) else it })
@@ -95,6 +97,8 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
             when (event) {
                 SyncEvent.Kicked, SyncEvent.RoomGone, SyncEvent.Replaced -> onLeave()
                 is SyncEvent.Error -> scope.launch { toasts.show("Algo deu errado: ${event.code}") }
+                is SyncEvent.NeedMedia -> session.state.value.seat()?.let { host?.need(it, event.generation) }
+                SyncEvent.MediaIdle -> host?.idle()
             }
         }
     }
@@ -169,6 +173,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                             roomId = entry.roomId,
                             sheet = sheet,
                             onSheet = { sheet = if (sheet == it) null else it },
+                            canHost = host != null && state.isController,
                             onReact = { bursts.add(it) },
                             onCopied = { scope.launch { toasts.show("Link copiado") } },
                             onLeave = leave,
@@ -195,6 +200,12 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
         Sheet.Chat -> ChatSheet(state.chat, state.members, onSend = session::chat, onDismiss = { sheet = null })
         Sheet.People -> PeopleSheet(state.members, state.memberId, state.controllerId, pinned, onPin = { pinned = if (pinned == it) null else it }, onDismiss = { sheet = null })
         Sheet.Settings -> SettingsSheet(player, onDismiss = { sheet = null })
+        Sheet.Source -> host?.let {
+            SourceSheet(it, onHost = { source ->
+                val seat = session.state.value.seat() ?: error("no seat")
+                it.host(seat, source)
+            }, onDismiss = { sheet = null })
+        }
         null -> Unit
     }
 }
@@ -210,6 +221,12 @@ private fun ImmersiveBars(immersive: Boolean) {
         if (immersive) controller.hide(WindowInsetsCompat.Type.systemBars()) else controller.show(WindowInsetsCompat.Type.systemBars())
         onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
+}
+
+private fun lol.juntos.core.sync.SyncState.seat(): lol.juntos.core.model.Seat? {
+    val id = memberId ?: return null
+    val capability = capability ?: return null
+    return lol.juntos.core.model.Seat(id, capability)
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

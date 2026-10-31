@@ -18,6 +18,9 @@ import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.hls.playlist.DefaultHlsPlaylistTracker
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.DecoderReuseEvaluation
@@ -26,7 +29,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.Call
@@ -45,6 +47,9 @@ private fun preferHardware(skip: Set<String>) = MediaCodecSelector { mimeType, s
 
 // Buffering with this much in hand and no frame out for this long is the decoder, not the network.
 private const val STALL_BUFFER_MS = 5_000L
+private const val LIVE_OFFSET_MS = 24 * 60 * 60 * 1000L
+/** Target durations a growing playlist may stand still before Media3 calls it stuck. */
+private const val PLAYLIST_PATIENCE = 1_000_000.0
 private const val STALL_MS = 2_500L
 
 private const val TICK_MS = 100L
@@ -92,7 +97,12 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
         context,
         DefaultRenderersFactory(context).setEnableDecoderFallback(true).setMediaCodecSelector(preferHardware(stalled)),
     )
-        .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(client)))
+        // The network through OkHttp; file:// for the cache this phone produces as host. A region's
+        // playlist stops growing while its producer waits far enough ahead: that is not a stuck stream.
+        .setMediaSourceFactory(
+            HlsMediaSource.Factory(DefaultDataSource.Factory(context, OkHttpDataSource.Factory(client)))
+                .setPlaylistTrackerFactory { source, errors, parser, cmcd -> DefaultHlsPlaylistTracker(source, errors, parser, cmcd, PLAYLIST_PATIENCE) },
+        )
         .setLooper(Looper.getMainLooper())
         .build()
 
@@ -175,7 +185,15 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
         error = null
         decoder = null
         takeSidecars(source.sidecarSubtitles)
-        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).build()
+        // A growing playlist reads as live, which Media3 opens near its edge and chases at its own
+        // speed. The room's clock sets both: an offset past any window puts the default at its start.
+        val live = MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(LIVE_OFFSET_MS)
+            .setMaxOffsetMs(LIVE_OFFSET_MS)
+            .setMinPlaybackSpeed(1f)
+            .setMaxPlaybackSpeed(1f)
+            .build()
+        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).setLiveConfiguration(live).build()
         exo.setMediaItem(item, (startAtMs - offsetMs).coerceAtLeast(0))
         exo.prepare()
         mark()

@@ -23,7 +23,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import lol.juntos.core.JuntosJson
 import lol.juntos.core.api.ApiException
 import lol.juntos.core.api.JuntosApi
@@ -92,6 +94,7 @@ class SocketSyncSession(
     private var unansweredSince: Long? = null
     private var retry: Job? = null
     private val pendingChat = ArrayDeque<String>()
+    private var announced: String? = null
     private val refreshes = Channel<Unit>(Channel.CONFLATED)
 
     init {
@@ -132,6 +135,11 @@ class SocketSyncSession(
     }
 
     override fun stillHere() = later { sendLive("stillHere") {} }
+
+    override fun announceSource(origin: String?) = later {
+        announced = origin
+        origin?.let { sendLive("source") { put("origin", it) } }
+    }
 
     override fun admit(requestId: String) = answer("admit", requestId)
 
@@ -222,6 +230,8 @@ class SocketSyncSession(
             request.device?.let { put("device", it) }
             request.avatar?.let { put("avatar", it) }
             put("client", "android")
+            // This phone can produce a source itself, so it never counts as waiting on the bucket for its own.
+            putJsonArray("features") { add("localSource") }
         })
     }
 
@@ -253,6 +263,8 @@ class SocketSyncSession(
             "gating" -> _state.update { it.copy(gating = message.gating ?: true) }
             "hostSubtitles" -> _state.update { it.copy(hostSubtitles = message.hostSubtitles) }
             "spotlight" -> _state.update { it.copy(spotlight = message.spotlight) }
+            "needBrowserMedia" -> _events.tryEmit(SyncEvent.NeedMedia(message.generation ?: 0))
+            "browserMediaIdle" -> _events.tryEmit(SyncEvent.MediaIdle)
             "roomStatus" -> refreshes.trySend(Unit)
             "roomUpdated" -> if (message.media != null) patchMedia(message.media) else refreshes.trySend(Unit)
         }
@@ -276,6 +288,7 @@ class SocketSyncSession(
             )
         }
         while (pendingChat.isNotEmpty()) socket?.send(chatFrame(pendingChat.removeFirst()))
+        announced?.let { origin -> socket?.send(frame("source") { put("origin", origin) }) }
         refreshes.trySend(Unit)
     }
 
@@ -408,6 +421,7 @@ class SocketSyncSession(
         val spotlight: Spotlight? = null,
         val requestId: String? = null,
         val nickname: String? = null,
+        val generation: Int? = null,
     )
 }
 

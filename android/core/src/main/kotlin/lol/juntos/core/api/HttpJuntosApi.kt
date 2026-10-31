@@ -44,6 +44,15 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
     override suspend fun join(roomId: String, password: String?): String? =
         read<Ticket>(post(url("api", "rooms", roomId, "join"), JoinBody(password.orEmpty()))).ticket
 
+    override suspend fun changeLocalSource(roomId: String, seat: Seat, title: String, durationMs: Long, localCopy: LocalCopy?): Int {
+        val name = title.trim().take(200)
+        val body = SourceBody(seat.memberId, seat.capability, "local", name, name, durationMs.takeIf { it > 0 }, localCopy)
+        return read<SourceReply>(post(url("api", "rooms", roomId, "source"), body)).mediaGeneration
+    }
+
+    override suspend fun promoteLocal(roomId: String, seat: Seat): Promotion =
+        read(post(url("api", "rooms", roomId, "local", "promote"), SeatBody(seat.memberId, seat.capability)))
+
     private fun url(vararg segments: String): HttpUrl =
         base.newBuilder().apply { segments.forEach(::addPathSegment) }.build()
 
@@ -72,6 +81,20 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
     @Serializable private class JoinBody(val password: String)
 
     @Serializable private class Ticket(val ticket: String? = null)
+
+    @Serializable private class SourceBody(
+        val memberId: String,
+        val capability: String,
+        val kind: String,
+        val fileName: String,
+        val title: String,
+        val durationMs: Long? = null,
+        val localCopy: LocalCopy? = null,
+    )
+
+    @Serializable private class SourceReply(val mediaGeneration: Int = 0)
+
+    @Serializable private class SeatBody(val memberId: String, val capability: String)
 
     @Serializable private class ErrorBody(val error: String? = null)
 

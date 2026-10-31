@@ -12,6 +12,7 @@ import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MicOff
@@ -43,6 +44,7 @@ object JuntosIcons {
     val Close: ImageVector get() = Icons.Rounded.Close
     val Check: ImageVector get() = Icons.Rounded.Check
     val Send: ImageVector get() = Icons.Rounded.Send
+    val Film: ImageVector get() = Icons.Outlined.Movie
     val Fullscreen: ImageVector get() = Icons.Rounded.Fullscreen
     val FullscreenExit: ImageVector get() = Icons.Rounded.FullscreenExit
 }
