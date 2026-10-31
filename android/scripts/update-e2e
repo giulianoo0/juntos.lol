@@ -1,0 +1,48 @@
+#!/bin/sh
+# The self-update end to end on one of our emulators: v1 and v2 signed with the release key,
+# v2 served from the Mac on 8078, and v1 updating itself without a prompt.
+#   android/scripts/update-e2e emulator-5554
+set -e
+serial=${1:?serial}
+root=$(cd "$(dirname "$0")/.." && pwd)
+sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+adb="$sdk/platform-tools/adb -s $serial"
+keystore="$HOME/.android-juntos/juntos-release.jks"
+password="$HOME/.android-juntos/password"
+java="$(ls -d "$HOME"/.gradle/jdks/*17*/jdk-17*/Contents/Home | tail -1)/bin/java"
+signer=$(ls -d "$sdk"/build-tools/*/lib/apksigner.jar | tail -1)
+work=$(mktemp -d)
+mkdir "$work/serve"
+
+# build <versionCode> <versionName> <signed apk>
+build() {
+  "$root/gw" --max-workers=2 -q :app:assembleDebug -Pjuntos.versionCode="$1" -Pjuntos.versionName="$2"
+  "$java" -jar "$signer" sign --ks "$keystore" --ks-key-alias juntos --ks-pass "file:$password" \
+    --out "$3" "$root/app/build/outputs/apk/debug/app-debug.apk" </dev/null
+}
+build 1 0.1.0 "$work/v1.apk"
+build 2 0.1.1 "$work/serve/juntos.apk"
+sha=$(shasum -a 256 "$work/serve/juntos.apk" | cut -d' ' -f1)
+printf '{"versionCode":2,"versionName":"0.1.1","url":"http://10.0.2.2:8078/juntos.apk","sha256":"%s"}\n' "$sha" \
+  >"$work/serve/latest.json"
+
+python3 -m http.server 8078 --bind 127.0.0.1 --directory "$work/serve" >/dev/null 2>&1 &
+server=$!
+trap 'kill $server; rm -rf "$work"' EXIT
+
+$adb uninstall lol.juntos.app >/dev/null 2>&1 || true
+$adb install --no-incremental "$work/v1.apk" >/dev/null
+# What a person does once, allowing Juntos as an install source; every update after it is silent.
+$adb shell appops set lol.juntos.app REQUEST_INSTALL_PACKAGES allow
+$adb shell am start -n lol.juntos.app/lol.juntos.update.UpdateProbeActivity \
+  --es manifest http://10.0.2.2:8078/latest.json >/dev/null
+for _ in $(seq 120); do
+  if $adb shell dumpsys package lol.juntos.app | grep -q "versionCode=2 "; then
+    $adb shell dumpsys package lol.juntos.app | grep -E "versionName|installerPackageName"
+    echo "a v1 se atualizou sozinha para a v2"
+    exit 0
+  fi
+  sleep 1
+done
+echo "não atualizou em 2 min" >&2
+exit 1
