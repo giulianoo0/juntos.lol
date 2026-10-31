@@ -607,6 +607,7 @@ impl Remux {
             }
         };
 
+        let clean = exit.as_ref().is_some_and(|(status, _)| status.success());
         if let Some((status, stderr_tail)) = exit {
             if !status.success() && !Self::cancelled(entry) {
                 let tail: String = stderr_tail.lock().clone();
@@ -630,8 +631,8 @@ impl Remux {
             tokio::select! {
                 result = &mut upload_task => break result,
                 _ = settle.tick(), if producing => {
-                    if run_sink.settled() || tokio::time::Instant::now() >= settle_by {
-                        if !run_sink.settled() {
+                    if run_sink.settled(clean) || tokio::time::Instant::now() >= settle_by {
+                        if !run_sink.settled(clean) {
                             tracing::warn!(run = %spec.run_id, "remux outputs still storing after ffmpeg exited");
                         }
                         run_sink.close_producer();

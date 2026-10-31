@@ -81,7 +81,9 @@ pub(crate) async fn remux_whole(bytes: Vec<u8>, dir: &Path) -> (Arc<Sink>, Vec<S
     let mut ffmpeg = process::spawn("ffmpeg", &args).unwrap();
     let status = tokio::time::timeout(Duration::from_secs(60), ffmpeg.wait()).await.unwrap().unwrap();
     assert!(status.success(), "ffmpeg: {}", ffmpeg.stderr_tail.lock());
-    while !sink.settled() {
+    let waited = std::time::Instant::now();
+    while !sink.settled(true) {
+        assert!(waited.elapsed() < Duration::from_secs(20), "never settled: {:#?}", sink.manifests());
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     sink.close_producer();

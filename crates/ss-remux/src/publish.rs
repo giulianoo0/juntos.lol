@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use super::sink::{ClosedObject, Sink};
 
 /// What one variant playlist declares, in order.
-fn playlist_segments(body: &str) -> Vec<(String, f64)> {
+pub(crate) fn playlist_segments(body: &str) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     let mut pending: Option<f64> = None;
     for line in body.lines() {

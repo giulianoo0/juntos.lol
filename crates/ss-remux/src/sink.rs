@@ -88,18 +88,24 @@ pub struct Sink {
     closed_tx: Mutex<Option<mpsc::UnboundedSender<ClosedObject>>>,
     cancelled: AtomicBool,
     serial: std::sync::atomic::AtomicU64,
-    stores: Arc<Mutex<(usize, std::time::Instant)>>,
+    stores: Arc<Mutex<(usize, tokio::time::Instant)>>,
 }
 
 /// One output body being stored; the sink is not settled while it lives.
-pub struct Storing(Arc<Mutex<(usize, std::time::Instant)>>);
+pub struct Storing(Arc<Mutex<(usize, tokio::time::Instant)>>);
 
 impl Drop for Storing {
     fn drop(&mut self) {
         let mut held = self.0.lock();
         held.0 -= 1;
-        held.1 = std::time::Instant::now();
+        held.1 = tokio::time::Instant::now();
     }
+}
+
+/// An event playlist only grows, and ends once: its segment count, then
+/// whether it has ended, orders its versions.
+fn playlist_age(body: &str) -> (usize, bool) {
+    (body.matches("#EXTINF").count(), body.contains("#EXT-X-ENDLIST"))
 }
 
 /// How long the outputs stay quiet before an exited FFmpeg counts as
@@ -121,7 +127,7 @@ impl Sink {
                 closed_tx: Mutex::new(Some(tx)),
                 cancelled: AtomicBool::new(false),
                 serial: std::sync::atomic::AtomicU64::new(0),
-                stores: Arc::new(Mutex::new((0, std::time::Instant::now()))),
+                stores: Arc::new(Mutex::new((0, tokio::time::Instant::now()))),
             }),
             rx,
         ))
@@ -141,16 +147,27 @@ impl Sink {
     pub fn storing(&self) -> Storing {
         let mut held = self.stores.lock();
         held.0 += 1;
-        held.1 = std::time::Instant::now();
+        held.1 = tokio::time::Instant::now();
         Storing(self.stores.clone())
     }
 
-    /// No body is being stored and none arrived for a beat: what FFmpeg
-    /// sent before it exited is in, the last segments and the playlists
-    /// that end them included.
-    pub fn settled(&self) -> bool {
+    /// No body is being stored and none arrived for a beat. After a clean
+    /// exit that is not proof: on a loaded machine FFmpeg's last connections
+    /// wait in the accept queue past the beat, so it also takes every
+    /// playlist ended on segments the sink holds.
+    pub fn settled(&self, exited_clean: bool) -> bool {
         let (open, last) = *self.stores.lock();
-        open == 0 && last.elapsed() >= SETTLE_QUIET
+        if open > 0 || last.elapsed() < SETTLE_QUIET {
+            return false;
+        }
+        if !exited_clean {
+            return true;
+        }
+        let closed = self.closed.lock();
+        self.manifests().iter().filter(|(name, _)| !name.ends_with("master.m3u8")).all(|(_, body)| {
+            body.contains("#EXT-X-ENDLIST")
+                && crate::publish::playlist_segments(body).iter().all(|(segment, _)| closed.contains_key(segment))
+        })
     }
 
     pub fn cancelled(&self) -> bool {
@@ -169,7 +186,13 @@ impl Sink {
         if body.len() > MAX_MANIFEST_BYTES {
             bail!("manifest over size");
         }
-        self.manifests.lock().insert(name.to_string(), body);
+        let mut manifests = self.manifests.lock();
+        // Every write is its own connection and the stores race: a version
+        // that lands late must not undo the later one, the ENDLIST included.
+        if manifests.get(name).is_some_and(|held| playlist_age(held) > playlist_age(&body)) {
+            return Ok(());
+        }
+        manifests.insert(name.to_string(), body);
         Ok(())
     }
 
@@ -406,6 +429,45 @@ mod tests {
         assert!(!second.is_finished(), "admission should be parked on budget");
         sink.discard(&first).await;
         second.await.unwrap().unwrap();
+        sink.destroy().await;
+    }
+
+    #[test]
+    fn a_playlist_version_landing_late_does_not_undo_the_newer_one() {
+        let (sink, _rx) = temp_sink(1024, 512);
+        let two = "#EXTINF:4.0,\ncs_0_0.m4s\n#EXTINF:4.0,\ncs_0_1.m4s\n";
+        let ended = format!("{two}#EXT-X-ENDLIST\n");
+        for (writes, kept) in [
+            (vec!["#EXTINF:4.0,\ncs_0_0.m4s\n", two], two),
+            (vec![two, "#EXTINF:4.0,\ncs_0_0.m4s\n"], two),
+            (vec![ended.as_str(), two], ended.as_str()),
+            (vec![two, ended.as_str()], ended.as_str()),
+        ] {
+            for body in &writes {
+                sink.store_manifest("client_stream_0.m3u8", body.to_string()).unwrap();
+            }
+            assert_eq!(sink.manifests()["client_stream_0.m3u8"], kept, "{writes:?}");
+            sink.manifests.lock().clear();
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cleanly_exited_ffmpeg_is_owed_its_ended_playlists_and_their_segments() {
+        let (sink, _rx) = temp_sink(1024, 512);
+        let quiet = std::time::Duration::from_secs(1);
+        sink.store_manifest("master.m3u8", "#EXTM3U\nclient_stream_0.m3u8\n".into()).unwrap();
+        sink.store_manifest("client_stream_0.m3u8", "#EXTINF:4.0,\ncs_0_0.m4s\n".into()).unwrap();
+        sink.store_media("cs_0_0.m4s", chunks(&[b"a"])).await.unwrap();
+        tokio::time::advance(quiet).await;
+        assert!(sink.settled(false), "a killed run owes nothing more");
+        assert!(!sink.settled(true), "the playlist has not ended");
+        sink.store_manifest("client_stream_0.m3u8", "#EXTINF:4.0,\ncs_0_0.m4s\n#EXTINF:2.0,\ncs_0_1.m4s\n#EXT-X-ENDLIST\n".into())
+            .unwrap();
+        tokio::time::advance(quiet).await;
+        assert!(!sink.settled(true), "cs_0_1 is listed but not stored");
+        sink.store_media("cs_0_1.m4s", chunks(&[b"b"])).await.unwrap();
+        tokio::time::advance(quiet).await;
+        assert!(sink.settled(true));
         sink.destroy().await;
     }
 
