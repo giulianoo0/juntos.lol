@@ -200,6 +200,25 @@ class SocketSyncSessionTest {
     }
 
     @Test
+    fun `a knock waits for the controller, and an answer clears it`() {
+        val session = seated()
+        end.send("""{"type":"knock","requestId":"req1","nickname":"Bia"}""")
+        assertEquals(listOf(Knock("req1", "Bia")), await(session) { it.knocks.isNotEmpty() }.knocks)
+        session.admit("req1")
+        assertEquals("req1", frame("admit").text("targetId"))
+        await(session) { it.knocks.isEmpty() }
+    }
+
+    @Test
+    fun `coming back to the network skips the backoff`() {
+        val session = seated(SyncTiming(heartbeatMs = 50, reconnectMinMs = 60_000, reconnectMaxMs = 60_000))
+        end.close(1001, "restart")
+        await(session) { it.connection == Connection.Reconnecting }
+        session.reconnectNow()
+        assertEquals("m1", frame("hello").text("memberId"))
+    }
+
+    @Test
     fun `a room the server no longer knows ends the session`() {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest) = MockResponse().setResponseCode(404)

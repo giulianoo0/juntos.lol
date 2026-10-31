@@ -133,6 +133,23 @@ class SocketSyncSession(
 
     override fun stillHere() = later { sendLive("stillHere") {} }
 
+    override fun admit(requestId: String) = answer("admit", requestId)
+
+    override fun deny(requestId: String) = answer("deny", requestId)
+
+    override fun reconnectNow() = later {
+        if (halted || socket != null) return@later
+        retry?.cancel()
+        attempt = 0
+        retry = scope.launch { connect() }
+    }
+
+    private fun answer(type: String, requestId: String) = later {
+        if (socket == null || !opened) return@later
+        sendLive(type) { put("targetId", requestId) }
+        _state.update { s -> s.copy(knocks = s.knocks.filterNot { it.requestId == requestId }) }
+    }
+
     override fun leave() = later {
         socket?.takeIf { opened }?.send(frame("leave") {})
         shutDown()
@@ -228,6 +245,9 @@ class SocketSyncSession(
                 _state.update { it.copy(door = Door.Denied) }
             }
             "error" -> failed(message.error ?: "error")
+            "knock" -> message.requestId?.let { id ->
+                _state.update { s -> if (s.knocks.any { it.requestId == id }) s else s.copy(knocks = s.knocks + Knock(id, message.nickname.orEmpty())) }
+            }
             "stillThere" -> _state.update { it.copy(stillThereDeadlineMs = message.deadlineMs) }
             "awake" -> _state.update { it.copy(stillThereDeadlineMs = null) }
             "gating" -> _state.update { it.copy(gating = message.gating ?: true) }
@@ -386,6 +406,8 @@ class SocketSyncSession(
         val hostSubtitles: HostSubtitles? = null,
         val media: MediaSnapshot? = null,
         val spotlight: Spotlight? = null,
+        val requestId: String? = null,
+        val nickname: String? = null,
     )
 }
 

@@ -38,9 +38,13 @@ data class SyncState(
     val stillThereDeadlineMs: Long? = null,
     /** Why the session ended for good: [SyncEvent.Kicked], [SyncEvent.Replaced] or [SyncEvent.RoomGone]. */
     val ended: SyncEvent? = null,
+    /** Who waits at the door of an approval room, for the controller to admit or deny. */
+    val knocks: List<Knock> = emptyList(),
 ) {
     val isController: Boolean get() = memberId != null && memberId == controllerId
 }
+
+data class Knock(val requestId: String, val nickname: String)
 
 /** Things that happen once: the UI reacts and moves on. */
 sealed interface SyncEvent {
@@ -82,6 +86,11 @@ interface SyncSession {
     fun chat(text: String)
     fun ready(report: ReadyReport)
     fun stillHere() {}
+    fun admit(requestId: String) {}
+    fun deny(requestId: String) {}
+
+    /** The network or the app came back: a socket waiting out its backoff tries now. */
+    fun reconnectNow() {}
 
     /** Leaves on purpose: the seat is not kept. */
     fun leave()
