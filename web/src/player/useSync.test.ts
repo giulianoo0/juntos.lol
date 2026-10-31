@@ -116,7 +116,7 @@ describe('useSync', () => {
     act(() => socket.onopen?.())
     act(() => socket.receive({ type: 'welcome', memberId: 'm1', capability: 'cap', controllerId: 'm1', members: [] }))
     act(() => socket.receive({ type: 'needBrowserMedia', generation: 4 }))
-    expect(localRoomFakes.needBrowserMedia).toHaveBeenCalledWith('r1', { memberId: 'm1', capability: 'cap' })
+    expect(localRoomFakes.needBrowserMedia).toHaveBeenCalledWith('r1', { memberId: 'm1', capability: 'cap' }, 4)
     act(() => socket.receive({ type: 'browserMediaIdle' }))
     expect(localRoomFakes.browserMediaIdle).toHaveBeenCalledWith('r1')
     unmount()

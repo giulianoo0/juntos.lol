@@ -66,10 +66,11 @@ const rooms = new Map<string, Attached>()
 /** The follow of a room this tab plays its own copy of, as a guest. */
 const copies = new Map<string, (absoluteMs: number) => void>()
 /**
- * Browser guests waiting on the bucket, by room. It outlives the source: the
- * room asks for the new one as the swap begins, while the app still prepares it.
+ * Browser guests waiting on the bucket, by room, and the generation they asked
+ * for. It outlives the source: the room asks for the new one as the swap
+ * begins, while the app still prepares it, or before this tab even started to.
  */
-const waiting = new Map<string, ControllerAuth>()
+const waiting = new Map<string, { auth: ControllerAuth; generation: number }>()
 /** Rooms whose next source is being prepared: the old one is not uploaded meanwhile. */
 const preparing = new Set<string>()
 const listeners = new Set<() => void>()
@@ -95,7 +96,7 @@ export async function attachLocalRoom(roomId: string, generation: number, source
     preparing.delete(roomId)
   }
   const wanted = waiting.get(roomId)
-  if (failed === null && wanted) void needBrowserMedia(roomId, wanted)
+  if (failed === null && wanted) void needBrowserMedia(roomId, wanted.auth, wanted.generation)
   return failed
 }
 
@@ -232,7 +233,8 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
   registerRemuxHandle(roomId, handle, () => {
     unregisterRemuxHandle(roomId, handle)
     if (rooms.get(roomId) !== attached) return
-    waiting.delete(roomId)
+    // What was asked of the next source is that one's to answer.
+    if ((waiting.get(roomId)?.generation ?? 0) <= attached.media.generation) waiting.delete(roomId)
     detach(roomId)
     void app.invoke('upload_stop', { roomId }).catch(() => undefined)
     void app.invoke('local_stop', { key: attached.key }).catch(() => undefined)
@@ -284,15 +286,16 @@ function stopWatching(attached: Attached): void {
 }
 
 /**
- * A guest needs the room: promote it and upload from the cache. While the
- * guest waits, an upload that stops on its own (a lost claim, a network
- * that gave up) is promoted again.
+ * A guest needs the room's `generation`: promote it and upload from the
+ * cache. While the guest waits, an upload that stops on its own (a lost
+ * claim, a network that gave up) is promoted again.
  */
-export async function needBrowserMedia(roomId: string, auth: ControllerAuth): Promise<void> {
+export async function needBrowserMedia(roomId: string, auth: ControllerAuth, generation: number): Promise<void> {
   if (copies.has(roomId)) return
-  waiting.set(roomId, auth)
+  waiting.set(roomId, { auth, generation })
   const attached = rooms.get(roomId)
-  if (!attached || preparing.has(roomId)) return
+  // A newer generation is a swap this tab has not attached yet: the cache here is the old film's.
+  if (!attached || preparing.has(roomId) || attached.media.generation < generation) return
   attached.wanted = auth
   if (attached.uploadWatch === null) {
     attached.uploadWatch = setInterval(() => { void reviveUpload(roomId) }, UPLOAD_WATCH_MS)
@@ -325,6 +328,11 @@ async function promote(roomId: string, attached: Attached, auth: ControllerAuth)
       return
     }
     const claim = await response.json() as { claim: string; mediaGeneration: number }
+    // The room swapped meanwhile: this cache would go up as the next film.
+    if (claim.mediaGeneration !== attached.media.generation || rooms.get(roomId) !== attached) {
+      console.warn('local promote answered for another source', claim.mediaGeneration, attached.media.generation)
+      return
+    }
     await app.invoke('upload_start', {
       key: attached.key,
       roomId,

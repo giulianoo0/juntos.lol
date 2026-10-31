@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDesktopForTests } from '../platform'
-import { remuxHandleFor } from '../upload'
+import { registerRemuxHandle, remuxHandleFor } from '../upload'
 import {
   attachLocalRoom, browserMediaIdle, closeLocalCopy, followLocalCopy, localMediaFor, needBrowserMedia, openLocalCopy,
   refreshLocalMedia, resetLocalRoomsForTests, safeLocalCopy, setLocalRenditions,
@@ -34,6 +34,11 @@ afterEach(() => {
 })
 
 const source = { kind: 'torrent' as const, id: 'abc', index: 0, title: 'Filme' }
+
+/** The room's media is at `generation` now: a promote answers for it. */
+function serverAt(generation: number): void {
+  fetchMock.mockImplementation(async () => new Response(JSON.stringify({ claim: 'CLAIM', mediaGeneration: generation }), { status: 200 }))
+}
 
 describe('a room played from the desktop cache', () => {
   it('prepares the source and plays its regions from the cache', async () => {
@@ -107,7 +112,7 @@ describe('a room played from the desktop cache', () => {
   it('a browser guest promotes the room and starts the upload at the playhead', async () => {
     await attachLocalRoom('ROOM1', 4, source)
     remuxHandleFor('ROOM1')?.follow(42_000)
-    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 4)
     expect(fetchMock).toHaveBeenCalledWith('/api/rooms/ROOM1/local/promote', expect.objectContaining({ method: 'POST', body: JSON.stringify({ memberId: 'm1', capability: 'cap' }) }))
     expect(invoke).toHaveBeenCalledWith('upload_start', { key: 't-abc-0', roomId: 'ROOM1', claim: 'CLAIM', mediaGeneration: 4, positionMs: 42_000 })
   })
@@ -122,8 +127,9 @@ describe('a room played from the desktop cache', () => {
     })
     const swapping = attachLocalRoom('ROOM1', 5, { ...source, id: 'def' })
     await vi.waitFor(() => expect(prepared).toBeDefined())
+    serverAt(5)
 
-    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 5)
     expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.anything())
 
     prepared({ ...meta, key: 't-def-0' })
@@ -131,11 +137,33 @@ describe('a room played from the desktop cache', () => {
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('upload_start', expect.objectContaining({ key: 't-def-0' })))
   })
 
+  it('a browser guest asking for the next source before the swap reaches this tab gets that one, never the old cache', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    serverAt(5)
+
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 5)
+    // The swap hands the room to the next source's producer, releasing this one.
+    registerRemuxHandle('ROOM1', { follow: () => undefined }, () => undefined)
+    invoke.mockImplementation(async (cmd: string) => cmd === 'local_prepare' ? { ...meta, key: 't-def-0' } : null)
+    await attachLocalRoom('ROOM1', 5, { ...source, id: 'def' })
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('upload_start', expect.objectContaining({ key: 't-def-0', mediaGeneration: 5 })))
+    expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.objectContaining({ key: 't-abc-0' }))
+  })
+
+  it('a promote the server answers for a newer source uploads nothing from this cache', async () => {
+    await attachLocalRoom('ROOM1', 4, source)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ claim: 'CLAIM', mediaGeneration: 5 }), { status: 200 }))
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 4)
+    expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.anything())
+  })
+
   it('a browser guest already waiting gets the new source after a swap', async () => {
     await attachLocalRoom('ROOM1', 4, source)
-    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 4)
     invoke.mockClear()
     invoke.mockImplementation(async (cmd: string) => cmd === 'local_prepare' ? { ...meta, key: 't-def-0' } : null)
+    serverAt(5)
 
     await attachLocalRoom('ROOM1', 5, { ...source, id: 'def' })
 
@@ -144,7 +172,7 @@ describe('a room played from the desktop cache', () => {
 
   it('once the last browser guest left, a swap uploads nothing', async () => {
     await attachLocalRoom('ROOM1', 4, source)
-    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 4)
     await browserMediaIdle('ROOM1')
     invoke.mockClear()
     invoke.mockImplementation(async (cmd: string) => cmd === 'local_prepare' ? { ...meta, key: 't-def-0' } : null)
@@ -158,12 +186,12 @@ describe('a room played from the desktop cache', () => {
   it('a refused promote starts nothing', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_local' }), { status: 409 }))
     await attachLocalRoom('ROOM1', 4, source)
-    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+    await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 4)
     expect(invoke).not.toHaveBeenCalledWith('upload_start', expect.anything())
   })
 
   it('a room this app does not produce ignores the event', async () => {
-    await needBrowserMedia('OTHER', { memberId: 'm1', capability: 'cap' })
+    await needBrowserMedia('OTHER', { memberId: 'm1', capability: 'cap' }, 4)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -188,7 +216,7 @@ describe('a room played from the desktop cache', () => {
     await attachLocalRoom('ROOM1', 4, source)
     vi.useFakeTimers()
     try {
-      await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' })
+      await needBrowserMedia('ROOM1', { memberId: 'm1', capability: 'cap' }, 4)
       const starts = () => invoke.mock.calls.filter(([cmd]) => cmd === 'upload_start').length
       await vi.advanceTimersByTimeAsync(5_000)
       expect(starts()).toBe(1)
@@ -246,7 +274,7 @@ describe('a guest on the app playing its own copy', () => {
   it('is no producer: the room never asks it to upload', async () => {
     await openLocalCopy('GUEST1', 4, torrentCopy, 'Filme')
     expect(remuxHandleFor('GUEST1')).toBeUndefined()
-    await needBrowserMedia('GUEST1', { memberId: 'm2', capability: 'cap' })
+    await needBrowserMedia('GUEST1', { memberId: 'm2', capability: 'cap' }, 4)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(calls('upload_start')).toEqual([])
   })

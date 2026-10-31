@@ -61,6 +61,8 @@ interface Outbound {
     episode?: number
     from?: string
   }
+  /** On a needBrowserMedia: the media the browsers are waiting for. */
+  generation?: number
 }
 
 /** The controller's subtitle pick: a room track index (-1 for none) and the
@@ -483,7 +485,7 @@ export function useSync(
             break
           case 'needBrowserMedia': {
             const held = seatRef.current
-            if (held?.roomId === roomId) void needBrowserMedia(roomId, { memberId: held.memberId, capability: held.capability })
+            if (held?.roomId === roomId) void needBrowserMedia(roomId, { memberId: held.memberId, capability: held.capability }, message.generation ?? 0)
             break
           }
           case 'browserMediaIdle':
