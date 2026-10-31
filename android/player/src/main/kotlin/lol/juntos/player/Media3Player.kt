@@ -10,6 +10,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -85,7 +86,7 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
     val videoSize: StateFlow<VideoSize> = _videoSize
 
     /** Whether the controls are up: the subtitles climb above them. */
-    internal val controlsShown = MutableStateFlow(false)
+    val controlsShown = MutableStateFlow(false)
 
     /** The rendition playing now: what a pinned quality is checked against. */
     val videoFormat: Format? get() = exo.videoFormat
@@ -104,6 +105,8 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
                 .setPlaylistTrackerFactory { source, errors, parser, cmcd -> DefaultHlsPlaylistTracker(source, errors, parser, cmcd, PLAYLIST_PATIENCE) },
         )
         .setLooper(Looper.getMainLooper())
+        // Off screen the room keeps playing: the CPU and the Wi-Fi stay up while it does.
+        .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
 
     private var offsetMs = 0L
@@ -180,6 +183,19 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
     override fun pause() = exo.pause()
     override fun setRate(rate: Float) = exo.setPlaybackSpeed(rate)
 
+    private var metadata = MediaMetadata.EMPTY
+
+    /** What the system's media controls show: the video's title, the room, the logo. Swapped in place, no reload. */
+    fun describe(meta: MediaMetadata) {
+        if (meta == metadata) return
+        metadata = meta
+        val current = exo.currentMediaItem ?: return
+        exo.replaceMediaItem(exo.currentMediaItemIndex, current.buildUpon().setMediaMetadata(meta).build())
+    }
+
+    /** Room time for a position in the loaded region. */
+    internal fun roomTime(regionMs: Long): Long = regionMs + offsetMs
+
     override fun load(source: MediaSource, startAtMs: Long) {
         offsetMs = source.offsetMs
         error = null
@@ -193,7 +209,7 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
             .setMinPlaybackSpeed(1f)
             .setMaxPlaybackSpeed(1f)
             .build()
-        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).setLiveConfiguration(live).build()
+        val item = MediaItem.Builder().setUri(source.masterUrl).setMimeType(MimeTypes.APPLICATION_M3U8).setLiveConfiguration(live).setMediaMetadata(metadata).build()
         exo.setMediaItem(item, (startAtMs - offsetMs).coerceAtLeast(0))
         exo.prepare()
         mark()

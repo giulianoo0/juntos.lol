@@ -26,6 +26,7 @@ dependencies {
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.ui)
+    api(libs.media3.session)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)

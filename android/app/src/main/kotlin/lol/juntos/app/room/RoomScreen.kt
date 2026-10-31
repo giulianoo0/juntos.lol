@@ -68,6 +68,8 @@ import lol.juntos.design.rememberToastState
 import lol.juntos.player.PlayerControls
 import lol.juntos.player.PlayerIntents
 import lol.juntos.player.PlayerSurface
+import lol.juntos.player.Media3Player
+import lol.juntos.player.RoomMediaSession
 
 enum class Sheet { Chat, People, Settings, Share }
 
@@ -148,12 +150,26 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
         waitText = if (stageStatus == StageStatus.Ready) waitText(snap.positionMs, mine?.regions ?: room?.mediaRegions.orEmpty(), bufferingFor, snap.bufferedAheadMs) else null,
         preparation = room?.preparation,
         failure = room?.errorMessage?.takeIf { stageStatus == StageStatus.Failed }.orEmpty(),
+        controls = true,
     )
-    LaunchedEffect(hasMedia) { if (!hasMedia) fullscreen = false }
+    val turn = rememberTurn { fullscreen = it }
+    LaunchedEffect(hasMedia) { if (!hasMedia && fullscreen) turn(false) }
     val fold = rememberFold()
     val layout = roomLayout(config.screenWidthDp, config.screenHeightDp, config.smallestScreenWidthDp, hasMedia, fullscreen, fold?.hinge)
-    val immersive = layout == RoomLayout.Immersive
+    val inPip = rememberPictureInPicture(autoEnter = hasMedia && snap.playing)
+    val immersive = layout == RoomLayout.Immersive || inPip
     ImmersiveBars(immersive)
+    OffScreen(
+        player = player,
+        intents = intents,
+        roomName = room?.name?.takeIf { it.isNotBlank() } ?: "Sala",
+        people = state.members.map { if (it.id == state.memberId) "Você" else it.nickname },
+        mediaTitle = room?.fileName?.takeIf { hasMedia && it.isNotBlank() },
+        playing = snap.playing,
+        hosting = mine != null,
+        onLeave = leave,
+    )
+    LaunchedEffect(inPip) { if (inPip) (player as? Media3Player)?.controlsShown?.value = false }
     val density = LocalDensity.current
 
     Box(
@@ -174,11 +190,11 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                             .background(Color.Black),
                     ) {
                         PlayerSurface(player, Modifier.fillMaxSize())
-                        PlayerControls(
+                        if (now.controls) PlayerControls(
                             player = player,
                             intents = intents,
                             fullscreen = full,
-                            onFullscreenChange = { fullscreen = it },
+                            onFullscreenChange = { turn(it) },
                             onSettings = { sheet = Sheet.Settings },
                             durationMs = now.durationMs,
                             canControl = now.canControl,
@@ -197,7 +213,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                     }
                 }
             }
-            val stage = @Composable { modifier: Modifier, full: Boolean -> stageContent(modifier, full, view) }
+            val stage = @Composable { modifier: Modifier, full: Boolean -> stageContent(modifier, full, view.copy(controls = !inPip)) }
             val header = @Composable { modifier: Modifier ->
                 RoomHeader(
                     state = state,
@@ -225,7 +241,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                     onLeave = leave,
                 )
             }
-            when (layout) {
+            when (if (inPip) RoomLayout.Immersive else layout) {
                 RoomLayout.Immersive -> stage(Modifier.fillMaxSize(), true)
                 RoomLayout.Column -> Column(Modifier.fillMaxSize()) {
                     header(Modifier.statusBarsPadding())
@@ -301,7 +317,144 @@ internal data class StageView(
     val waitText: String?,
     val preparation: lol.juntos.core.model.RoomPreparation?,
     val failure: String,
+    /** False in picture-in-picture: the window is the video and its subtitles. */
+    val controls: Boolean,
 )
+
+/**
+ * The room off screen: the service that keeps it alive with its notifications, the media
+ * session the lock screen and headsets talk to, and the logo and names they show.
+ */
+@Composable
+private fun OffScreen(
+    player: lol.juntos.player.JuntosPlayer,
+    intents: lol.juntos.player.PlayerIntents,
+    roomName: String,
+    people: List<String>,
+    mediaTitle: String?,
+    playing: Boolean,
+    hosting: Boolean,
+    onLeave: () -> Unit,
+) {
+    val context = LocalContext.current
+    val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) {}
+    val media = remember(player) {
+        (player as? Media3Player)?.let {
+            val open = android.app.PendingIntent.getActivity(
+                context,
+                0,
+                android.content.Intent(context, lol.juntos.app.MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
+            RoomMediaSession(context, it, intents, open)
+        }
+    }
+    val latestLeave by androidx.compose.runtime.rememberUpdatedState(onLeave)
+    val latestPlaying by androidx.compose.runtime.rememberUpdatedState(playing)
+    DisposableEffect(media) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        RoomPresence.session = media?.session
+        RoomPresence.leave = { latestLeave() }
+        RoomPresence.togglePlay = { if (latestPlaying) intents.pause(player.snapshot.value.positionMs) else intents.play(player.snapshot.value.positionMs) }
+        RoomService.start(context)
+        onDispose {
+            RoomPresence.clear()
+            media?.release()
+        }
+    }
+    val logo = remember { logoPng(context) }
+    LaunchedEffect(roomName, people, mediaTitle, playing, hosting) {
+        RoomPresence.show(Presence(roomName, people, mediaTitle, playing, hosting))
+        (player as? Media3Player)?.describe(
+            androidx.media3.common.MediaMetadata.Builder()
+                .setTitle(mediaTitle ?: roomName)
+                .setArtist(roomName)
+                .setArtworkData(logo, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                .build(),
+        )
+    }
+}
+
+/** The launcher icon as PNG bytes, the artwork the media controls show. */
+private fun logoPng(context: Context): ByteArray {
+    val icon = androidx.core.content.ContextCompat.getDrawable(context, lol.juntos.app.R.mipmap.ic_launcher)!!
+    val bitmap = androidx.core.graphics.createBitmap(256, 256)
+    icon.setBounds(0, 0, 256, 256)
+    icon.draw(android.graphics.Canvas(bitmap))
+    return java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+}
+
+/**
+ * Whether the room shows in picture-in-picture, and the system told to enter it by itself
+ * when the viewer leaves the app with a video playing.
+ */
+@Composable
+private fun rememberPictureInPicture(autoEnter: Boolean): Boolean {
+    val activity = LocalContext.current.findActivity() as? androidx.activity.ComponentActivity ?: return false
+    var inPip by remember { mutableStateOf(activity.isInPictureInPictureMode) }
+    DisposableEffect(activity) {
+        val listener = androidx.core.util.Consumer<androidx.core.app.PictureInPictureModeChangedInfo> { inPip = it.isInPictureInPictureMode }
+        activity.addOnPictureInPictureModeChangedListener(listener)
+        onDispose {
+            activity.removeOnPictureInPictureModeChangedListener(listener)
+            activity.setPictureInPictureParams(android.app.PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+            // Leaving from the notification while in the small window: the window goes with the room.
+            if (activity.isInPictureInPictureMode) activity.moveTaskToBack(false)
+        }
+    }
+    LaunchedEffect(autoEnter) {
+        activity.setPictureInPictureParams(
+            android.app.PictureInPictureParams.Builder()
+                .setAspectRatio(android.util.Rational(16, 9))
+                .setAutoEnterEnabled(autoEnter)
+                .setSeamlessResizeEnabled(true)
+                .build(),
+        )
+    }
+    return inPip
+}
+
+/**
+ * Full screen turns the phone on its side whatever the sensor says; leaving it stands the
+ * phone up and holds it there until it is upright in the hand, then the sensor rules again.
+ */
+@Composable
+private fun rememberTurn(onFullscreen: (Boolean) -> Unit): (Boolean) -> Unit {
+    val context = LocalContext.current
+    val activity = context.findActivity()
+    val latest by androidx.compose.runtime.rememberUpdatedState(onFullscreen)
+    val upright = remember {
+        object : android.view.OrientationEventListener(context) {
+            override fun onOrientationChanged(degrees: Int) {
+                if (degrees == ORIENTATION_UNKNOWN || (degrees in 31..329)) return
+                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                disable()
+            }
+        }
+    }
+    DisposableEffect(activity) {
+        onDispose {
+            upright.disable()
+            activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    return remember(activity) {
+        { full: Boolean ->
+            latest(full)
+            if (full) {
+                upright.disable()
+                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                if (upright.canDetectOrientation()) upright.enable() else activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+    }
+}
 
 /** The fold of a foldable, in window pixels, as the WindowManager reports it. */
 private class Fold(val hinge: Hinge, val bounds: android.graphics.Rect)

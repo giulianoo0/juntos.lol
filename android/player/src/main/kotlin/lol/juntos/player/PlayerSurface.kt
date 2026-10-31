@@ -67,7 +67,9 @@ private fun Subtitles(player: Media3Player) {
         Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, bottom = lift),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        val fontSize = with(LocalDensity.current) { maxOf(13.dp.toPx(), maxHeight.toPx() * 0.045f).toSp() }
+        // A picture-in-picture window is too short for the site's 13 px floor.
+        val floor = if (maxHeight < 240.dp) 8.dp else 13.dp
+        val fontSize = with(LocalDensity.current) { maxOf(floor.toPx(), maxHeight.toPx() * 0.045f).toSp() }
         val stroke = with(LocalDensity.current) { fontSize.toPx() * 0.16f }
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
             for (cue in cues) {

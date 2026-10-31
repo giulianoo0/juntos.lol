@@ -17,7 +17,7 @@ private val THREE_TO_TWO = mapOf(
     "lav" to "lv", "lit" to "lt", "nor" to "no", "pol" to "pl", "por" to "pt", "rus" to "ru",
     "slv" to "sl", "spa" to "es", "srp" to "sr", "swe" to "sv", "tam" to "ta", "tel" to "te",
     "tgl" to "tl", "tha" to "th", "tur" to "tr", "ukr" to "uk", "urd" to "ur", "vie" to "vi",
-    "nob" to "nb", "nno" to "nn", "bos" to "bs", "cmn" to "zh", "arb" to "ar", "twi" to "tw",
+    "nob" to "no", "nno" to "no", "bos" to "bs", "cmn" to "zh", "arb" to "ar", "twi" to "tw",
 )
 
 private val FFMPEG_PLACEHOLDER = Regex("^audio_\\d+$")
@@ -42,6 +42,12 @@ fun languageLabel(code: String): String? {
     // Media3 writes Indonesian as "ms-ind" and Serbian as "hbs-srp": a three-letter second subtag is the language itself.
     val inner = subtags.getOrNull(1)?.takeIf { it.length == 3 && it.all { c -> c in 'a'..'z' } }
     return inner?.let(::nameOf) ?: nameOf(subtags[0])
+}
+
+/** The language's English name, three-letter codes included: what a release's titles spell. */
+fun englishLanguageName(code: String): String {
+    val primary = code.trim().lowercase().replace('_', '-').split('-')[0]
+    return Locale.forLanguageTag(THREE_TO_TWO[primary] ?: primary).getDisplayLanguage(Locale.ENGLISH)
 }
 
 private fun nameOf(code: String): String? {

@@ -20,6 +20,7 @@ class SubtitleLabelTest {
         assertEquals("Português (Brasil)", subtitleLabel("NF_Portuguese(Brazil)", "por"))
         assertEquals("Espanhol (América Latina)", subtitleLabel("NF_Spanish(Latin_America)", "spa"))
         assertEquals("Japonês (CC)", subtitleLabel("NF_Japanese(CC)", "jpn"))
+        assertEquals("Norueguês", subtitleLabel("NF_Norwegian", "nob"))
         assertEquals("Inglês (automática)", subtitleLabel("English (auto-generated)", "en"))
     }
 

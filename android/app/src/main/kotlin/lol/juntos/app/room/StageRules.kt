@@ -1,11 +1,11 @@
 package lol.juntos.app.room
 
-import java.util.Locale
 import kotlin.math.ceil
 import lol.juntos.core.media.regionHolds
 import lol.juntos.core.model.MediaRegion
 import lol.juntos.core.model.RoomInfo
 import lol.juntos.core.model.RoomPreparation
+import lol.juntos.player.englishLanguageName
 import lol.juntos.player.languageLabel
 
 enum class StageStatus { Empty, Preparing, Ready, Failed }
@@ -75,7 +75,7 @@ fun subtitleLabel(title: String, language: String): String {
     val cleaned = title.trim().replace(PROVIDER, "").replace('_', ' ').trim()
     val extras = PARENS.findAll(cleaned).map { it.groupValues[1].trim() }.filter { it.isNotEmpty() }.toList()
     val base = cleaned.replace(PARENS, "").trim()
-    val english = Locale.forLanguageTag(language).getDisplayLanguage(Locale.ENGLISH)
+    val english = englishLanguageName(language)
     val named = languageLabel(language)
     val plain = base.isEmpty() || base.equals(english, ignoreCase = true) || (named != null && base.equals(named, ignoreCase = true))
     if (!plain) return cleaned.ifEmpty { title }
