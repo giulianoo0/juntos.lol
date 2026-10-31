@@ -101,6 +101,7 @@ impl Planner {
 
     fn plan(&mut self, local: &[LocalRegion], playhead_ms: u64, max: usize, with_inflight: bool) -> Vec<Item> {
         let mut order: Vec<(usize, usize)> = Vec::new();
+        let mut past: Vec<(usize, usize)> = Vec::new();
         let mut rest: Vec<(usize, usize)> = Vec::new();
         let anchor = self.anchor(local, playhead_ms);
         let first = local.iter().find(|l| l.n == 0);
@@ -111,9 +112,10 @@ impl Planner {
                 past_limit = if at.from_ms == 0 { kp } else { first.map_or(0, |l| index_or_len(&l.variants[0], at.from_ms)) };
             }
             order.extend((kp..kp + AHEAD).map(|k| (remote, k)));
+            // A segment the window passed before it went up would hold the region's span there for good.
+            past.extend((0..kp).map(|k| (remote, k)));
             rest.extend((kp + AHEAD..region_len(local, &self.remotes[remote])).map(|k| (remote, k)));
         }
-        let mut past = Vec::new();
         if past_limit > 0 && first.is_some() {
             let back = self.remote_for(0, 0);
             past.extend((0..past_limit).map(|k| (back, k)));
@@ -122,12 +124,14 @@ impl Planner {
         let mut out = Vec::new();
         let mut seen = HashSet::new();
         for slots in [&order, &past, &rest] {
-            if let Some(&(remote, _)) = slots.first() {
-                for item in self.inits(local, remote) {
-                    self.offer(item, &mut out, &mut seen, max, with_inflight);
-                }
-            }
+            let mut last = None;
             for &(remote, k) in slots {
+                if last != Some(remote) {
+                    last = Some(remote);
+                    for item in self.inits(local, remote) {
+                        self.offer(item, &mut out, &mut seen, max, with_inflight);
+                    }
+                }
                 for item in self.segments(local, remote, k) {
                     self.offer(item, &mut out, &mut seen, max, with_inflight);
                 }
@@ -337,6 +341,19 @@ mod tests {
         finish(&mut planner, &ahead);
         let past = planner.next(&local, 41_000, 4);
         assert_eq!(names(&past), ["cinit_0.mp4", "cinit_1.mp4", "cs_0_0.m4s", "cs_1_0.m4s"]);
+    }
+
+    #[test]
+    fn a_hole_the_playhead_left_behind_in_its_region_is_filled() {
+        let local = [region(0, 0, 40, true)];
+        let mut planner = Planner::new();
+        let first = planner.next(&local, 41_000, 4);
+        finish(&mut planner, &first[..3]);
+        planner.failed(&first[3].remote);
+        // The room played on two segments before that audio segment could go up.
+        let rest = planner.next(&local, 49_000, 1_000);
+        finish(&mut planner, &rest);
+        assert_eq!(planner.regions(&local)[1], RegionReport { n: 1, start_ms: 40_000, produced_ms: 120_000, growing: false });
     }
 
     #[test]
