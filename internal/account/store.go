@@ -57,6 +57,10 @@ type Account struct {
 	CreatedAt         time.Time `json:"createdAt"`
 	Sessions          int64     `json:"-"`
 	WatchedSeconds    int64     `json:"-"`
+	// GuildAsked is set once the account was sent to Discord to join the
+	// server, or joined it; GuildJoined once the join went through.
+	GuildAsked  bool `json:"-"`
+	GuildJoined bool `json:"-"`
 }
 
 // Changes is a PATCH of an account; nil fields stay as they are. An empty
@@ -108,13 +112,15 @@ type Store struct {
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 const accountColumns = `id, discord_id, nickname, avatar, visibility, discord_username,
-	discord_global_name, discord_public, created_at, sessions, watched_seconds`
+	discord_global_name, discord_public, created_at, sessions, watched_seconds,
+	guild_asked_at IS NOT NULL, guild_joined_at IS NOT NULL`
 
 func scanAccount(row pgx.Row) (Account, error) {
 	var a Account
 	var discordPublic bool
 	err := row.Scan(&a.ID, &a.DiscordID, &a.Nickname, &a.Avatar, &a.Visibility, &a.DiscordUsername,
-		&a.DiscordGlobalName, &discordPublic, &a.CreatedAt, &a.Sessions, &a.WatchedSeconds)
+		&a.DiscordGlobalName, &discordPublic, &a.CreatedAt, &a.Sessions, &a.WatchedSeconds,
+		&a.GuildAsked, &a.GuildJoined)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, ErrNotFound
 	}
@@ -215,6 +221,21 @@ func (s *Store) Update(ctx context.Context, id int64, changes Changes) (Account,
 		nickname = COALESCE($2, nickname), avatar = COALESCE($3, avatar),
 		visibility = COALESCE($4, visibility), discord_public = COALESCE($5, discord_public)
 		WHERE id = $1 RETURNING `+accountColumns, id, nickname, changes.Avatar, changes.Visibility, discordPublic))
+}
+
+// MarkGuildAsked spends the account's one ask to join the server, saying
+// whether this call is the one that spent it.
+func (s *Store) MarkGuildAsked(ctx context.Context, id int64) (bool, error) {
+	tag, err := s.pool.Exec(ctx, "UPDATE accounts SET guild_asked_at = now() WHERE id = $1 AND guild_asked_at IS NULL", id)
+	return tag.RowsAffected() == 1, err
+}
+
+// MarkGuildJoined records that the account is in the server, which also
+// spends its ask.
+func (s *Store) MarkGuildJoined(ctx context.Context, id int64) error {
+	_, err := s.pool.Exec(ctx, `UPDATE accounts SET guild_joined_at = COALESCE(guild_joined_at, now()),
+		guild_asked_at = COALESCE(guild_asked_at, now()) WHERE id = $1`, id)
+	return err
 }
 
 func hashToken(token string) []byte {
