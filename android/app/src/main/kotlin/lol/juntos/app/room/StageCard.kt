@@ -11,7 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +32,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import lol.juntos.core.model.RoomPreparation
@@ -49,25 +50,28 @@ private val WARM = Color(0xFFFF9366)
 fun PreparingCard(prep: RoomPreparation?, failed: String?, modifier: Modifier = Modifier) {
     val progress = preparationProgress(prep)
     val shown by animateFloatAsState(progress ?: 0f, pop(), label = "prep")
-    Box(modifier.fillMaxSize().background(Color(0xFF030407)), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier.fillMaxSize().background(Color(0xFF030407)), contentAlignment = Alignment.Center) {
+        // A portrait 16:9 stage is short: the card loses its frame and keeps to one line per row.
+        val compact = maxHeight < 260.dp
+        val shape = RoundedCornerShape(22.dp)
         Column(
             Modifier
                 .widthIn(max = 480.dp)
                 .fillMaxWidth()
-                .padding(16.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(22.dp))
-                .padding(horizontal = 20.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(if (compact) 12.dp else 16.dp)
+                .then(if (compact) Modifier else Modifier.clip(shape).border(1.dp, Color.White.copy(alpha = 0.1f), shape).padding(horizontal = 20.dp, vertical = 18.dp)),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 10.dp),
         ) {
             Text(
                 if (failed != null) "Falha ao processar o vídeo" else "Preparando seu vídeo",
                 color = Color(0xFFEDEDED),
-                fontSize = 19.sp,
+                fontSize = if (compact) 16.sp else 19.sp,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             val line = failed ?: preparationLine(prep)
-            if (line != null) Text(line, color = Color(0xFF9B9B9B), fontSize = 13.sp)
+            if (line != null) Text(line, color = Color(0xFF9B9B9B), fontSize = if (compact) 12.sp else 13.sp, maxLines = if (compact) 2 else 3, overflow = TextOverflow.Ellipsis)
             if (failed == null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PrepBar(if (progress == null) null else shown, Modifier.weight(1f))

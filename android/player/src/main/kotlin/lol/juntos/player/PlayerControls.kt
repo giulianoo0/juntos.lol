@@ -157,6 +157,14 @@ fun PlayerControls(
     var feedbacks by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(snap.playing) { playingShown = snap.playing }
+    val waiting = waitText != null || (snap.buffering && snap.playing)
+    // Done loading, the controls are up at once instead of waiting for a tap.
+    LaunchedEffect(waiting) {
+        if (!waiting) {
+            visible = true
+            touches++
+        }
+    }
     LaunchedEffect(visible) { (player as? Media3Player)?.controlsShown?.value = visible }
     LaunchedEffect(visible, playingShown, touches, scrubbing) {
         if (visible && playingShown && !scrubbing) {
@@ -205,13 +213,9 @@ fun PlayerControls(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
-                        // A touch that only brings the controls back does not play or pause.
-                        if (!visible) {
-                            visible = true
-                            touches++
-                        } else {
-                            toggle()
-                        }
+                        // A tap shows or hides the controls; playing and pausing is the button's.
+                        visible = !visible
+                        touches++
                     },
                     onDoubleTap = { at ->
                         val direction = when {
@@ -252,7 +256,6 @@ fun PlayerControls(
         SkipLabel(skip, Alignment.CenterEnd, 1)
         feedback?.let { key(feedbacks) { CenterFeedback(it.playing, Modifier.align(Alignment.Center)) } }
 
-        val waiting = waitText != null || (snap.buffering && snap.playing)
         if (waiting) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Spinner()

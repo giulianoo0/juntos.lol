@@ -61,12 +61,12 @@ object RoomPresence {
 /**
  * Keeps the room alive off screen. One notification is the room itself, its people and Sair,
  * promoted to a Live Update where the system has them; the other is the video's media
- * controls, with the room's name and the logo, while there is a video.
+ * controls, with the room's name, while there is a video.
  */
 class RoomService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wake: PowerManager.WakeLock? = null
-    private val logo by lazy { logoBitmap() }
+    private val logo by lazy { markBitmap(this, (64 * resources.displayMetrics.density).toInt()) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -142,7 +142,6 @@ class RoomService : Service() {
     private fun mediaNotification(presence: Presence, session: MediaSession): Notification =
         NotificationCompat.Builder(this, MEDIA_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_juntos)
-            .setLargeIcon(logo)
             .setContentTitle(presence.mediaTitle)
             .setContentText(presence.roomName)
             .setContentIntent(openRoom())
@@ -187,15 +186,6 @@ class RoomService : Service() {
     private fun service(action: String, code: Int): PendingIntent =
         PendingIntent.getService(this, code, Intent(this, RoomService::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE)
 
-    private fun logoBitmap(): Bitmap {
-        val icon = ContextCompat.getDrawable(this, R.mipmap.ic_launcher)!!
-        val size = (64 * resources.displayMetrics.density).toInt()
-        return createBitmap(size, size).also { bitmap ->
-            icon.setBounds(0, 0, size, size)
-            icon.draw(Canvas(bitmap))
-        }
-    }
-
     companion object {
         private const val ROOM_CHANNEL = "room"
         private const val MEDIA_CHANNEL = "room-media"
@@ -209,6 +199,24 @@ class RoomService : Service() {
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, RoomService::class.java))
         }
+    }
+}
+
+/**
+ * The j alone, filling most of the square, on [ground] or on nothing: what the notifications
+ * and the media card show, instead of the launcher icon and its padding.
+ */
+internal fun markBitmap(context: Context, size: Int, ground: Int? = null): Bitmap {
+    val mark = ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground)!!
+    // The j spans y 24.1..82.8 of the icon's 108 units, centred near (54.3, 53.4).
+    val unit = size * 0.8f / 58.7f
+    val left = (size / 2f - 54.3f * unit).toInt()
+    val top = (size / 2f - 53.4f * unit).toInt()
+    return createBitmap(size, size).also { bitmap ->
+        val canvas = Canvas(bitmap)
+        if (ground != null) canvas.drawColor(ground)
+        mark.setBounds(left, top, left + (108 * unit).toInt(), top + (108 * unit).toInt())
+        mark.draw(canvas)
     }
 }
 

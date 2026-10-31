@@ -377,26 +377,15 @@ private fun OffScreen(
             media?.release()
         }
     }
-    val logo = remember { logoPng(context) }
     LaunchedEffect(roomName, people, mediaTitle, playing, hosting) {
         RoomPresence.show(Presence(roomName, people, mediaTitle, playing, hosting))
         (player as? Media3Player)?.describe(
             androidx.media3.common.MediaMetadata.Builder()
                 .setTitle(mediaTitle ?: roomName)
                 .setArtist(roomName)
-                .setArtworkData(logo, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                 .build(),
         )
     }
-}
-
-/** The launcher icon as PNG bytes, the artwork the media controls show. */
-private fun logoPng(context: Context): ByteArray {
-    val icon = androidx.core.content.ContextCompat.getDrawable(context, lol.juntos.app.R.mipmap.ic_launcher)!!
-    val bitmap = androidx.core.graphics.createBitmap(256, 256)
-    icon.setBounds(0, 0, 256, 256)
-    icon.draw(android.graphics.Canvas(bitmap))
-    return java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
 }
 
 /**
