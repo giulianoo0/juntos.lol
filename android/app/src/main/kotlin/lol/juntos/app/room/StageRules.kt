@@ -1,10 +1,12 @@
 package lol.juntos.app.room
 
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 import lol.juntos.core.media.regionHolds
 import lol.juntos.core.model.MediaRegion
 import lol.juntos.core.model.RoomInfo
 import lol.juntos.core.model.RoomPreparation
+import lol.juntos.core.model.SwarmStats
 import lol.juntos.player.englishLanguageName
 import lol.juntos.player.languageLabel
 
@@ -50,10 +52,67 @@ fun preparationLine(prep: RoomPreparation?): String? = when (prep?.previewPhase)
     else -> null
 }
 
+/** The bytes the wait ends at, and whether that is when it plays rather than when the whole file is in. */
+data class PrepTarget(val bytes: Long, val untilPlayable: Boolean)
+
+/**
+ * A file with no preview waits for all of it. Otherwise the wait ends when it can play: the
+ * preview's target, else the first seconds at the file's bitrate, never the whole download.
+ */
+fun prepTarget(prep: RoomPreparation?, durationMs: Long = 0): PrepTarget {
+    val source = prep?.sourceBytes ?: 0
+    if (prep?.previewPhase == "unavailable") return PrepTarget(source, untilPlayable = false)
+    val preview = prep?.previewTargetBytes ?: 0
+    if (preview > 0) return PrepTarget(preview, untilPlayable = true)
+    if (source > 0 && durationMs > 0) return PrepTarget(firstPlayBytes(source, durationMs), untilPlayable = true)
+    return PrepTarget(0, untilPlayable = true)
+}
+
+private const val MIN_USEFUL_BYTES_PER_SECOND = 16 * 1024
+
+/** Seconds left at [bytesPerSecond], or null while the rate is too thin to say. */
+fun etaSeconds(receivedBytes: Long, targetBytes: Long, bytesPerSecond: Double): Double? {
+    val remaining = targetBytes - receivedBytes
+    if (remaining <= 0 || bytesPerSecond < MIN_USEFUL_BYTES_PER_SECOND) return null
+    return remaining / bytesPerSecond
+}
+
+/** "menos de 1 min", "~4 min", "~2 h"; "quase lá" once everything it waits for is in. */
+fun etaLabel(seconds: Double?, arrived: Boolean): String? = when {
+    seconds == null -> if (arrived) "quase lá" else null
+    seconds < 60 -> "menos de 1 min"
+    seconds < 3600 -> "~${(seconds / 60).roundToInt()} min"
+    else -> "~${(seconds / 3600).roundToInt()} h"
+}
+
+private val PT_BR = java.util.Locale.forLanguageTag("pt-BR")
+
+fun megabytesPerSecond(bytesPerSecond: Long): String = String.format(PT_BR, "%.1f MB/s", bytesPerSecond / 1_048_576.0)
+
+/** MB under a gigabyte, where "0,01 GB" would say nothing. */
+fun byteSize(bytes: Long): String =
+    if (bytes < 1_073_741_824) String.format(PT_BR, "%.0f MB", bytes / 1_048_576.0) else String.format(PT_BR, "%.2f GB", bytes / 1_073_741_824.0)
+
+private const val FIRST_PLAY_MS = 16_000L
+
+/**
+ * What a hosted torrent must fetch before it plays: the gate's 10 s and the segment that
+ * holds them, at the file's average bitrate. The swarm streams from the start, so it comes first.
+ */
+fun firstPlayBytes(fileBytes: Long, durationMs: Long): Long =
+    if (durationMs <= 0) fileBytes else (fileBytes * (FIRST_PLAY_MS.toDouble() / durationMs).coerceAtMost(1.0)).toLong()
+
+/** The host's own wait, from its swarm, once the probe knows how long the file runs. */
+fun hostPreparation(swarm: SwarmStats?, durationMs: Long?): RoomPreparation? {
+    val size = swarm?.selectedBytes?.takeIf { it > 0 } ?: return null
+    val duration = durationMs?.takeIf { it > 0 } ?: return null
+    return RoomPreparation(sourceBytes = size, receivedBytes = swarm.haveBytes, previewTargetBytes = firstPlayBytes(size, duration))
+}
+
 /** How far the preview got, 0..1, or null while nothing says. */
-fun preparationProgress(prep: RoomPreparation?): Float? {
+fun preparationProgress(prep: RoomPreparation?, durationMs: Long = 0): Float? {
     val received = prep?.receivedBytes ?: return null
-    val target = (if (prep.previewPhase == "unavailable") prep.sourceBytes else prep.previewTargetBytes) ?: return null
+    val target = prepTarget(prep, durationMs).bytes
     if (target <= 0) return null
     return (received.toFloat() / target).coerceIn(0f, 1f)
 }

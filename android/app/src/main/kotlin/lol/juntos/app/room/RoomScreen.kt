@@ -153,13 +153,15 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
             }
         }
     }
+    val hostSwarm by (host?.swarm ?: remember { kotlinx.coroutines.flow.MutableStateFlow(null) }).collectAsState()
     val view = StageView(
         status = stageStatus,
         durationMs = timelineMs(room, mine?.durationMs),
         canControl = state.isController,
         chaptersMs = room?.chapters.orEmpty().map { it.startMs },
         waitText = if (stageStatus == StageStatus.Ready) waitText(snap.positionMs, mine?.regions ?: room?.mediaRegions.orEmpty(), bufferingFor, snap.bufferedAheadMs) else null,
-        preparation = room?.preparation,
+        preparation = hostPreparation(hostSwarm, mine?.durationMs) ?: room?.preparation,
+        swarm = hostSwarm ?: room?.preparation?.swarm,
         failure = room?.errorMessage?.takeIf { stageStatus == StageStatus.Failed }.orEmpty(),
         controls = true,
     )
@@ -218,7 +220,7 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
                             enter = fadeIn(pop()),
                             exit = fadeOut(settle()),
                         ) {
-                            PreparingCard(now.preparation, now.failure.takeIf { now.status == StageStatus.Failed })
+                            PreparingCard(now.preparation, now.swarm, now.durationMs, now.failure.takeIf { now.status == StageStatus.Failed })
                         }
                         BurstLayer(bursts, Modifier.fillMaxSize())
                     }
@@ -327,6 +329,7 @@ internal data class StageView(
     val chaptersMs: List<Long>,
     val waitText: String?,
     val preparation: lol.juntos.core.model.RoomPreparation?,
+    val swarm: lol.juntos.core.model.SwarmStats?,
     val failure: String,
     /** False in picture-in-picture: the window is the video and its subtitles. */
     val controls: Boolean,

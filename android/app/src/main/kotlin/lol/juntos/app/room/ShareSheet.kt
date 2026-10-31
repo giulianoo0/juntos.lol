@@ -133,7 +133,7 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
                                 val name = file.path.substringAfterLast('/')
                                 SpringRow(name, icon = JuntosIcons.Film, onClick = {
                                     run("Não deu para começar esse arquivo.") {
-                                        onHost(LocalSource.Torrent(opened.id, file.index, name.substringBeforeLast('.'), opened.magnet))
+                                        onHost(LocalSource.Torrent(opened.id, file.index, name.substringBeforeLast('.'), opened.magnet, file.size))
                                         onDismiss()
                                     }
                                 })

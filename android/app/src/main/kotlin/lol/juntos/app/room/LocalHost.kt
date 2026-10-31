@@ -24,6 +24,7 @@ import lol.juntos.core.media.regionFor
 import lol.juntos.core.media.regionHolds
 import lol.juntos.core.model.MediaRegion
 import lol.juntos.core.model.Seat
+import lol.juntos.core.model.SwarmStats
 import lol.juntos.core.sync.SyncSession
 import lol.juntos.producer.Producer
 
@@ -32,7 +33,7 @@ sealed interface LocalSource {
     val title: String
 
     data class Youtube(val url: String, val videoId: String, override val title: String, val durationMs: Long) : LocalSource
-    data class Torrent(val id: String, val index: Int, override val title: String, val magnet: String) : LocalSource
+    data class Torrent(val id: String, val index: Int, override val title: String, val magnet: String, val size: Long = 0) : LocalSource
 }
 
 /** One file a magnet holds, to pick from. */
@@ -61,6 +62,10 @@ class LocalHost(
     private val _preparing = MutableStateFlow(false)
     val preparing: StateFlow<Boolean> = _preparing
 
+    /** The torrent this phone is fetching for the room, read every second; null for YouTube. */
+    private val _swarm = MutableStateFlow<SwarmStats?>(null)
+    val swarm: StateFlow<SwarmStats?> = _swarm
+
     private var poll: Job? = null
     private var watch: Job? = null
     private var followTimer: Job? = null
@@ -86,7 +91,8 @@ class LocalHost(
             val file = it.jsonObject
             TorrentFile(file["index"]!!.jsonPrimitive.int, file["path"]!!.jsonPrimitive.content, file["size"]!!.jsonPrimitive.long)
         }
-        return OpenedTorrent(opened["id"]!!.jsonPrimitive.content, opened["name"]!!.jsonPrimitive.content, magnet, files)
+        val id = opened["id"]!!.jsonPrimitive.content
+        return OpenedTorrent(id, opened["name"]!!.jsonPrimitive.content, roomMagnet(id, magnet), files)
     }
 
     /** Points the room at [source] and starts writing it into the cache; the previous one stops. */
@@ -118,15 +124,25 @@ class LocalHost(
                     )
                 }.onFailure { Log.w(TAG, "subtitles", it) }
             }
-            poll = scope.launch { pollRegions(key) }
+            poll = scope.launch { pollRegions(key, source as? LocalSource.Torrent) }
             wanted?.let { if (it == generation) need(seat, generation) }
         } finally {
             _preparing.value = false
         }
     }
 
-    private suspend fun pollRegions(key: String) {
+    private suspend fun pollRegions(key: String, torrent: LocalSource.Torrent?) {
         while (scope.isActive) {
+            if (torrent != null) {
+                runCatching { producer.call("torrent_stats", mapOf("id" to torrent.id)).jsonObject }.getOrNull()?.let { stats ->
+                    _swarm.value = SwarmStats(
+                        peers = stats["peers"]?.jsonPrimitive?.longOrNull ?: 0,
+                        downSpeed = stats["downBps"]?.jsonPrimitive?.longOrNull ?: 0,
+                        haveBytes = stats["downloaded"]?.jsonPrimitive?.longOrNull ?: 0,
+                        selectedBytes = torrent.size,
+                    )
+                }
+            }
             val regions = runCatching { producer.call("local_regions", mapOf("key" to key)).jsonArray }.getOrNull()
             if (regions != null) {
                 if (lol.juntos.app.BuildConfig.DEBUG) Log.d(TAG, "regions $regions")
@@ -247,6 +263,7 @@ class LocalHost(
     private suspend fun stopCurrent() {
         val media = _media.value ?: return
         poll?.cancel()
+        _swarm.value = null
         watch?.cancel()
         followTimer?.cancel()
         _media.value = null

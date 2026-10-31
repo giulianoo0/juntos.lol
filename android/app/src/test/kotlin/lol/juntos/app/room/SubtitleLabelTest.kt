@@ -65,4 +65,38 @@ class SubtitleLabelTest {
         assertEquals(0.5f, preparationProgress(RoomPreparation(receivedBytes = 50, previewTargetBytes = 100))!!, 0.001f)
         assertNull(preparationProgress(RoomPreparation(previewPhase = "receiving")))
     }
+
+    @Test
+    fun `the wait ends when it can play, and at the whole file only when there is no preview`() {
+        assertEquals(PrepTarget(100, untilPlayable = true), prepTarget(RoomPreparation(sourceBytes = 1_000, previewTargetBytes = 100)))
+        assertEquals(PrepTarget(1_000, untilPlayable = false), prepTarget(RoomPreparation(sourceBytes = 1_000, previewTargetBytes = 100, previewPhase = "unavailable")))
+        assertEquals(PrepTarget(16_000_000, untilPlayable = true), prepTarget(RoomPreparation(sourceBytes = 1_440_000_000), durationMs = 1_440_000))
+        assertEquals(PrepTarget(0, untilPlayable = true), prepTarget(RoomPreparation(sourceBytes = 1_440_000_000)))
+    }
+
+    @Test
+    fun `the time left reads in minutes and hours, and says nothing while the rate is too thin`() {
+        val mb = 1_048_576L
+        assertNull(etaSeconds(0, 100 * mb, 1_000.0))
+        assertEquals("menos de 1 min", etaLabel(etaSeconds(0, 30 * mb, mb.toDouble()), arrived = false))
+        assertEquals("~4 min", etaLabel(etaSeconds(0, 240 * mb, mb.toDouble()), arrived = false))
+        assertEquals("~2 h", etaLabel(etaSeconds(0, 7_200 * mb, mb.toDouble()), arrived = false))
+        assertEquals("quase lá", etaLabel(etaSeconds(100, 100, mb.toDouble()), arrived = true))
+    }
+
+    @Test
+    fun `speed and size read with a Brazilian decimal comma`() {
+        assertEquals("3,5 MB/s", megabytesPerSecond(3_670_016))
+        assertEquals("1,50 GB", byteSize(1_610_612_736))
+        assertEquals("12 MB", byteSize(12_582_912))
+    }
+
+    @Test
+    fun `a hosted torrent plays once it has the first sixteen seconds at the file's bitrate`() {
+        assertEquals(16_000_000L, firstPlayBytes(1_440_000_000, 1_440_000))
+        assertEquals(1_000L, firstPlayBytes(1_000, 8_000))
+        val prep = hostPreparation(lol.juntos.core.model.SwarmStats(haveBytes = 4_000_000, selectedBytes = 1_440_000_000), 1_440_000)!!
+        assertEquals(0.25f, preparationProgress(prep)!!, 0.001f)
+        assertNull(hostPreparation(lol.juntos.core.model.SwarmStats(selectedBytes = 1_000), durationMs = 0))
+    }
 }

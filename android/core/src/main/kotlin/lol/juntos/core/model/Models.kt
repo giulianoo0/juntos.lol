@@ -75,6 +75,16 @@ data class RoomPreparation(
     val receivedBytes: Long? = null,
     val previewPhase: String? = null,
     val previewTargetBytes: Long? = null,
+    val swarm: SwarmStats? = null,
+)
+
+/** The torrent behind a room's source: a worker reports it, a phone hosting one reads its own. */
+@Serializable
+data class SwarmStats(
+    val peers: Long = 0,
+    val downSpeed: Long = 0,
+    val haveBytes: Long = 0,
+    val selectedBytes: Long = 0,
 )
 
 /** GET /api/rooms/{id}. */
