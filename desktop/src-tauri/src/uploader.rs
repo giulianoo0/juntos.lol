@@ -97,6 +97,12 @@ const READY_AHEAD_MS: u64 = 3_100;
 const REACH_MS: u64 = 10_000;
 /// Objects a held region lets pile up before the rounds go on without it.
 const HELD_CONFIRMS: usize = 32;
+/// What playback and the room's drift corrections move the playhead by,
+/// past the time between two looks, short of a seek.
+const JUMP_SLACK_MS: u64 = 5_000;
+/// The longest the room goes between follows while it plays (a couple of
+/// heartbeats).
+const FOLLOW_GAP: Duration = Duration::from_secs(10);
 const REVOKED: &[&str] = &["claim_mismatch", "stale_generation", "stale_run", "room_not_found"];
 
 /// One room's upload from the cache. Stops on `stop`, on a revoked claim,
@@ -178,7 +184,7 @@ impl Upload {
         // What each PUT on the way carries, to drop it and keep its URL.
         let mut flying: HashMap<String, (AbortHandle, PresignedObject, Instant)> = HashMap::new();
         let mut finished: Option<Result<anyhow::Result<ClosedObject>, JoinError>> = None;
-        let mut followed = self.playhead.load(Ordering::Relaxed);
+        let mut followed = (self.playhead.load(Ordering::Relaxed), Instant::now());
         let mut confirm: Vec<String> = Vec::new();
         let mut seq = 0u64;
         let mut bytes = 0u64;
@@ -200,12 +206,15 @@ impl Upload {
             }
             let local = producer.local_regions(key);
             let playhead = self.playhead.load(Ordering::Relaxed);
-            if playhead != followed {
-                followed = playhead;
-                for name in planner.displaced(&local, playhead, PUTS) {
-                    if let Some((put, sign, at)) = flying.remove(&name) {
-                        put.abort();
-                        signed.insert(name, (sign, at));
+            if playhead != followed.0 {
+                let seek = jumped(followed.0, playhead, followed.1.elapsed());
+                followed = (playhead, Instant::now());
+                if seek {
+                    for name in planner.displaced(&local, playhead, PUTS) {
+                        if let Some((put, sign, at)) = flying.remove(&name) {
+                            put.abort();
+                            signed.insert(name, (sign, at));
+                        }
                     }
                 }
             }
@@ -318,6 +327,15 @@ pub fn held(regions: &[RegionReport], announced: &HashSet<u64>, playhead_ms: u64
         .max_by_key(|r| r.start_ms)?;
     let ready = !region.growing || region.start_ms + region.produced_ms >= playhead_ms + READY_AHEAD_MS;
     (!ready && !announced.contains(&region.n)).then_some(region.n)
+}
+
+/// Whether the room's position jumped (a seek) between two looks `since`
+/// apart, rather than moving with playback: the room follows every few
+/// seconds while it plays, and a PUT dropped for that is uplink thrown away.
+/// A longer gap means a pause, which moves nothing.
+fn jumped(from_ms: u64, to_ms: u64, since: Duration) -> bool {
+    let played = since.min(FOLLOW_GAP).as_millis() as u64;
+    to_ms + JUMP_SLACK_MS < from_ms || to_ms > from_ms + played + JUMP_SLACK_MS
 }
 
 /// Where the run fence says the room is; an older server answers nothing.
@@ -446,6 +464,21 @@ mod tests {
         assert_eq!(held(&regions, &HashSet::from([0, 1]), 600_000), None);
         let ended = [report(0, 0, 320_000, true), report(1, 884_000, 4_000, false)];
         assert_eq!(held(&ended, &HashSet::from([0]), 886_000), None);
+    }
+
+    #[test]
+    fn playback_moving_the_playhead_is_not_a_seek() {
+        let look = Duration::from_secs(3);
+        for (from, to, since, seek) in [
+            (60_000, 63_000, look, false),
+            (60_000, 59_400, look, false),
+            (100_000, 150_000, Duration::from_secs(60), true),
+            (45_000, 56_000, look, true),
+            (60_000, 600_000, look, true),
+            (600_000, 150_000, look, true),
+        ] {
+            assert_eq!(jumped(from, to, since), seek, "{from} -> {to} in {since:?}");
+        }
     }
 
     #[test]
