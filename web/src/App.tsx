@@ -7,6 +7,7 @@ import { RoomHost } from './components/RoomHost'
 import { DownloadAppHost } from './components/DownloadApp'
 import { AppUpdate } from './components/AppUpdate'
 import { AppChrome } from './components/AppChrome'
+import { GuildJoin } from './account/GuildJoin'
 import type { CreateRoomInput } from './pages/Home'
 
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })))
@@ -43,6 +44,7 @@ export default function App() {
         <DownloadAppHost />
         <AppUpdate />
         <AppChrome />
+        <GuildJoin />
       </Suspense>
     </HistoryRouter>
   )

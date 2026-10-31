@@ -34,6 +34,8 @@ export interface Me extends AccountCard {
   discord?: DiscordNames
   createdAt: string
   stats: AccountStats
+  /** Never sent yet to join the juntos server on Discord. */
+  guildPending?: boolean
 }
 
 /** A profile; stats are left out when the account does not show them to the viewer. */
@@ -116,6 +118,16 @@ export async function updateMe(changes: MeChanges): Promise<Me> {
   const me = await response.json() as Me
   setMe(me)
   return me
+}
+
+/**
+ * Spends the account's one ask to join the juntos server. True means go
+ * through Discord's authorization now; the server has already marked it.
+ */
+export async function askGuildJoin(): Promise<boolean> {
+  const response = await fetch('/api/me/discord-guild', { method: 'POST' })
+  if (!response.ok) return false
+  return (await response.json() as { authorize?: boolean }).authorize === true
 }
 
 export async function logout(): Promise<void> {

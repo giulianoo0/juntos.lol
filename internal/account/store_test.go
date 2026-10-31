@@ -206,6 +206,29 @@ func TestInvitesKeepTheNewestPerFriendAndExpire(t *testing.T) {
 	require.Len(t, invites, 1)
 }
 
+func TestGuildAskIsSpentOnceAndJoinIsKept(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	ana, _ := store.SignInDiscord(ctx, DiscordUser{ID: "1", GlobalName: "Ana"})
+	bia, _ := store.SignInDiscord(ctx, DiscordUser{ID: "2", GlobalName: "Bia"})
+	require.False(t, ana.GuildAsked, "conta nova ainda não foi levada ao servidor")
+
+	first, err := store.MarkGuildAsked(ctx, ana.ID)
+	require.NoError(t, err)
+	again, err := store.MarkGuildAsked(ctx, ana.ID)
+	require.NoError(t, err)
+	require.True(t, first)
+	require.False(t, again, "o pedido só vale uma vez")
+	stored, _ := store.Get(ctx, ana.ID)
+	require.True(t, stored.GuildAsked)
+	require.False(t, stored.GuildJoined)
+
+	require.NoError(t, store.MarkGuildJoined(ctx, bia.ID))
+	stored, _ = store.Get(ctx, bia.ID)
+	require.True(t, stored.GuildJoined)
+	require.True(t, stored.GuildAsked, "quem entrou não é pedido de novo")
+}
+
 func TestRecordWatchKeepsNewestFirstAndCountsIt(t *testing.T) {
 	store := newTestStore(t)
 	ctx := t.Context()

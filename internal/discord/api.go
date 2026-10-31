@@ -54,8 +54,28 @@ func (a *API) AddGuildMember(ctx context.Context, guildID, userID, accessToken, 
 	if roleID == "" {
 		return nil
 	}
-	_, err := a.call(ctx, http.MethodPut, path+"/roles/"+url.PathEscape(roleID), true, struct{}{})
+	return a.AddGuildMemberRole(ctx, guildID, userID, roleID)
+}
+
+// AddGuildMemberRole gives someone already in the server the role, through
+// the bot alone.
+func (a *API) AddGuildMemberRole(ctx context.Context, guildID, userID, roleID string) error {
+	_, err := a.call(ctx, http.MethodPut, "/guilds/"+url.PathEscape(guildID)+"/members/"+url.PathEscape(userID)+"/roles/"+url.PathEscape(roleID), true, struct{}{})
 	return err
+}
+
+// unknownMember is Discord's code for someone not in the server; any other
+// 404, like Unknown Guild with the bot outside it, is no answer at all.
+const unknownMember = 10007
+
+// IsGuildMember says whether the user is in the server, as the bot sees it.
+func (a *API) IsGuildMember(ctx context.Context, guildID, userID string) (bool, error) {
+	_, err := a.call(ctx, http.MethodGet, "/guilds/"+url.PathEscape(guildID)+"/members/"+url.PathEscape(userID), true, nil)
+	var refused *APIError
+	if errors.As(err, &refused) && refused.Code == unknownMember {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // ErrDMClosed is Discord refusing the bot a DM: the person shares no server
@@ -93,15 +113,21 @@ func (e *APIError) Error() string {
 }
 
 func (a *API) call(ctx context.Context, method, path string, asBot bool, message any) (string, error) {
-	body, err := json.Marshal(message)
-	if err != nil {
-		return "", fmt.Errorf("marshal discord message: %w", err)
+	var body io.Reader
+	if message != nil {
+		raw, err := json.Marshal(message)
+		if err != nil {
+			return "", fmt.Errorf("marshal discord message: %w", err)
+		}
+		body = bytes.NewReader(raw)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, a.Base+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, a.Base+path, body)
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	if asBot {
 		request.Header.Set("Authorization", "Bot "+a.BotToken)
 	}
