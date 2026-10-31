@@ -82,12 +82,12 @@ type Config struct {
 	DiscordGuildID      string
 	DiscordMemberRoleID string
 
-	// Turnstile in front of opening and entering rooms; without a secret
-	// nobody is asked. Hostnames are where the widget may have been solved.
 	// CatalogAddonURL is the Stremio-protocol addon the catalog reads, in the
 	// browser; the server only hands its address over.
 	CatalogAddonURL string
 
+	// Turnstile in front of opening and entering rooms; without a secret
+	// nobody is asked. Hostnames are where the widget may have been solved.
 	TurnstileSiteKey   string
 	TurnstileSecret    string
 	TurnstileHostnames []string

@@ -10,11 +10,8 @@ import (
 
 const writeWait = 10 * time.Second
 
-// Variables so tests can shrink them. A connection is alive as long as
-// anything arrives on it: a pong, or the heartbeat the browser sends every
-// few seconds. Pongs alone were not enough — a link busy uploading a screen
-// held them back for minutes while the heartbeats kept coming, and the room
-// dropped members who were right there.
+// Variables so tests can shrink them. Any frame keeps a connection alive, not
+// just a pong: an uploading link can hold pongs back for minutes.
 var (
 	pongWait   = 60 * time.Second
 	pingPeriod = 30 * time.Second
