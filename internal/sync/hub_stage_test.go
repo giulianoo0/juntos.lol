@@ -138,6 +138,28 @@ func TestTheMediaOwnerDrivesThePlayback(t *testing.T) {
 	}
 }
 
+func TestTheHostWhoOpenedTheMediaHandsItsControlsAwayWithTheHost(t *testing.T) {
+	_, store, host, guest, _ := twoMembers(t)
+	_, _, err := store.SwapSource(t.Context(), "r1", "m1", "movie.mkv", "ready", time.Now())
+	require.NoError(t, err)
+	require.NoError(t, store.SetGatingDisabled(t.Context(), "r1", true))
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))
+	for _, conn := range []*websocket.Conn{host, guest} {
+		require.Equal(t, "members", readHubEvent(t, conn).Type)
+		require.Equal(t, "roomUpdated", readHubEvent(t, conn).Type)
+	}
+	require.True(t, storedRoom(t, store).SourceYielded)
+	require.Equal(t, "m1", storedRoom(t, store).SourceMemberID, "it still produces the media")
+
+	require.NoError(t, host.WriteJSON(Inbound{Type: "play", PositionMs: 1_000, Rate: 1}))
+	require.Equal(t, "not_controller", readHubEvent(t, host).ErrCode)
+
+	_, _, err = store.SwapSource(t.Context(), "r1", "m1", "next.mkv", "ready", time.Now())
+	require.NoError(t, err)
+	require.False(t, storedRoom(t, store).SourceYielded, "a new media drives again for whoever opens it")
+}
+
 func TestSpotlightIsTheHostsAndReachesEveryone(t *testing.T) {
 	_, store, host, guest, _ := twoMembers(t)
 	require.NoError(t, guest.WriteJSON(Inbound{Type: "spotlight", Kind: room.StageMedia}))

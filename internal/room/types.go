@@ -150,7 +150,9 @@ type Room struct {
 	ErrorMessage    string        `json:"errorMessage,omitempty"`
 	ControllerID    string        `json:"controllerId"`
 	SourceMemberID  string        `json:"sourceMemberId,omitempty"`
-	SourceOrigin    string        `json:"sourceOrigin,omitempty"`
+	// SourceYielded: whoever opened the media handed the host away, and with it the controls.
+	SourceYielded bool   `json:"sourceYielded,omitempty"`
+	SourceOrigin  string `json:"sourceOrigin,omitempty"`
 	// LocalSource: the media lives in the host's desktop app, which plays it
 	// from its own cache and uploads only while a browser needs it. It stays
 	// true through uploading and ready, until the source is swapped.

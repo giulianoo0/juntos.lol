@@ -68,6 +68,12 @@ describe('who may do what', () => {
     expect(canDriveMedia(playing, '')).toBe(false)
   })
 
+  it('leaves only the new host driving once the one who opened the media handed the host away', () => {
+    const handed = { ...playing, controllerId: 'm3', sourceMemberId: 'm1', sourceYielded: true }
+    expect(canDriveMedia(handed, 'm3')).toBe(true)
+    expect(canDriveMedia(handed, 'm1')).toBe(false)
+  })
+
   it('lets the host or the owner close a stage', () => {
     const [media, screen] = stagesOf(playing)
     expect(canCloseStage(playing, media, 'm1')).toBe(true)

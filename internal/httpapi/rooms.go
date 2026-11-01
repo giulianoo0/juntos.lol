@@ -203,6 +203,7 @@ func getRoom(store *room.Store, mediaBaseURL string, authorizer memberAuthorizer
 			"errorMessage":        r.ErrorMessage,
 			"controllerId":        r.ControllerID,
 			"sourceMemberId":      r.SourceMemberID,
+			"sourceYielded":       r.SourceYielded,
 			"sourceOrigin":        r.SourceOrigin,
 			"localSource":         r.LocalSource,
 			"localCopy":           r.LocalCopy,

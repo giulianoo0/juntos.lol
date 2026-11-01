@@ -73,7 +73,7 @@ export function stagesOf(room: RoomInfo): Stage[] {
 /** Play, pause, seek and rate: the host's, and whoever opened the media's. */
 export function canDriveMedia(room: RoomInfo, memberId: string): boolean {
   if (!memberId) return false
-  return memberId === room.controllerId || (hasMedia(room) && memberId === room.sourceMemberId)
+  return memberId === room.controllerId || (hasMedia(room) && memberId === room.sourceMemberId && !room.sourceYielded)
 }
 
 export function canCloseStage(room: RoomInfo, stage: Stage, memberId: string): boolean {

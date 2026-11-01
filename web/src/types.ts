@@ -160,6 +160,8 @@ export interface RoomInfo {
   createdAt?: string
   /** Who opened the media; they drive it besides the host. */
   sourceMemberId?: string
+  /** Whoever opened the media handed the host away, and its controls with it. */
+  sourceYielded?: boolean
   sourceOrigin?: 'file' | 'torrent' | 'url' | 'youtube'
   mediaGeneration: number
   mediaVersion?: number

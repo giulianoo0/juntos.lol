@@ -318,6 +318,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 	}
 	r.Name = fields["name"]
 	r.SourceMemberID = fields["source_member_id"]
+	r.SourceYielded = fields["source_yielded"] == "1"
 	r.SourceOrigin = fields["source_origin"]
 	r.LocalSource = fields["local_source"] == "1"
 	if v := fields["local_copy"]; v != "" && r.LocalSource {
@@ -430,7 +431,13 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 // SetSourceHolder records which member's browser holds the room's source and
 // what kind of pick it was.
 func (s *Store) SetSourceHolder(ctx context.Context, id, memberID, origin string) error {
-	return s.mutateRoom(ctx, id, false, "source_member_id", memberID, "source_origin", origin)
+	return s.mutateRoom(ctx, id, false, "source_member_id", memberID, "source_origin", origin, "source_yielded", "")
+}
+
+// SetSourceYielded records that whoever opened the media handed the host away:
+// they still produce it, but no longer drive it.
+func (s *Store) SetSourceYielded(ctx context.Context, id string) error {
+	return s.mutateRoom(ctx, id, false, "source_yielded", "1")
 }
 
 // SetIngestProgress records how much of the incoming source has landed. It is
@@ -903,7 +910,7 @@ redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapte
   'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
 		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
   'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token',
-  'source_origin', 'source_kind', 'renditions', 'local_copy')
+  'source_origin', 'source_kind', 'renditions', 'local_copy', 'source_yielded')
 redis.call('DEL', KEYS[2])
 redis.call('DEL', KEYS[3])
 redis.call('DEL', KEYS[4])

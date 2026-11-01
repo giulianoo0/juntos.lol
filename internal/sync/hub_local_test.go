@@ -158,6 +158,7 @@ func TestTheProducerIsAskedEvenAfterHandingTheControlsAway(t *testing.T) {
 
 	require.NoError(t, host.WriteJSON(Inbound{Type: "transfer", TargetID: "m2"}))
 	nextOf(t, guest, "members")
+	nextOf(t, guest, "roomUpdated")
 	requireNoEvent(t, guest, 50*time.Millisecond)
 
 	require.NoError(t, host.Close())

@@ -279,5 +279,5 @@ func (r *roomConn) mayDrive(ctx context.Context, sender *client) bool {
 	if err != nil {
 		return false
 	}
-	return stored.SourceMemberID != "" && stored.SourceMemberID == sender.id
+	return stored.SourceMemberID != "" && stored.SourceMemberID == sender.id && !stored.SourceYielded
 }

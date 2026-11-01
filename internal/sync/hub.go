@@ -758,6 +758,15 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 	case "transfer":
 		ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 		err := r.hub.store.SetController(ctx, r.id, target.id)
+		// The host who opened the media gives its controls away with the host.
+		yielded := false
+		if stored, getErr := r.hub.store.Get(ctx, r.id); err == nil && getErr == nil && stored.SourceMemberID == sender.id {
+			if err := r.hub.store.SetSourceYielded(ctx, r.id); err != nil {
+				slog.ErrorContext(r.hub.ctx, "yield media controls failed", "room_id", r.id, "error", err)
+			} else {
+				yielded = true
+			}
+		}
 		cancel()
 		if err != nil {
 			slog.ErrorContext(r.hub.ctx, "transfer websocket controller failed", "room_id", r.id, "error", err)
@@ -766,6 +775,9 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		}
 		r.controllerID = target.id
 		r.broadcast(Outbound{Type: "members", ControllerID: r.controllerID, Members: r.members()})
+		if yielded {
+			r.broadcast(Outbound{Type: "roomUpdated"})
+		}
 		r.replayStageRequests()
 		r.syncBrowserMedia(target)
 	case "kick":
