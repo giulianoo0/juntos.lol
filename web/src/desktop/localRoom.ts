@@ -24,6 +24,8 @@ export interface LocalMedia {
   /** The cache entry's base: the player reads `<root>/hls/<name>`. */
   root: string
   generation: number
+  /** The app's ffprobe of the source: a local room's own duration is often unknown. */
+  durationMs: number
   regions: MediaRegion[]
 }
 
@@ -193,7 +195,7 @@ async function attach(roomId: string, generation: number, source: LocalSource, p
   detach(roomId)
   const attached: Attached = {
     key: meta.key,
-    media: { root: `${app.mediaRoot}/${meta.key}`, generation, regions: [] },
+    media: { root: `${app.mediaRoot}/${meta.key}`, generation, durationMs: meta.durationMs, regions: [] },
     positionMs: 0,
     poll: setInterval(() => { void refreshLocalMedia(roomId) }, POLL_MS),
     low: false,

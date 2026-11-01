@@ -4,7 +4,7 @@ import type { RoomInfo } from '../types'
 
 const room = { id: 'R', status: 'local', mediaGeneration: 2, fileName: 'Filme', controllerId: 'h', audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0, memberCount: 2, expiresAt: '' } as RoomInfo
 const regions = [{ n: 0, startMs: 0, producedMs: 8000, growing: true }]
-const local = { root: 'juntos-media://localhost/k', generation: 2, regions }
+const local = { root: 'juntos-media://localhost/k', generation: 2, durationMs: 1_413_846, regions }
 
 describe('the room as the desktop host plays it', () => {
   it('is ready the moment the cache has a region of this generation', () => {
@@ -32,5 +32,10 @@ describe('the room as the desktop host plays it', () => {
     expect(played.mediaRoot).toBe('juntos-media://localhost/k')
     expect(played.room.mediaRegions).toEqual(regions)
     expect(played.room.status).toBe('ready')
+  })
+
+  it('runs the timeline to the end of the source the app probed when the room has no duration', () => {
+    expect(playableRoom(room, local).room.durationMs).toBe(1_413_846)
+    expect(playableRoom({ ...room, durationMs: 1_440_000 }, local).room.durationMs).toBe(1_440_000)
   })
 })

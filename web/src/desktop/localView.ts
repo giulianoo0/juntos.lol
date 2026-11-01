@@ -19,7 +19,13 @@ export function localStatus(status: string, local: LocalMedia | null, generation
 export function playableRoom(room: RoomInfo, local: LocalMedia | null): { room: RoomInfo; mediaRoot: string | undefined } {
   if (!mine(local, room.mediaGeneration)) return { room, mediaRoot: undefined }
   return {
-    room: { ...room, status: localStatus(room.status, local, room.mediaGeneration), mediaRegions: local.regions },
+    room: {
+      ...room,
+      status: localStatus(room.status, local, room.mediaGeneration),
+      mediaRegions: local.regions,
+      // The cache's playlist grows as it is made; the timeline is the whole source from the start.
+      durationMs: room.durationMs && room.durationMs > 0 ? room.durationMs : local.durationMs || room.durationMs,
+    },
     mediaRoot: local.root,
   }
 }

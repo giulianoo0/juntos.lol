@@ -45,7 +45,7 @@ describe('a room played from the desktop cache', () => {
     expect(await attachLocalRoom('ROOM1', 4, source)).toBeNull()
     expect(invoke).toHaveBeenCalledWith('local_prepare', { source })
     await refreshLocalMedia('ROOM1')
-    expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, regions })
+    expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, durationMs: 600000, regions })
   })
 
   it('has the app publish the source\'s subtitles to the room as the seat that opened it, and a guest copy never does', async () => {
@@ -276,7 +276,7 @@ describe('a guest on the app playing its own copy', () => {
     expect(calls('torrent_select')).toEqual([{ id: 'abc', index: 2 }])
     expect(calls('local_prepare')).toEqual([{ source: { kind: 'torrent', id: 'abc', index: 2, title: 'A Viagem de Chihiro – 千と千尋' } }])
     await refreshLocalMedia('ROOM1')
-    expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, regions })
+    expect(localMediaFor('ROOM1')).toEqual({ root: 'juntos-media://localhost/t-abc-0', generation: 4, durationMs: 600000, regions })
   })
 
   it('opens the same video', async () => {
