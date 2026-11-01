@@ -90,12 +90,18 @@ pub fn call(method: &str, args: &str) -> String {
         return json!({ "error": "not initialized" }).to_string();
     };
     let args: Value = serde_json::from_str(args).unwrap_or(Value::Null);
-    let result = tauri::async_runtime::runtime().block_on(dispatch(state, method, args));
+    // A panic would cross into the JVM and abort the whole app; it answers as an error instead.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tauri::async_runtime::runtime().block_on(dispatch(state, method, args))))
+        .unwrap_or_else(|panic| Err(format!("{method} panicked: {}", panic_message(&panic))));
     match result {
         Ok(value) => json!({ "ok": value }),
         Err(error) => json!({ "error": error }),
     }
     .to_string()
+}
+
+fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> &str {
+    panic.downcast_ref::<&str>().copied().or_else(|| panic.downcast_ref::<String>().map(String::as_str)).unwrap_or("unknown")
 }
 
 fn err(error: impl std::fmt::Display) -> String {

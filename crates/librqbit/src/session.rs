@@ -718,6 +718,15 @@ impl Session {
                     b
                 };
 
+                // The platform verifier needs a JNI handshake on Android nobody does: an
+                // https tracker panicked the app. Mozilla's roots, built in, need none.
+                #[cfg(target_os = "android")]
+                let builder = builder.tls_certs_only(
+                    webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                        .iter()
+                        .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
+                );
+
                 builder
                     .user_agent(&client_name_and_version)
                     .build()

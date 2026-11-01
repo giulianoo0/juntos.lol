@@ -2308,6 +2308,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "webpki-root-certs",
  "windows",
 ]
 
