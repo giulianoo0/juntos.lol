@@ -123,6 +123,8 @@ export const ptBR: Record<string, string> = {
   'prep.etaAlmost': 'quase lá',
   'room.error': 'Falha ao processar o vídeo',
   'room.expired': 'Esta sala expirou.',
+  'room.openedInApp': 'A sala abriu no app.',
+  'room.stayInBrowser': 'Continuar no navegador',
   'room.new': 'Criar nova sala',
   'room.backToRoom': 'Voltar para a sala',
   'room.copyReport': 'Copiar o erro',

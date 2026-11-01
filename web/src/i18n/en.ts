@@ -123,6 +123,8 @@ export const en: Record<string, string> = {
   'prep.etaAlmost': 'almost there',
   'room.error': 'Video processing failed',
   'room.expired': 'This room has expired.',
+  'room.openedInApp': 'The room opened in the app.',
+  'room.stayInBrowser': 'Continue in the browser',
   'room.new': 'Create new room',
   'room.backToRoom': 'Back to the room',
   'room.copyReport': 'Copy the error',

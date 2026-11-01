@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { appRoomLink } from './openInApp'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { appRoomLink, openRoomInApp } from './openInApp'
 
 const CHROME_ANDROID = 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36'
 const ANDROID_WEBVIEW = 'Mozilla/5.0 (Linux; Android 14; Pixel 7; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0 Mobile Safari/537.36'
@@ -34,5 +34,36 @@ describe('appRoomLink', () => {
 
   it('never builds a link from a room id that is not one', () => {
     expect(appRoomLink('../x', HREF, MAC_SAFARI, true)).toBeNull()
+  })
+})
+
+describe('openRoomInApp', () => {
+  const realLocation = window.location
+  beforeEach(() => {
+    vi.useFakeTimers()
+    sessionStorage.clear()
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(WINDOWS_CHROME)
+    Object.defineProperty(window, 'location', { configurable: true, value: { href: HREF } })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    Object.defineProperty(window, 'location', { configurable: true, value: realLocation })
+  })
+
+  it('says the app took the room when the page loses the focus right after the link', async () => {
+    const handed = openRoomInApp('ABCD1234')
+    expect(window.location.href).toBe('juntos://room/ABCD1234')
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    window.dispatchEvent(new Event('blur'))
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(await handed).toBe(true)
+  })
+
+  it('keeps the room in this tab when nothing answers the link, and tries only once', async () => {
+    const handed = openRoomInApp('ABCD1234')
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(await handed).toBe(false)
+    expect(await openRoomInApp('ABCD1234')).toBe(false)
   })
 })

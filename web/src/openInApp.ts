@@ -34,15 +34,33 @@ export function appRoomLink(roomId: string, href: string, userAgent: string, app
   return chromium || appDownloaded ? `juntos://room/${roomId}` : null
 }
 
-/** Once per room and tab, a room opened in a browser hands itself to the app. */
-export function openRoomInApp(roomId: string): void {
-  if (isDesktop()) return
+/** How long the page waits to see the app (or the browser's prompt for it) take the focus. */
+const HANDOFF_MS = 2_500
+
+/**
+ * Once per room and tab, a room opened in a browser hands itself to the app. True when the
+ * page lost the focus right after: the app took the room and this tab should not join it too.
+ */
+export function openRoomInApp(roomId: string): Promise<boolean> {
+  if (isDesktop()) return Promise.resolve(false)
   try {
-    if (sessionStorage.getItem(TRIED_KEY(roomId))) return
+    if (sessionStorage.getItem(TRIED_KEY(roomId))) return Promise.resolve(false)
     sessionStorage.setItem(TRIED_KEY(roomId), '1')
   } catch {
-    return
+    return Promise.resolve(false)
   }
   const link = appRoomLink(roomId, window.location.href, navigator.userAgent, downloaded())
-  if (link) window.location.href = link
+  if (!link) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    let left = false
+    const away = () => { if (document.hidden || !document.hasFocus()) left = true }
+    window.addEventListener('blur', away)
+    document.addEventListener('visibilitychange', away)
+    window.location.href = link
+    setTimeout(() => {
+      window.removeEventListener('blur', away)
+      document.removeEventListener('visibilitychange', away)
+      resolve(left)
+    }, HANDOFF_MS)
+  })
 }

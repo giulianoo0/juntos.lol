@@ -3,7 +3,7 @@ import { Mascot } from '../mascot'
 import { avatarOf } from '../room/avatar'
 import { arrive } from '../ui/arrive'
 import { useT } from '../i18n/useT'
-import { PillLink } from '../ui/Pill'
+import { Pill, PillLink } from '../ui/Pill'
 import { SiteHeader } from './SiteHeader'
 import styles from './LostPage.module.css'
 
@@ -28,6 +28,21 @@ export function NotFoundPage({ title }: { title?: string }) {
     <div className={styles.page}>
       <SiteHeader />
       <LostPage title={title ?? t('lost.page')} action={<PillLink tone="brand" size="lg" href="/">{t('lost.home')}</PillLink>} />
+    </div>
+  )
+}
+
+/** The room went to the app; this tab only offers to stay. */
+export function OpenedInAppPage({ onStay }: { onStay: () => void }) {
+  const t = useT()
+  return (
+    <div className={styles.page}>
+      <SiteHeader />
+      <LostPage
+        seed="app"
+        title={t('room.openedInApp')}
+        action={<Pill tone="brand" size="lg" onClick={onStay}>{t('room.stayInBrowser')}</Pill>}
+      />
     </div>
   )
 }

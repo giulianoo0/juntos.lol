@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useNavigate } from 'react-router-dom'
 import { openRoomInApp } from '../openInApp'
 import { ensureHuman } from '../human'
-import { NotFoundPage } from '../components/LostPage'
+import { NotFoundPage, OpenedInAppPage } from '../components/LostPage'
 import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { CopyErrorReport } from '../components/CopyErrorReport'
@@ -107,7 +107,13 @@ const PRODUCER_ALIVE_MS = 90_000
     once you are in the call, waiting in the corner while you browse. */
 export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: boolean) => void }) {
   const t = useT()
-  useEffect(() => { openRoomInApp(id) }, [id])
+  // The app took the room: this tab waits instead of joining it a second time.
+  const [inApp, setInApp] = useState(false)
+  useEffect(() => {
+    let live = true
+    void openRoomInApp(id).then((handed) => { if (live && handed) setInApp(true) })
+    return () => { live = false }
+  }, [id])
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [preview, setPreview] = useState<RoomPreview | null>(null)
   const [missing, setMissing] = useState(false)
@@ -168,6 +174,7 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
 
   if (missing) return <NotFoundPage title={t('room.expired')} />
   if (!preview || meLoading) return <EntrySkeleton />
+  if (inApp && !entered) return <OpenedInAppPage onStay={() => setInApp(false)} />
 
   const joinMode: JoinMode = owner ? 'open' : preview.joinMode
   // An account walks in under its own name and face: the door only asks
