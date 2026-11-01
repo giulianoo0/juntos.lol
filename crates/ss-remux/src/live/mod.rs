@@ -217,7 +217,7 @@ async fn run(
         moq_mux::import::ContainerStream::new(broadcast.clone(), catalog.reserve(), "fmp4")
             .context("fmp4 importer")?;
 
-    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+    let mut cmd = tokio::process::Command::from(ss_media::tools::command(&ffmpeg_path));
     cmd.args(ffmpeg_args(selection, resolver.proxy()));
     // The HLS demuxer reopens playlists and segments with its own options,
     // so the trust roots go in through OpenSSL's environment, not an argument.

@@ -758,7 +758,7 @@ impl http::Refresh for RefreshVia {
 }
 
 fn ytdlp(cfg: &Config) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(&cfg.ytdlp_path);
+    let mut cmd = tokio::process::Command::from(ss_media::tools::command(&cfg.ytdlp_path));
     cmd.args(&cfg.ytdlp_args)
         .env_clear()
         .envs(ss_media::tools::tool_env())

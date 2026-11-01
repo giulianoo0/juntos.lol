@@ -286,7 +286,7 @@ impl Extractor {
         tokio::fs::create_dir_all(&fonts_dir).await?;
         let output = tokio::time::timeout(
             Duration::from_secs(120),
-            tokio::process::Command::new(&self.ffmpeg_path)
+            tokio::process::Command::from(ss_media::tools::command(&self.ffmpeg_path))
                 .args(["-nostdin", "-v", "error", "-dump_attachment:t", ""])
                 .args(crate::plan::INPUT_GUARD)
                 .args(["-i", &self.input_url, "-t", "0", "-f", "null", "/dev/null"])

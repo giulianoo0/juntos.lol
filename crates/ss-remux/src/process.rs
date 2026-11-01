@@ -19,7 +19,7 @@ pub struct Supervised {
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
 
 pub fn spawn(binary: &str, args: &[String]) -> anyhow::Result<Supervised> {
-    let mut child = Command::new(binary)
+    let mut child = Command::from(ss_media::tools::command(binary))
         .args(args)
         .env_clear()
         .envs(ss_media::tools::tool_env())
@@ -84,7 +84,7 @@ impl Supervised {
 pub async fn run_capture(binary: &str, args: &[String], timeout: Duration) -> anyhow::Result<String> {
     let output = tokio::time::timeout(
         timeout,
-        Command::new(binary)
+        Command::from(ss_media::tools::command(binary))
             .args(args)
             .env_clear()
             .envs(ss_media::tools::tool_env())

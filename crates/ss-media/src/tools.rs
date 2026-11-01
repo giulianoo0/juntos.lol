@@ -21,6 +21,19 @@ const KEPT: &[&str] = &[
     "TMPDIR",
 ];
 
+/// A tool's command; on Windows it opens no console window beside the app.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// The kept variables this process has, to pass after `env_clear`.
 pub fn tool_env() -> Vec<(&'static str, OsString)> {
     KEPT.iter().filter_map(|name| std::env::var_os(name).map(|value| (*name, value))).collect()
