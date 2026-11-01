@@ -42,3 +42,9 @@
   background: #c42b1c;
   color: #fff;
 }
+
+/* The floating picture-in-picture is all video: no window buttons over it. */
+:global(html[data-app-pip]) .buttons,
+:global(html[data-app-pip]) .drag {
+  display: none;
+}

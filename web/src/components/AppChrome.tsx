@@ -12,6 +12,16 @@ import { appChrome, desktop, type AppChrome as Chrome, type DesktopApp } from '.
 import { Tip } from '../ui/Tip'
 import styles from './AppChrome.module.css'
 
+const CONTROLS = 'button, a, input, textarea, select, label, [role="button"], [role="menuitem"], [role="tab"], [contenteditable="true"]'
+
+/** Where a press moves the window: anywhere in a drag region but on its controls. */
+export function dragsWindow(target: Element): boolean {
+  const region = target.closest('[data-tauri-drag-region]')
+  if (!region || target === region) return false
+  const control = target.closest(CONTROLS)
+  return control === null || !region.contains(control)
+}
+
 export function AppChrome() {
   const t = useT()
   const [app, setApp] = useState<DesktopApp | null>(null)
@@ -33,6 +43,22 @@ export function AppChrome() {
     root.dataset.appChrome = chrome
     return () => { delete root.dataset.appChrome }
   }, [chrome])
+
+  // Tauri moves the window only for a press on the marked element itself, never on its
+  // children: the title, the avatars and the gaps between them carried the header's weight.
+  useEffect(() => {
+    if (!chrome || !app) return
+    const press = (event: MouseEvent) => {
+      if (event.button !== 0 || !(event.target instanceof Element) || !dragsWindow(event.target)) return
+      event.preventDefault()
+      // The floating picture's double click goes back to the room, not to a maximised window.
+      if (event.detail === 2 && event.target.closest('[data-tauri-drag-region="pip"]')) return
+      const cmd = event.detail === 2 ? 'toggle_maximize' : 'start_dragging'
+      void app.invoke(`plugin:window|${cmd}`, { label: 'main' }).catch(() => undefined)
+    }
+    document.addEventListener('mousedown', press)
+    return () => document.removeEventListener('mousedown', press)
+  }, [chrome, app])
 
   if (!chrome || !app) return null
   const window = (cmd: 'minimize' | 'toggle_maximize' | 'close') => () => {
