@@ -154,3 +154,13 @@ fun subtitleRank(language: String, title: String): Int = when {
     else -> 2
 }
 
+
+/**
+ * The picture-in-picture window's shape, as the video's (pixel aspect included), held inside
+ * what Android accepts (2.39:1 either way). 16:9 until the video says its size.
+ */
+fun pipAspect(width: Int, height: Int, pixelRatio: Float = 1f): Pair<Int, Int> {
+    if (width <= 0 || height <= 0) return 16 to 9
+    val ratio = (width * pixelRatio / height).coerceIn(1 / 2.39f, 2.39f)
+    return (ratio * 1000).roundToInt() to 1000
+}

@@ -169,7 +169,9 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     LaunchedEffect(hasMedia) { if (!hasMedia && fullscreen) turn(false) }
     val fold = rememberFold()
     val layout = roomLayout(config.screenWidthDp, config.screenHeightDp, config.smallestScreenWidthDp, hasMedia, fullscreen, fold?.hinge)
-    val inPip = rememberPictureInPicture(autoEnter = hasMedia && snap.playing)
+    val pipShape = (player as? Media3Player)?.videoSize?.collectAsState()?.value
+        ?.let { pipAspect(it.width, it.height, it.pixelWidthHeightRatio) } ?: (16 to 9)
+    val inPip = rememberPictureInPicture(autoEnter = hasMedia && snap.playing, aspect = pipShape)
     val immersive = layout == RoomLayout.Immersive || inPip
     ImmersiveBars(immersive)
     OffScreen(
@@ -396,7 +398,7 @@ private fun OffScreen(
  * when the viewer leaves the app with a video playing.
  */
 @Composable
-private fun rememberPictureInPicture(autoEnter: Boolean): Boolean {
+private fun rememberPictureInPicture(autoEnter: Boolean, aspect: Pair<Int, Int>): Boolean {
     // Only MainActivity declares picture-in-picture; any other activity throws on the params.
     val activity = LocalContext.current.findActivity() as? lol.juntos.app.MainActivity ?: return false
     var inPip by remember { mutableStateOf(activity.isInPictureInPictureMode) }
@@ -410,10 +412,10 @@ private fun rememberPictureInPicture(autoEnter: Boolean): Boolean {
             if (activity.isInPictureInPictureMode) activity.moveTaskToBack(false)
         }
     }
-    LaunchedEffect(autoEnter) {
+    LaunchedEffect(autoEnter, aspect) {
         activity.setPictureInPictureParams(
             android.app.PictureInPictureParams.Builder()
-                .setAspectRatio(android.util.Rational(16, 9))
+                .setAspectRatio(android.util.Rational(aspect.first, aspect.second))
                 .setAutoEnterEnabled(autoEnter)
                 .setSeamlessResizeEnabled(true)
                 .build(),

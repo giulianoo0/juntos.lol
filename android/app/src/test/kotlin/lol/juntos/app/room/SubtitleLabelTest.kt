@@ -99,4 +99,14 @@ class SubtitleLabelTest {
         assertEquals(0.25f, preparationProgress(prep)!!, 0.001f)
         assertNull(hostPreparation(lol.juntos.core.model.SwarmStats(selectedBytes = 1_000), durationMs = 0))
     }
+
+    @Test
+    fun thePictureInPictureWindowTakesTheVideosShapeWithinWhatAndroidAllows() {
+        assertEquals(16 to 9, pipAspect(0, 0))
+        assertEquals(1778 to 1000, pipAspect(1920, 1080))
+        assertEquals(1333 to 1000, pipAspect(1440, 1080))
+        assertEquals(1778 to 1000, pipAspect(1440, 1080, 4 / 3f))
+        assertEquals(2390 to 1000, pipAspect(3840, 1080))
+        assertEquals(418 to 1000, pipAspect(1080, 3840))
+    }
 }
