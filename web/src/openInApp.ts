@@ -15,9 +15,10 @@ function downloaded(): boolean {
 
 /**
  * Where a room link goes to land in the app instead of this tab. Android's Chrome takes an
- * intent that falls back to this page marked `web=1` when the app is missing; a computer's
- * browser only gets `juntos://` once it downloaded the app, since Safari and Firefox show an
- * error for a scheme nobody registered. Web views, iPhones and the apps themselves stay here.
+ * intent that falls back to this page marked `web=1` when the app is missing. On a computer,
+ * Chrome and Edge ignore a scheme nobody registered, so they always try `juntos://`; Safari
+ * and Firefox show an error for it, so only once they downloaded the app. Web views, iPhones
+ * and the apps themselves stay here.
  */
 export function appRoomLink(roomId: string, href: string, userAgent: string, appDownloaded: boolean): string | null {
   if (!ROOM_ID.test(roomId)) return null
@@ -29,7 +30,8 @@ export function appRoomLink(roomId: string, href: string, userAgent: string, app
     return `intent://room/${roomId}#Intent;scheme=juntos;package=lol.juntos.app;S.browser_fallback_url=${encodeURIComponent(here.toString())};end`
   }
   if (/iPhone|iPad|Mobile/i.test(userAgent)) return null
-  return appDownloaded ? `juntos://room/${roomId}` : null
+  const chromium = /Chrome\/|Edg\//.test(userAgent) && !/Firefox\//.test(userAgent)
+  return chromium || appDownloaded ? `juntos://room/${roomId}` : null
 }
 
 /** Once per room and tab, a room opened in a browser hands itself to the app. */
