@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use librqbit::dht::DhtPersistenceConfig;
-use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Session, SessionOptions};
+use librqbit::api::TorrentIdOrHash;
+use librqbit::{AddTorrent, AddTorrentOptions, DhtSessionConfig, Magnet, Session, SessionOptions};
 use serde::Serialize;
 use ss_remux::torrent::local::Local;
 use ss_remux::torrent::{TorrentFiles, TorrentSource};
@@ -78,16 +79,23 @@ impl Torrents {
     /// Adds the magnet (paused: nothing downloads until a file is picked)
     /// and lists its files.
     pub async fn open(&self, magnet: &str) -> anyhow::Result<Opened> {
-        let response = tokio::time::timeout(
-            ADD_TIMEOUT,
-            self.local.session().add_torrent(
-                AddTorrent::from_url(magnet),
-                Some(AddTorrentOptions { paused: true, overwrite: true, ..Default::default() }),
-            ),
-        )
-        .await
-        .context("torrent metadata timed out")??;
-        let handle = response.into_handle().context("no torrent handle")?;
+        // librqbit looks a magnet's metadata up on the network before it sees the torrent is
+        // already here: the next episode of a pack waited out the site and went to the fleet.
+        let known = Magnet::parse(magnet).ok().and_then(|m| m.as_id20()).and_then(|id| self.local.session().get(TorrentIdOrHash::Hash(id)));
+        let handle = match known {
+            Some(handle) => handle,
+            None => tokio::time::timeout(
+                ADD_TIMEOUT,
+                self.local.session().add_torrent(
+                    AddTorrent::from_url(magnet),
+                    Some(AddTorrentOptions { paused: true, overwrite: true, ..Default::default() }),
+                ),
+            )
+            .await
+            .context("torrent metadata timed out")??
+            .into_handle()
+            .context("no torrent handle")?,
+        };
         // A torrent still checking its pieces refuses a file selection.
         tokio::time::timeout(ADD_TIMEOUT, handle.wait_until_initialized())
             .await
@@ -141,5 +149,34 @@ impl Torrents {
         let downloaded = stats.have_bytes.max(stats.progress_bytes);
         let progress = if stats.total_bytes > 0 { stats.progress_bytes as f64 / stats.total_bytes as f64 } else { 0.0 };
         Stats { peers, down_bps, downloaded, progress }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use librqbit::spawn_utils::BlockingSpawner;
+    use librqbit::{create_torrent, CreateTorrentOptions};
+
+    #[tokio::test]
+    async fn a_torrent_already_here_opens_by_its_magnet_without_the_network() {
+        let seed = tempfile::tempdir().unwrap();
+        std::fs::write(seed.path().join("ep01.mkv"), vec![7u8; 64 * 1024]).unwrap();
+        let made = create_torrent(seed.path(), CreateTorrentOptions { piece_length: Some(16 * 1024), ..Default::default() }, &BlockingSpawner::new(1))
+            .await
+            .unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let torrents = Torrents::new(data.path().to_path_buf()).await.unwrap();
+        torrents
+            .local
+            .session()
+            .add_torrent(AddTorrent::from_bytes(made.as_bytes().unwrap()), Some(AddTorrentOptions { paused: true, ..Default::default() }))
+            .await
+            .unwrap();
+
+        let magnet = format!("magnet:?xt=urn:btih:{}", made.info_hash().as_string());
+        let opened = tokio::time::timeout(Duration::from_secs(5), torrents.open(&magnet)).await.expect("waited on the network").unwrap();
+        assert_eq!(opened.id, made.info_hash().as_string());
+        assert_eq!(opened.files.len(), 1);
     }
 }
