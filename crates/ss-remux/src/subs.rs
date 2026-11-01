@@ -19,7 +19,6 @@ use super::publish::Revoked;
 const SEEK_LEAD_MS: u64 = 15_000;
 const TAIL_MS: u64 = 15_000;
 /// How far past the seek the pass reads before it slows to its pace.
-const INITIAL_BURST_MS: u64 = 15_000;
 const POLL: Duration = Duration::from_millis(1500);
 const PUBLISH_EVERY: Duration = Duration::from_secs(2);
 const MAX_DOC_BYTES: usize = 4 << 20;
@@ -110,12 +109,8 @@ pub fn extractor_args(input_url: &str, dir: &Path, plan: &SourcePlan, start_ms: 
         "error".into(),
         "-progress".into(),
         "pipe:1".into(),
-        "-readrate".into(),
-        "8".into(),
-        // The lead and the first seconds past the seek at full speed: the
-        // paced read alone held the first cue after a seek for ~13 s.
-        "-readrate_initial_burst".into(),
-        format!("{}", (SEEK_LEAD_MS + INITIAL_BURST_MS) / 1000),
+        // No -readrate: FFmpeg 8 paces the whole input by the sparse
+        // subtitle packets, and 8× became 1× (a 24 min episode outlived its run).
     ];
     let seek_ms = start_ms.saturating_sub(SEEK_LEAD_MS);
     if start_ms > 0 && seek_ms > 0 {
@@ -510,7 +505,7 @@ mod tests {
         let args = extractor_args("http://in", Path::new("/tmp/x"), &plan(), 1_021_000, 0);
         let joined = args.join(" ");
         assert!(joined.contains("-ss 1006.000 -copyts"));
-        assert!(joined.contains("-readrate 8 -readrate_initial_burst 30"), "the first cues after a seek wait on the pace: {joined}");
+        assert!(!joined.contains("-readrate"), "a paced read crawls at the pace of the subtitle packets: {joined}");
         assert!(joined.contains("-map 0:v:0 -c:v copy -f null /dev/null"));
         assert!(joined.contains("-map 0:s:2 -c:s copy"));
         assert!(joined.contains("-map 0:s:3 -c:s ass"));
