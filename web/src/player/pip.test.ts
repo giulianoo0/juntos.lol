@@ -37,6 +37,11 @@ describe('pipMode', () => {
     expect(pipMode({} as Window, { videoPip: false, canvasStream: true })).toBe('none')
     expect(pipMode({} as Window, { videoPip: true, canvasStream: false })).toBe('none')
   })
+
+  it("uses the desktop app's own window, whose web view opens neither", () => {
+    const withDocument = { documentPictureInPicture: { requestWindow: vi.fn() } } as unknown as Window
+    expect(pipMode(withDocument, { videoPip: true, canvasStream: true }, true)).toBe('app')
+  })
 })
 
 describe('openDocumentPip', () => {

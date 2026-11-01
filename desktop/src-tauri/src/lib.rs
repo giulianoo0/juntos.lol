@@ -2,6 +2,7 @@ pub mod cache;
 pub mod commands;
 pub mod hls;
 pub mod local;
+pub mod pip;
 pub mod screen;
 pub mod serve;
 pub mod site;
@@ -20,6 +21,9 @@ use tauri_plugin_opener::OpenerExt;
 
 use commands::{AppState, Tools};
 use site::Navigation;
+
+/// The smallest the window goes, but as the floating picture-in-picture.
+pub const MIN_WINDOW: (f64, f64) = (720.0, 520.0);
 
 /// What the drawn title bar needs: drag, double-click to zoom, and the buttons.
 const WINDOW_PERMISSIONS: &[&str] = &[
@@ -124,8 +128,10 @@ pub fn run() {
             screen::audio_stop,
             screen::screen_permission,
             screen::screen_permission_guide,
+            pip::pip_window,
         ])
         .manage(screen::ScreenState::default())
+        .manage(pip::PipState::default())
         .setup(move |app| {
             // An end-to-end run (debug builds only) keeps out of the way of the
             // app in daily use on the same machine: its own data, a private
@@ -196,7 +202,7 @@ pub fn run() {
             window
                 .title("Juntos")
                 .inner_size(1280.0, 800.0)
-                .min_inner_size(720.0, 520.0)
+                .min_inner_size(MIN_WINDOW.0, MIN_WINDOW.1)
                 .initialization_script(init)
                 .on_page_load(|_, payload| {
                     if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -213,6 +219,9 @@ pub fn run() {
                 })
                 .build()?
                 .with_webview(serve::mark_secure)?;
+            if let Some(main) = app.get_webview_window("main") {
+                pip::keep_shape(&main);
+            }
 
             let linked = app.handle().clone();
             let link_site = site.clone();
@@ -250,7 +259,7 @@ mod tests {
     #[test]
     fn the_site_is_granted_each_command_the_build_declares() {
         let granted: Vec<String> = site_permissions().collect();
-        assert_eq!(granted.len(), 30);
+        assert_eq!(granted.len(), 31);
         assert_eq!(granted[0], "allow-app-hello");
         assert!(granted.contains(&"allow-local-prepare".to_string()));
         assert!(granted.contains(&"allow-screen-start".to_string()));

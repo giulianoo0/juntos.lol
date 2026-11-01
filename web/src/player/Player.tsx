@@ -962,7 +962,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
 
   const { fullscreen, pinned, toggle: toggleFullscreen } = useStageFullscreen(playerRef)
   const pipBodyRef = useRef<HTMLDivElement>(null)
-  const pip = usePictureInPicture(pipBodyRef, videoRef)
+  const pip = usePictureInPicture(pipBodyRef, videoRef, t('room.exitPip'))
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

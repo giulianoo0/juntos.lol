@@ -28,3 +28,4 @@ screen_permission
 screen_permission_guide
 local_subtitles
 e2e_log
+pip_window

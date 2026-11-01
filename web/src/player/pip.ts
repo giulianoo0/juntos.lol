@@ -1,5 +1,6 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 
+import { desktop, isDesktop } from '../platform'
 import { subtitleFontSize } from './subtitleLayout'
 
 /**
@@ -8,8 +9,10 @@ import { subtitleFontSize } from './subtitleLayout'
  * a document window and carry the video and its subtitle layers into it;
  * Safari gets a canvas that composes picture and subtitles every frame,
  * streamed into a hidden video that goes to PiP. Firefox has no PiP API.
+ * The desktop app's web views open neither, so the app's own window becomes
+ * the small floating one.
  */
-export type PipMode = 'document' | 'canvas' | 'none'
+export type PipMode = 'app' | 'document' | 'canvas' | 'none'
 
 interface DocumentPictureInPicture {
   requestWindow(options: { width: number; height: number }): Promise<Window>
@@ -44,7 +47,8 @@ function browserFeatures(): PipFeatures {
   }
 }
 
-export function pipMode(scope: Window = window, features: PipFeatures = browserFeatures()): PipMode {
+export function pipMode(scope: Window = window, features: PipFeatures = browserFeatures(), app = isDesktop()): PipMode {
+  if (app) return 'app'
   if ((scope as PipScope).documentPictureInPicture) return 'document'
   if (features.videoPip && features.canvasStream) return 'canvas'
   return 'none'
@@ -209,12 +213,63 @@ export async function openCanvasPip(video: HTMLVideoElement, overlay: ParentNode
   }
 }
 
+const EXIT_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+
+/**
+ * The desktop app's PiP: `body` covers the window, the app shrinks the window
+ * to the video's shape in a corner of the screen and keeps it on top. Dragging
+ * the picture moves the window; a double click, Escape or the button go back.
+ */
+export async function openAppPip(body: HTMLElement, video: HTMLVideoElement, exitLabel: string, { onClose }: PipOptions): Promise<PipSession> {
+  const app = await desktop()
+  if (!app) throw new Error('desktop app unavailable')
+  const aspect = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
+  const style = body.getAttribute('style')
+  const root = document.documentElement
+  body.setAttribute('style', 'position:fixed;inset:0;z-index:2147483000;display:block;background:#000')
+  body.setAttribute('data-tauri-drag-region', 'pip')
+  root.dataset.appPip = ''
+  const exit = document.createElement('button')
+  exit.type = 'button'
+  exit.setAttribute('aria-label', exitLabel)
+  exit.title = exitLabel
+  exit.innerHTML = EXIT_ICON
+  exit.style.cssText = 'position:fixed;top:10px;right:10px;z-index:2147483001;display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:999px;background:rgba(0,0,0,.55);color:#fff;cursor:pointer'
+  document.body.append(exit)
+
+  let open = true
+  const close = () => {
+    if (!open) return
+    open = false
+    exit.remove()
+    body.removeEventListener('dblclick', close)
+    window.removeEventListener('keydown', onKey)
+    body.removeAttribute('data-tauri-drag-region')
+    if (style === null) body.removeAttribute('style')
+    else body.setAttribute('style', style)
+    delete root.dataset.appPip
+    void app.invoke('pip_window', { on: false, aspect }).catch(() => undefined)
+    onClose()
+  }
+  const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') close() }
+  exit.addEventListener('click', close)
+  body.addEventListener('dblclick', close)
+  window.addEventListener('keydown', onKey)
+  try {
+    await app.invoke('pip_window', { on: true, aspect })
+  } catch (error) {
+    close()
+    throw error
+  }
+  return { close }
+}
+
 /**
  * The player's PiP button: `bodyRef` wraps the video and its subtitle
  * layers (and is the only child of a node React renders), `videoRef` is the
  * video inside it.
  */
-export function usePictureInPicture(bodyRef: RefObject<HTMLElement | null>, videoRef: RefObject<HTMLVideoElement | null>): {
+export function usePictureInPicture(bodyRef: RefObject<HTMLElement | null>, videoRef: RefObject<HTMLVideoElement | null>, exitLabel: string): {
   mode: PipMode
   active: boolean
   toggle: () => void
@@ -239,7 +294,9 @@ export function usePictureInPicture(bodyRef: RefObject<HTMLElement | null>, vide
       sessionRef.current = null
       setActive(false)
     }
-    const opening = mode === 'document' ? openDocumentPip(body, { onClose }) : openCanvasPip(video, body, { onClose })
+    const opening = mode === 'app' ? openAppPip(body, video, exitLabel, { onClose })
+      : mode === 'document' ? openDocumentPip(body, { onClose })
+      : openCanvasPip(video, body, { onClose })
     opening
       .then((session) => {
         // The window can be shut before the request settles.
@@ -249,7 +306,7 @@ export function usePictureInPicture(bodyRef: RefObject<HTMLElement | null>, vide
       })
       .catch((error) => console.warn('picture-in-picture failed', error))
       .finally(() => { openingRef.current = false })
-  }, [bodyRef, videoRef, mode])
+  }, [bodyRef, videoRef, mode, exitLabel])
 
   useEffect(() => () => sessionRef.current?.close(), [])
 
