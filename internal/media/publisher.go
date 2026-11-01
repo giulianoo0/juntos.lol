@@ -17,6 +17,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -25,6 +26,8 @@ const (
 	subtitleCacheControl = "public, max-age=3600"
 
 	maxRememberedSubtitles = 4096
+
+	subtitleUploads = 8
 )
 
 // Publisher moves the subtitle files a host's browser extracted into the
@@ -112,17 +115,19 @@ func (p *Publisher) publishSubtitleDir(ctx context.Context, prefix, dir string) 
 		}
 		return fmt.Errorf("list subtitles: %w", err)
 	}
+	// One at a time, a source with dozens of tracks took ~11 s per publish.
+	var group errgroup.Group
+	group.SetLimit(subtitleUploads)
 	for _, entry := range entries {
 		contentType, known := subtitleContentTypes[strings.ToLower(filepath.Ext(entry.Name()))]
 		if entry.IsDir() || !known {
 			continue
 		}
-		if err := p.putSubtitle(ctx, prefix+entry.Name(),
-			filepath.Join(dir, entry.Name()), contentType); err != nil {
-			return err
-		}
+		group.Go(func() error {
+			return p.putSubtitle(ctx, prefix+entry.Name(), filepath.Join(dir, entry.Name()), contentType)
+		})
 	}
-	return nil
+	return group.Wait()
 }
 
 // putSubtitle uploads one WebVTT file unless the bucket already holds exactly
