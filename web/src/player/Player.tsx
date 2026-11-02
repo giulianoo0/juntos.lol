@@ -30,7 +30,7 @@ import { MOCK_AUDIO_TRACKS, MOCK_LEVELS, mocksEnabled } from '../mocks'
 import { TorrentReadout } from '../components/TorrentReadout'
 import { WaitLabel } from './WaitLabel'
 import { bufferAhead, holdsForBuffer } from './bufferAhead'
-import { gateSecondsFor } from './gate'
+import { GATE_READY_BUFFER_MS, gateSecondsFor } from './gate'
 import { bundledLoader, fetchBundle, mediaRoot, prefetchInitSegments } from './bundle'
 import { prefetchingLoader } from './prefetch'
 import { isTouchDevice, recordMediaBitrate, TOUCH_BACK_BUFFER_SEC } from './playbackHealth'
@@ -42,7 +42,7 @@ import { lastUploadFailureDetail } from '../upload'
 import type { TorrentStats } from '../torrent'
 import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
-import { REGION_BEHIND_MS, regionHolds } from './regions'
+import { REGION_BEHIND_MS, regionHas, regionHolds } from './regions'
 
 interface PlayerProps {
   room: RoomInfo
@@ -1176,7 +1176,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     const at = resumeAtMsRef.current
     if (at === null) return
     if (coldWait || bufferGate || !(duration > 0)) return
-    if (regions && !regions.some((r) => regionHolds(r, at))) return
+    if (regions && !regions.some((r) => regionHas(r, at, GATE_READY_BUFFER_MS))) return
     resumeAtMsRef.current = null
     send('play', { positionMs: at, rate: videoRef.current?.playbackRate ?? 1 })
     // The room parking at the target is a change too: a seek into what is

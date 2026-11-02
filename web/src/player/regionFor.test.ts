@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { regionFor } from './Player'
+import { regionHas } from './regions'
 import type { MediaRegion } from '../types'
 
 const r = (n: number, startMs: number, producedMs: number, growing = false): MediaRegion => ({ n, startMs, producedMs, growing })
@@ -32,5 +33,23 @@ describe('regionFor', () => {
 
   it('an empty map has no answer', () => {
     expect(regionFor([], 0, null)).toBeNull()
+  })
+})
+
+describe('regionHas', () => {
+  it('does not count a region that just opened as having the target, though it holds it', () => {
+    const opened = r(1, 598_598, 0, true)
+    expect(regionHas(opened, 600_000, 3000)).toBe(false)
+    expect(regionHas(r(1, 598_598, 4_000, true), 600_000, 3000)).toBe(false)
+    expect(regionHas(r(1, 598_598, 4_500, true), 600_000, 3000)).toBe(true)
+  })
+
+  it('takes a finished region up to its last frame', () => {
+    expect(regionHas(r(0, 0, 24_000), 23_500, 3000)).toBe(true)
+    expect(regionHas(r(0, 0, 24_000), 24_500, 3000)).toBe(false)
+  })
+
+  it('never reaches back before the region starts', () => {
+    expect(regionHas(r(2, 100_000, 60_000, true), 50_000, 3000)).toBe(false)
   })
 })
