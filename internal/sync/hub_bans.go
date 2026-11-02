@@ -85,6 +85,15 @@ func (r *roomConn) kick(target *client) {
 		}
 	}
 	r.broadcastBans()
+	if kicked := r.hub.onKick; kicked != nil {
+		go kicked(r.id)
+	}
+}
+
+// OnKick runs after a member is put out, off the room's loop: the room's
+// relay moves then, so what they still hold stops reaching it.
+func (h *Hub) OnKick(fn func(roomID string)) {
+	h.onKick = fn
 }
 
 // handleUnban is the host letting someone they put out come back.

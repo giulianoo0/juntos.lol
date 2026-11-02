@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -49,7 +50,8 @@ func (a testMemberAuthorizer) AuthorizeStage(r *room.Room, memberID, capability,
 
 var screenshareCfg = config.Config{
 	MoqRelayURL: "https://relay.example.test", MoqPublishToken: "pub-token", MoqSubscribeToken: "sub-token",
-	MoqBridgeURL: "/moq-bridge",
+	MoqBridgeURL:    "/moq-bridge",
+	MoqBridgeSecret: "0123456789abcdef0123456789abcdef",
 }
 
 type relayResponse struct {
@@ -73,7 +75,7 @@ func newScreenshareRouter(t *testing.T, notify func(string), stages ...string) (
 		granted[key] = true
 	}
 	router := gin.New()
-	RegisterScreenshareRoutes(router.Group("/api"), store, screenshareCfg, testMemberAuthorizer{allowed: true, stages: granted}, notify)
+	RegisterScreenshareRoutes(router.Group("/api"), store, screenshareCfg, moqrelay.FromConfig(screenshareCfg, store), testMemberAuthorizer{allowed: true, stages: granted}, notify)
 	return router, store
 }
 
@@ -86,7 +88,7 @@ func TestScreenshareRelayByRole(t *testing.T) {
 	var host relayResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &host))
 	require.Equal(t, "https://relay.example.test/sub-token", host.URL)
-	require.Equal(t, "/moq-bridge", host.Bridge)
+	require.True(t, strings.HasPrefix(host.Bridge, "/moq-bridge?t="), host.Bridge)
 	require.True(t, host.Publish)
 
 	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability","publish":true}`)
@@ -143,7 +145,7 @@ func TestScreenshareRefusesAGuestWithoutAGrant(t *testing.T) {
 
 func TestScreenshareRelayDisabled(t *testing.T) {
 	router := gin.New()
-	RegisterScreenshareRoutes(router.Group("/api"), newTestStore(t), config.Config{}, nil, nil)
+	RegisterScreenshareRoutes(router.Group("/api"), newTestStore(t), config.Config{}, moqrelay.FromConfig(config.Config{}, nil), nil, nil)
 	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"secret-capability"}`)
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.JSONEq(t, `{"error":"screenshare_disabled"}`, w.Body.String())
@@ -156,7 +158,7 @@ func TestScreenshareRelayRequiresRoomMember(t *testing.T) {
 		ID: "r1", Status: "ready", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	router := gin.New()
-	RegisterScreenshareRoutes(router.Group("/api"), store, screenshareCfg, testMemberAuthorizer{}, nil)
+	RegisterScreenshareRoutes(router.Group("/api"), store, screenshareCfg, moqrelay.FromConfig(screenshareCfg, store), testMemberAuthorizer{}, nil)
 
 	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m1","capability":"wrong"}`)
 	require.Equal(t, http.StatusForbidden, w.Code)

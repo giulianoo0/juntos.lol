@@ -180,6 +180,8 @@ export interface RoomInfo {
   producerHeartbeatMs?: number
   screens?: ScreenShareInfo[] | null
   live?: LiveInfo | null
+  /** Counts the room's moves to a new relay (a kick moves it); a change means asking for the relay again. */
+  relayEpoch?: number
   preparation?: RoomPreparation
   memberCount: number
   expiresAt: string

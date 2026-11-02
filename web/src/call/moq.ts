@@ -70,3 +70,38 @@ export function whenPublished(broadcast: Publish.Broadcast): Promise<void> {
     })
   })
 }
+
+/**
+ * What a relay handout's failure says: `disabled` when the server has no
+ * relay at all, `relay_unavailable` when the room's own relay could not be
+ * made just now and asking again may get it.
+ */
+export async function relayRefusal(response: Response, disabled: string): Promise<Error> {
+  if (response.status !== 503) return new Error(`relay handout ${response.status}`)
+  const body = await response.json().catch(() => ({})) as { error?: string }
+  return new Error(body.error === 'relay_unavailable' ? 'relay_unavailable' : disabled)
+}
+
+const RELAY_RETRY_FIRST_MS = 2_000
+const RELAY_RETRY_MAX_MS = 30_000
+
+/**
+ * Asks for the room's relay until it comes: a room's relay is made on the
+ * first ask, and a refusal then is a moment, not an answer. A server with no
+ * relay at all is the one answer that ends it. Returns the canceller.
+ */
+export function keepAskingForRelay<T>(ask: () => Promise<T>, got: (relay: T) => void, disabled: string): () => void {
+  let cancelled = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const attempt = (wait: number) => {
+    ask().then((relay) => { if (!cancelled) got(relay) }, (error: unknown) => {
+      if (cancelled || (error instanceof Error && error.message === disabled)) return
+      timer = setTimeout(() => attempt(Math.min(wait * 2, RELAY_RETRY_MAX_MS)), wait)
+    })
+  }
+  attempt(RELAY_RETRY_FIRST_MS)
+  return () => {
+    cancelled = true
+    if (timer !== null) clearTimeout(timer)
+  }
+}

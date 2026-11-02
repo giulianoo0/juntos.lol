@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { watchConnection } from './moq'
+import { keepAskingForRelay, watchConnection } from './moq'
 
 const WKWEBVIEW = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)'
 const CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36'
@@ -30,5 +30,41 @@ describe('watchConnection', () => {
     const { url, websocket } = Reload.mock.calls[0][0] as { url: URL; websocket: { enabled: boolean } }
     expect(url.href).toBe('https://relay.test/token')
     expect(websocket.enabled).toBe(false)
+  })
+})
+
+describe('keepAskingForRelay', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('asks again while the room relay is being made, and stops at a server with none', async () => {
+    vi.useFakeTimers()
+    const answers = [new Error('relay_unavailable'), new Error('relay_unavailable'), { url: 'r' }]
+    const ask = vi.fn(async () => {
+      const next = answers.shift()
+      if (next instanceof Error) throw next
+      return next
+    })
+    const got = vi.fn()
+    keepAskingForRelay(ask, got, 'call_disabled')
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(got).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(got).toHaveBeenCalledWith({ url: 'r' })
+    expect(ask).toHaveBeenCalledTimes(3)
+
+    const refused = vi.fn(async () => { throw new Error('call_disabled') })
+    keepAskingForRelay(refused, got, 'call_disabled')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(refused).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks no more once cancelled', async () => {
+    vi.useFakeTimers()
+    const ask = vi.fn(async () => { throw new Error('relay_unavailable') })
+    const cancel = keepAskingForRelay(ask, vi.fn(), 'call_disabled')
+    await vi.advanceTimersByTimeAsync(0)
+    cancel()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(ask).toHaveBeenCalledTimes(1)
   })
 })

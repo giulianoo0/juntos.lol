@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { desktop, resetDesktopForTests } from '../platform'
-import { publishEncodedScreen } from '../screenshare'
+import { fetchScreenRelay, publishEncodedScreen } from '../screenshare'
 import { startH264Feed } from '../jlocal/h264Feed'
 import { appAudioTrack, startAppFeed, type AppFeed } from '../desktop/screen'
 import { resetSoundChoiceForTests, setAppMuted, setSoundEnabled } from '../jlocal/soundChoice'
@@ -106,6 +106,21 @@ describe('useScreenShare through the desktop app', () => {
     expect(publisher.switchSource).toHaveBeenCalledTimes(1)
     expect(feed.stop).not.toHaveBeenCalled()
     expect(startAppFeed).toHaveBeenCalledTimes(1)
+  })
+
+  it('publishes the same capture again on the relay a kick moved the room to', async () => {
+    await installApp(['screenCapture'])
+    const { result, rerender } = renderHook(({ relayEpoch }) => useScreenShare({
+      roomId: 'r1', memberId: 'm1', nickname: 'Ana', capability: 'cap', isController: true, shareOpen: false, screens: [], relayEpoch,
+    }), { initialProps: { relayEpoch: 1 } })
+    await act(() => result.current.startWithJlocal(pick))
+    const relays = vi.mocked(fetchScreenRelay).mock.calls.length
+    rerender({ relayEpoch: 2 })
+    await vi.waitFor(() => expect(publishEncodedScreen).toHaveBeenCalledTimes(2))
+    expect(publisher.close).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchScreenRelay).mock.calls.length).toBeGreaterThan(relays)
+    expect(startAppFeed).toHaveBeenCalledTimes(1)
+    expect(result.current.state).toBe('sharing')
   })
 
   it('stops the share when the shared window closes', async () => {

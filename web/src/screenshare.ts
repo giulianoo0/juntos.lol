@@ -11,7 +11,7 @@ import type * as Watch from '@moq/watch'
 import type { EncodedFrame } from './jlocal/h264Feed'
 import { codecFromAnnexB } from './jlocal/h264Feed'
 import { audioLocked } from './ui/audioUnlock'
-import { isWebKit, relayConnection, relayPublishSupported, watchConnection, whenPublished } from './call/moq'
+import { isWebKit, relayConnection, relayPublishSupported, relayRefusal, watchConnection, whenPublished } from './call/moq'
 import { appCanCapture } from './desktop/screen'
 
 export { isWebKit }
@@ -187,7 +187,7 @@ export async function fetchScreenRelay(roomId: string, memberId: string, capabil
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memberId, capability, publish }),
   })
-  if (!response.ok) throw new Error(response.status === 503 ? 'screenshare_disabled' : 'screenshare unavailable')
+  if (!response.ok) throw await relayRefusal(response, 'screenshare_disabled')
   return await response.json() as ScreenRelay
 }
 

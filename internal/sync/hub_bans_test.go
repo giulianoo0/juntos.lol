@@ -65,6 +65,26 @@ func TestKickedSeatIsTurnedAwayWhenItReconnects(t *testing.T) {
 	requireNoEvent(t, host, 100*time.Millisecond)
 }
 
+func TestKickMovesTheRoomOffTheRelayTheKickedKnows(t *testing.T) {
+	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	moved := make(chan string, 1)
+	hub.OnKick(func(roomID string) { moved <- roomID })
+	host := dialHubWS(t, server)
+	helloHubClient(t, host, "host", 1)
+	guest := dialHubWS(t, server)
+	helloHubClient(t, guest, "guest", 2)
+	require.Equal(t, "members", readHubEvent(t, host).Type)
+
+	kickGuest(t, host, guest)
+
+	select {
+	case roomID := <-moved:
+		require.Equal(t, "r1", roomID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a kick left the room on its relay")
+	}
+}
+
 func TestKickReachesASeatHeldForADroppedSocket(t *testing.T) {
 	holdSeats(t)
 	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})

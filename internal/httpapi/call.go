@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -17,10 +18,11 @@ type callTokenRequest struct {
 
 // RegisterCallRoutes mounts the relay handout for cameras and microphones.
 // Every member may publish their own camera and voice, so unlike a screen the
-// publish token goes to anyone in the room; the path under the room's secret
-// base is what keeps one member's broadcast theirs.
-func RegisterCallRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer memberAuthorizer) {
-	rg.POST("/rooms/:id/call/token", callToken(store, cfg, authorizer))
+// publish token goes to anyone in the room; it opens only the room's relay,
+// and the path under the room's secret base is what keeps one member's
+// broadcast theirs.
+func RegisterCallRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer memberAuthorizer) {
+	rg.POST("/rooms/:id/call/token", callToken(store, cfg, relays, authorizer))
 }
 
 // CallBroadcastPath is where one member's camera and microphone live on the relay.
@@ -28,7 +30,7 @@ func CallBroadcastPath(roomID, secret, memberID string) string {
 	return ScreenBroadcastBase(roomID, secret) + "/av/" + memberID + ".hang"
 }
 
-func callToken(store *room.Store, cfg config.Config, authorizer memberAuthorizer) gin.HandlerFunc {
+func callToken(store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer memberAuthorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.ScreenshareEnabled() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "call_disabled"})
@@ -57,12 +59,18 @@ func callToken(store *room.Store, cfg config.Config, authorizer memberAuthorizer
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
+		relay, ok := roomRelay(c, relays, roomID)
+		if !ok {
+			return
+		}
+		base := ScreenBroadcastBase(roomID, secret)
 		c.JSON(http.StatusOK, gin.H{
-			"url":        cfg.MoqRelayURL + "/" + cfg.MoqSubscribeToken,
-			"publishUrl": cfg.MoqRelayURL + "/" + cfg.MoqPublishToken,
-			"base":       ScreenBroadcastBase(roomID, secret),
+			"url":        relay.SubscribeURL(),
+			"publishUrl": relay.PublishURL(),
+			"base":       base,
 			"path":       CallBroadcastPath(roomID, secret, request.MemberID),
-			"bridge":     cfg.MoqBridgeURL,
+			"bridge":     bridgeURL(cfg, relay, base),
+			"epoch":      relay.Epoch,
 		})
 	}
 }

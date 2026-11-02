@@ -1,4 +1,5 @@
 import { Maximize, Minimize, Volume2 } from 'lucide-react'
+import { keepAskingForRelay } from '../call/moq'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as Watch from '@moq/watch'
 import type { Translator } from '../i18n/useT'
@@ -28,11 +29,13 @@ function liveLatency(): Watch.Latency {
 
 // A YouTube live on the relay, painted on a canvas like a shared screen. No timeline: the red
 // badge jumps to the edge with a fresh subscription, since the relay hands a newcomer its newest group.
-export function LiveStage({ roomId, memberId, capability, broadcast, title, t }: {
+export function LiveStage({ roomId, memberId, capability, broadcast, relayEpoch = 0, title, t }: {
   roomId: string
   memberId: string
   capability: string
   broadcast: string
+  /** The room's relay epoch: the live is watched again on the relay a kick moved the room to. */
+  relayEpoch?: number
   title: string
   t: Translator
 }) {
@@ -51,12 +54,11 @@ export function LiveStage({ roomId, memberId, capability, broadcast, title, t }:
 
   useEffect(() => {
     if (!memberId || !capability) return
-    let disposed = false
-    void fetchScreenRelay(roomId, memberId, capability)
-      .then((relay) => { if (!disposed) { relayRef.current = relay; setGeneration((n) => n + 1) } })
-      .catch(() => undefined)
-    return () => { disposed = true }
-  }, [roomId, memberId, capability])
+    return keepAskingForRelay(() => fetchScreenRelay(roomId, memberId, capability), (relay) => {
+      relayRef.current = relay
+      setGeneration((n) => n + 1)
+    }, 'screenshare_disabled')
+  }, [roomId, memberId, capability, relayEpoch])
 
   useEffect(() => {
     const relay = relayRef.current

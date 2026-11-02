@@ -79,8 +79,8 @@ class JlocalLive {
   private wasLive = false
 
   private readonly roomId: string
-  private readonly auth: LiveAuth
-  private readonly source: LiveSource
+  readonly auth: LiveAuth
+  readonly source: LiveSource
 
   constructor(roomId: string, auth: LiveAuth, source: LiveSource) {
     this.roomId = roomId
@@ -149,6 +149,16 @@ if (typeof window !== 'undefined') {
     for (const live of jlocalLives.values()) live.stop()
     jlocalLives.clear()
   })
+}
+
+/**
+ * Starts the live this tab's companion runs over on the room's new relay,
+ * after a kick moved the room. A fleet live is moved by the server.
+ */
+export async function moveLive(roomId: string): Promise<void> {
+  const live = jlocalLives.get(roomId)
+  if (!live) return
+  await startYoutubeLive(roomId, live.source, live.auth)
 }
 
 /** Stops the companion app's live for a room, if this tab is following one. */

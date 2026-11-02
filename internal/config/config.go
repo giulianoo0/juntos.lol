@@ -31,7 +31,18 @@ type Config struct {
 	// MoqBridgeURL is where WebKit viewers reach the relay's broadcasts over
 	// WebSocket (ss-moq-bridge); relative to the site, or absolute. Empty
 	// leaves them without screens.
-	MoqBridgeURL      string
+	MoqBridgeURL string
+	// MoqBridgeSecret signs the tickets the bridge asks of every viewer.
+	MoqBridgeSecret string
+	// MoqAPIToken and MoqAccountID give every room a relay of its own on
+	// Cloudflare. Without them every room shares the relay of the fixed
+	// tokens, which only a single-tenant setup (local tests) can afford.
+	MoqAPIToken  string
+	MoqAccountID string
+	// MoqRelayOwner names this deployment in its relays' names. Each server
+	// sweeps only the relays with its own name, so two servers on one account
+	// (production and a laptop) never delete each other's rooms' relays.
+	MoqRelayOwner     string
 	R2AccountID       string
 	R2Bucket          string
 	R2AccessKeyID     string
@@ -166,6 +177,10 @@ func Load() (Config, error) {
 	cfg.MoqPublishToken = strings.TrimSpace(os.Getenv("MOQ_PUBLISH_TOKEN"))
 	cfg.MoqSubscribeToken = strings.TrimSpace(os.Getenv("MOQ_SUBSCRIBE_TOKEN"))
 	cfg.MoqBridgeURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("MOQ_BRIDGE_URL")), "/")
+	cfg.MoqBridgeSecret = strings.TrimSpace(os.Getenv("MOQ_BRIDGE_SECRET"))
+	cfg.MoqAPIToken = strings.TrimSpace(os.Getenv("MOQ_API_TOKEN"))
+	cfg.MoqAccountID = strings.TrimSpace(os.Getenv("MOQ_ACCOUNT_ID"))
+	cfg.MoqRelayOwner = strings.TrimSpace(os.Getenv("MOQ_RELAY_OWNER"))
 	if err := cfg.validateScreenshare(); err != nil {
 		return Config{}, err
 	}
@@ -264,17 +279,31 @@ func Load() (Config, error) {
 // ScreenshareEnabled reports whether screen sharing has a relay to run on.
 // Rooms of every other kind work without one.
 func (c Config) ScreenshareEnabled() bool {
-	return c.MoqRelayURL != "" && c.MoqPublishToken != "" && c.MoqSubscribeToken != ""
+	return c.MoqRelayURL != "" && (c.MoqRelaysPerRoom() || c.MoqPublishToken != "" && c.MoqSubscribeToken != "")
+}
+
+// MoqRelaysPerRoom reports whether each room gets a relay of its own.
+func (c Config) MoqRelaysPerRoom() bool {
+	return c.MoqAPIToken != "" && c.MoqAccountID != ""
 }
 
 // validateScreenshare accepts no relay at all or a complete one: a partial
 // setting would hand out a URL nobody can connect to.
 func (c Config) validateScreenshare() error {
-	if c.MoqRelayURL == "" && c.MoqPublishToken == "" && c.MoqSubscribeToken == "" {
+	if c.MoqRelayURL == "" && c.MoqPublishToken == "" && c.MoqSubscribeToken == "" && c.MoqAPIToken == "" {
 		return nil
 	}
+	if (c.MoqAPIToken == "") != (c.MoqAccountID == "") {
+		return fmt.Errorf("config: relays per room need MOQ_API_TOKEN and MOQ_ACCOUNT_ID together")
+	}
+	if c.MoqRelaysPerRoom() && !validRelayOwner(c.MoqRelayOwner) {
+		return fmt.Errorf("config: relays per room need MOQ_RELAY_OWNER, this deployment's name (letters, digits, dots and dashes)")
+	}
 	if !c.ScreenshareEnabled() {
-		return fmt.Errorf("config: screen sharing needs MOQ_RELAY_URL, MOQ_PUBLISH_TOKEN and MOQ_SUBSCRIBE_TOKEN together")
+		return fmt.Errorf("config: screen sharing needs MOQ_RELAY_URL with MOQ_API_TOKEN and MOQ_ACCOUNT_ID, or with MOQ_PUBLISH_TOKEN and MOQ_SUBSCRIBE_TOKEN")
+	}
+	if c.MoqBridgeURL != "" && len(c.MoqBridgeSecret) < 32 {
+		return fmt.Errorf("config: MOQ_BRIDGE_URL needs MOQ_BRIDGE_SECRET of at least 32 characters")
 	}
 	u, err := url.Parse(c.MoqRelayURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
@@ -332,4 +361,16 @@ func envInt64(key string, fallback int64) (int64, error) {
 		return 0, fmt.Errorf("config: invalid %s=%q: %w", key, v, err)
 	}
 	return n, nil
+}
+
+func validRelayOwner(owner string) bool {
+	if owner == "" || len(owner) > 40 {
+		return false
+	}
+	for _, r := range owner {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-') {
+			return false
+		}
+	}
+	return true
 }

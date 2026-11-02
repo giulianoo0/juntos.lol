@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -29,7 +31,7 @@ func newCallRouter(t *testing.T, cfg config.Config, authorizer memberAuthorizer)
 		ID: "r1", Status: "ready", ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}, room.Member{ID: "m1", Nickname: "giuli", JoinedAt: now}))
 	router := gin.New()
-	RegisterCallRoutes(router.Group("/api"), store, cfg, authorizer)
+	RegisterCallRoutes(router.Group("/api"), store, cfg, moqrelay.FromConfig(cfg, store), authorizer)
 	return router
 }
 
@@ -45,7 +47,7 @@ func TestCallTokenGivesEveryMemberTheirOwnPath(t *testing.T) {
 		require.Equal(t, "https://relay.example.test/pub-token", relay.PublishURL, "a guest publishes their camera without asking anyone")
 		require.Regexp(t, `^juntos/r1/[0-9a-f]{32}$`, relay.Base)
 		require.Equal(t, relay.Base+"/av/"+member+".hang", relay.Path)
-		require.Equal(t, "/moq-bridge", relay.Bridge)
+		require.True(t, strings.HasPrefix(relay.Bridge, "/moq-bridge?t="), relay.Bridge)
 	}
 }
 

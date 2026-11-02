@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { audioLocked } from '../ui/audioUnlock'
-import { relayPublishSupported } from './moq'
+import { keepAskingForRelay, relayPublishSupported } from './moq'
 import { fetchCallRelay, localLevel, openCallWatch, publishCall, type CallPublisher, type CallRelay, type CallWatchSession, type MemberWatch } from './media'
 import { hearable, viewable, type CallMember } from './plan'
 import { SpeakingDetector, voiceLevel } from './speaking'
@@ -24,6 +24,8 @@ export interface CallOptions {
   members: CallMember[]
   /** What the entry screen left switched on. */
   initial?: { mic?: boolean; cam?: boolean }
+  /** The room's relay epoch: when it moves, the call moves with it. */
+  relayEpoch?: number
 }
 
 export interface CallApi {
@@ -72,7 +74,7 @@ const CALL_RETRY = { retryMs: 4_000, loadingRetryMs: 6_000, gapMs: 1_500 }
  * the host has not muted them; a camera downloads while on, not turned off by
  * the host, and bound to a tile on screen.
  */
-export function useCall({ roomId, memberId, capability, send, members, initial }: CallOptions): CallApi {
+export function useCall({ roomId, memberId, capability, send, members, initial, relayEpoch = 0 }: CallOptions): CallApi {
   const local = useLocalMedia(initial)
   const supported = useMemo(() => relayPublishSupported(), [])
   const [relay, setRelay] = useState<CallRelay | null>(null)
@@ -90,10 +92,8 @@ export function useCall({ roomId, memberId, capability, send, members, initial }
 
   useEffect(() => {
     if (!memberId || !capability) return
-    let disposed = false
-    void fetchCallRelay(roomId, memberId, capability).then((next) => { if (!disposed) setRelay(next) }).catch(() => undefined)
-    return () => { disposed = true }
-  }, [roomId, memberId, capability])
+    return keepAskingForRelay(() => fetchCallRelay(roomId, memberId, capability), setRelay, 'call_disabled')
+  }, [roomId, memberId, capability, relayEpoch])
 
   useEffect(() => {
     if (!relay) return

@@ -162,3 +162,38 @@ func TestLoadDiscordLogin(t *testing.T) {
 		})
 	}
 }
+
+func TestRelaysPerRoomNeedTheDeploymentsName(t *testing.T) {
+	setMediaEnv(t)
+	t.Setenv("MOQ_RELAY_URL", "https://relay.example.test")
+	t.Setenv("MOQ_API_TOKEN", "token")
+	t.Setenv("MOQ_ACCOUNT_ID", "account")
+
+	_, err := Load()
+	require.ErrorContains(t, err, "MOQ_RELAY_OWNER")
+
+	t.Setenv("MOQ_RELAY_OWNER", "juntos/lol")
+	_, err = Load()
+	require.ErrorContains(t, err, "MOQ_RELAY_OWNER")
+
+	t.Setenv("MOQ_RELAY_OWNER", "juntos.lol")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.MoqRelaysPerRoom())
+	require.True(t, cfg.ScreenshareEnabled())
+}
+
+func TestTheBridgeNeedsItsTicketKey(t *testing.T) {
+	setMediaEnv(t)
+	t.Setenv("MOQ_RELAY_URL", "https://relay.example.test")
+	t.Setenv("MOQ_PUBLISH_TOKEN", "pub")
+	t.Setenv("MOQ_SUBSCRIBE_TOKEN", "sub")
+	t.Setenv("MOQ_BRIDGE_URL", "/moq-bridge")
+
+	_, err := Load()
+	require.ErrorContains(t, err, "MOQ_BRIDGE_SECRET")
+
+	t.Setenv("MOQ_BRIDGE_SECRET", "0123456789abcdef0123456789abcdef")
+	_, err = Load()
+	require.NoError(t, err)
+}

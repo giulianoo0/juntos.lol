@@ -57,7 +57,7 @@ import { TorrentPicker } from '../components/TorrentPicker'
 import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { YoutubePicker } from '../components/YoutubePicker'
 import { LiveStage } from '../components/LiveStage'
-import { startYoutubeLive, stopLive } from '../live'
+import { moveLive, startYoutubeLive, stopLive } from '../live'
 import { YoutubeError, isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
 import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
@@ -624,6 +624,14 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const mayOpenLive = canOpenStage(stageRoom, sync.stages, sync.memberId, 'live')
   const mayShareScreen = canOpenStage(stageRoom, sync.stages, sync.memberId, 'screen')
   const screens = liveRoom.screens ?? []
+  // A kick moves the room to a new relay; a live this tab's companion runs follows it there.
+  const relayEpochRef = useRef(liveRoom.relayEpoch ?? 0)
+  useEffect(() => {
+    const epoch = liveRoom.relayEpoch ?? 0
+    if (epoch === relayEpochRef.current) return
+    relayEpochRef.current = epoch
+    moveLive(room.id).catch((error: unknown) => console.warn('live did not follow the room to its new relay', error))
+  }, [liveRoom.relayEpoch, room.id])
   const { stageUsed } = sync
   useEffect(() => {
     const answer = sync.stages.answer
@@ -927,6 +935,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     send: callSend,
     members: sync.members,
     initial: initialMedia,
+    relayEpoch: liveRoom.relayEpoch,
   })
   const { receive } = call
   useEffect(() => {
@@ -940,6 +949,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     isController: sync.isController,
     shareOpen: mayShareScreen,
     screens,
+    relayEpoch: liveRoom.relayEpoch,
     onScreenStarted: screenStartedNotice(toast, t),
   })
   useScreenShareNotices(screenShare, t)
@@ -1230,6 +1240,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         memberId={sync.memberId}
         capability={sync.capability}
         broadcast={liveRoom.live.broadcast}
+        relayEpoch={liveRoom.relayEpoch}
         title={liveRoom.live.title}
         t={t}
       />

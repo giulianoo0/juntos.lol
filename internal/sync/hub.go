@@ -62,6 +62,7 @@ type Hub struct {
 
 	// clientIP is the trustworthy address of a request, or "".
 	clientIP func(*http.Request) string
+	onKick   func(roomID string)
 
 	usage *usage.Counter
 

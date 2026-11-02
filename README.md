@@ -184,9 +184,13 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `ROOM_IDLE_SECONDS` | `90` | Tempo sem participantes até a sala ser recolhida: registro no Redis, diretório em disco e mídia no bucket. |
 | `UPLOAD_IDLE_MINUTES` | `10` | Tempo sem atividade até o claim de um remux ser devolvido. |
 | `MOQ_RELAY_URL` | vazio | Relay MoQ da Cloudflare, por exemplo `https://draft-16.cloudflare.mediaoverquic.com`. Sem ele o compartilhamento de tela fica desligado. |
-| `MOQ_PUBLISH_TOKEN` | vazio | Token do relay com `publish` e `subscribe`, entregue só ao controlador da sala. |
-| `MOQ_SUBSCRIBE_TOKEN` | vazio | Token do relay só com `subscribe`, entregue aos demais participantes. |
-| `MOQ_BRIDGE_URL` | vazio (`/moq-bridge` no Compose) | Onde o WebKit assiste telas e lives. O cliente MoQ recusa o WebTransport de todo WebKit (o Safari trava sessões longas) e o relay da Cloudflare não fala WebSocket; o `ss-moq-bridge` aceita WebSocket e puxa os mesmos broadcasts do relay por QUIC, só leitura. No Safari, compartilhar a própria tela continua indisponível. |
+| `MOQ_API_TOKEN` | vazio | Token da API da Cloudflare só com MoQ Read e MoQ Write na conta, de preferência preso ao IP do servidor. Com ele (e `MOQ_ACCOUNT_ID`), cada sala ganha um relay próprio no primeiro uso, apagado quando a sala acaba; uma expulsão muda a sala para um relay novo. |
+| `MOQ_ACCOUNT_ID` | vazio | Conta Cloudflare dos relays. |
+| `MOQ_RELAY_OWNER` | vazio | Nome desta instalação (letras, dígitos, ponto e hífen), obrigatório com a API. Vai no nome dos relays, e cada servidor só apaga os relays com o próprio nome: produção e uma cópia local na mesma conta não derrubam os relays um do outro. |
+| `MOQ_PUBLISH_TOKEN` | vazio | Sem a API: token fixo com `publish` e `subscribe` de um relay único para todas as salas. Só para testes locais, porque abre todas as salas. |
+| `MOQ_SUBSCRIBE_TOKEN` | vazio | Sem a API: token fixo só com `subscribe` do relay único. |
+| `MOQ_BRIDGE_URL` | vazio (`/moq-bridge` no Compose) | Onde o WebKit assiste telas e lives. O cliente MoQ recusa o WebTransport de todo WebKit (o Safari trava sessões longas) e o relay da Cloudflare não fala WebSocket; o `ss-moq-bridge` aceita WebSocket e puxa os broadcasts do relay da sala por QUIC, só leitura. |
+| `MOQ_BRIDGE_SECRET` | vazio | Chave (32+ caracteres) que assina o ticket de cada viewer da ponte: a sala, o relay dela e a validade. O `ss-moq-bridge` recebe a mesma chave em `SS_MOQ_BRIDGE_SECRET` e só serve broadcasts da sala do ticket. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 
@@ -196,15 +200,19 @@ Valores inválidos em variáveis numéricas impedem a inicialização, em vez de
 
 ## Produção
 
-O container `app` publica apenas em loopback por padrão. Coloque um proxy TLS, como Caddy ou nginx, na frente de `127.0.0.1:8099`. Para compartilhamento de tela, crie um relay MoQ na conta Cloudflare (Media › Realtime › MoQ Relay, ou `POST /accounts/{id}/moq/relays`) e coloque a URL do relay e o par de tokens padrão nas variáveis `MOQ_*`. O relay faz o fan-out para os viewers; a VPS não carrega mídia nem expõe porta nova. Um relay aceita no máximo 10 tokens, por isso os tokens são por instalação e não por sala: o que isola uma sala da outra é o segredo no caminho do broadcast.
+O container `app` publica apenas em loopback por padrão. Coloque um proxy TLS, como Caddy ou nginx, na frente de `127.0.0.1:8099`. Para compartilhamento de tela, câmeras e lives, crie na Cloudflare um token de conta só com MoQ Read e MoQ Write, preso ao IP da VPS, e preencha `MOQ_RELAY_URL`, `MOQ_API_TOKEN`, `MOQ_ACCOUNT_ID` e `MOQ_BRIDGE_SECRET`. O relay faz o fan-out para os viewers; a VPS não carrega mídia nem expõe porta nova.
+
+A Cloudflare não restringe token por caminho, e quem assina um relay consegue listar tudo que passa nele. Por isso cada sala tem um relay só dela (`juntos-<host>-room-<id>`): o token que um membro recebe abre só a própria sala. Na expulsão, a sala muda para um relay novo; quem fica pede o relay de novo e republica, e o expulso fica com um token de um relay onde ninguém mais publica. Revogar token ou apagar relay não derruba sessão já aberta, então o corte vem de os publicadores saírem dali. O servidor apaga a cada 5 minutos os relays de salas que acabaram, só os que levam o `MOQ_RELAY_OWNER` dele no nome.
 
 Exemplo mínimo de variáveis:
 
 ```dotenv
 APP_BIND=127.0.0.1:8099
 MOQ_RELAY_URL=https://draft-16.cloudflare.mediaoverquic.com
-MOQ_PUBLISH_TOKEN=eyJ...
-MOQ_SUBSCRIBE_TOKEN=eyJ...
+MOQ_API_TOKEN=...
+MOQ_ACCOUNT_ID=...
+MOQ_RELAY_OWNER=juntos.lol
+MOQ_BRIDGE_SECRET=...
 ```
 
 Segredos e ajustes locais de deploy ficam num override do Compose mantido fora do repositório.

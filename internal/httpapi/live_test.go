@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/room"
 )
@@ -35,7 +36,7 @@ func liveRoomWith(t *testing.T, authorizer testMemberAuthorizer) (*gin.Engine, *
 	store := newTestStore(t)
 	e := sourceRoom(t, cfg, store)
 	hooks := &liveHooks{}
-	RegisterLiveRoutes(e.Group("/api"), store, cfg, authorizer, SourceHooks{
+	RegisterLiveRoutes(e.Group("/api"), store, cfg, moqrelay.FromConfig(cfg, store), authorizer, SourceHooks{
 		NotifyStatus:      func(_, status string) { hooks.statuses = append(hooks.statuses, status) },
 		NotifyRoomUpdated: func(id string) { hooks.updated = append(hooks.updated, id) },
 		CancelMedia:       func(id string) { hooks.canceledMedia = append(hooks.canceledMedia, id) },

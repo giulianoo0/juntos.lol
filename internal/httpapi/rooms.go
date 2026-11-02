@@ -213,6 +213,7 @@ func getRoom(store *room.Store, mediaBaseURL string, authorizer memberAuthorizer
 			"bitmapSubsSkipped":   r.BitmapSubsSkipped,
 			"producerHeartbeatMs": r.ProducerHeartbeatMs,
 			"screens":             r.Screens,
+			"relayEpoch":          r.RelayEpoch,
 			"live":                r.Live,
 			"spotlight":           r.Spotlight,
 			"preparation":         r.Preparation,

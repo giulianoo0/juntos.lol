@@ -175,8 +175,11 @@ type Room struct {
 	Screens             []ScreenShare  `json:"screens,omitempty"`
 	Live                *LiveInfo      `json:"live,omitempty"`
 	Spotlight           *Spotlight     `json:"spotlight,omitempty"`
-	CreatedAt           time.Time      `json:"createdAt"`
-	ExpiresAt           time.Time      `json:"expiresAt"`
+	// RelayEpoch counts the room's moves to a new relay; a client that sees
+	// it change asks for the relay again.
+	RelayEpoch int       `json:"relayEpoch,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
 
 	// JoinMode is how the room is entered: open, password or approval.
 	JoinMode string `json:"joinMode,omitempty"`

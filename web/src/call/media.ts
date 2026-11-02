@@ -10,7 +10,7 @@
  */
 import type * as Publish from '@moq/publish'
 import type * as Watch from '@moq/watch'
-import { relayConnection, watchConnection, whenPublished } from './moq'
+import { relayConnection, relayRefusal, watchConnection, whenPublished } from './moq'
 import { rms } from './speaking'
 import type { WatchStatus } from './subscriptions'
 
@@ -38,7 +38,7 @@ export async function fetchCallRelay(roomId: string, memberId: string, capabilit
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memberId, capability }),
   })
-  if (!response.ok) throw new Error(response.status === 503 ? 'call_disabled' : 'call unavailable')
+  if (!response.ok) throw await relayRefusal(response, 'call_disabled')
   return await response.json() as CallRelay
 }
 

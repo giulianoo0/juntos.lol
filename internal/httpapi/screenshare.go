@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -28,12 +29,11 @@ type memberAuthorizer interface {
 }
 
 // RegisterScreenshareRoutes mounts the MoQ relay handout and the "member is
-// publishing" flag. The relay is shared by every room and hands out a fixed
-// pair of tokens, so the server's job is to give each member the token their
-// standing allows — the host, or a guest the host let share — and the
-// broadcast path only this room knows.
-func RegisterScreenshareRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer stageAuthorizer, notify func(roomID string)) {
-	rg.POST("/rooms/:id/screenshare/token", screenshareRelay(store, cfg, authorizer))
+// publishing" flag. Each room has a relay of its own, so the server's job is
+// to give each member the token their standing allows — the host, or a guest
+// the host let share — and the broadcast path only this room knows.
+func RegisterScreenshareRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer stageAuthorizer, notify func(roomID string)) {
+	rg.POST("/rooms/:id/screenshare/token", screenshareRelay(store, cfg, relays, authorizer))
 	rg.POST("/rooms/:id/screenshare/live", screenshareLive(store, authorizer, notify))
 }
 
@@ -69,7 +69,29 @@ func screenshareMember(c *gin.Context, store *room.Store, authorizer stageAuthor
 	return storedRoom, request, true
 }
 
-func screenshareRelay(store *room.Store, cfg config.Config, authorizer stageAuthorizer) gin.HandlerFunc {
+// roomRelay answers for the request when the room has no relay to give.
+func roomRelay(c *gin.Context, relays *moqrelay.Rooms, roomID string) (moqrelay.Relay, bool) {
+	relay, err := relays.ForRoom(c.Request.Context(), roomID)
+	switch {
+	case errors.Is(err, room.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "room_not_found"})
+	case err != nil:
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "relay_unavailable"})
+	default:
+		return relay, true
+	}
+	return moqrelay.Relay{}, false
+}
+
+// bridgeURL is the WebKit bridge with this room's ticket; empty without a bridge.
+func bridgeURL(cfg config.Config, relay moqrelay.Relay, base string) string {
+	if cfg.MoqBridgeURL == "" {
+		return ""
+	}
+	return moqrelay.BridgeURL(cfg.MoqBridgeURL, cfg.MoqBridgeSecret, base, relay.SubscribeURL(), time.Now())
+}
+
+func screenshareRelay(store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer stageAuthorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.ScreenshareEnabled() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "screenshare_disabled"})
@@ -88,19 +110,25 @@ func screenshareRelay(store *room.Store, cfg config.Config, authorizer stageAuth
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
-		token := cfg.MoqSubscribeToken
+		relay, ok := roomRelay(c, relays, storedRoom.ID)
+		if !ok {
+			return
+		}
+		url := relay.SubscribeURL()
 		// Asking for the token comes before the screen starts, so it only
 		// looks at a grant; starting is what spends it.
 		publish := authorizer.AuthorizeStage(storedRoom, request.MemberID, request.Capability, room.StageScreen, false)
 		if publish && request.Publish {
-			token = cfg.MoqPublishToken
+			url = relay.PublishURL()
 		}
+		base := ScreenBroadcastBase(storedRoom.ID, secret)
 		c.JSON(http.StatusOK, gin.H{
-			"url":     cfg.MoqRelayURL + "/" + token,
-			"base":    ScreenBroadcastBase(storedRoom.ID, secret),
+			"url":     url,
+			"base":    base,
 			"path":    ScreenBroadcastPath(storedRoom.ID, secret, request.MemberID),
 			"publish": publish,
-			"bridge":  cfg.MoqBridgeURL,
+			"bridge":  bridgeURL(cfg, relay, base),
+			"epoch":   relay.Epoch,
 		})
 	}
 }

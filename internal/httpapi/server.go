@@ -11,6 +11,7 @@ import (
 
 	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/usage"
@@ -19,6 +20,7 @@ import (
 type ServerOption func(*serverOptions)
 
 type serverOptions struct {
+	relays            *moqrelay.Rooms
 	sourceHooks       SourceHooks
 	subtitlePublisher SubtitlePublisher
 	clientMediaBucket ClientMediaBucket
@@ -30,6 +32,12 @@ type serverOptions struct {
 	discord           http.Handler
 	accounts          *account.Store
 	usage             *usage.Counter
+}
+
+// WithRelays shares the room relays with the rest of the process (the kick
+// moves a room to a new one).
+func WithRelays(relays *moqrelay.Rooms) ServerOption {
+	return func(o *serverOptions) { o.relays = relays }
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
@@ -114,8 +122,12 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if hub != nil {
 		screenAuthorizer = hub
 	}
-	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
-	RegisterCallRoutes(r.Group("/api"), store, cfg, screenAuthorizer)
+	relays := options.relays
+	if relays == nil {
+		relays = moqrelay.FromConfig(cfg, store)
+	}
+	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, relays, screenAuthorizer, onSubsStored)
+	RegisterCallRoutes(r.Group("/api"), store, cfg, relays, screenAuthorizer)
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, screenAuthorizer, options.subtitlePublisher, onSubsStored)
 	var authorizer stageAuthorizer
 	if hub != nil {
@@ -126,7 +138,7 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)
-	RegisterLiveRoutes(r.Group("/api"), store, cfg, authorizer, options.sourceHooks, options.torrentAccess.Service)
+	RegisterLiveRoutes(r.Group("/api"), store, cfg, relays, authorizer, options.sourceHooks, options.torrentAccess.Service)
 	if hub != nil {
 		RegisterJoinRoutes(r.Group("/api"), store, cfg, hub, hub, hub.NotifyRoomUpdated)
 		r.GET("/ws/rooms/:id", human.Require(), hub.HandleWS)

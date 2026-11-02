@@ -316,6 +316,7 @@ func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
 			return nil, fmt.Errorf("unmarshal spotlight: %w", err)
 		}
 	}
+	r.RelayEpoch, _ = strconv.Atoi(fields["moq_epoch"])
 	r.Name = fields["name"]
 	r.SourceMemberID = fields["source_member_id"]
 	r.SourceYielded = fields["source_yielded"] == "1"

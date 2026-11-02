@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { keepAskingForRelay } from '../call/moq'
 import type { ScreenShareInfo } from '../types'
 import {
   fetchScreenRelay,
@@ -127,7 +128,7 @@ export interface ScreenShareApi {
  * The whole screen-sharing machine of a room: who is publishing, what I am
  * publishing, and one subscription per remote screen, reopened until it shows frames.
  */
-export function useScreenShare({ roomId, memberId, nickname, capability, isController, shareOpen, screens, onScreenStarted }: {
+export function useScreenShare({ roomId, memberId, nickname, capability, isController, shareOpen, screens, relayEpoch = 0, onScreenStarted }: {
   roomId: string
   memberId: string
   nickname: string
@@ -135,6 +136,8 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   isController: boolean
   shareOpen: boolean
   screens: ScreenShareInfo[]
+  /** The room's relay epoch: a kick moves the room to a new relay, and every screen with it. */
+  relayEpoch?: number
   onScreenStarted?: (share: ScreenShareInfo) => void
 }): ScreenShareApi {
   const publisherRef = useRef<ScreenPublisher | null>(null)
@@ -449,16 +452,11 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
   // member may publish, so it is refetched when the host grants or takes back a stage.
   useEffect(() => {
     if (!memberId || !capability) return
-    let disposed = false
-    void fetchScreenRelay(roomId, memberId, capability)
-      .then((current) => {
-        if (disposed) return
-        relayRef.current = current
-        setRelay(current)
-      })
-      .catch(() => undefined)
-    return () => { disposed = true }
-  }, [roomId, memberId, capability, shareOpen])
+    return keepAskingForRelay(() => fetchScreenRelay(roomId, memberId, capability), (current) => {
+      relayRef.current = current
+      setRelay(current)
+    }, 'screenshare_disabled')
+  }, [roomId, memberId, capability, shareOpen, relayEpoch])
 
   // A stream granted on the home page is published as soon as the room knows who we are.
   useEffect(() => {
@@ -514,6 +512,24 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
     })
   }, [memberId, publish, publishJlocal, fail])
 
+  // A kick moves the room to a new relay; the screen I share moves with it,
+  // and whoever was put out is left on a relay that gets nothing more.
+  const epochRef = useRef(relayEpoch)
+  useEffect(() => {
+    const previous = epochRef.current
+    epochRef.current = relayEpoch
+    const stream = streamRef.current
+    if (previous === relayEpoch || !stream || !memberId) return
+    publisherRef.current?.close()
+    publisherRef.current = null
+    const companion = jlocalRef.current
+    const again = companion ? publishJlocal(companion, loadScreenQuality()) : publish(stream, loadScreenQuality())
+    again.catch((failure: unknown) => {
+      stopRef.current()
+      fail(failure)
+    })
+  }, [relayEpoch, memberId, publish, publishJlocal, fail])
+
   // A host closing the room to guests takes the guests' screens down with it.
   useEffect(() => {
     if (shareOpen || isController || !streamRef.current) return
@@ -553,8 +569,14 @@ export function useScreenShare({ roomId, memberId, nickname, capability, isContr
 
   // A tile can be bound before the relay answers; it gets its subscription the
   // moment it does, instead of waiting out a retry.
+  // A relay of its own after a move: what was watched on the old one is watched again here.
+  const watchedOnRef = useRef<string | null>(null)
   useEffect(() => {
-    if (relay) pool.refresh()
+    if (!relay) return
+    const moved = watchedOnRef.current !== null && watchedOnRef.current !== relay.url
+    watchedOnRef.current = relay.url
+    if (moved) for (const key of pool.keys()) pool.reopen(key)
+    else pool.refresh()
   }, [relay, pool])
 
   useEffect(() => {

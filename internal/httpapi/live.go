@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/room"
 	"github.com/giulianoo0/ss/internal/worker"
@@ -52,9 +53,9 @@ type liveStateRequest struct {
 
 // RegisterLiveRoutes mounts the live start and the companion app's state
 // report. service may be nil: then only the companion app can produce.
-func RegisterLiveRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, authorizer stageAuthorizer,
+func RegisterLiveRoutes(rg *gin.RouterGroup, store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer stageAuthorizer,
 	hooks SourceHooks, service *worker.Service) {
-	rg.POST("/rooms/:id/live", startLive(store, cfg, authorizer, hooks, service))
+	rg.POST("/rooms/:id/live", startLive(store, cfg, relays, authorizer, hooks, service))
 	rg.POST("/rooms/:id/live/state", reportLive(store, authorizer, hooks.NotifyRoomUpdated))
 }
 
@@ -71,7 +72,7 @@ func loadLiveStageRoom(c *gin.Context, store *room.Store) (*room.Room, bool) {
 	return storedRoom, true
 }
 
-func startLive(store *room.Store, cfg config.Config, authorizer stageAuthorizer, hooks SourceHooks, service *worker.Service) gin.HandlerFunc {
+func startLive(store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer stageAuthorizer, hooks SourceHooks, service *worker.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.ScreenshareEnabled() {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "live_disabled"})
@@ -120,7 +121,11 @@ func startLive(store *room.Store, cfg config.Config, authorizer stageAuthorizer,
 			Status:    "processing",
 		}
 		if req.Producer == LiveProducerFleet {
-			job, err := service.StartLive(ctx, storedRoom.ID, CanonicalYoutubeURL(videoID), cfg.MoqRelayURL+"/"+cfg.MoqPublishToken, live.Broadcast)
+			relay, ok := roomRelay(c, relays, storedRoom.ID)
+			if !ok {
+				return
+			}
+			job, err := service.StartLive(ctx, storedRoom.ID, CanonicalYoutubeURL(videoID), relay.PublishURL(), live.Broadcast)
 			if err != nil {
 				code := liveStartCode(err)
 				live.Status, live.Error = "error", code
@@ -244,5 +249,33 @@ func LiveReporter(store *room.Store, notify func(roomID string)) func(roomID, wo
 			return
 		}
 		applyLiveState(ctx, store, notify, storedRoom, state)
+	}
+}
+
+// MoveFleetLive starts the room's fleet live over on the room's current
+// relay, after the room moved to a new one. A live from a companion app is
+// moved by the tab that runs it.
+func MoveFleetLive(ctx context.Context, store *room.Store, relays *moqrelay.Rooms, service *worker.Service, roomID string) {
+	storedRoom, err := store.Get(ctx, roomID)
+	if err != nil || service == nil {
+		return
+	}
+	live := storedRoom.Live
+	if live == nil || live.Producer != LiveProducerFleet || live.Status == "error" {
+		return
+	}
+	relay, err := relays.ForRoom(ctx, roomID)
+	if err != nil {
+		return
+	}
+	service.CancelRoomLive(roomID)
+	job, err := service.StartLive(ctx, roomID, CanonicalYoutubeURL(live.VideoID), relay.PublishURL(), live.Broadcast)
+	if err != nil {
+		live.Status, live.Error = "error", liveStartCode(err)
+	} else {
+		live.Status, live.WorkerID, live.JobID = "processing", job.WorkerID, job.ID
+	}
+	if err := store.SetLive(ctx, roomID, live); err != nil {
+		slog.ErrorContext(ctx, "record moved live", "room_id", roomID, "error", err)
 	}
 }

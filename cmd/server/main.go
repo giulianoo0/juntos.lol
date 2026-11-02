@@ -21,6 +21,7 @@ import (
 	"github.com/giulianoo0/ss/internal/db"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
+	"github.com/giulianoo0/ss/internal/moqrelay"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/room"
@@ -162,7 +163,22 @@ func main() {
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)
 
+	relays := moqrelay.FromConfig(cfg, store)
+	go relays.RunSweeper(ctx, 5*time.Minute)
+	hub.OnKick(func(roomID string) {
+		moveCtx, cancel := context.WithTimeout(ctx, time.Hour)
+		defer cancel()
+		relays.MoveAfterKick(moveCtx, roomID, func() {
+			// The room hears first, so screens and cameras leave the old relay
+			// without waiting on the worker that takes the live over.
+			hub.NotifyRoomUpdated(roomID)
+			httpapi.MoveFleetLive(moveCtx, store, relays, torrents, roomID)
+			hub.NotifyRoomUpdated(roomID)
+		})
+	})
+
 	r := httpapi.NewServer(cfg, store, hub,
+		httpapi.WithRelays(relays),
 		httpapi.WithSubtitlePublisher(publisher),
 		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{
 			NotifyStatus:       hub.NotifyStatus,
