@@ -90,6 +90,28 @@ export function takeReload(roomId: string): string | null {
   }
 }
 
+/** Why a tab was put out of a room, for the page it reloads into. */
+export type LeftReason = 'kicked' | 'replaced' | 'idle' | 'gone'
+
+const leftKey = (roomId: string) => `ss.left.${roomId}`
+const LEFT_REASONS: readonly LeftReason[] = ['kicked', 'replaced', 'idle', 'gone']
+
+/** Notes, before the tab reloads away from the room, why it left. */
+export function noteLeft(roomId: string, reason: LeftReason): void {
+  try { sessionStorage.setItem(leftKey(roomId), reason) } catch { /* the door just shows */ }
+}
+
+/** Why this tab just left the room, if it did; asked once. */
+export function takeLeft(roomId: string): LeftReason | null {
+  try {
+    const kept = sessionStorage.getItem(leftKey(roomId))
+    sessionStorage.removeItem(leftKey(roomId))
+    return LEFT_REASONS.find((reason) => reason === kept) ?? null
+  } catch {
+    return null
+  }
+}
+
 const DEVICE_KEY = 'juntos-device'
 
 /**

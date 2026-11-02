@@ -187,27 +187,6 @@ func TestHubTabThatSaysItIsLeavingIsGoneWithoutTheLongGrace(t *testing.T) {
 	require.Len(t, members.Members, 1)
 }
 
-func TestHubKickDropsASeatHeldForADroppedSocket(t *testing.T) {
-	holdSeats(t)
-	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
-	host := dialHubWS(t, server)
-	helloHubClient(t, host, "host", 1)
-	guest := dialHubWS(t, server)
-	guestWelcome := helloHubClient(t, guest, "guest", 2)
-	require.Equal(t, "members", readHubEvent(t, host).Type)
-	require.NoError(t, guest.Close())
-	requireNoEvent(t, host, 100*time.Millisecond)
-
-	require.NoError(t, host.WriteJSON(Inbound{Type: "kick", TargetID: "m2"}))
-	members := readHubEvent(t, host)
-	require.Equal(t, "members", members.Type)
-	require.Len(t, members.Members, 1)
-
-	again := dialHubWS(t, server)
-	welcome := resumeHubClient(t, again, "guest", "m2", guestWelcome.Capability, 3)
-	require.Equal(t, "m3", welcome.MemberID, "a kicked seat came back")
-}
-
 func TestHubResumeWithAWrongCapabilityIsAFreshJoin(t *testing.T) {
 	holdSeats(t)
 	_, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})

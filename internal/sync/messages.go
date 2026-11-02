@@ -90,6 +90,13 @@ type TitleRequest struct {
 	From     string `json:"from,omitempty"`
 }
 
+// BanView is a ban as the room shows it: who, never what matched them.
+type BanView struct {
+	ID       string `json:"id"`
+	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar,omitempty"`
+}
+
 // HostSubtitles is which subtitle track the controller watches with and how
 // far it shifted it. Track is the room track index, or -1 for none; local
 // imports never leave the host's browser, so those arrive as -1 too.
@@ -124,6 +131,8 @@ type Outbound struct {
 	Nickname      string              `json:"nickname,omitempty"`
 	Allow         *bool               `json:"allow,omitempty"`
 	Spotlight     *room.Spotlight     `json:"spotlight,omitempty"`
+	// Bans on a welcome or a bans: who the host put out, for letting back in.
+	Bans []BanView `json:"bans,omitempty"`
 	// Mic and Cam on a forceMedia: what the host just turned off for this member.
 	Mic *bool `json:"mic,omitempty"`
 	Cam *bool `json:"cam,omitempty"`

@@ -111,6 +111,12 @@ func previewRoom(store *room.Store) gin.HandlerFunc {
 	}
 }
 
+// ClientIP reads a request's address the way every limit here does, for the
+// sync hub's bans.
+func ClientIP(behindEdge bool) func(*http.Request) string {
+	return func(r *http.Request) string { return requestIP(r, behindEdge) }
+}
+
 // requestIP is the client's address. Behind Cloudflare that is the edge's
 // CF-Connecting-IP, but only on a request Cloudflare brought: the origin
 // answers anyone who finds it, and they write the header themselves.

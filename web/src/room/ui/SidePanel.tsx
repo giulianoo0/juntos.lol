@@ -65,40 +65,65 @@ function Asks({ requests, knocks }: { requests: StageRequest[]; knocks: Knock[] 
   )
 }
 
+/** Who the host put out: the only way back in for them is this button. */
+function RemovedList() {
+  const { vm, strings } = useRoomUi()
+  if (!vm.isHost || vm.removed.length === 0) return null
+  return (
+    <section className={styles.removed} aria-labelledby="removed-heading">
+      <h3 id="removed-heading" className={styles.removedHeading}>{strings.removed}</h3>
+      <ul className={styles.people}>
+        {vm.removed.map((person) => (
+          <li key={person.id} className={styles.person} data-removed={person.id}>
+            <Face id={person.id} avatar={person.avatar} size={32} />
+            <span className={styles.personName}><span className={styles.nameText}>{person.name}</span></span>
+            <Pill tone="soft" size="sm" aria-label={fill(strings.unbanName, { name: person.name })} onClick={() => vm.actions.unban(person.id)}>
+              {strings.unban}
+            </Pill>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 function PeopleList() {
   const { vm, strings } = useRoomUi()
   return (
-    <ul className={styles.people} aria-label={strings.people}>
-      {vm.people.map((person) => {
-        const muted = !person.mic || person.hostMuted
-        const self = person.id === vm.selfId
-        return (
-          <li key={person.id} className={styles.person} data-member={person.id}>
-            <Face id={person.id} avatar={person.avatar} size={32} />
-            <span className={styles.personName}>
-              {person.host ? <Tip label={strings.host}><Crown size={13} className={styles.crown} fill="currentColor" aria-hidden="true" /></Tip> : null}
-              <span className={styles.nameText}>{person.name}</span>
-              {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
-              {person.app ? <Tip label={strings.usingApp}><AppWindow size={13} className={styles.app} data-app="" aria-hidden="true" /></Tip> : null}
-              {self ? <span className={styles.you}>{strings.you}</span> : null}
-            </span>
-            {person.cam && !person.hostCamOff ? null : (
-              <Tip label={strings.camOff}><VideoOff size={15} className={styles.mark} aria-hidden="true" /></Tip>
-            )}
-            {vm.isHost && !self && !muted ? (
-              <button type="button" className={styles.icon} aria-label={fill(strings.muteName, { name: person.name })} title={fill(strings.muteName, { name: person.name })} onClick={() => vm.actions.hostMute(person.id)}>
-                <Mic size={15} aria-hidden="true" />
-              </button>
-            ) : muted ? (
-              <Tip label={strings.micOff}><MicOff size={15} className={styles.mark} aria-hidden="true" /></Tip>
-            ) : (
-              <Tip label={strings.mic}><Mic size={15} className={styles.mark} aria-hidden="true" /></Tip>
-            )}
-            <PersonMenu person={person} />
-          </li>
-        )
-      })}
-    </ul>
+    <div className={styles.peopleView}>
+      <ul className={styles.people} aria-label={strings.people}>
+        {vm.people.map((person) => {
+          const muted = !person.mic || person.hostMuted
+          const self = person.id === vm.selfId
+          return (
+            <li key={person.id} className={styles.person} data-member={person.id}>
+              <Face id={person.id} avatar={person.avatar} size={32} />
+              <span className={styles.personName}>
+                {person.host ? <Tip label={strings.host}><Crown size={13} className={styles.crown} fill="currentColor" aria-hidden="true" /></Tip> : null}
+                <span className={styles.nameText}>{person.name}</span>
+                {person.accountId ? <span className={styles.number}>#{person.accountId}</span> : null}
+                {person.app ? <Tip label={strings.usingApp}><AppWindow size={13} className={styles.app} data-app="" aria-hidden="true" /></Tip> : null}
+                {self ? <span className={styles.you}>{strings.you}</span> : null}
+              </span>
+              {person.cam && !person.hostCamOff ? null : (
+                <Tip label={strings.camOff}><VideoOff size={15} className={styles.mark} aria-hidden="true" /></Tip>
+              )}
+              {vm.isHost && !self && !muted ? (
+                <button type="button" className={styles.icon} aria-label={fill(strings.muteName, { name: person.name })} title={fill(strings.muteName, { name: person.name })} onClick={() => vm.actions.hostMute(person.id)}>
+                  <Mic size={15} aria-hidden="true" />
+                </button>
+              ) : muted ? (
+                <Tip label={strings.micOff}><MicOff size={15} className={styles.mark} aria-hidden="true" /></Tip>
+              ) : (
+                <Tip label={strings.mic}><Mic size={15} className={styles.mark} aria-hidden="true" /></Tip>
+              )}
+              <PersonMenu person={person} />
+            </li>
+          )
+        })}
+      </ul>
+      <RemovedList />
+    </div>
   )
 }
 

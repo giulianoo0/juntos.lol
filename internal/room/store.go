@@ -1087,7 +1087,7 @@ func (s *Store) Messages(ctx context.Context, id string) ([]ChatMessage, error) 
 func (s *Store) Delete(ctx context.Context, id string) error {
 	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
 		p.Del(ctx, roomKey(id), stateKey(id), chatKey(id), membersKey(id), uploadKey(id),
-			playlistsKey(id), publishedKey(id))
+			playlistsKey(id), publishedKey(id), bansKey(id))
 		p.ZRem(ctx, byExpiryKey, id)
 		return nil
 	})

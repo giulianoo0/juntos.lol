@@ -29,7 +29,7 @@ import { useStageHosts } from '../room/stageHosts'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
-import { claimOwnerFromHash, fetchRoomPreview, rememberForReload, requestJoinTicket, setRoomAccess, takeReload, type JoinMode, type RoomPreview } from '../join'
+import { claimOwnerFromHash, fetchRoomPreview, noteLeft, rememberForReload, requestJoinTicket, setRoomAccess, takeLeft, takeReload, type JoinMode, type LeftReason, type RoomPreview } from '../join'
 import { useLocalMedia } from '../call/useLocalMedia'
 import { localLevel } from '../call/media'
 import { voiceLevel } from '../call/speaking'
@@ -117,10 +117,13 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [preview, setPreview] = useState<RoomPreview | null>(null)
   const [missing, setMissing] = useState(false)
-  // A reload walks straight back in: the seat is still being held.
+  // Put out of the room a moment ago: this page says so and nothing more.
+  const [left, setLeft] = useState<LeftReason | null>(() => takeLeft(id))
+  // A reload walks straight back in: the seat is still being held. Not after
+  // leaving, though: that reload was the room letting the tab go.
   const [entered, setEntered] = useState<{ nickname: string; mic: boolean; cam: boolean } | null>(() => {
     const nickname = takeReload(id)
-    return nickname ? { nickname, mic: false, cam: false } : null
+    return nickname && !left ? { nickname, mic: false, cam: false } : null
   })
   useEffect(() => {
     onInCall(entered !== null)
@@ -172,7 +175,8 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
     return () => controller.abort()
   }, [id])
 
-  if (missing) return <NotFoundPage title={t('room.expired')} />
+  if (missing || left === 'gone') return <NotFoundPage title={t('room.expired')} />
+  if (left) return <LeftRoom reason={left} onRejoin={() => setLeft(null)} />
   if (!preview || meLoading) return <EntrySkeleton />
   if (inApp && !entered) return <OpenedInAppPage onStay={() => setInApp(false)} />
 
@@ -244,6 +248,38 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
         setEntered(null)
       }}
     />
+  )
+}
+
+/**
+ * The page a tab lands on once the room let it go. Nothing of the room is
+ * mounted: the tab reloaded into this, so no player, call, screen or upload
+ * of the room it was in is left running. Someone put out has no way back from
+ * here; only the host lets them in again.
+ */
+function LeftRoom({ reason, onRejoin }: { reason: Exclude<LeftReason, 'gone'>; onRejoin: () => void }) {
+  const t = useT()
+  const title = reason === 'kicked' ? 'room.kickedTitle' : reason === 'replaced' ? 'room.replacedTitle' : 'room.closedIdleTitle'
+  return (
+    <main className="center-state">
+      <Dialog open onOpenChange={() => undefined}>
+        <DialogContent
+          className="still-there-dialog"
+          closeLabel={t('room.closedIdleHome')}
+          title={t(title)}
+          onCloseClick={() => { window.location.assign('/') }}
+        >
+          <div className="closed-idle-actions">
+            {reason === 'kicked' ? null : (
+              <button type="button" className="primary-button" autoFocus onClick={onRejoin}>
+                {t(reason === 'replaced' ? 'room.replacedRejoin' : 'room.closedIdleRejoin')}
+              </button>
+            )}
+            <Link className={reason === 'kicked' ? 'primary-button' : 'secondary-button'} to="/">{t('room.closedIdleHome')}</Link>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </main>
   )
 }
 
@@ -401,6 +437,17 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     videoRef.current?.pause()
     leave()
   }, [leave])
+  // Put out, replaced by another tab, closed for idling or gone: the tab
+  // drops the room at once. A full reload is the one way out that also ends
+  // what runs outside React (an upload, the app's producer, a relay
+  // session); the reloaded page shows why and never walks back in by itself.
+  const leftReason: LeftReason | null = sync.kicked ? 'kicked' : sync.replaced ? 'replaced' : sync.gone ? 'gone' : sync.left ? 'idle' : null
+  useEffect(() => {
+    if (!leftReason) return
+    videoRef.current?.pause()
+    noteLeft(room.id, leftReason)
+    window.location.replace(`/room/${encodeURIComponent(room.id)}`)
+  }, [leftReason, room.id])
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
   const liveRoomRef = useRef(liveRoom)
@@ -947,6 +994,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     spotlight: spotlight as RoomViewModel['spotlight'],
     requests: sync.isController ? sync.stages.requests.map((request) => ({ id: request.requestId, memberId: request.memberId, name: request.nickname, kind: request.kind })) : [],
     knocks: sync.isController ? sync.knocks.map((knock) => ({ id: knock.requestId, name: knock.nickname })) : [],
+    removed: sync.isController ? sync.bans.map((ban) => ({ id: ban.id, name: ban.nickname, avatar: ban.avatar })) : [],
     chat,
     reactions,
     sources,
@@ -982,6 +1030,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       hostMute: call.hostMute,
       hostCamOff: call.hostCamOff,
       kick: (memberId) => { sync.send('kick', { targetId: memberId }) },
+      unban: (removedId) => { sync.send('unban', { targetId: removedId }) },
       makeHost: (memberId) => { sync.send('transfer', { targetId: memberId }) },
       setAccess: (mode, password) => {
         void setRoomAccess(room.id, sync.memberId, sync.capability, mode, password)
@@ -1154,15 +1203,16 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     </div>
   ) : null
 
-  // Nothing of a room that is gone stays mounted: the player would keep
-  // asking for its playlists.
-  if (sync.gone) return <NotFoundPage title={t('room.expired')} />
+  // Nothing of a room this tab left stays mounted, and the reload that
+  // follows takes what lives outside React with it (see the effect above).
+  if (leftReason === 'gone') return <NotFoundPage title={t('room.expired')} />
+  if (leftReason) return <EntrySkeleton />
   if (sync.door === 'password' || sync.door === 'badPassword') {
     return <PasswordAgain bad={sync.door === 'badPassword'} onAgain={onPasswordAgain} />
   }
   if (sync.door === 'denied') return <RoomGate step="denied" />
   if (sync.door === 'lobby') {
-    return <WaitingRoom vm={{ name: vm.name, nickname, avatar: loadPickedAvatar() ?? undefined, cancel: () => { leaveIdle(); window.location.assign('/') } }} />
+    return <WaitingRoom vm={{ name: vm.name, nickname, avatar: loadPickedAvatar() ?? undefined, cancel: () => { sync.sayGoodbye(); window.location.assign('/') } }} />
   }
 
   return (
@@ -1259,24 +1309,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       onExpired={leaveIdle}
       t={t}
     />
-    <Dialog open={sync.left} onOpenChange={() => undefined}>
-      {sync.left ? (
-        <DialogContent
-          className="still-there-dialog"
-          closeLabel={t('room.closedIdleHome')}
-          title={t(sync.replaced ? 'room.replacedTitle' : sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
-          description={sync.replaced ? undefined : t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
-          onCloseClick={() => { window.location.assign("/") }}
-        >
-          <div className="closed-idle-actions">
-            <button type="button" className="primary-button" autoFocus onClick={() => window.location.reload()}>
-              {t(sync.replaced ? 'room.replacedRejoin' : 'room.closedIdleRejoin')}
-            </button>
-            <Link className="secondary-button" to="/">{t('room.closedIdleHome')}</Link>
-          </div>
-        </DialogContent>
-      ) : null}
-    </Dialog>
     </CallProvider>
   )
 }

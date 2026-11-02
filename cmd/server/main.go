@@ -68,6 +68,7 @@ func main() {
 	defer hub.Close()
 	accounts := account.NewStore(pool)
 	hub.SetAccounts(httpapi.HubAccounts(accounts))
+	hub.SetClientIP(httpapi.ClientIP(cfg.BehindCloudflare))
 	counter := usage.New(rdb, pool)
 	hub.SetUsage(counter)
 	go counter.Run(ctx, func() int {

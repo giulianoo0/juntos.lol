@@ -254,6 +254,51 @@ describe('sala com aprovação', () => {
   })
 })
 
+describe('saída da sala', () => {
+  let replace: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    replace = vi.fn()
+    vi.stubGlobal('location', { ...window.location, replace, assign: vi.fn(), pathname: '/room/abc123', search: '', hash: '' })
+    sessionStorage.clear()
+  })
+
+  it.each([
+    ['kicked', { type: 'error', error: 'kicked' }],
+    ['replaced', { type: 'error', error: 'replaced' }],
+  ])('quem sai por %s perde a sala na hora e recarrega sem reentrar', async (reason, message) => {
+    serve()
+    await joined('m2')
+
+    receive(message)
+
+    expect(screen.queryByRole('button', { name: 'Copiar link da sala' })).not.toBeInTheDocument()
+    expect(replace).toHaveBeenCalledWith('/room/abc123')
+    expect(sessionStorage.getItem('ss.left.abc123')).toBe(reason)
+  })
+
+  it('quem foi expulso volta numa tela sem caminho de volta, mesmo com o apelido guardado para recarregar', async () => {
+    sessionStorage.setItem('ss.left.abc123', 'kicked')
+    sessionStorage.setItem('ss.reload.abc123', JSON.stringify({ nickname: 'Giuli', at: Date.now() }))
+    serve()
+    renderRoom()
+
+    expect(await screen.findByRole('heading', { name: 'Você foi removido da sala' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Entrar de novo' })).not.toBeInTheDocument()
+    expect(FakeWebSocket.instances).toHaveLength(0)
+    expect(sessionStorage.getItem('ss.reload.abc123')).toBeNull()
+  })
+
+  it('a aba substituída pode voltar, mas pela porta', async () => {
+    sessionStorage.setItem('ss.left.abc123', 'replaced')
+    serve()
+    renderRoom()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Usar esta aba' }))
+    expect(await nameField()).toBeInTheDocument()
+    expect(FakeWebSocket.instances).toHaveLength(0)
+  })
+})
+
 describe('versão da sala', () => {
   it('aplica um refetch lento mesmo com novos sinais de versão no meio', async () => {
     const slow: Array<(body: unknown) => void> = []

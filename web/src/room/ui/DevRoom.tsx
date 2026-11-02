@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock } from '../model'
+import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock, Removed } from '../model'
 import { profilePath } from '../../account'
 import { openDownloadApp } from '../../components/DownloadApp'
 import { Segmented } from '../../ui/Segmented'
@@ -125,6 +125,7 @@ export function DevRoom() {
   const [joinMode, setJoinMode] = useState<JoinMode>((params.get('mode') as JoinMode | null) ?? 'password')
   const [requests, setRequests] = useState<StageRequest[]>([])
   const [knocks, setKnocks] = useState<Knock[]>([])
+  const [removed, setRemoved] = useState<Removed[]>([])
   const [stages, setStages] = useState<Stage[]>([])
   const [spotlight, setSpotlight] = useState<Spotlight | null>(null)
 
@@ -160,6 +161,7 @@ export function DevRoom() {
     spotlight,
     requests,
     knocks,
+    removed,
     ...splitReactions(chat),
     sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
     appOnly: params.get('app') === '1' ? [] : ['youtube'],
@@ -203,7 +205,12 @@ export function DevRoom() {
       hostMute: (id) => update(id, { hostMuted: true, speaking: false }),
       hostCamOff: (id) => update(id, { hostCamOff: true }),
       makeHost: () => undefined,
-      kick: (id) => setPeople((list) => list.filter((person) => person.id !== id)),
+      kick: (id) => {
+        const person = people.find((item) => item.id === id)
+        setPeople((list) => list.filter((item) => item.id !== id))
+        if (person) setRemoved((list) => [...list, { id, name: person.name, avatar: person.avatar }])
+      },
+      unban: (id) => setRemoved((list) => list.filter((item) => item.id !== id)),
       setAccess: (mode) => setJoinMode(mode),
       closeStage: (stage) => setStages((list) => list.filter((item) => item.id !== stage.id)),
       openProfile: (accountId) => navigate(profilePath(accountId)),
@@ -219,7 +226,7 @@ export function DevRoom() {
     },
     // `update` and the setters are stable enough for a dev page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, chat, params])
+  }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, removed, chat, params])
 
   const others = people.filter((person) => person.id !== selfId)
   const [entryAvatar, setEntryAvatar] = useState(params.get('avatar') ?? 'fox.bowtie')

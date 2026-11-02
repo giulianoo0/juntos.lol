@@ -28,8 +28,10 @@ type client struct {
 	telemetry        syncTelemetry
 	lastTitleRequest time.Time
 	// The tab said it is going: its seat is held only for a reload.
-	leaving  bool
-	device   string
+	leaving bool
+	device  string
+	// ip is the address the socket came from, "" when there is no trustworthy one.
+	ip       string
 	identity Identity
 	watch    *watchSpan
 	// ClientDesktop for the app, as its hello said, or "" for a browser.

@@ -11,7 +11,7 @@ const person = (id: string, name: string, extra: Partial<Person> = {}): Person =
 function model(overrides: Partial<RoomViewModel> = {}): RoomViewModel {
   const actions = Object.fromEntries([
     'setMic', 'setCam', 'share', 'react', 'sendChat', 'leave', 'copyLink', 'spotlight', 'answerRequest',
-    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'makeHost', 'setAccess', 'closeStage', 'openProfile', 'getApp',
+    'admit', 'deny', 'hostMute', 'hostCamOff', 'kick', 'unban', 'makeHost', 'setAccess', 'closeStage', 'openProfile', 'getApp',
   ].map((name) => [name, vi.fn()])) as unknown as RoomActions
   return {
     name: 'Sessão de sexta',
@@ -25,6 +25,7 @@ function model(overrides: Partial<RoomViewModel> = {}): RoomViewModel {
     spotlight: null,
     requests: [{ id: 'r1', memberId: 'ana', name: 'Ana', kind: 'screen' }],
     knocks: [],
+    removed: [],
     chat: [],
     reactions: [],
     sources: ['screen', 'file', 'torrent'],
@@ -204,6 +205,21 @@ describe('RoomView faces', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Pessoas/ }))
     const list = screen.getByRole('list', { name: 'Pessoas' })
     expect(list.querySelector('svg[data-kind="owl"]')).not.toBeNull()
+  })
+
+  it('lets the host bring back someone they put out', () => {
+    const vm = model({ requests: [], removed: [{ id: 'm7', name: 'Caio' }] })
+    render(<RoomView vm={vm} />)
+    fireEvent.click(screen.getByRole('radio', { name: /Pessoas/ }))
+    const removed = screen.getByRole('region', { name: 'Expulsos' })
+    fireEvent.click(within(removed).getByRole('button', { name: 'Liberar Caio' }))
+    expect(vm.actions.unban).toHaveBeenCalledWith('m7')
+  })
+
+  it('shows a guest nobody who was put out', () => {
+    render(<RoomView vm={model({ requests: [], isHost: false, removed: [{ id: 'm7', name: 'Caio' }] })} />)
+    fireEvent.click(screen.getByRole('radio', { name: /Pessoas/ }))
+    expect(screen.queryByRole('region', { name: 'Expulsos' })).toBeNull()
   })
 })
 

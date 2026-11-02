@@ -55,6 +55,13 @@ export interface StageRequest {
   kind: RequestKind
 }
 
+/** Someone the host put out, kept out until the host lets them back (host only). */
+export interface Removed {
+  id: string
+  name: string
+  avatar?: string
+}
+
 /** Someone at the door of an approval room (host only). */
 export interface Knock {
   id: string
@@ -101,6 +108,8 @@ export interface RoomActions {
   hostMute: (memberId: string) => void
   hostCamOff: (memberId: string) => void
   kick: (memberId: string) => void
+  /** Host: lets someone put out come back. */
+  unban: (removedId: string) => void
   makeHost: (memberId: string) => void
   setAccess: (mode: JoinMode, password?: string) => void
   /** Host, or the stage's owner. */
@@ -138,6 +147,8 @@ export interface RoomViewModel {
   spotlight: Spotlight | null
   requests: StageRequest[]
   knocks: Knock[]
+  /** Who the host put out; empty for a guest. */
+  removed: Removed[]
   chat: ChatMessage[]
   /** Reactions, newest last; only the fresh ones float. */
   reactions: Reaction[]

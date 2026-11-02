@@ -50,6 +50,7 @@ interface Outbound {
   nickname?: string
   allow?: boolean
   spotlight?: Spotlight
+  bans?: RoomBan[]
   mic?: boolean
   cam?: boolean
   title?: {
@@ -63,6 +64,13 @@ interface Outbound {
   }
   /** On a needBrowserMedia: the media the browsers are waiting for. */
   generation?: number
+}
+
+/** Someone the host put out of the room, until the host lets them back. */
+export interface RoomBan {
+  id: string
+  nickname: string
+  avatar?: string
 }
 
 /** The controller's subtitle pick: a room track index (-1 for none) and the
@@ -125,6 +133,8 @@ interface SyncResult {
   retryDoor: () => void
   /** Host: who is waiting in the lobby of an approval room. */
   knocks: { requestId: string; nickname: string }[]
+  /** Who the host put out; only the host can let them back. */
+  bans: RoomBan[]
   admit: (requestId: string) => boolean
   deny: (requestId: string) => boolean
   /** What the host just turned off for this member; the seq changes on each. */
@@ -205,6 +215,7 @@ export function useSync(
   const [door, setDoor] = useState<Door>('in')
   const [doorNonce, setDoorNonce] = useState(0)
   const [knocks, setKnocks] = useState<{ requestId: string; nickname: string }[]>([])
+  const [bans, setBans] = useState<RoomBan[]>([])
   const [forced, setForced] = useState<{ mic?: boolean; cam?: boolean; seq: number } | null>(null)
 
   const send = useCallback((type: string, payload: Record<string, unknown> = {}): boolean => {
@@ -434,6 +445,7 @@ export function useSync(
             setCapability(message.capability ?? '')
             setGatingEnabled(message.gating ?? true)
             setHostSubtitles(message.hostSubtitles ?? null)
+            setBans(message.bans ?? [])
             setWaiting(null)
             setRoomStatus('live')
             setRoomVersion((version) => version + 1)
@@ -474,6 +486,9 @@ export function useSync(
             break
           case 'gating':
             setGatingEnabled(message.gating ?? true)
+            break
+          case 'bans':
+            setBans(message.bans ?? [])
             break
           case 'hostSubtitles':
             setHostSubtitles(message.hostSubtitles ?? null)
@@ -681,6 +696,7 @@ export function useSync(
     door,
     retryDoor,
     knocks,
+    bans,
     admit,
     deny,
     forced,

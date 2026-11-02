@@ -60,6 +60,9 @@ type Hub struct {
 
 	onStageClose func(roomID, kind string)
 
+	// clientIP is the trustworthy address of a request, or "".
+	clientIP func(*http.Request) string
+
 	usage *usage.Counter
 
 	mu           stdsync.Mutex
@@ -309,6 +312,11 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		writeHandshakeError(conn, "server_stopping")
 		return
 	}
+	ip := h.requestIP(c.Request)
+	if errCode := h.refuseBanned(c.Request.Context(), storedRoom.ID, hello, identity, ip); errCode != "" {
+		writeHandshakeError(conn, errCode)
+		return
+	}
 	if errCode, sent := h.admit(conn, storedRoom, hello); errCode != "" || sent {
 		if !sent {
 			writeHandshakeError(conn, errCode)
@@ -321,6 +329,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		send:        make(chan Outbound, 64),
 		telemetry:   syncTelemetry{device: deviceClass(c.Request.UserAgent())},
 		identity:    identity,
+		ip:          ip,
 		localSource: playsLocally(hello),
 		localCopy:   copiesLocally(hello),
 		kind:        clientKind(hello),
@@ -691,6 +700,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		Type: "welcome", MemberID: memberID, State: &state, ControllerID: r.controllerID,
 		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
 		Capability: request.client.capability, Gating: &gating, HostSubtitles: r.hostSubtitles,
+		Bans: r.banViews(ctx),
 	})
 	r.send(request.client, Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
@@ -781,7 +791,7 @@ func (r *roomConn) handleMemberAction(sender *client, message Inbound) {
 		r.replayStageRequests()
 		r.syncBrowserMedia(target)
 	case "kick":
-		r.dismiss(target, Outbound{Type: "error", ErrCode: "kicked", closeAfter: true})
+		r.kick(target)
 	}
 	r.touch()
 }
@@ -946,6 +956,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 		Type: "welcome", MemberID: next.id, State: &state, ControllerID: r.controllerID,
 		Members: members, History: history, ServerTimeMs: time.Now().UnixMilli(),
 		Capability: next.capability, Gating: &gating, HostSubtitles: r.hostSubtitles,
+		Bans: r.banViews(ctx),
 	})
 	r.send(next, Outbound{
 		Type: "pong", ServerTimeMs: time.Now().UnixMilli(), ClientTimeMs: request.clientTimeMs,
@@ -1062,6 +1073,8 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		r.handleIgnore(event.client, message)
 	case "kick", "transfer":
 		r.handleMemberAction(event.client, message)
+	case "unban":
+		r.handleUnban(event.client, message)
 	case "source":
 		r.handleSource(event.client, message)
 	case "stageRequest":

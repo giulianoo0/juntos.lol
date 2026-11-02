@@ -71,6 +71,32 @@
   overflow-y: auto;
 }
 
+.peopleView {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.peopleView .people {
+  overflow-y: visible;
+}
+
+.removed {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.removedHeading {
+  margin: 0;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+}
+
 .person {
   display: flex;
   align-items: center;
