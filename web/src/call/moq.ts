@@ -36,12 +36,15 @@ export function relayConnection(net: Net, url: string): Publish.Net.Connection.R
 }
 
 /**
- * A viewer's way in: the relay itself, or the bridge when the MoQ client will
- * not use this browser's WebTransport (it refuses every WebKit) and the
- * server names one. The bridge speaks WebSocket only.
+ * A viewer's way in: the relay itself, or the bridge for every WebKit when the
+ * server names one. WebKit never hands receive credit back (bug 319818: no
+ * MAX_DATA or MAX_STREAMS after the first ~16 MiB), so a viewer on it stalls
+ * within seconds. The MoQ client only spots Safari by its version: the Mac
+ * app's WKWebView, which names none, has to be caught here. The bridge
+ * speaks WebSocket only.
  */
 export function watchConnection(net: Net, relay: { url: string; bridge?: string }): Publish.Net.Connection.Reload {
-  if (relay.bridge && !net.Connection.isWebTransportSupported()) {
+  if (relay.bridge && (isWebKit() || !net.Connection.isWebTransportSupported())) {
     const url = new URL(relay.bridge, location.href)
     return new net.Connection.Reload({ url, enabled: true, websocket: { enabled: true, delay: 0 }, delay: RELAY_RETRY })
   }

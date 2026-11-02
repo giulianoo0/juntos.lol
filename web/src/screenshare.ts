@@ -12,6 +12,7 @@ import type { EncodedFrame } from './jlocal/h264Feed'
 import { codecFromAnnexB } from './jlocal/h264Feed'
 import { audioLocked } from './ui/audioUnlock'
 import { isWebKit, relayConnection, relayPublishSupported, watchConnection, whenPublished } from './call/moq'
+import { appCanCapture } from './desktop/screen'
 
 export { isWebKit }
 
@@ -38,9 +39,14 @@ const MIN_BITRATE = 2_000_000
  */
 const AUTO_BITRATE_1080P30 = 6_000_000
 
-/** Whether this browser can send a screen: QUIC to the relay and codecs in both directions. */
+/**
+ * Whether this page can send a screen: QUIC to the relay and codecs in both
+ * directions, or the desktop app capturing and encoding it. The Mac app runs
+ * in WebKit, whose WebTransport only breaks on what it receives; a publisher
+ * receives next to nothing, so the app sends over it.
+ */
 export function screenShareSupported(): boolean {
-  return relayPublishSupported()
+  return relayPublishSupported() || (appCanCapture() && typeof WebTransport !== 'undefined')
 }
 
 /** Whether this browser can capture a screen at all: phones have no getDisplayMedia. */
@@ -435,6 +441,22 @@ const RESUBSCRIBE_GAP_MS = 1_500
  */
 const AUDIO_STALL_MS = 4_000
 const AUDIO_BEHIND_MS = 3_000
+/**
+ * The other way round: the relay can end its own subscription to the
+ * publisher's video and never take it again (seen with the Mac app), leaving
+ * the sound going over a frozen picture. Past this long without a picture
+ * while the sound plays, the video alone is opened again. A browser sharing a
+ * still screen sends no frames either, so each try that brings nothing waits
+ * twice as long as the last, up to the ceiling.
+ */
+const VIDEO_STALL_MS = 6_000
+const VIDEO_STALL_MAX_MS = 60_000
+/*
+ * The relay can drop both of its subscriptions to the publisher too. Sound
+ * that should play never stands still, silence included, so a broadcast still
+ * live with neither moving for as long is opened again whole, on the same
+ * doubling wait.
+ */
 const AUDIO_WATCH_EVERY_MS = 1_000
 const AUDIO_RECOVERY_COOLDOWN_MS = 15_000
 
@@ -462,7 +484,12 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     hasAudio.set(catalog === undefined ? undefined : catalog.audio !== undefined)
   })
 
-  let media: { audio: () => Watch.Audio.Decoder | null; video: Watch.Video.Decoder; reopenAudio: () => void } | null = null
+  let media: {
+    audio: () => Watch.Audio.Decoder | null
+    video: () => Watch.Video.Decoder | null
+    reopenAudio: () => void
+    reopenVideo: () => void
+  } | null = null
 
   const open = () => {
     const videoSource = new Watch.Video.Source({ broadcast, supported: Watch.Video.Decoder.supported })
@@ -473,8 +500,22 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
       video: videoSource.out.jitter,
       audio: audioSource.out.jitter,
     })
-    const video = new Watch.Video.Decoder(videoSource, sync, { enabled: true, paced: true })
-    const renderer = new Watch.Video.Renderer(video, { canvas, visible: 'always' })
+    // The decoder holds the video subscription, so the picture can be taken
+    // again with the sound left playing.
+    let video: Watch.Video.Decoder | null = null
+    const openVideo = () => {
+      const decoder = new Watch.Video.Decoder(videoSource, sync, { enabled: true, paced: true })
+      const renderer = new Watch.Video.Renderer(decoder, { canvas, visible: 'always' })
+      video = decoder
+      return () => {
+        video = null
+        // The renderer goes first, so the canvas keeps the last picture instead of going black.
+        renderer.close()
+        decoder.close()
+      }
+    }
+    let closeVideo = openVideo()
+    let reopenVideo: ReturnType<typeof setTimeout> | null = null
 
     // The decoder holds the subscription and the AudioContext, so sound can
     // start over on its own while the picture keeps going.
@@ -498,7 +539,16 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     let reopenAudio: ReturnType<typeof setTimeout> | null = null
     media = {
       audio: () => audio,
-      video,
+      video: () => video,
+      reopenVideo: () => {
+        if (reopenVideo !== null) return
+        closeVideo()
+        closeVideo = () => undefined
+        reopenVideo = setTimeout(() => {
+          reopenVideo = null
+          closeVideo = openVideo()
+        }, RESUBSCRIBE_GAP_MS)
+      },
       reopenAudio: () => {
         if (reopenAudio !== null) return
         closeAudio()
@@ -513,9 +563,9 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
     return () => {
       media = null
       if (reopenAudio !== null) clearTimeout(reopenAudio)
+      if (reopenVideo !== null) clearTimeout(reopenVideo)
       closeAudio()
-      renderer.close()
-      video.close()
+      closeVideo()
       sync.close()
       audioSource.close()
       videoSource.close()
@@ -536,14 +586,49 @@ export async function watchScreen(relay: ScreenRelay, path: string, canvas: HTML
   }
 
   let silentSince: { video: number; at: number } | null = null
+  // The picture is judged by the wall clock: after a resubscription that the
+  // relay leaves starved there is no picture timestamp to compare at all.
+  let lastVideo: number | undefined
+  let lastAudio: number | undefined
+  let videoMovedAt = performance.now()
+  let audioMovedAt = performance.now()
+  let videoWait = VIDEO_STALL_MS
+  let videoSince: number | null = null
   let recoveredAt = 0
   const audioWatch = setInterval(() => {
     const now = performance.now()
-    const videoAt = media?.video.out.timestamp.peek()
+    const videoAt = media?.video()?.out.timestamp.peek()
     const audioAt = media?.audio()?.out.timestamp.peek()
     const expectsSound = hasAudio.peek() === true && !mutedSignal.peek() && volumeSignal.peek() > 0
     // Sound held back until a tap (iOS) is not stuck; reopening it would only make another held-back context.
     if (audioLocked()) { silentSince = null; return }
+    if (videoAt === undefined) videoSince = null
+    else if (videoAt !== lastVideo) {
+      videoSince ??= now
+      videoMovedAt = now
+      // Only a picture that keeps moving well past being taken again counts as back: a
+      // reopened still screen hands over its last few frames and stops.
+      if (now - videoSince >= VIDEO_STALL_MS) videoWait = VIDEO_STALL_MS
+    }
+    lastVideo = videoAt
+    if (audioAt !== lastAudio) { lastAudio = audioAt; audioMovedAt = now }
+    const soundGoing = expectsSound && now - audioMovedAt < AUDIO_WATCH_EVERY_MS * 2
+    if (soundGoing && now - videoMovedAt >= videoWait) {
+      console.warn(`screen picture still for ${Math.round(now - videoMovedAt)} ms while the sound plays, reopening it`)
+      videoMovedAt = now
+      videoWait = Math.min(videoWait * 2, VIDEO_STALL_MAX_MS)
+      media?.reopenVideo()
+      return
+    }
+    const live = broadcast.out.status.peek() === 'live'
+    if (live && media && expectsSound && now - videoMovedAt >= videoWait && now - audioMovedAt >= videoWait) {
+      console.warn(`screen picture and sound still for ${Math.round(now - audioMovedAt)} ms, resubscribing`)
+      videoMovedAt = now
+      audioMovedAt = now
+      videoWait = Math.min(videoWait * 2, VIDEO_STALL_MAX_MS)
+      jump()
+      return
+    }
     if (!expectsSound || videoAt === undefined || audioAt === undefined) { silentSince = null; return }
     const behind = videoAt - audioAt
     if (behind < AUDIO_BEHIND_MS) { silentSince = null; return }

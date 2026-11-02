@@ -20,6 +20,7 @@ import { useScreenShare } from '../screen/useScreenShare'
 import { JlocalPicker } from '../screen/JlocalPicker'
 import { AppScreenPicker } from '../screen/AppScreenPicker'
 import { encodedPicker } from '../screen/encodedOrigin'
+import { appCanCapture } from '../desktop/screen'
 import { closeLocalCopy, followLocalCopy, localMediaFor, openLocalCopy, setLocalRenditions, useLocalRoomMedia } from '../desktop/localRoom'
 import { openDownloadApp } from '../components/DownloadApp'
 import { isDesktop } from '../platform'
@@ -966,7 +967,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   }))
   const spotlight = currentSpotlight(stageRoom, sync.stages)
   const sources: ShareSource[] = [
-    ...(screenShareSupported() && displayCaptureAvailable() ? ['screen' as const] : []),
+    ...(screenShareSupported() && (appCanCapture() || displayCaptureAvailable()) ? ['screen' as const] : []),
     'file', 'torrent', 'youtube', 'drive', 'catalog',
   ]
   const memberIdByName = new Map(sync.members.map((member) => [member.nickname, member.id]))

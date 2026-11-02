@@ -1,5 +1,5 @@
 diff --git a/node_modules/@moq/net/ietf/publisher.js b/node_modules/@moq/net/ietf/publisher.js
-index c5d30e8..4b85a17 100644
+index c5d30e8..93cfa1e 100644
 --- a/node_modules/@moq/net/ietf/publisher.js
 +++ b/node_modules/@moq/net/ietf/publisher.js
 @@ -9,6 +9,7 @@ import { FetchHeader } from "./fetch.js";
@@ -35,10 +35,53 @@ index c5d30e8..4b85a17 100644
              });
              if (!stream) {
                  group.close(new Error("no stream slot"));
-@@ -944,4 +947,12 @@ function fillRange(fill, subscription, largest) {
+@@ -304,6 +307,7 @@ export class Publisher {
+                 },
+             });
+             await header.encode(stream, this.#session.version);
++            let written = 0;
+             try {
+                 // The first written object goes on the wire as its absolute id, so a trimmed
+                 // head shows the true numbering rather than a silently renumbered group.
+@@ -328,15 +332,16 @@ export class Publisher {
+                     next = frame.sequence + 1;
+                     if (slice.until !== undefined && frame.sequence >= slice.until)
+                         break;
++                    written += frame.payload.byteLength;
+                     const obj = new Frame({ payload: frame.payload, timestamp: frame.timestamp });
+                     const delta = first ? frame.sequence : 0;
+                     first = false;
+                     await obj.encode(stream, header.flags, timescale, this.#session.version, delta);
+                 }
+-                stream.close();
++                lingerThen(written, () => stream.close());
+             }
+             catch (err) {
+-                stream.reset(error(err));
++                lingerThen(written, () => stream.reset(error(err)));
+             }
+         }
+         finally {
+@@ -944,4 +949,28 @@ function fillRange(fill, subscription, largest) {
          until: end.object === undefined ? undefined : end.object + 1n,
      };
  }
++// Apple's QUIC (WebKit: Safari, the Mac app's WKWebView) closes the whole connection with
++// STREAM_STATE_ERROR when a MAX_STREAM_DATA reaches a send stream it already finished, which
++// RFC 9000 says to ignore. The relay grows a big stream's window as it reads, so a group that
++// ends while an update is in flight took the publisher down every few seconds. Holding the
++// FIN of a big stream for a moment lets those updates land on an open stream. Small groups
++// (audio, the catalog) never outgrow the first window and close at once: holding them
++// too would spend the stream slots video needs.
++const LINGER_MS = 1500;
++const LINGER_BYTES = 64 * 1024;
++const lingers = typeof navigator !== "undefined" && /AppleWebKit\//.test(navigator.userAgent) && !/(Chrome|Chromium|Edg)\//.test(navigator.userAgent);
++function lingerThen(written, fn) {
++    if (lingers && written >= LINGER_BYTES)
++        setTimeout(fn, LINGER_MS);
++    else
++        fn();
++}
 +// A relay may forward one priority for every track, so the send order also ranks by kind (the
 +// hang catalog's own scale): a congested uplink then delivers sound ahead of picture instead of
 +// letting a game's video bury the audio until it arrives too late to play.
@@ -48,3 +91,4 @@ index c5d30e8..4b85a17 100644
 +    return 60;
 +}
  //# sourceMappingURL=publisher.js.map
+\ No newline at end of file
