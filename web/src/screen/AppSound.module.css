@@ -16,11 +16,58 @@
   transform: scale(var(--press-scale));
 }
 
+/* The field stays put; only the apps scroll, inside the room the host gives them. */
+.switches {
+  display: grid;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--well);
+  color: var(--text-muted);
+}
+
+.search:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  outline: none;
+}
+
+.search input::placeholder {
+  color: var(--text-faint);
+}
+
+.search input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
 .apps {
   display: grid;
   gap: 2px;
+  max-height: var(--app-sound-max, 18rem);
   margin: 0;
   padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
 }
 

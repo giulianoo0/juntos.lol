@@ -46,6 +46,27 @@ async function renderPicker(props: Partial<Parameters<typeof AppScreenPicker>[0]
 }
 
 describe('AppScreenPicker', () => {
+  it('searches a long list of apps by name, without minding case or accents', async () => {
+    vi.mocked(appAudioApps).mockResolvedValueOnce([
+      'Google Chrome', 'Discord', 'Spotify', 'Música', '\u200eWhatsApp', 'Obsidian', 'Finder', 'Claude',
+    ].map((name) => ({ id: name.toLowerCase(), name, icon: '' })))
+    await renderPicker()
+    const search = screen.getByRole('searchbox', { name: 'Buscar app' })
+
+    fireEvent.change(search, { target: { value: 'MUSICA' } })
+    expect(screen.getAllByRole('switch').map((row) => row.textContent)).toEqual(['Música'])
+    fireEvent.change(search, { target: { value: 'whats' } })
+    expect(screen.getAllByRole('switch')).toHaveLength(1)
+    fireEvent.change(search, { target: { value: 'zzz' } })
+    expect(screen.queryAllByRole('switch')).toHaveLength(0)
+    expect(screen.getByText('Nenhum app com esse nome')).toBeInTheDocument()
+  })
+
+  it('leaves a short list of apps without a search field', async () => {
+    await renderPicker()
+    expect(screen.queryByRole('searchbox')).toBeNull()
+  })
+
   it('without Screen Recording it sends the person to Settings and lists the screens once it is on', async () => {
     vi.mocked(appScreenPermitted).mockResolvedValueOnce(false).mockResolvedValueOnce(false)
     vi.useFakeTimers({ shouldAdvanceTime: true })
