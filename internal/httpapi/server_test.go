@@ -59,6 +59,17 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 	}
 }
 
+// The Samsung app opens /tv inside an iframe of its local shell, so that
+// page alone may be framed.
+func TestServerLetsOnlyTheTVPageBeFramed(t *testing.T) {
+	server := NewServer(testCfg(t), newTestStore(t), nil)
+	for path, framed := range map[string]bool{"/tv": true, "/tv/vincular": false, "/room/abc": false} {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, framed, response.Header().Get("X-Frame-Options") == "", path)
+	}
+}
+
 // Claims and OAuth codes travel in query strings; the access log keeps only
 // the path.
 func TestServerAccessLogLeavesQueryStringsOut(t *testing.T) {

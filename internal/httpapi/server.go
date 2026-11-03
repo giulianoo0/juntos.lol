@@ -185,7 +185,10 @@ func privacyHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
+		// The Samsung app's local shell shows /tv in an iframe.
+		if c.Request.URL.Path != "/tv" {
+			c.Header("X-Frame-Options", "DENY")
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/assets/plugin-worker/") {
 			c.Header("Content-Security-Policy", "default-src 'none'; script-src blob:")
 		}
