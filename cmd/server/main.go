@@ -26,6 +26,7 @@ import (
 	"github.com/giulianoo0/ss/internal/remux"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
+	"github.com/giulianoo0/ss/internal/tv"
 	"github.com/giulianoo0/ss/internal/usage"
 	"github.com/giulianoo0/ss/internal/worker"
 )
@@ -68,7 +69,8 @@ func main() {
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute, hub.RoomRemoved)
 	defer hub.Close()
 	accounts := account.NewStore(pool)
-	hub.SetAccounts(httpapi.HubAccounts(accounts))
+	tvAccess := httpapi.TVAccess{Devices: tv.NewDevices(pool), Pairs: tv.NewPairs(rdb), Mixes: tv.NewMixes(rdb)}
+	hub.SetAccounts(httpapi.HubAccounts(accounts, tvAccess.Devices))
 	hub.SetClientIP(httpapi.ClientIP(cfg.BehindCloudflare))
 	counter := usage.New(rdb, pool)
 	hub.SetUsage(counter)
@@ -192,6 +194,7 @@ func main() {
 		httpapi.WithPluginFetch(sessions, quota),
 		httpapi.WithDiscord(httpapi.DiscordApp(cfg, store, rdb, hub, accounts)),
 		httpapi.WithAccounts(accounts),
+		httpapi.WithTV(tvAccess),
 		httpapi.WithUsage(counter),
 	)
 

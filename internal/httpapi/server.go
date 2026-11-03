@@ -31,6 +31,7 @@ type serverOptions struct {
 	pluginQuota       *Quota
 	discord           http.Handler
 	accounts          *account.Store
+	tv                *TVAccess
 	usage             *usage.Counter
 }
 
@@ -141,7 +142,11 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterLiveRoutes(r.Group("/api"), store, cfg, relays, authorizer, options.sourceHooks, options.torrentAccess.Service)
 	if hub != nil {
 		RegisterJoinRoutes(r.Group("/api"), store, cfg, hub, hub, hub.NotifyRoomUpdated)
-		r.GET("/ws/rooms/:id", human.Require(), hub.HandleWS)
+		roomGate := human.Require()
+		if options.tv != nil {
+			roomGate = TVOrHuman(options.tv.Devices, roomGate)
+		}
+		r.GET("/ws/rooms/:id", roomGate, hub.HandleWS)
 		r.GET("/api/live", func(c *gin.Context) {
 			_, members := hub.Live()
 			census, err := store.Census(c.Request.Context())
@@ -163,6 +168,13 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 			presence = hub
 		}
 		RegisterAccountRoutes(r.Group("/api"), cfg, options.accounts, store, presence)
+		if options.tv != nil {
+			var rooms TVRooms
+			if hub != nil {
+				rooms = hub
+			}
+			RegisterTVRoutes(r, cfg, options.accounts, *options.tv, rooms)
+		}
 	}
 	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
 	registerFrontend(r, cfg.WebDir)
