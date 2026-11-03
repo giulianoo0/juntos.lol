@@ -226,6 +226,18 @@ func registerFrontend(r *gin.Engine, webDir string) {
 		// Asked again on every visit: kept by heuristic, a shell from an
 		// older build reopens pointing at chunks the new one no longer has.
 		c.Header("Cache-Control", "no-cache")
-		c.File(filepath.Join(webDir, "index.html"))
+		c.File(filepath.Join(webDir, shellFor(webDir, c.Request.URL.Path)))
 	})
+}
+
+// shellFor is the page that opens a path: /tv has its own build for the old
+// browsers of TVs, when the build carries it.
+func shellFor(webDir, path string) string {
+	if path == "/tv" || path == "/tv/" {
+		tv := filepath.Join("tv-app", "tv.html")
+		if _, err := os.Stat(filepath.Join(webDir, tv)); err == nil {
+			return tv
+		}
+	}
+	return "index.html"
 }

@@ -114,6 +114,21 @@ func TestDocsPathDoesNotFallBackToTheApp(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, "a wrong docs address must not open the app shell")
 }
 
+// /tv opens the TVs' own build; /tv/vincular is the site's, on the phone.
+func TestTVPageOpensItsOwnBuild(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "tv-app"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tv-app", "tv.html"), []byte("<h1>tv</h1>"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<h1>app</h1>"), 0o644))
+	server := newServerWithWebDir(t, dir)
+
+	for path, want := range map[string]string{"/tv": "<h1>tv</h1>", "/tv/vincular": "<h1>app</h1>", "/room/abc": "<h1>app</h1>"} {
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, want, rec.Body.String(), path)
+	}
+}
+
 func TestEveryBuildFolderIsServedAsFiles(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "emoji"), 0o755))
