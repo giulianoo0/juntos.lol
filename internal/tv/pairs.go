@@ -15,9 +15,9 @@ import (
 
 const (
 	PairTTL = 10 * time.Minute
-	// The code is typed in from the TV screen like a room id, so it shares
-	// the room id's alphabet.
-	codeAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	// The code is read off a TV across the room, so no two of its
+	// characters look alike (no O and 0, no I, L and 1).
+	codeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 	codeLength   = 8
 )
 

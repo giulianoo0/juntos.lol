@@ -18,13 +18,18 @@ func newTestPairs(t *testing.T) (*Pairs, *miniredis.Miniredis) {
 	return NewPairs(rdb), mr
 }
 
-func TestPairCodeIsEightCharactersOfTheRoomAlphabet(t *testing.T) {
+// The code is read off a TV across the room: no O and 0, no I, L and 1.
+func TestPairCodeIsEightCharactersNoneOfThemLookAlikes(t *testing.T) {
 	pairs, _ := newTestPairs(t)
 
+	for range 50 {
+		pair, err := pairs.Start(t.Context())
+		require.NoError(t, err)
+		require.Regexp(t, `^[A-HJKMNP-Z2-9]{8}$`, pair.Code)
+	}
 	pair, err := pairs.Start(t.Context())
 
 	require.NoError(t, err)
-	require.Regexp(t, `^[A-Z0-9]{8}$`, pair.Code)
 	require.NotEmpty(t, pair.ID)
 	require.WithinDuration(t, time.Now().Add(PairTTL), pair.ExpiresAt, 5*time.Second)
 }
