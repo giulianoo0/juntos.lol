@@ -117,7 +117,7 @@ func (h *Hub) validTicket(roomID, ticket string) bool {
 // otherwise the room's mode decides.
 // An approval room parks the socket in the lobby until the host answers.
 // It returns the handshake error to send, and whether one was already sent.
-func (h *Hub) admit(conn *websocket.Conn, storedRoom *room.Room, hello Inbound) (string, bool) {
+func (h *Hub) admit(conn *websocket.Conn, storedRoom *room.Room, hello Inbound, identity Identity) (string, bool) {
 	if storedRoom.OwnerToken != "" && hello.OwnerToken != "" &&
 		subtle.ConstantTimeCompare([]byte(storedRoom.OwnerToken), []byte(hello.OwnerToken)) == 1 {
 		return "", false
@@ -137,6 +137,10 @@ func (h *Hub) admit(conn *websocket.Conn, storedRoom *room.Room, hello Inbound) 
 			return "bad_ticket", false
 		}
 	case room.JoinApproval:
+		// The host already let the account in; its TV comes along.
+		if identity.TV && h.accountSeated(identity.AccountID, storedRoom.ID) {
+			return "", false
+		}
 		return h.waitInLobby(conn, storedRoom.ID, hello.Nickname)
 	}
 	return "", false

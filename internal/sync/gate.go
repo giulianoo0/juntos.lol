@@ -47,7 +47,7 @@ type playGate struct {
 // to buffer. The room is read fresh: the setting and the source can both
 // change while this connection lives.
 func (r *roomConn) shouldGate(ctx context.Context) bool {
-	if len(r.clients) < 2 {
+	if r.connectedPeople() < 2 {
 		return false
 	}
 	storedRoom, err := r.hub.store.Get(ctx, r.id)
@@ -231,7 +231,7 @@ func (r *roomConn) stalledMember() string {
 // gateOnStall stops the room when someone's playback runs dry mid-episode:
 // the same gate as a play or a seek, opened at wherever the room is now.
 func (r *roomConn) gateOnStall(ctx context.Context, now int64) {
-	if r.gate != nil || !r.gating || len(r.clients) < 2 {
+	if r.gate != nil || !r.gating || r.connectedPeople() < 2 {
 		return
 	}
 	if !r.stallGateReadyAt.IsZero() && time.Now().Before(r.stallGateReadyAt) {

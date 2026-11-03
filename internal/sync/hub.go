@@ -303,6 +303,10 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		return
 	}
 	identity := pickedAvatar(h.identify(c.Request), hello.Avatar)
+	if hello, ok = tvHello(hello, identity); !ok {
+		writeHandshakeError(conn, "invalid_hello")
+		return
+	}
 	nickname := hello.Nickname
 	if identity.AccountID != 0 && identity.Nickname != "" {
 		nickname = identity.Nickname
@@ -318,7 +322,7 @@ func (h *Hub) HandleWS(c *gin.Context) {
 		writeHandshakeError(conn, errCode)
 		return
 	}
-	if errCode, sent := h.admit(conn, storedRoom, hello); errCode != "" || sent {
+	if errCode, sent := h.admit(conn, storedRoom, hello, identity); errCode != "" || sent {
 		if !sent {
 			writeHandshakeError(conn, errCode)
 		}
@@ -627,11 +631,15 @@ func (r *roomConn) handleJoin(request joinRequest) {
 		}
 		r.dismiss(previous, Outbound{Type: "error", ErrCode: "replaced", closeAfter: true})
 	}
-	if len(r.clients)+len(r.detached) >= r.hub.cfg.MaxParticipants {
+	if !request.client.isTV() && r.people() >= r.hub.cfg.MaxParticipants {
 		request.result <- "room_full"
 		return
 	}
+	// A TV's id never matches a controller id the room kept from a person.
 	memberID := fmt.Sprintf("m%d", r.nextMember)
+	if request.client.isTV() {
+		memberID = fmt.Sprintf("tv%d", r.nextMember)
+	}
 	r.nextMember++
 	request.client.id = memberID
 	request.client.device = request.device
@@ -647,7 +655,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 
 	ctx, cancel := context.WithTimeout(r.hub.ctx, storeTimeout)
 	defer cancel()
-	if err := r.hub.store.AddMember(ctx, r.id, request.client.member); err != nil {
+	if err := r.storeMember(ctx, request.client); err != nil {
 		slog.ErrorContext(ctx, "add websocket member failed", "room_id", r.id, "member_id", memberID, "error", err)
 		request.result <- "internal_error"
 		return
@@ -675,7 +683,7 @@ func (r *roomConn) handleJoin(request joinRequest) {
 	}
 	claimsOwnership := r.ownerToken != "" && request.ownerToken != "" &&
 		subtle.ConstantTimeCompare([]byte(r.ownerToken), []byte(request.ownerToken)) == 1
-	if r.controllerID == "" || !controllerLive || claimsOwnership {
+	if !request.client.isTV() && (r.controllerID == "" || !controllerLive || claimsOwnership) {
 		if err := r.hub.store.SetController(ctx, r.id, memberID); err != nil {
 			slog.ErrorContext(ctx, "set initial websocket controller failed", "room_id", r.id, "error", err)
 			r.undoJoin(ctx, memberID)
@@ -921,7 +929,7 @@ func (r *roomConn) reseat(previous *client, request joinRequest, moved bool) {
 	if request.nickname != next.member.Nickname || next.kind != next.member.Client {
 		next.member.Nickname = request.nickname
 		next.member.Client = next.kind
-		if err := r.hub.store.AddMember(ctx, r.id, next.member); err != nil {
+		if err := r.storeMember(ctx, next); err != nil {
 			slog.ErrorContext(ctx, "rename resumed websocket member failed", "room_id", r.id, "member_id", next.id, "error", err)
 		}
 		renamed = true
@@ -1038,6 +1046,9 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		return
 	}
 	message := event.message
+	if event.client.isTV() && !tvMessages[message.Type] {
+		return
+	}
 	switch message.Type {
 	case "heartbeat":
 		r.send(event.client, Outbound{
@@ -1277,11 +1288,14 @@ func recovered(what, roomID string, fn func()) {
 
 func (r *roomConn) members() []room.Member {
 	members := make([]room.Member, 0, len(r.clients)+len(r.detached))
-	for _, connected := range r.clients {
-		members = append(members, connected.member)
-	}
-	for _, seat := range r.detached {
-		members = append(members, seat.client.member)
+	owners := r.tvOwners()
+	for _, seat := range r.seats() {
+		if seat.isTV() {
+			continue
+		}
+		member := seat.member
+		member.TV = member.AccountID != 0 && owners[member.AccountID]
+		members = append(members, member)
 	}
 	slices.SortFunc(members, func(a, b room.Member) int {
 		if a.JoinedAt.Before(b.JoinedAt) {
