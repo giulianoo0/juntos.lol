@@ -28,6 +28,7 @@ function serve(signedIn: boolean, overrides: Record<string, () => Promise<Respon
       case 'GET /api/friends': return respond(200, { friends: [{ ...lu, presence: { inRoom: true, roomId: 'OMSRPLX0' } }, { ...dudu, presence: { inRoom: false } }] })
       case 'GET /api/friends/requests': return respond(200, { incoming: [caio], outgoing: [] })
       case 'GET /api/users/128/history': return respond(200, { history: [{ roomId: 'OMSRPLX0', title: 'Duna: Parte Dois', kind: 'torrent', startedAt: new Date().toISOString(), durationSec: 9000, with: [lu] }] })
+      case 'GET /api/tv/devices': return respond(200, { devices: [{ id: 'tv1', name: 'TV da sala', online: true, mix: { media: 1, people: {} } }] })
       case 'GET /api/users/7': return respond(200, lu)
       case 'GET /api/users/7/history': return respond(403, { error: 'history_hidden' })
       default: return respond(200, {})
@@ -101,6 +102,28 @@ describe('AccountPage', () => {
     expect(within(discord).getByRole('radio', { name: 'Só eu' })).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(within(discord).getByRole('radio', { name: 'Público' }))
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/me', body: { discordVisibility: 'public' } }))
+  })
+
+  it('renomeia uma TV vinculada', async () => {
+    const calls = await mine()
+    fireEvent.click(await screen.findByRole('button', { name: 'Renomear TV da sala' }))
+    const field = screen.getByRole('textbox', { name: 'Nome da TV' })
+    fireEvent.change(field, { target: { value: ' TV do quarto ' } })
+    fireEvent.submit(field)
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/tv/devices/tv1', body: { name: 'TV do quarto' } }))
+    expect(await screen.findByText('TV do quarto')).toBeInTheDocument()
+  })
+
+  it('desvincula uma TV', async () => {
+    let linked = true
+    const calls = await mine({
+      'GET /api/tv/devices': () => respond(200, { devices: linked ? [{ id: 'tv1', name: 'TV da sala', online: false, mix: { media: 1, people: {} } }] : [] }),
+      'DELETE /api/tv/devices/tv1': () => { linked = false; return respond(204) },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Desvincular TV da sala' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Desvincular' }))
+    await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/tv/devices/tv1', body: undefined }))
+    await waitFor(() => expect(screen.queryByText('TV da sala')).toBeNull())
   })
 
   it('sends /conta to its own /c/ page', async () => {
