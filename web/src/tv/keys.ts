@@ -49,6 +49,21 @@ export function tvKeyAction(event: { key: string; keyCode: number }): TvKeyActio
   return BY_CODE[event.keyCode] ?? BY_KEY[event.key] ?? null
 }
 
+/**
+ * The transport keys as the player's own shortcuts (k, l, j: play/pause and
+ * ±10 s), so the remote steers the room with the player's rules and messages.
+ * Play on a playing video, or pause on a paused one, is nothing to do.
+ */
+export function playerKeyFor(action: 'playPause' | 'play' | 'pause' | 'forward' | 'rewind', paused: boolean): string | null {
+  switch (action) {
+    case 'forward': return 'l'
+    case 'rewind': return 'j'
+    case 'play': return paused ? 'k' : null
+    case 'pause': return paused ? null : 'k'
+    case 'playPause': return 'k'
+  }
+}
+
 /** Tizen only delivers the transport keys and the colours to a page that asks for them. */
 const TIZEN_KEYS = ['MediaPlayPause', 'MediaPlay', 'MediaPause', 'MediaFastForward', 'MediaRewind', 'ColorF0Red', 'Info']
 

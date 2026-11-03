@@ -16,9 +16,9 @@ const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pic
  * The chat as bubbles: others on the left under their creature, a run of
  * theirs stacked in one column; yours on the right in the brand colour,
  * each popping out of its own tail corner. An empty chat shows
- * the room's creatures waiting for someone to start.
+ * the room's creatures waiting for someone to start. The TV only reads it.
  */
-export function ChatPanel() {
+export function ChatPanel({ readOnly = false }: { readOnly?: boolean } = {}) {
   const { vm, strings } = useRoomUi()
   const avatarOf = (id: string) => vm.people.find((person) => person.id === id)?.avatar
   const [text, setText] = useState('')
@@ -90,7 +90,7 @@ export function ChatPanel() {
           })}
         </div>
       </div>
-      <form className={styles.composer} onSubmit={submit}>
+      {readOnly ? null : <form className={styles.composer} onSubmit={submit}>
         <input
           className={styles.input}
           value={text}
@@ -103,7 +103,7 @@ export function ChatPanel() {
         <button type="submit" className={styles.send} aria-label={strings.send} title={strings.send} disabled={!text.trim()}>
           <ArrowUp size={16} strokeWidth={2.4} aria-hidden="true" />
         </button>
-      </form>
+      </form>}
     </div>
   )
 }

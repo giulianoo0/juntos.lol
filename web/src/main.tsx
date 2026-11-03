@@ -11,6 +11,7 @@ import { jlocalBackend } from './jlocal/youtube'
 import { desktopYoutubeBackend } from './desktop/sources'
 import { installAudioUnlock } from './ui/audioUnlock'
 import { applyTheme } from './ui/theme'
+import { isTvPage } from './tv/route'
 
 applyTheme()
 markEngine()
@@ -25,14 +26,21 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-registerYoutubeBackend(jlocalBackend)
-// Inside the desktop app, yt-dlp on this machine goes first.
-registerYoutubeBackend(desktopYoutubeBackend)
+// The TV only watches: it opens no YouTube and runs no catalog plugins.
+const onTv = isTvPage(window.location.pathname)
+
+if (!onTv) {
+  registerYoutubeBackend(jlocalBackend)
+  // Inside the desktop app, yt-dlp on this machine goes first.
+  registerYoutubeBackend(desktopYoutubeBackend)
+}
 
 // One page load for /data's tally: nothing in it names the browser.
 try { navigator.sendBeacon?.('/api/visit') } catch {}
 
-const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
-const idle = window.requestIdleCallback
-if (typeof idle === 'function') idle(checkPlugins, { timeout: 3_000 })
-else window.setTimeout(checkPlugins, 1_500)
+if (!onTv) {
+  const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
+  const idle = window.requestIdleCallback
+  if (typeof idle === 'function') idle(checkPlugins, { timeout: 3_000 })
+  else window.setTimeout(checkPlugins, 1_500)
+}

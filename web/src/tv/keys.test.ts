@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { exitTvApp, registerTvKeys, shellPlatform, tvKeyAction, type TvKeyAction } from './keys'
+import { exitTvApp, playerKeyFor, registerTvKeys, shellPlatform, tvKeyAction, type TvKeyAction } from './keys'
 
 const press = (key: string, keyCode = 0) => ({ key, keyCode })
 
@@ -29,6 +29,21 @@ describe('tvKeyAction', () => {
 
   it('deixa passar o que não é do controle', () => {
     expect(tvKeyAction(press('a', 65))).toBeNull()
+  })
+})
+
+describe('playerKeyFor', () => {
+  it.each([
+    ['playPause', true, 'k'],
+    ['playPause', false, 'k'],
+    ['play', true, 'k'],
+    ['play', false, null],
+    ['pause', false, 'k'],
+    ['pause', true, null],
+    ['forward', false, 'l'],
+    ['rewind', true, 'j'],
+  ] as const)('%s com o vídeo pausado=%s vira a tecla %s do player', (action, paused, key) => {
+    expect(playerKeyFor(action, paused)).toBe(key)
   })
 })
 

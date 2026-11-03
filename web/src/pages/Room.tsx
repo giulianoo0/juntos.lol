@@ -793,7 +793,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         .catch(() => undefined)
     }, PREPARING_POLL_MS)
     return () => { window.clearInterval(timer); controller.abort() }
-  }, [preparing, sync.connected, room.id, sync.memberId, sync.capability])
+  }, [preparing, sync.connected, room.id, sync.memberId, sync.capability, setLiveRoom])
 
   useEffect(() => {
     const positionMs = expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs)
