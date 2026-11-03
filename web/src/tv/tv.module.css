@@ -3,6 +3,30 @@
  * font follows the screen's height, so a 960×540 TV at 2x and a 1920×1080 one
  * at 1x look alike), no glass, and motion only in transform and opacity.
  */
+/* The site's tokens mix colors with color-mix() inside variables, which
+   Chromium before 111 can't read and the build can't fold: on the TV they
+   are their dark-theme values, plain. */
+:global(html[data-tv]) {
+  --hover: rgba(255, 255, 255, 0.07) !important;
+  --hover-strong: rgba(255, 255, 255, 0.12) !important;
+  --button-secondary-bg: rgba(255, 255, 255, 0.07) !important;
+  --button-secondary-hover: rgba(255, 255, 255, 0.12) !important;
+  --field: rgba(255, 255, 255, 0.04) !important;
+  --scrim: rgba(0, 0, 0, 0.45) !important;
+  --scrim-strong: rgba(0, 0, 0, 0.62) !important;
+  --veil: rgba(0, 0, 0, 0.4) !important;
+  --status-danger-soft: rgba(220, 38, 38, 0.12) !important;
+}
+
+/* No linear() before Chromium 113: the springs become beziers that overshoot
+   about as much, so popovers still pop and settle. */
+@supports not (animation-timing-function: linear(0, 1)) {
+  :global(html[data-tv]) {
+    --ease-spring-pop: cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+    --ease-spring-settle: cubic-bezier(0.22, 1.2, 0.36, 1) !important;
+  }
+}
+
 :global(html[data-tv]) {
   /* Chromium before 79 has no clamp() and drops the line: it keeps this one. */
   font-size: calc(100vh / 45);
