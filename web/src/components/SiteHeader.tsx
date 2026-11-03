@@ -1,7 +1,8 @@
+import { LogOut, Tv, UserRound } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { AvatarFace } from '../account/AvatarFace'
-import { discordLoginUrl, profilePath, useMe } from '../account'
+import { discordLoginUrl, logout, profilePath, useMe } from '../account'
 import { NotificationBell } from '../account/NotificationBell'
 import { useT } from '../i18n/useT'
 import { TravellingWordmark } from '../pages/home/Wordmark'
@@ -10,7 +11,9 @@ import { DiscordGlyph } from '../ui/DiscordGlyph'
 import { DownloadApp } from './DownloadApp'
 import { Skeleton } from '../ui/Shimmer'
 import { GithubLink } from '../ui/GithubLink'
+import { SpringPopover, SpringRow, SpringRule } from '../ui/SpringPopover'
 import { ThemeToggle } from '../ui/ThemeToggle'
+import { LinkTvDialog } from '../tvlink/LinkTvDialog'
 import styles from './SiteHeader.module.css'
 
 /** The same top on every page outside a room: the logo home, which lights
@@ -24,7 +27,9 @@ export function SiteHeader({ logo = true, you = true }: {
   const t = useT()
   const { me, loading } = useMe()
   const location = useLocation()
+  const navigate = useNavigate()
   const [shine, setShine] = useState(false)
+  const [linking, setLinking] = useState(false)
   return (
     <header className={styles.header} data-tauri-drag-region>
       {logo ? (
@@ -48,10 +53,27 @@ export function SiteHeader({ logo = true, you = true }: {
           <>
             <NotificationBell />
             {you ? (
-              <Link className={`${styles.me} ${arrive}`} to={profilePath(me.id)} aria-label={`${me.nickname} #${me.id}`}>
-                <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
-                <span className={styles.number}>#{me.id}</span>
-              </Link>
+              <SpringPopover
+                triggerRender={<button type="button" className={`${styles.me} ${arrive}`} />}
+                trigger={(
+                  <>
+                    <AvatarFace avatar={me.avatar} seed={me.id} size={32} />
+                    <span className={styles.number}>#{me.id}</span>
+                  </>
+                )}
+                triggerLabel={`${me.nickname} #${me.id}`}
+                align="end"
+                width="14rem"
+              >
+                {({ close }) => (
+                  <div role="menu" aria-label={t('account.menu')}>
+                    <SpringRow icon={<UserRound size={16} />} label={t('account.viewProfile')} onSelect={() => { close(); navigate(profilePath(me.id)) }} />
+                    <SpringRow icon={<Tv size={16} />} label={t('tv.link')} onSelect={() => { close(); setLinking(true) }} />
+                    <SpringRule />
+                    <SpringRow icon={<LogOut size={16} />} label={t('account.logout')} onSelect={() => { close(); navigate('/'); void logout().catch(() => undefined) }} />
+                  </div>
+                )}
+              </SpringPopover>
             ) : null}
           </>
         ) : !you ? null : loading ? <Skeleton round width="7.5rem" height="var(--round-button)" /> : (
@@ -61,6 +83,7 @@ export function SiteHeader({ logo = true, you = true }: {
           </a>
         )}
       </div>
+      <LinkTvDialog open={linking} onOpenChange={setLinking} />
     </header>
   )
 }

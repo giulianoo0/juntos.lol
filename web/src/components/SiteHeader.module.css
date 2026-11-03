@@ -71,8 +71,16 @@
 
 .me {
   padding: 0 var(--space-5) 0 var(--space-2);
+  border: 0;
   background: var(--button-secondary-bg);
   color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Its menu open: it holds the hover's face. */
+.me[data-popup-open] {
+  background: var(--button-secondary-hover);
 }
 
 .number {
