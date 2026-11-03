@@ -36,7 +36,9 @@ type TVAccess struct {
 // TVRooms is the hub's part in casting: who is in which room, and the
 // ticket that lets a TV through a room's password.
 type TVRooms interface {
-	PresenceSource
+	// Seated reports whether the account holds a seat in that room; it may
+	// hold seats in several at once.
+	Seated(accountID int64, roomID string) bool
 	MintTicket(roomID string) string
 }
 
@@ -275,7 +277,7 @@ func (t *tvRoutes) cast(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	if t.rooms == nil || t.rooms.Presence([]int64{me.ID})[me.ID] != request.RoomID {
+	if t.rooms == nil || !t.rooms.Seated(me.ID, request.RoomID) {
 		c.JSON(http.StatusConflict, gin.H{"error": "not_in_room"})
 		return
 	}

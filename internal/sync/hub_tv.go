@@ -24,6 +24,9 @@ func tvHello(hello Inbound, identity Identity) (Inbound, bool) {
 	return hello, true
 }
 
+// Seated reports whether the account holds a seat of its own in the room.
+func (h *Hub) Seated(accountID int64, roomID string) bool { return h.accountSeated(accountID, roomID) }
+
 // accountSeated reports whether the account holds a seat of its own in the room.
 func (h *Hub) accountSeated(accountID int64, roomID string) bool {
 	if accountID == 0 {

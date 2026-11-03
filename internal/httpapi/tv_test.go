@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,8 +20,13 @@ import (
 	"github.com/giulianoo0/ss/internal/tv"
 )
 
-// tvRooms answers presence from a fixed map and cuts recognizable tickets.
-type tvRooms struct{ fixedPresence }
+// tvRooms seats each account in the rooms listed for it and cuts
+// recognizable tickets.
+type tvRooms map[int64][]string
+
+func (r tvRooms) Seated(accountID int64, roomID string) bool {
+	return slices.Contains(r[accountID], roomID)
+}
 
 func (tvRooms) MintTicket(roomID string) string { return "ticket-" + roomID }
 
@@ -31,14 +37,14 @@ type tvRig struct {
 	access   TVAccess
 }
 
-func newTVRig(t *testing.T, presence fixedPresence) tvRig {
+func newTVRig(t *testing.T, seats tvRooms) tvRig {
 	t.Helper()
 	_, rdb := newRedis(t)
 	pool := dbtest.New(t)
 	accounts := account.NewStore(pool)
 	access := TVAccess{Devices: tv.NewDevices(pool), Pairs: tv.NewPairs(rdb), Mixes: tv.NewMixes(rdb)}
 	router := gin.New()
-	RegisterTVRoutes(router, config.Config{PublicOrigin: "https://juntos.test"}, accounts, access, tvRooms{presence})
+	RegisterTVRoutes(router, config.Config{PublicOrigin: "https://juntos.test"}, accounts, access, seats)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
 	return tvRig{router: router, server: server, accounts: accounts, access: access}
@@ -215,10 +221,10 @@ func TestTVUnlinkDropsItsSocket(t *testing.T) {
 }
 
 func TestTVCastNeedsTheAccountInTheRoomAndTheTVOnline(t *testing.T) {
-	presence := fixedPresence{}
-	rig := newTVRig(t, presence)
+	seats := tvRooms{}
+	rig := newTVRig(t, seats)
 	ana, cookie := rig.signIn(t, "111", "Ana")
-	presence[ana.ID] = "ROOM1234"
+	seats[ana.ID] = []string{"EARLIER1", "ROOM1234"}
 	deviceID, token := rig.linkTV(t, cookie)
 	cast := func(roomID string) *httptest.ResponseRecorder {
 		return rig.do(http.MethodPost, "/api/tv/devices/"+deviceID+"/cast", `{"roomId":"`+roomID+`"}`, nil, cookie)
