@@ -27,6 +27,7 @@ import { isDesktop } from '../platform'
 import { localStatus, playableRoom } from '../desktop/localView'
 import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } from '../room/stages'
 import { useStageHosts } from '../room/stageHosts'
+import { emptyRoom, fetchRoomInfo, useLiveRoom } from '../room/useLiveRoom'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
@@ -298,21 +299,6 @@ function PreviewVideo({ stream }: { stream: MediaStream | null }) {
   return <video ref={ref} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
 }
 
-/** A room behind a door answers its members only; they name themselves. */
-function fetchRoomInfo(roomId: string, memberId: string, capability: string, signal?: AbortSignal): Promise<Response> {
-  return fetch(`/api/rooms/${encodeURIComponent(roomId)}`, {
-    signal,
-    headers: memberId ? { 'X-Member-Id': memberId, 'X-Capability': capability } : undefined,
-  })
-}
-
-function emptyRoom(id: string): RoomInfo {
-  return {
-    id, fileName: '', status: 'empty', mediaGeneration: 0, controllerId: '', audioTracks: null,
-    subtitleTracks: null, bitmapSubsSkipped: 0, memberCount: 0, expiresAt: '',
-  }
-}
-
 type GateStep = 'join' | 'expired' | 'denied' | 'preparing' | 'buffering' | 'failed' | 'error' | null
 
 /** One panel that changes what it asks for, rather than swapping screens. */
@@ -450,7 +436,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     window.location.replace(`/room/${encodeURIComponent(room.id)}`)
   }, [leftReason, room.id])
   const { toast } = useToast()
-  const [liveRoom, setLiveRoom] = useState(room)
+  const [liveRoom, setLiveRoom] = useLiveRoom(room, sync)
   const liveRoomRef = useRef(liveRoom)
   liveRoomRef.current = liveRoom
   useEffect(() => {
@@ -809,63 +795,11 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     return () => { window.clearInterval(timer); controller.abort() }
   }, [preparing, sync.connected, room.id, sync.memberId, sync.capability])
 
-  const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
   useEffect(() => {
     const positionMs = expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs)
     remuxHandleFor(room.id)?.follow(positionMs)
     followLocalCopy(room.id, positionMs)
   }, [room.id, sync.state, sync.serverOffsetMs])
-
-  const { mediaPatch, refreshRoom } = sync
-  useEffect(() => {
-    if (!mediaPatch) return
-    setLiveRoom((current) => {
-      if (mediaPatch.mediaGeneration !== current.mediaGeneration || mediaPatch.mediaVersion < (current.mediaVersion ?? 0)) {
-        refreshRoom()
-        return current
-      }
-      return {
-        ...current,
-        mediaVersion: mediaPatch.mediaVersion,
-        mediaOffsetMs: mediaPatch.mediaOffsetMs,
-        mediaRegions: mediaPatch.mediaRegions ?? undefined,
-      }
-    })
-  }, [mediaPatch, refreshRoom])
-
-  useEffect(() => {
-    const state = refetch.current
-    state.latest = sync.roomVersion
-    if (sync.roomVersion === 0 || state.running) return
-    state.running = true
-    const controller = new AbortController()
-    state.controller = controller
-    void (async () => {
-      try {
-        let fetched = -1
-        while (fetched !== state.latest) {
-          fetched = state.latest
-          const response = await fetchRoomInfo(room.id, sync.memberId, sync.capability, controller.signal)
-          if (response.ok) setLiveRoom(await response.json() as RoomInfo)
-        }
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          console.error('room refetch failed', error)
-        }
-      } finally {
-        state.running = false
-        state.controller = null
-      }
-    })()
-  }, [sync.roomVersion, room.id, sync.memberId, sync.capability])
-  useEffect(() => {
-    const state = refetch.current
-    return () => {
-      state.controller?.abort()
-      state.running = false
-      state.latest = 0
-    }
-  }, [room.id])
 
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {

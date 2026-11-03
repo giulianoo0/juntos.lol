@@ -143,7 +143,7 @@ describe('useCall', () => {
 
   it('toca cada voz no volume pedido, 1 para quem não está na lista', async () => {
     const members: CallMember[] = [{ id: 'm1' }, { id: 'm2', mic: true }, { id: 'm3', mic: true }]
-    const { rerender } = renderHook((props: { volumes: Record<string, number> }) => useCall(options({ members, ...props })), { initialProps: { volumes: { m2: 0 } } })
+    const { rerender } = renderHook((props: { volumes: Record<string, number> }) => useCall(options({ members, ...props })), { initialProps: { volumes: { m2: 0 } as Record<string, number> } })
     await waitFor(() => expect(watches).toHaveLength(2))
     const voice = (id: string) => watches.find((watch) => watch.memberId === id)!
     expect(voice('m2').volume).toBe(0)
