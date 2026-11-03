@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock, Removed } from '../model'
+import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomTv, RoomTvDevice, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock, Removed } from '../model'
 import { profilePath } from '../../account'
 import { openDownloadApp } from '../../components/DownloadApp'
 import { Segmented } from '../../ui/Segmented'
@@ -36,6 +36,7 @@ function fakePeople(count: number): Person[] {
     avatar: AVATARS[index],
     accountId: ACCOUNTS[index],
     app: index === 1 || index === 3,
+    tv: index === 2,
   }))
 }
 
@@ -97,6 +98,38 @@ const STAGE_SET: Record<string, (people: Person[]) => Stage | null> = {
   screen: (people) => people[2] ? { id: `screen:${people[2].id}`, kind: 'screen', title: `Tela de ${people[2].name}`, ownerId: people[2].id } : null,
 }
 
+// ?tv=guest (no account), none (no TV), list (two TVs), on (one playing here).
+const TV_SETS: Record<string, RoomTvDevice[]> = {
+  none: [],
+  list: [
+    { id: 'tv-sala', name: 'TV da sala', online: true, here: false, mix: { media: 1, people: {} } },
+    { id: 'tv-quarto', name: 'TV do quarto', online: false, here: false, mix: { media: 1, people: {} } },
+  ],
+  on: [
+    { id: 'tv-sala', name: 'TV da sala', online: true, here: true, mix: { media: 0.8, people: { 'm-ana': 0.5 } } },
+    { id: 'tv-quarto', name: 'TV do quarto', online: false, here: false, mix: { media: 1, people: {} } },
+  ],
+}
+
+function useFakeTv(set: string): RoomTv {
+  const [devices, setDevices] = useState<RoomTvDevice[]>(() => TV_SETS[set] ?? TV_SETS.list ?? [])
+  useEffect(() => { setDevices(TV_SETS[set] ?? TV_SETS.list ?? []) }, [set])
+  const patch = (id: string, change: Partial<RoomTvDevice>) => setDevices((list) => list.map((device) => (device.id === id ? { ...device, ...change } : device)))
+  return {
+    signedIn: set !== 'guest',
+    loginUrl: '/api/auth/discord?next=%2Fdev%2Fsala',
+    devices,
+    watch: () => undefined,
+    cast: async (id) => patch(id, { here: true }),
+    stop: (id) => patch(id, { here: false }),
+    setMix: (id, mix) => patch(id, { mix }),
+    link: async (code) => {
+      if (code === 'AAAAAAAA') throw new Error('code_not_found')
+      setDevices((list) => [...list, { id: code, name: 'TV nova', online: true, here: false, mix: { media: 1, people: {} } }])
+    },
+  }
+}
+
 function parseSpot(value: string | null, people: Person[]): Spotlight | null {
   if (value === 'media' || value === 'live') return { kind: value }
   if (value === 'screen' && people[2]) return { kind: 'screen', memberId: people[2].id }
@@ -118,6 +151,8 @@ export function DevRoom() {
   const view = params.get('view') ?? 'room'
   const isHost = params.get('host') !== '0'
   const stageKeys = (params.get('stages') ?? '').split(',').filter(Boolean)
+  const tvSet = params.get('tv') ?? 'list'
+  const tv = useFakeTv(tvSet)
 
   const [people, setPeople] = useState<Person[]>(() => fakePeople(count))
   useEffect(() => { setPeople(fakePeople(count)) }, [count])
@@ -166,6 +201,7 @@ export function DevRoom() {
     sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
     appOnly: params.get('app') === '1' ? [] : ['youtube'],
     levelOf: fakeLevel,
+    tv,
     actions: {
       setMic: (on) => update(selfId, { mic: on, hostMuted: false }),
       setCam: (on) => update(selfId, { cam: on, hostCamOff: false }),
@@ -226,7 +262,7 @@ export function DevRoom() {
     },
     // `update` and the setters are stable enough for a dev page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, removed, chat, params])
+  }), [joinMode, selfId, isHost, people, stages, spotlight, requests, knocks, removed, chat, params, tv])
 
   const others = people.filter((person) => person.id !== selfId)
   const [entryAvatar, setEntryAvatar] = useState(params.get('avatar') ?? 'fox.bowtie')
@@ -288,6 +324,7 @@ export function DevRoom() {
             <Segmented label="Palcos" options={[{ value: '', label: 'Nenhum' }, { value: 'media', label: 'Mídia' }, { value: 'media,screen', label: '+ Tela' }, { value: 'media,live,screen', label: '+ Live' }]} value={stageKeys.join(',')} onChange={(value) => set('stages', value || null)} />
             <Segmented label="Papel" options={[{ value: '1', label: 'Host' }, { value: '0', label: 'Convidado' }]} value={isHost ? '1' : '0'} onChange={(value) => set('host', value)} />
             <Segmented label="Pedidos" options={[{ value: '0', label: 'Sem' }, { value: '1', label: 'Com' }]} value={params.get('asks') === '1' ? '1' : '0'} onChange={(value) => set('asks', value)} />
+            <Segmented label="TV" options={[{ value: 'guest', label: 'Sem conta' }, { value: 'none', label: 'Sem TV' }, { value: 'list', label: 'TVs' }, { value: 'on', label: 'Espelhando' }]} value={tvSet} onChange={(value) => set('tv', value)} />
             <Segmented label="Tema" options={[{ value: 'system', label: 'Sistema' }, { value: 'light', label: 'Claro' }, { value: 'dark', label: 'Escuro' }]} value={theme} onChange={(value) => setTheme(value as Theme)} />
           </div>
         </details>
