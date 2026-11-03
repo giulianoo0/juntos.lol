@@ -1,0 +1,15 @@
+{
+  "id": "lol.juntos.tv",
+  "version": "0.1.0",
+  "vendor": "juntos",
+  "type": "web",
+  "main": "index.html",
+  "title": "juntos",
+  "icon": "icon-80.png",
+  "largeIcon": "icon-130.png",
+  "splashBackground": "splash-1920x1080.png",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true,
+  "handlesRelaunch": false,
+  "requiredMemory": 300
+}
