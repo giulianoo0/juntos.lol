@@ -19,6 +19,8 @@ type Identity struct {
 	Avatar   string
 	// Unlisted: a private account, whose number the room never shows.
 	Unlisted bool
+	// TV: the socket is a TV linked to the account, not the person.
+	TV bool
 }
 
 // Accounts tells the hub who is behind a socket and keeps what signed-in
@@ -223,6 +225,10 @@ func pickedAvatar(identity Identity, picked string) Identity {
 
 // withIdentity stamps the account on a member about to take a seat.
 func withIdentity(member room.Member, identity Identity) room.Member {
+	// A TV's seat is not the account's: no presence, no history.
+	if identity.TV {
+		return member
+	}
 	member.AccountID = identity.AccountID
 	member.Avatar = identity.Avatar
 	member.Unlisted = identity.Unlisted

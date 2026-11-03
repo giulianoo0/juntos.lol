@@ -21,6 +21,7 @@ import (
 	"github.com/giulianoo0/ss/internal/discord"
 	"github.com/giulianoo0/ss/internal/room"
 	syncapi "github.com/giulianoo0/ss/internal/sync"
+	"github.com/giulianoo0/ss/internal/tv"
 )
 
 const (
@@ -108,7 +109,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	}
 	rg.GET("/auth/discord", routes.startLogin)
 	rg.GET("/auth/discord/callback", routes.finishLogin)
-	rg.Use(routes.sameOrigin)
+	rg.Use(sameOrigin(cfg))
 	rg.POST("/auth/logout", routes.logout)
 	rg.GET("/me", routes.me)
 	rg.PATCH("/me", routes.patchMe)
@@ -126,14 +127,21 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	rg.GET("/users/:id/history", routes.history)
 }
 
-// HubAccounts is what the hub signs sockets in with and keeps watches through.
-func HubAccounts(accounts *account.Store) syncapi.Accounts {
-	return hubAccounts{accounts: accounts}
+// HubAccounts is what the hub signs sockets in with and keeps watches
+// through. devices may be nil, and then no TV signs in.
+func HubAccounts(accounts *account.Store, devices *tv.Devices) syncapi.Accounts {
+	return hubAccounts{accounts: accounts, devices: devices}
 }
 
-type hubAccounts struct{ accounts *account.Store }
+type hubAccounts struct {
+	accounts *account.Store
+	devices  *tv.Devices
+}
 
 func (h hubAccounts) Identify(r *http.Request) (syncapi.Identity, bool) {
+	if token := r.URL.Query().Get("tv"); token != "" {
+		return h.identifyTV(r, token)
+	}
 	cookie, err := r.Cookie(accountCookie)
 	if err != nil {
 		return syncapi.Identity{}, false
@@ -147,6 +155,24 @@ func (h hubAccounts) Identify(r *http.Request) (syncapi.Identity, bool) {
 		return syncapi.Identity{}, false
 	}
 	return syncapi.Identity{AccountID: signed.ID, Nickname: signed.Nickname, Avatar: signed.Avatar, Unlisted: signed.Visibility == account.VisibilityPrivate}, true
+}
+
+// identifyTV signs a TV in as the account that linked it. A socket that
+// names a token is a TV or nobody, never the cookie's account.
+func (h hubAccounts) identifyTV(r *http.Request, token string) (syncapi.Identity, bool) {
+	if h.devices == nil {
+		return syncapi.Identity{}, false
+	}
+	device, err := h.devices.ByToken(r.Context(), token)
+	if err != nil {
+		return syncapi.Identity{}, false
+	}
+	owner, err := h.accounts.Get(r.Context(), device.AccountID)
+	if err != nil {
+		return syncapi.Identity{}, false
+	}
+	return syncapi.Identity{AccountID: owner.ID, Nickname: owner.Nickname, Avatar: owner.Avatar,
+		Unlisted: owner.Visibility == account.VisibilityPrivate, TV: true}, true
 }
 
 func (h hubAccounts) RecordWatch(ctx context.Context, accountID int64, watch account.Watch) error {
@@ -472,14 +498,16 @@ func (a *accountRoutes) cards(ctx context.Context, ids []int64) ([]accountCard, 
 
 // sameOrigin turns away a change sent from a page that isn't the site: the
 // SameSite cookie already stops other sites, this also stops a sibling host.
-func (a *accountRoutes) sameOrigin(c *gin.Context) {
-	switch c.Request.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return
-	}
-	origin := c.GetHeader("Origin")
-	if origin != "" && a.cfg.PublicOrigin != "" && origin != a.cfg.PublicOrigin {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "bad_origin"})
+func sameOrigin(cfg config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			return
+		}
+		origin := c.GetHeader("Origin")
+		if origin != "" && cfg.PublicOrigin != "" && origin != cfg.PublicOrigin {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "bad_origin"})
+		}
 	}
 }
 

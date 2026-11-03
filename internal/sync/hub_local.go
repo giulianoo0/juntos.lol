@@ -20,9 +20,13 @@ import (
 // with it, and a browser with nothing.
 const ClientDesktop = "desktop"
 
+// ClientTV on a hello is a TV linked to an account, showing the room for it.
+// Only a socket signed in with the TV's token may say so.
+const ClientTV = "tv"
+
 func clientKind(hello Inbound) string {
-	if hello.Client == ClientDesktop {
-		return ClientDesktop
+	if hello.Client == ClientDesktop || hello.Client == ClientTV {
+		return hello.Client
 	}
 	return ""
 }
@@ -95,6 +99,9 @@ func (r *roomConn) copies(member *client) bool {
 // waitsFor reports whether the room holds its playback for this member: one
 // with no media to load yet is not waited on.
 func (r *roomConn) waitsFor(member *client) bool {
+	if member.isTV() {
+		return false
+	}
 	return !r.media.bare || r.produces(member) || r.copies(member)
 }
 
