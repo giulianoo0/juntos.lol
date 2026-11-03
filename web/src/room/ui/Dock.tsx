@@ -6,11 +6,12 @@ import { Pill } from '../../ui/Pill'
 import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
 import { useRoomUi } from './context'
 import { sourceIcon, sourceLabel } from './sources'
+import { TvButton } from './TvButton'
 import { fill } from './strings'
 import styles from './Dock.module.css'
 
-/** The dock: the room's link, then mic, camera, Compartilhar, reactions
-    and the chat in the middle; and Sair, apart, under the room's right
+/** The dock: the room's link, then mic, camera, Compartilhar, reactions,
+    the TV and the chat in the middle; and Sair, apart, under the room's right
     column (the room's grid places both). */
 export function Dock({ panelOpen, onTogglePanel, onShare }: {
   panelOpen: boolean
@@ -79,6 +80,7 @@ export function Dock({ panelOpen, onTogglePanel, onShare }: {
               </div>
             )}
           </SpringPopover>
+          {vm.tv ? <TvButton tv={vm.tv} /> : null}
           <IconPill label={strings.chat} icon={<MessageSquare size={18} />} active={panelOpen} aria-expanded={panelOpen} onClick={onTogglePanel} />
         </div>
       </footer>

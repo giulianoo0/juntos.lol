@@ -84,6 +84,19 @@ const ptBR = {
   waiting: 'Esperando o host deixar você entrar',
   cancel: 'Cancelar',
   loading: 'Carregando',
+  mirror: 'Espelhar na TV',
+  mirrorStop: 'Parar de espelhar',
+  onlyMedia: 'Só a mídia',
+  mediaVolume: 'Volume da mídia',
+  volumeOf: 'Volume de {name}',
+  tvMute: 'Silenciar {name} na TV',
+  tvUnmute: 'Ativar o som de {name} na TV',
+  tvNeedsAccount: 'Para vincular uma TV, é preciso entrar com uma conta.',
+  tvOffline: 'A TV está desligada',
+  tvNotInRoom: 'Entre na sala para espelhar',
+  tvFailed: 'Não deu para espelhar',
+  linkTv: 'Vincular TV',
+  onTv: 'Na TV',
 } as const
 
 export type RoomStrings = Record<keyof typeof ptBR, string>
@@ -170,6 +183,19 @@ const en: RoomStrings = {
   waiting: 'Waiting for the host to let you in',
   cancel: 'Cancel',
   loading: 'Loading',
+  mirror: 'Mirror on TV',
+  mirrorStop: 'Stop mirroring',
+  onlyMedia: 'Media only',
+  mediaVolume: 'Media volume',
+  volumeOf: "{name}'s volume",
+  tvMute: 'Mute {name} on the TV',
+  tvUnmute: 'Unmute {name} on the TV',
+  tvNeedsAccount: 'You need an account to link a TV.',
+  tvOffline: 'The TV is off',
+  tvNotInRoom: 'Join the room to mirror it',
+  tvFailed: "Couldn't mirror",
+  linkTv: 'Link a TV',
+  onTv: 'On TV',
 }
 
 export function useRoomStrings(): RoomStrings {
