@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { CallProvider, CallVideo } from '../call/CallVideo'
 import { useCall } from '../call/useCall'
 import { StillThere } from '../components/StillThere'
 import { useT } from '../i18n/useT'
 import { Player } from '../player/Player'
+import type { SettingGroup } from '../player/Settings'
 import { useSync } from '../player/useSync'
 import type { ChatMessage as ViewChatMessage, Person, RoomActions, RoomViewModel, Stage as ViewStage } from '../room/model'
 import { splitReactions } from '../room/reactions'
@@ -15,10 +16,11 @@ import type { ChatEntry } from '../types'
 import { Loading, Skeleton } from '../ui/Shimmer'
 import type { TvAccount } from './api'
 import { AudioPanel } from './AudioPanel'
-import { playerKeyFor } from './keys'
+import { playerKeyFor, type TvKeyAction } from './keys'
 import { memberVolumes, ownerMemberId, type Mix } from './mix'
+import { TrackPanel } from './TrackPanel'
 import { TvRelayStage } from './TvRelayStage'
-import { TvRoomView } from './TvRoomView'
+import { TvRoomView, type Playhead, type TvRoomKeys } from './TvRoomView'
 import type { MediaAction } from './useRemote'
 import styles from './tv.module.css'
 
@@ -28,6 +30,9 @@ export interface RoomRemote {
   back(): boolean
   menu(): void
   media(action: MediaAction): void
+  /** True when the room took the key (its bar, OK held). */
+  key(action: TvKeyAction, repeat: boolean): boolean
+  enterUp(): void
 }
 
 const nothing = () => undefined
@@ -103,25 +108,46 @@ export function TvRoom({ roomId, ticket, token, account, mix, onMix, onClosed, r
   })
 
   const [audioOpen, setAudioOpen] = useState(false)
+  const [tracksOpen, setTracksOpen] = useState(false)
+  const [settings, setSettings] = useState<SettingGroup[]>([])
+  const panelOpen = audioOpen || tracksOpen
   const roomStages = stagesOf(stageRoom)
   const mediaStage = roomStages.find((stage) => stage.kind === 'media')
+  const keysRef = useRef<TvRoomKeys>(null)
+  const steer = useCallback((action: MediaAction) => {
+    const video = videoRef.current
+    if (!video) return
+    const key = playerKeyFor(action, video.paused)
+    if (key) document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  }, [])
   useEffect(() => {
     remoteRef.current = {
       back: () => {
-        if (!audioOpen) return false
+        if (!panelOpen) return false
         setAudioOpen(false)
+        setTracksOpen(false)
         return true
       },
-      menu: () => setAudioOpen((open) => !open),
+      menu: () => { setTracksOpen(false); setAudioOpen((open) => !open) },
       media: (action) => {
+        if (!mediaStage) return
+        steer(action)
         const video = videoRef.current
-        if (!video || !mediaStage) return
-        const key = playerKeyFor(action, video.paused)
-        if (key) document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+        keysRef.current?.flash(action === 'playPause' && video ? (video.paused ? 'play' : 'pause') : action)
       },
+      key: (action, repeat) => (panelOpen ? false : keysRef.current?.key(action, repeat) ?? false),
+      enterUp: () => { if (!panelOpen) keysRef.current?.enterUp() },
     }
     return () => { remoteRef.current = null }
   })
+  const durationSec = (liveRoom.durationMs ?? 0) / 1000
+  const playhead = useCallback((): Playhead | null => {
+    const video = videoRef.current
+    if (!video) return null
+    const offset = (mediaOffsetMsRef.current ?? 0) / 1000
+    const duration = durationSec > 0 ? durationSec : Number.isFinite(video.duration) ? video.duration + offset : 0
+    return { position: video.currentTime + offset, duration, paused: video.paused }
+  }, [durationSec])
 
   const people: Person[] = sync.members.map((member) => ({
     id: member.id,
@@ -205,6 +231,9 @@ export function TvRoom({ roomId, ticket, token, account, mix, onMix, onClosed, r
           autoplayBlocked={sync.autoplayBlocked}
           gatedStart={sync.waiting !== null}
           onBuffering={sync.reportBuffering}
+          bare
+          followHost
+          onSettings={setSettings}
         />
       ) : status === 'error' ? (
         <div className={styles.stageNote} role="alert">{t('room.error')}</div>
@@ -218,7 +247,7 @@ export function TvRoom({ roomId, ticket, token, account, mix, onMix, onClosed, r
 
   return (
     <CallProvider call={call}>
-      <TvRoomView vm={vm} onAudio={() => setAudioOpen(true)} />
+      <TvRoomView vm={vm} playhead={playhead} onMedia={steer} onAudio={() => { setTracksOpen(false); setAudioOpen(true) }} onTracks={settings.some((group) => group.options.length > 1) ? () => { setAudioOpen(false); setTracksOpen(true) } : undefined} onStop={onClosed} keysRef={keysRef} />
       {mediaStage ? hosts.portal('media', mediaContent) : null}
       {liveRoom.live ? hosts.portal('live', (
         <TvRelayStage
@@ -251,6 +280,7 @@ export function TvRoom({ roomId, ticket, token, account, mix, onMix, onClosed, r
           onClose={() => setAudioOpen(false)}
         />
       ) : null}
+      {tracksOpen ? <TrackPanel groups={settings} onClose={() => setTracksOpen(false)} /> : null}
       <StillThere
         deadlineMs={sync.stillThereDeadlineMs}
         serverOffsetMs={sync.serverOffsetMs}

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { tvKeyAction } from './keys'
+import { tvKeyAction, type TvKeyAction } from './keys'
 import { moveFocus, openOverlay } from './spatial'
 
 export type MediaAction = 'playPause' | 'play' | 'pause' | 'forward' | 'rewind'
@@ -9,6 +9,10 @@ export interface RemoteHandlers {
   onBack(): void
   onMenu(): void
   onMedia(action: MediaAction): void
+  /** Asked first: true when the room took the key itself (the bar, OK held). */
+  onKey?(action: TvKeyAction, repeat: boolean): boolean
+  /** OK let go, for telling a press from a hold. */
+  onEnterUp?(): void
 }
 
 const isSlider = (element: Element | null) => element instanceof HTMLInputElement && element.type === 'range'
@@ -25,6 +29,11 @@ export function useRemote(handlers: RemoteHandlers): void {
     const onKeyDown = (event: KeyboardEvent) => {
       const action = tvKeyAction(event)
       if (!action) return
+      if (handlersRef.current.onKey?.(action, event.repeat)) {
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
       const active = document.activeElement
       switch (action) {
         case 'up':
@@ -60,7 +69,14 @@ export function useRemote(handlers: RemoteHandlers): void {
           handlersRef.current.onMedia(action)
       }
     }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (tvKeyAction(event) === 'enter') handlersRef.current.onEnterUp?.()
+    }
     window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+    }
   }, [])
 }

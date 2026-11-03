@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
+import { HeroWordmark } from '../pages/home/Wordmark'
 import { Face } from '../room/ui/Face'
 import { Loading, Skeleton } from '../ui/Shimmer'
 import { exitTvApp, listenForShell, registerTvKeys } from './keys'
@@ -44,6 +45,8 @@ export function TvApp() {
     },
     onMenu: () => { if (inRoom) remoteRef.current?.menu() },
     onMedia: (action) => { if (inRoom) remoteRef.current?.media(action) },
+    onKey: (action, repeat) => (inRoom && !confirm ? remoteRef.current?.key(action, repeat) ?? false : false),
+    onEnterUp: () => { if (inRoom) remoteRef.current?.enterUp() },
   })
   const leaveRoom = useCallback(() => roomClosed(roomId), [roomClosed, roomId])
 
@@ -55,7 +58,10 @@ export function TvApp() {
       ) : null}
       {session.screen === 'waiting' ? (
         <main className={styles.waiting}>
-          <Face id={String(session.account.id)} avatar={session.account.avatar} size={260} still={false} />
+          <HeroWordmark className={styles.waitingMark} sweep={false} />
+          <div className={styles.waitingFace}>
+            <Face id={String(session.account.id)} avatar={session.account.avatar} size={260} still={false} />
+          </div>
           <h1 className={styles.waitingName}>{session.account.nickname}</h1>
         </main>
       ) : null}

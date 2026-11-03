@@ -36,7 +36,7 @@ describe('PairingScreen', () => {
   it('mostra o código em dois blocos e o QR que leva ao vínculo no celular', async () => {
     render(<PairingScreen onLinked={vi.fn()} />)
     await settle()
-    expect(screen.getByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.getByLabelText('ABCD-EFGH')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'http://localhost/tv/vincular?c=ABCDEFGH' })).toBeInTheDocument()
   })
 
@@ -56,22 +56,22 @@ describe('PairingScreen', () => {
     render(<PairingScreen onLinked={vi.fn()} />)
     await settle()
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
-    expect(screen.getByText('JKLM-NPQR')).toBeInTheDocument()
+    expect(screen.getByLabelText('JKLM-NPQR')).toBeInTheDocument()
   })
 
   it('troca o código quando a hora dele passa, sem esperar o servidor dizer', async () => {
     render(<PairingScreen onLinked={vi.fn()} />)
     await settle()
     await act(async () => { await vi.advanceTimersByTimeAsync(600_000) })
-    expect(screen.getByText('JKLM-NPQR')).toBeInTheDocument()
+    expect(screen.getByLabelText('JKLM-NPQR')).toBeInTheDocument()
   })
 
   it('servidor fora do ar: tenta de novo sozinho', async () => {
     fetchMock.mockImplementationOnce(async () => { throw new TypeError('offline') })
     render(<PairingScreen onLinked={vi.fn()} />)
     await settle()
-    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('ABCD-EFGH')).not.toBeInTheDocument()
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-    expect(screen.getByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.getByLabelText('ABCD-EFGH')).toBeInTheDocument()
   })
 })

@@ -64,7 +64,7 @@ describe('TvApp', () => {
     pairAnswers = [() => json({ status: 'linked', token: 't9', account, device })]
     render(<TvApp />)
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-    expect(screen.getByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.getByLabelText('ABCD-EFGH')).toBeInTheDocument()
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
     expect(screen.getByText('Giuli')).toBeInTheDocument()
     expect(localStorage.getItem(TOKEN_KEY)).toBe('t9')

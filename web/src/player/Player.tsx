@@ -70,6 +70,12 @@ interface PlayerProps {
   gatedStart?: boolean
   onBuffering?: (stalled: boolean) => void
   onWait?: (wait: { secondsLeft: number | null; cold: boolean }) => void
+  /** Without its own controls: the TV draws its own for the remote. */
+  bare?: boolean
+  /** Keeps the host's subtitle pick, as it changes: the TV has no menu to pick one. */
+  followHost?: boolean
+  /** The subtitle, audio and quality choices, for a host drawing its own picker. */
+  onSettings?: (groups: SettingGroup[]) => void
 }
 
 const PLAY_INTENT_TTL_MS = 5_000
@@ -165,7 +171,7 @@ function subtitleSource(room: SubtitleBucket, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, mediaRoot: localRoot, isController, memberId = '', capability = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
+export function Player({ room, mediaRoot: localRoot, isController, memberId = '', capability = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait, bare = false, followHost = false, onSettings }: PlayerProps) {
   const { toast } = useToast()
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement | null>(null)
@@ -666,6 +672,9 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     if (hostSubtitles.track === -1) setSubtitle(-1)
     else if (sharedTracks.some((track) => track.index === hostSubtitles.track)) setSubtitle(hostSubtitles.track)
   }, [hostSubtitles, sharedTracks, setDelay])
+  useEffect(() => {
+    if (followHost && !isController) copyFromHost()
+  }, [followHost, isController, copyFromHost])
   const [assFailed, setAssFailed] = useState(false)
   const assFontUrls = useMemo(
     () => (room.mediaBaseUrl ? (room.subtitleFonts ?? []).map((font) => `${room.mediaBaseUrl}/subs/${font.file}`) : []),
@@ -1122,6 +1131,8 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     return groups
   }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
 
+  useEffect(() => { onSettings?.(settingGroups) }, [onSettings, settingGroups])
+
   const seekMax = Math.max(timelineEnd, 1)
   const pct = (seconds: number) => `${(Math.min(Math.max(seconds, 0), seekMax) / seekMax) * 100}%`
   const chapters = useMemo(() => (room.chapters ?? [])
@@ -1219,7 +1230,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
   return (
     <div
       ref={wrapRef}
-      className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''}`}
+      className={`player-wrap ${playing && !controlsVisible ? 'controls-hidden' : ''} ${pinned ? 'is-pseudo-fullscreen' : ''} ${bare ? 'is-bare' : ''}`}
       onPointerMove={() => revealControls(playing)}
       onPointerDown={(event) => {
         tapRef.current = { touch: event.pointerType === 'touch', revealed: !controlsVisibleRef.current }

@@ -51,17 +51,32 @@ export function PairingScreen({ onLinked }: { onLinked: (link: { token: string; 
     }
   }, [round, onLinked])
 
+  const code = pairing ? pairing.code : ''
   return (
     <main className={styles.pairing}>
       <HeroWordmark className={styles.pairingMark} sweep={false} />
       <h1 className={styles.pairingTitle}>{t('tv.pairTitle')}</h1>
-      <div className={styles.pairingBody} data-ready={pairing ? '' : undefined}>
+      <div className={styles.pairingCard} data-ready={pairing ? '' : undefined}>
         <div className={styles.qr}>
-          {pairing && qr ? <img src={qr} alt={linkUrl(pairing.code)} /> : null}
+          {pairing && qr ? <img key={code} src={qr} alt={linkUrl(code)} /> : null}
         </div>
-        <div className={styles.pairingCode}>
-          <span className={styles.pairingUrl}>{window.location.host}/tv/vincular</span>
-          <strong className={styles.code}>{pairing ? formatCode(pairing.code) : '····-····'}</strong>
+        <div className={styles.pairingSteps}>
+          <section className={styles.pairingStep}>
+            <span className={styles.pairingLabel}>{t('tv.onPhone')}</span>
+            <span className={styles.pairingUrl}>
+              <strong>{window.location.host}</strong>/tv/vincular
+            </span>
+          </section>
+          <section className={styles.pairingStep}>
+            <span className={styles.pairingLabel}>{t('tv.codeShort')}</span>
+            <span className={styles.code} aria-label={formatCode(code)}>
+              {Array.from({ length: 8 }, (_, index) => (
+                <span key={`${code}-${index}`} className={styles.codeCell} data-gap={index === 4 ? '' : undefined} style={{ animationDelay: `${index * 40}ms` }}>
+                  {code[index] ?? ''}
+                </span>
+              ))}
+            </span>
+          </section>
         </div>
       </div>
     </main>
