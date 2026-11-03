@@ -26,6 +26,8 @@ export interface CallOptions {
   initial?: { mic?: boolean; cam?: boolean }
   /** The room's relay epoch: when it moves, the call moves with it. */
   relayEpoch?: number
+  /** How loud each voice plays, 0..1; absent is 1. The TV's mix sets it. */
+  volumes?: Record<string, number>
 }
 
 export interface CallApi {
@@ -74,7 +76,7 @@ const CALL_RETRY = { retryMs: 4_000, loadingRetryMs: 6_000, gapMs: 1_500 }
  * the host has not muted them; a camera downloads while on, not turned off by
  * the host, and bound to a tile on screen.
  */
-export function useCall({ roomId, memberId, capability, send, members, initial, relayEpoch = 0 }: CallOptions): CallApi {
+export function useCall({ roomId, memberId, capability, send, members, initial, relayEpoch = 0, volumes }: CallOptions): CallApi {
   const local = useLocalMedia(initial)
   const supported = useMemo(() => relayPublishSupported(), [])
   const [relay, setRelay] = useState<CallRelay | null>(null)
@@ -151,11 +153,12 @@ export function useCall({ roomId, memberId, capability, send, members, initial, 
   const voices = useMemo(() => new Set(hearable(members, memberId)), [members, memberId])
   const voicesRef = useRef(voices)
   voicesRef.current = voices
-  const planRef = useRef({ voices, members })
-  planRef.current = { voices, members }
+  const planRef = useRef({ voices, members, volumes })
+  planRef.current = { voices, members, volumes }
   const shape = useCallback((target: string, watch: MemberWatch) => {
     const plan = planRef.current
     watch.setAudio(plan.voices.has(target))
+    watch.setVolume(plan.volumes?.[target] ?? 1)
     watch.setCanvas(viewable(plan.members, target) ? canvasesRef.current.get(target) ?? null : null)
   }, [])
 
@@ -225,7 +228,7 @@ export function useCall({ roomId, memberId, capability, send, members, initial, 
       const watch = pool.get(target)
       if (watch) shape(target, watch)
     }
-  }, [voices, members, memberId, pool, shape, canvasVersion])
+  }, [voices, members, memberId, pool, shape, canvasVersion, volumes])
 
   const attach = useCallback((target: string, canvas: HTMLCanvasElement | null) => {
     const canvases = canvasesRef.current

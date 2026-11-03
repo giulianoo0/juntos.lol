@@ -9,6 +9,7 @@ import { AppUpdate } from './components/AppUpdate'
 import { AppChrome } from './components/AppChrome'
 import { GuildJoin } from './account/GuildJoin'
 import type { CreateRoomInput } from './pages/Home'
+import { isTvPage } from './tv/route'
 
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })))
 const AccountPage = lazy(() => import('./pages/Account').then((module) => ({ default: module.AccountPage })))
@@ -16,6 +17,7 @@ const LegacyProfile = lazy(() => import('./pages/Account').then((module) => ({ d
 const DataPage = lazy(() => import('./pages/Data').then((module) => ({ default: module.DataPage })))
 const TvLinkPage = lazy(() => import('./pages/TvLink').then((module) => ({ default: module.TvLinkPage })))
 const DevRoom =lazy(() => import('./room/ui/DevRoom').then((module) => ({ default: module.DevRoom })))
+const TvApp = lazy(() => import('./tv').then((module) => ({ default: module.TvApp })))
 
 async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
   const { createEmptyRoom } = await import('./upload')
@@ -27,6 +29,14 @@ async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
 const history = deferPops(createBrowserHistory({ v5Compat: true }))
 
 export default function App() {
+  // The TV page runs on its own, without the site's notices, hosts and updater.
+  if (isTvPage(window.location.pathname)) {
+    return (
+      <HistoryRouter history={history}>
+        <Suspense fallback={null}><TvApp /></Suspense>
+      </HistoryRouter>
+    )
+  }
   return (
     <HistoryRouter history={history}>
       <CodecSupportNotice />
