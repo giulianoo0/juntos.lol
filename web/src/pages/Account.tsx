@@ -184,7 +184,7 @@ function OwnAccount({ me }: { me: Me }) {
 
 function OtherAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
   const t = useT()
-  const [profile, setProfile] = useState<Profile | null | 'private' | undefined>(undefined)
+  const [profile, setProfile] = useState<Profile | null | undefined>(undefined)
   const [history, setHistory] = useState<HistoryEntry[] | null | undefined>(undefined)
   const [failed, setFailed] = useState(false)
 
@@ -204,10 +204,11 @@ function OtherAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
   if (failed) return <Empty title={t('account.loadFailed')} action={<Pill tone="soft" size="md" onClick={() => { void load() }}>{t('account.retry')}</Pill>} />
   if (profile === undefined) return <AccountSkeleton />
   if (profile === null) return <MissingAccount signedIn={signedIn} />
-  if (profile === 'private') return <PrivateAccount id={id} signedIn={signedIn} />
   return (
     <div className={styles.layout}>
-      <IdentityCard account={profile} stats={profile.stats} discord={profile.discord} />
+      <IdentityCard account={profile} stats={profile.stats} discord={profile.discord}>
+        {signedIn ? <AskFriend id={id} /> : null}
+      </IdentityCard>
       <div className={styles.column}>
         <HistoryPanel history={history ?? null} />
       </div>
@@ -290,9 +291,9 @@ function IdentityCard({ account, stats, discord, own = false, children }: {
           <div className={styles.stat}><dt>{t('account.friendCount')}</dt><dd>{stats.friends}</dd></div>
         </dl>
       ) : null}
-      {own ? (
+      {own || children ? (
         <div className={styles.cardActions}>
-          <button type="button" className={styles.changeAvatar} onClick={() => setEditing(true)}>{t('account.changeAvatar')}</button>
+          {own ? <button type="button" className={styles.changeAvatar} onClick={() => setEditing(true)}>{t('account.changeAvatar')}</button> : null}
           {children}
         </div>
       ) : null}
@@ -778,8 +779,7 @@ function MissingAccount({ signedIn }: { signedIn: boolean }) {
   )
 }
 
-/** An account that shows itself to no one: it is there, and a friend request is the way in. */
-function PrivateAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
+function AskFriend({ id }: { id: number }) {
   const t = useT()
   const { toast } = useToast()
   const [asked, setAsked] = useState(false)
@@ -795,17 +795,7 @@ function PrivateAccount({ id, signedIn }: { id: number; signedIn: boolean }) {
     }
   }
 
-  return (
-    <LostPage
-      title={t('account.privateAccount')}
-      seed={`private-${id}`}
-      action={signedIn ? (
-        <Pill tone="brand" size="lg" icon={<Plus size={16} />} disabled={asked} onClick={() => { void ask() }}>{t('account.askFriend')}</Pill>
-      ) : (
-        <PillLink tone="brand" size="lg" icon={<DiscordGlyph size={18} />} href={discordLoginUrl(profilePath(id))}>{t('landing.signIn')}</PillLink>
-      )}
-    />
-  )
+  return <Pill tone="soft" size="md" icon={<Plus size={15} />} disabled={asked} onClick={() => { void ask() }}>{t('account.askFriend')}</Pill>
 }
 
 function Empty({ icon, title, action }: { icon?: ReactNode; title: string; action?: ReactNode }) {

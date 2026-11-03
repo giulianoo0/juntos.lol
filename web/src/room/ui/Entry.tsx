@@ -120,11 +120,9 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           <IconPill size="sm" label={vm.mic ? strings.mic : strings.micOff} icon={vm.mic ? <Mic size={16} /> : <MicOff size={16} />} state={vm.mic ? undefined : 'off'} aria-pressed={vm.mic} onClick={() => vm.setMic(!vm.mic)} />
           <IconPill size="sm" label={vm.cam ? strings.cam : strings.camOff} icon={vm.cam ? <Video size={16} /> : <VideoOff size={16} />} state={vm.cam ? undefined : 'off'} aria-pressed={vm.cam} onClick={() => vm.setCam(!vm.cam)} />
         </div>
-        {vm.account ? null : (
-          <div className={styles.looks}>
-            <AvatarEditor value={avatar} onChange={choose} only="looks" />
-          </div>
-        )}
+        <div className={styles.looks}>
+          <AvatarEditor value={avatar} onChange={choose} only="looks" />
+        </div>
       </div>
 
       <form className={styles.form} onSubmit={submit}>
@@ -136,18 +134,16 @@ export function EntryScreen({ vm }: { vm: EntryViewModel }) {
           </div>
         </div>
         {vm.account ? null : (
-          <>
-            <Field
-              label={strings.yourName}
-              value={nickname}
-              onChange={(event) => setNickname(event.target.value)}
-              autoComplete="nickname"
-              maxLength={64}
-              autoFocus={!vm.nickname}
-            />
-            <AvatarEditor value={avatar} onChange={choose} only="kinds" />
-          </>
+          <Field
+            label={strings.yourName}
+            value={nickname}
+            onChange={(event) => setNickname(event.target.value)}
+            autoComplete="nickname"
+            maxLength={64}
+            autoFocus={!vm.nickname}
+          />
         )}
+        <AvatarEditor value={avatar} onChange={choose} only="kinds" />
         {needsPassword ? (
           <Field
             label={<><Lock size={12} aria-hidden="true" />{strings.roomPassword}</>}

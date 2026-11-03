@@ -166,6 +166,22 @@ describe('RoomView reactions', () => {
     expect(bursts[0]?.closest('[data-member]')?.getAttribute('data-member')).toBe('ana')
     expect(container.querySelector('[data-member="ana"]')).toHaveAttribute('data-reaction', '😂')
   })
+
+  it('floats reactions inside a stage pinned in fullscreen, where no tile shows', async () => {
+    const vm = model({ requests: [] })
+    const { rerender } = render(<RoomView vm={vm} />)
+    const stage = document.createElement('div')
+    stage.className = 'player-wrap is-pseudo-fullscreen'
+    document.body.append(stage)
+    try {
+      await act(async () => { document.documentElement.classList.add('has-pseudo-fullscreen') })
+      rerender(<RoomView vm={{ ...vm, reactions: [{ id: 'f1', memberId: 'ana', emoji: '🔥', at: Date.now() }] }} />)
+      expect(stage.querySelector('[data-reaction-float] img')).toHaveAttribute('src', '/emoji/1f525.png?v=2')
+    } finally {
+      document.documentElement.classList.remove('has-pseudo-fullscreen')
+      stage.remove()
+    }
+  })
 })
 
 describe('RoomView faces', () => {
@@ -283,6 +299,13 @@ describe('EntryScreen', () => {
     expect(screen.queryByRole('link', { name: /Discord/ })).toBeNull()
     expect(screen.queryByLabelText('Seu nome')).toBeNull()
     expect(screen.getByLabelText('Senha da sala')).toBeInTheDocument()
+  })
+
+  it('lets an account change its mascot before walking in', () => {
+    const vm = entry({ joinMode: 'open', account: { id: 7 } })
+    render(<EntryScreen vm={vm} />)
+    fireEvent.click(screen.getByRole('radio', { name: 'Gato' }))
+    expect(vm.setAvatar).toHaveBeenCalledWith('cat.bowtie')
   })
 
   it('waits for the password before letting you in', () => {

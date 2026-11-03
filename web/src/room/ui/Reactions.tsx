@@ -1,16 +1,20 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type AnimationEvent, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import type { MascotExpression } from '../../mascot'
 import { reactionMood } from '../avatar'
 import type { Reaction } from '../model'
 import { freshReactions, reactionSrc } from '../reactions'
 import { useRoomUi } from './context'
+import { Face } from './Face'
 import styles from './Reactions.module.css'
 
 // Long enough for the rise to end, should the animation never report it
 // (a hidden tab).
-const BURST_MS = 2_800
+const BURST_MS = 4_200
 // More at once only crowd the tile.
 const MAX_BURSTS = 8
+// Over a whole screen there is room for a few more.
+const MAX_FLOATING = 16
 
 /** The last reaction someone sent while their tile was up. */
 export interface LastReaction {
@@ -19,16 +23,14 @@ export interface LastReaction {
 }
 
 /**
- * Someone's reactions as their tile shows them: the ones floating now,
- * and the last one (for the face to answer). What was there when the tile
- * mounted is history and never floats.
+ * The reactions to float out of `reactions`: the ones that arrive while
+ * this is mounted, at most `max` at once, and the newest of them. What was
+ * there at mount is history and never floats.
  */
-export function useReactions(memberId: string): { bursts: Reaction[]; last: LastReaction | null; finish: (id: string) => void } {
-  const { vm } = useRoomUi()
-  const mine = vm.reactions.filter((reaction) => reaction.memberId === memberId)
-  const key = mine.map(({ id }) => id).join(',')
+function useBursts(reactions: Reaction[], max: number): { bursts: Reaction[]; last: LastReaction | null; finish: (id: string) => void } {
+  const key = reactions.map(({ id }) => id).join(',')
   const seen = useRef<Set<string> | null>(null)
-  if (seen.current === null) seen.current = new Set(mine.map(({ id }) => id))
+  if (seen.current === null) seen.current = new Set(reactions.map(({ id }) => id))
   const [bursts, setBursts] = useState<Reaction[]>([])
   const [last, setLast] = useState<LastReaction | null>(null)
   const timers = useRef<number[]>([])
@@ -37,20 +39,26 @@ export function useReactions(memberId: string): { bursts: Reaction[]; last: Last
 
   useEffect(() => {
     const known = seen.current ?? new Set<string>()
-    const fresh = freshReactions(mine, known, Date.now())
-    for (const { id } of mine) known.add(id)
+    const fresh = freshReactions(reactions, known, Date.now())
+    for (const { id } of reactions) known.add(id)
     const newest = fresh.at(-1)
     if (!newest) return
-    setBursts((current) => [...current, ...fresh].slice(-MAX_BURSTS))
+    setBursts((current) => [...current, ...fresh].slice(-max))
     setLast({ emoji: newest.emoji, at: newest.at })
     for (const { id } of fresh) timers.current.push(window.setTimeout(() => finish(id), BURST_MS))
-    // `key` stands for `mine`: a new reaction, not a new array.
+    // `key` stands for `reactions`: a new reaction, not a new array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
   useEffect(() => () => { for (const timer of timers.current) window.clearTimeout(timer) }, [])
 
   return { bursts, last, finish }
+}
+
+/** Someone's reactions as their tile shows them: the ones floating now, and the last one (for the face to answer). */
+export function useReactions(memberId: string): { bursts: Reaction[]; last: LastReaction | null; finish: (id: string) => void } {
+  const { vm } = useRoomUi()
+  return useBursts(vm.reactions.filter((reaction) => reaction.memberId === memberId), MAX_BURSTS)
 }
 
 // Where along the tile a reaction rises and how it leans: from its id, so
@@ -82,6 +90,68 @@ export function ReactionBursts({ bursts, finish, small }: { bursts: Reaction[]; 
         )
       })}
     </div>
+  )
+}
+
+type FullscreenDocument = Document & { webkitFullscreenElement?: Element | null }
+
+/** The stage filling the screen, native or pinned over the page (an iPhone), or null. */
+function useFullscreenHost(): HTMLElement | null {
+  const [host, setHost] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    const read = () => {
+      const doc = document as FullscreenDocument
+      const native = doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null
+      setHost((native ?? document.querySelector('.is-pseudo-fullscreen')) as HTMLElement | null)
+    }
+    read()
+    document.addEventListener('fullscreenchange', read)
+    document.addEventListener('webkitfullscreenchange', read)
+    // The pinned stage marks the page with a class, and fires no event.
+    const pinned = new MutationObserver(read)
+    pinned.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => {
+      document.removeEventListener('fullscreenchange', read)
+      document.removeEventListener('webkitfullscreenchange', read)
+      pinned.disconnect()
+    }
+  }, [])
+  return host
+}
+
+/**
+ * Everyone's reactions over a stage in fullscreen, where no tile shows
+ * them: up from the bottom right across most of the screen, each with the
+ * face of who sent it.
+ */
+export function FullscreenReactions() {
+  const { vm } = useRoomUi()
+  const host = useFullscreenHost()
+  const { bursts, finish } = useBursts(vm.reactions, MAX_FLOATING)
+  if (!host || bursts.length === 0) return null
+  return createPortal(
+    <div className={styles.floating} aria-hidden="true">
+      {bursts.map((burst) => {
+        const src = reactionSrc(burst.emoji)
+        if (!src) return null
+        const { x, tilt, sway } = spread(burst.id)
+        const person = vm.people.find((each) => each.id === burst.memberId)
+        const done = (event: AnimationEvent) => { if (event.target === event.currentTarget) finish(burst.id) }
+        return (
+          <span
+            key={burst.id}
+            className={styles.drift}
+            style={{ '--x': `${x / 4}%`, '--tilt': `${tilt}deg`, '--sway': `${sway * 2}px` } as CSSProperties}
+          >
+            <span data-reaction-float className={styles.lift} onAnimationEnd={done}>
+              <img className={styles.emoji} src={src} alt="" draggable={false} />
+              {person ? <Face id={person.id} avatar={person.avatar} size={22} className={styles.sender} /> : null}
+            </span>
+          </span>
+        )
+      })}
+    </div>,
+    host,
   )
 }
 

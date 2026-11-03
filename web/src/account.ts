@@ -212,11 +212,10 @@ export async function inviteFriend(id: number): Promise<void> {
   throw new InviteError(body?.error ?? 'failed', body?.roomId)
 }
 
-/** A profile; null when no one has the number, 'private' when its owner shows it to no one. */
-export async function fetchProfile(id: number): Promise<Profile | null | 'private'> {
+/** A profile, open to anyone; null when no one has the number. */
+export async function fetchProfile(id: number): Promise<Profile | null> {
   const response = await fetch(`/api/users/${id}`)
   if (response.status === 404) return null
-  if (response.status === 403) return 'private'
   if (!response.ok) throw new Error(await errorCode(response))
   return await response.json() as Profile
 }

@@ -455,15 +455,6 @@ func TestHistoryFollowsVisibility(t *testing.T) {
 			history := rig.do(http.MethodGet, "/api/users/1/history", "", cookies...)
 			profile := rig.do(http.MethodGet, "/api/users/1", "", cookies...)
 
-			if !tt.visible && tt.visibility == account.VisibilityPrivate {
-				// A conta existe: dizer "ninguém com esse número" mentia para quem
-				// abria /c/5. Diz que é privada, sem apelido nem avatar.
-				require.Equal(t, http.StatusForbidden, profile.Code)
-				require.JSONEq(t, `{"error":"account_private"}`, profile.Body.String())
-				require.Equal(t, http.StatusForbidden, history.Code)
-				require.JSONEq(t, `{"error":"account_private"}`, history.Body.String())
-				return
-			}
 			require.Equal(t, http.StatusOK, profile.Code)
 			if !tt.visible {
 				require.Equal(t, http.StatusForbidden, history.Code)

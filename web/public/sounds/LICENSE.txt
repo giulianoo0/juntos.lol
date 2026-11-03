@@ -1,0 +1,37 @@
+The .mp3 files in this directory are Visual Studio Code's accessibility signals.
+They are not original to Earshot. They come from the microsoft/vscode repository,
+at src/vs/platform/accessibilitySignal/browser/media, and are redistributed here
+under that repository's MIT licence, reproduced in full below.
+
+They are used rather than replaced on purpose: they were designed for people who
+listen to their editor rather than look at it, so the events that matter most are
+already distinct from each other by intent.
+
+--------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2015 - present Microsoft Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+Microsoft, Visual Studio and VS Code are trademarks of Microsoft Corporation.
+Earshot is not affiliated with or endorsed by Microsoft.

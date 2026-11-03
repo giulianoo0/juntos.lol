@@ -220,27 +220,19 @@ describe('AccountPage', () => {
     expect(screen.queryByText(/^@/)).toBeNull()
   })
 
-  it('tells a private account apart from a number no one has, and asks to be friends', async () => {
+  it('shows a private account like any other, with the history closed, and asks to be friends', async () => {
     const calls = serve(true, {
-      'GET /api/users/5': () => respond(403, { error: 'account_private' }),
-      'GET /api/users/5/history': () => respond(403, { error: 'account_private' }),
+      'GET /api/users/5': () => respond(200, { id: 5, nickname: 'zé', avatar: '' }),
+      'GET /api/users/5/history': () => respond(403, { error: 'history_hidden' }),
       'POST /api/friends/requests': () => respond(200, { state: 'requested' }),
     })
     await refreshMe()
     renderAt('/c/5')
-    expect(await screen.findByRole('heading', { name: 'Conta privada' })).toBeInTheDocument()
-    expect(screen.queryByText('Ninguém com esse número')).toBeNull()
+    expect(await screen.findByRole('heading', { name: 'zé' })).toBeInTheDocument()
+    expect(screen.getByText('Histórico fechado')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Pedir amizade' }))
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/friends/requests', body: { id: 5 } }))
     expect(await screen.findByText('Pedido enviado')).toBeInTheDocument()
-  })
-
-  it('offers Discord on a private account to someone signed out', async () => {
-    serve(false, { 'GET /api/users/5': () => respond(403, { error: 'account_private' }) })
-    await refreshMe()
-    renderAt('/c/5')
-    expect(await screen.findByRole('heading', { name: 'Conta privada' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Entrar com Discord' })).toHaveAttribute('href', '/api/auth/discord?next=%2Fc%2F5')
   })
 
   it('still says no one has a number that is free', async () => {

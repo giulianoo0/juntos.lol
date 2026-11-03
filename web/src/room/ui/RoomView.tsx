@@ -13,6 +13,7 @@ import { gridColumns, layoutOf, type Arrangement, type Target } from './layout'
 import { PeopleContextMenu } from './PersonMenu'
 import { SidePanel, type PanelTab } from './SidePanel'
 import { useRoomStrings } from './strings'
+import { FullscreenReactions } from './Reactions'
 import { PersonTile, StageTile } from './Tiles'
 import styles from './RoomView.module.css'
 
@@ -194,6 +195,7 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
           </aside>
         </PeopleContextMenu>
       </div>
+      <FullscreenReactions />
       <Modal
         open={sharePicker !== null}
         onOpenChange={(open) => { if (!open) closeShare() }}

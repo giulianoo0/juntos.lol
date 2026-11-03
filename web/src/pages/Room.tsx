@@ -46,7 +46,7 @@ import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
-import { playJoinChime } from '../ui/chime'
+import { playEnteredChime, playJoinChime, playKnockChime, playLeaveChime, playRequestChime, preloadChimes } from '../ui/chime'
 import type { ChatEntry, LocalCopy, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import type { OverlayFocus } from '../catalog/CatalogOverlay'
 const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
@@ -184,11 +184,6 @@ export function RoomPage({ id, onInCall }: { id: string; onInCall: (inCall: bool
   if (inApp && !entered) return <OpenedInAppPage onStay={() => setInApp(false)} />
 
   const joinMode: JoinMode = owner ? 'open' : preview.joinMode
-  // An account walks in under its own name and face: the door only asks
-  // for the password, when there is one.
-  if (!entered && me && joinMode !== 'password') {
-    return <AccountEntry nickname={me.nickname} onEnter={setEntered} />
-  }
   if (!entered) {
     const storedNickname = (() => { try { return localStorage.getItem('ss.nickname') || '' } catch { return '' } })()
     const entryAvatar = me?.avatar || picked || serializeAvatar(avatarOf(undefined, storedNickname || id))
@@ -284,12 +279,6 @@ function LeftRoom({ reason, onRejoin }: { reason: Exclude<LeftReason, 'gone'>; o
       </Dialog>
     </main>
   )
-}
-
-/** Seats an account straight away; the skeleton stays up for the instant it takes. */
-function AccountEntry({ nickname, onEnter }: { nickname: string; onEnter: (choice: { nickname: string; mic: boolean; cam: boolean }) => void }) {
-  useEffect(() => { onEnter({ nickname, mic: false, cam: false }) }, [nickname, onEnter])
-  return <EntrySkeleton />
 }
 
 function PreviewVideo({ stream }: { stream: MediaStream | null }) {
@@ -588,6 +577,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     if (producesLocally) void setLocalRenditions(room.id, renditions ? renditions.split(',') : [])
   }, [producesLocally, renditions, room.id])
   usePresenceNotices(sync.presence, t)
+  useRoomSounds(sync.connected, sync.isController ? sync.knocks.length : 0, sync.isController ? sync.stages.requests.length : 0)
   // A reaction floats over a tile; it does not ring like a message.
   const chimeMessages = useMemo(() => sync.messages.filter((message) => !isReaction(message.text)), [sync.messages])
   useMessageChime(chimeMessages, sync.connected, nickname)
@@ -1301,7 +1291,33 @@ function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
   )
 }
 
-/** An arrival is audible as well as visible; a departure stays silent. */
+/** The room's sounds besides chat and presence: walking in once, and the host hearing someone at the door or asking for the stage. */
+function useRoomSounds(connected: boolean, knocks: number, requests: number): void {
+  const entered = useRef(false)
+  const knocksRef = useRef(knocks)
+  const requestsRef = useRef(requests)
+
+  useEffect(() => { preloadChimes() }, [])
+
+  useEffect(() => {
+    // A reconnect is not walking in again.
+    if (!connected || entered.current) return
+    entered.current = true
+    playEnteredChime()
+  }, [connected])
+
+  useEffect(() => {
+    if (knocks > knocksRef.current) playKnockChime()
+    knocksRef.current = knocks
+  }, [knocks])
+
+  useEffect(() => {
+    if (requests > requestsRef.current) playRequestChime()
+    requestsRef.current = requests
+  }, [requests])
+}
+
+/** An arrival or a departure, seen and heard. */
 function usePresenceNotices(presence: PresenceEvent[], t: Translator): void {
   const { toast } = useToast()
   const lastSeenRef = useRef(0)
@@ -1317,6 +1333,7 @@ function usePresenceNotices(presence: PresenceEvent[], t: Translator): void {
         </span>,
       )
       if (event.kind === 'join') playJoinChime()
+      else playLeaveChime()
     }
   }, [presence, t, toast])
 }

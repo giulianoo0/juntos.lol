@@ -1,10 +1,24 @@
 import { incidentalAudio } from './audioUnlock'
 /**
- * The room's small sounds: a two-note blip for an arrival, a softer one for a
- * message. Synthesised, so there is no file to host, license or fail to load.
+ * The room's small sounds: you walking in, someone arriving or leaving, a
+ * message, a knock at the door. They are Visual Studio Code's accessibility
+ * signals (MIT, public/sounds/LICENSE.txt), made to be told apart by ear.
  */
 
+type Cue = 'entered' | 'join' | 'leave' | 'message' | 'knock' | 'request' | 'jlocal'
+
+const CUES: Record<Cue, { file: string; volume: number }> = {
+  entered: { file: 'editsKept', volume: 0.4 },
+  join: { file: 'voiceRecordingStarted', volume: 0.35 },
+  leave: { file: 'voiceRecordingStopped', volume: 0.35 },
+  message: { file: 'chatEditModifiedFile', volume: 0.3 },
+  knock: { file: 'chatUserActionRequired', volume: 0.45 },
+  request: { file: 'terminalBell', volume: 0.35 },
+  jlocal: { file: 'success', volume: 0.35 },
+}
+
 let context: AudioContext | null = null
+const buffers = new Map<Cue, Promise<AudioBuffer | null>>()
 
 function audio(): AudioContext | null {
   if (typeof AudioContext === 'undefined') return null
@@ -12,51 +26,78 @@ function audio(): AudioContext | null {
   return context
 }
 
-interface Note {
-  frequency: number
-  startMs: number
-  durationMs: number
-  peak: number
+function bufferOf(ctx: AudioContext, cue: Cue): Promise<AudioBuffer | null> {
+  let buffer = buffers.get(cue)
+  if (!buffer) {
+    buffer = fetch(`/sounds/${CUES[cue].file}.mp3`)
+      .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(new Error('missing'))))
+      .then((bytes) => ctx.decodeAudioData(bytes))
+      .catch(() => {
+        // A failed fetch may try again next time.
+        buffers.delete(cue)
+        return null
+      })
+    buffers.set(cue, buffer)
+  }
+  return buffer
 }
+
+// The same sound twice inside this window is one sound: three people
+// arriving together are one arrival, not a chord.
+const REPEAT_MS = 350
+const lastPlayed = new Map<Cue, number>()
+const WAKE_MS = 500
 
 /** Plays nothing before a gesture has unlocked audio, and nothing for a reader who asked for calm. */
-function playNotes(notes: Note[]): void {
+function play(cue: Cue): void {
   const ctx = audio()
-  if (!ctx || ctx.state !== 'running') { void ctx?.resume().catch(() => undefined); return }
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-
-  for (const { frequency, startMs, durationMs, peak } of notes) {
-    const startsAt = ctx.currentTime + startMs / 1000
-    const endsAt = startsAt + durationMs / 1000
-    const oscillator = ctx.createOscillator()
-    const gain = ctx.createGain()
-    oscillator.type = 'sine'
-    oscillator.frequency.value = frequency
-    gain.gain.setValueAtTime(0, startsAt)
-    gain.gain.linearRampToValueAtTime(peak, startsAt + 0.012)
-    gain.gain.exponentialRampToValueAtTime(0.0001, endsAt)
-    oscillator.connect(gain).connect(ctx.destination)
-    oscillator.start(startsAt)
-    oscillator.stop(endsAt + 0.02)
+  if (!ctx) return
+  // Fetched on the first ask even when it cannot sound yet, so the next one is ready.
+  const buffer = bufferOf(ctx, cue)
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+  if (ctx.state !== 'running') {
+    // Right after a tap the context is still waking; later than this, the
+    // sound would arrive for nothing that is happening now.
+    const asked = performance.now()
+    void ctx.resume().then(() => { if (performance.now() - asked < WAKE_MS) sound(ctx, cue, buffer) }, () => undefined)
+    return
   }
+  sound(ctx, cue, buffer)
 }
 
-export function playJoinChime(): void {
-  playNotes([
-    { frequency: 659.25, startMs: 0, durationMs: 90, peak: 0.05 },
-    { frequency: 987.77, startMs: 90, durationMs: 90, peak: 0.05 },
-  ])
+function sound(ctx: AudioContext, cue: Cue, buffer: Promise<AudioBuffer | null>): void {
+  const now = performance.now()
+  if (now - (lastPlayed.get(cue) ?? -Infinity) < REPEAT_MS) return
+  lastPlayed.set(cue, now)
+  void buffer.then((decoded) => {
+    if (!decoded) return
+    const source = ctx.createBufferSource()
+    const gain = ctx.createGain()
+    source.buffer = decoded
+    gain.gain.value = CUES[cue].volume
+    source.connect(gain).connect(ctx.destination)
+    source.start()
+  })
 }
 
-export function playMessageChime(): void {
-  playNotes([{ frequency: 880, startMs: 0, durationMs: 70, peak: 0.035 }])
+/** Fetches every sound ahead, so the first of each is on time. */
+export function preloadChimes(): void {
+  const ctx = audio()
+  if (!ctx) return
+  for (const cue of Object.keys(CUES) as Cue[]) void bufferOf(ctx, cue)
 }
 
-/** A short rising triad for the moment the jlocal companion connects. */
-export function playJLocalChime(): void {
-  playNotes([
-    { frequency: 1046.5, startMs: 0, durationMs: 70, peak: 0.04 },
-    { frequency: 1318.5, startMs: 70, durationMs: 70, peak: 0.04 },
-    { frequency: 1568, startMs: 140, durationMs: 110, peak: 0.04 },
-  ])
-}
+/** You are in the room. */
+export const playEnteredChime = () => play('entered')
+/** Someone came in. */
+export const playJoinChime = () => play('join')
+/** Someone left. */
+export const playLeaveChime = () => play('leave')
+/** A message from someone else. */
+export const playMessageChime = () => play('message')
+/** Someone at the door, for the host to let in. */
+export const playKnockChime = () => play('knock')
+/** Someone asks the host for the stage. */
+export const playRequestChime = () => play('request')
+/** The jlocal companion connected. */
+export const playJLocalChime = () => play('jlocal')
