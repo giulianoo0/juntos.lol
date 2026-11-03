@@ -16,7 +16,7 @@ const AccountPage = lazy(() => import('./pages/Account').then((module) => ({ def
 const LegacyProfile = lazy(() => import('./pages/Account').then((module) => ({ default: module.LegacyProfile })))
 const DataPage = lazy(() => import('./pages/Data').then((module) => ({ default: module.DataPage })))
 const DevRoom =lazy(() => import('./room/ui/DevRoom').then((module) => ({ default: module.DevRoom })))
-const TvApp = lazy(() => import('./tv/TvApp').then((module) => ({ default: module.TvApp })))
+const TvApp = lazy(() => import('./tv').then((module) => ({ default: module.TvApp })))
 
 async function createRoom(input: CreateRoomInput): Promise<{ roomID: string }> {
   const { createEmptyRoom } = await import('./upload')
