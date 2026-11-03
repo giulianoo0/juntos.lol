@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://juntos.lol/tv" version="0.1.0" viewmodes="maximized">
+    <!-- Trocar o id deixa a instalação órfã. required_version baixo instala em
+         qualquer TV (o alvo real é Tizen 7+, M94). -->
+    <tizen:application id="6BfN87oaeM.juntos" package="6BfN87oaeM" required_version="2.4"/>
+    <!-- Casca local (shell/tizen-shell.js): página hospedada não tem as APIs do
+         Tizen, então /tv abre num iframe. -->
+    <content src="index.html"/>
+    <!-- WARP: a página fala com R2, relays MoQ por sala e a ponte WS, todos fora
+         de juntos.lol. Sem tizen:allow-navigation, que troca para o modo CSP. -->
+    <access origin="*" subdomains="true"/>
+    <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
+    <icon src="icon.png"/>
+    <name>juntos</name>
+    <tizen:profile name="tv"/>
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <!-- registerKey das teclas de mídia, que senão vão para o popup da TV. -->
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+</widget>

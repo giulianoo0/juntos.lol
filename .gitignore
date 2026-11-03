@@ -37,3 +37,6 @@ docker-compose.override.yml
 /.cargo-target/
 web/dev/*.png
 dump.rdb
+
+# Pacotes do app de TV (tv/build.sh)
+/tv/dist/

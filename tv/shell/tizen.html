@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>juntos</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0c0a0b;
+      }
+      #splash {
+        position: absolute;
+        inset: 0;
+        background: url(splash.png) center / cover no-repeat;
+      }
+      #app {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        opacity: 0;
+      }
+      .ready #app {
+        opacity: 1;
+      }
+      .ready #splash {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="splash"></div>
+    <iframe id="app" allow="autoplay; fullscreen; encrypted-media"></iframe>
+    <script src="config.js"></script>
+    <script src="tizen-shell.js"></script>
+    <script>
+      juntosTvShell.start(window, JUNTOS_TV_URL)
+    </script>
+  </body>
+</html>
