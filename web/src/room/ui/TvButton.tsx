@@ -10,6 +10,7 @@ import { Modal } from '../../ui/Modal'
 import { Pill, PillLink } from '../../ui/Pill'
 import { SpringPopover, SpringRow, SpringRule } from '../../ui/SpringPopover'
 import { Spinner } from '../../ui/Spinner'
+import { Tip } from '../../ui/Tip'
 import { useRoomUi } from './context'
 import { Face } from './Face'
 import { fill, type RoomStrings } from './strings'
@@ -109,7 +110,7 @@ function MixPanel({ device, tv, onStop }: { device: RoomTvDevice; tv: RoomTv; on
   return (
     <div className={styles.mix}>
       <div className={styles.line}>
-        <span className={styles.mark} aria-hidden="true"><Film size={16} /></span>
+        <Tip label={strings.mediaVolume}><span className={styles.mark} aria-hidden="true"><Film size={16} /></span></Tip>
         <Level label={strings.mediaVolume} value={device.mix.media} onChange={(media) => set({ ...device.mix, media })} />
       </div>
       {vm.people.map((person) => {
