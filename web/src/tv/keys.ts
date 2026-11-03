@@ -67,11 +67,50 @@ export function registerTvKeys(host: TizenHost = window as TizenHost): void {
   }
 }
 
-/** Back to the TV's launcher: Tizen has its own call, webOS closes the window. */
-export function exitTvApp(host: TizenHost & { close(): void } = window as TizenHost & Window): void {
+export type TvPlatform = 'tizen' | 'webos' | 'browser'
+
+/**
+ * Which TV this is. The Samsung shell holds the page in an iframe, where
+ * `tizen` does not reach, and says so with a message as the page loads; the
+ * LG one hands the page the whole window. Without either, the user agent tells.
+ */
+export function shellPlatform(message: unknown, userAgent: string): TvPlatform {
+  const shell = message as { type?: unknown; platform?: unknown } | null
+  if (shell?.type === 'juntos-tv:shell' && (shell.platform === 'tizen' || shell.platform === 'webos')) return shell.platform
+  if (/Web0S|webOS/.test(userAgent)) return 'webos'
+  if (/Tizen/.test(userAgent)) return 'tizen'
+  return 'browser'
+}
+
+let platform: TvPlatform = typeof navigator === 'undefined' ? 'browser' : shellPlatform(null, navigator.userAgent)
+
+/** Listens for the shell's hello; installed once, as the TV page starts. */
+export function listenForShell(): () => void {
+  const onMessage = (event: MessageEvent) => {
+    const said = shellPlatform(event.data, '')
+    if (said !== 'browser') platform = said
+  }
+  window.addEventListener('message', onMessage)
+  return () => window.removeEventListener('message', onMessage)
+}
+
+interface ExitHost extends TizenHost {
+  close(): void
+  parent?: { postMessage(message: unknown, target: string): void }
+}
+
+/**
+ * Back to the TV's launcher: Tizen's own call where it reaches, the Samsung
+ * shell's message from inside its iframe, and closing the window on webOS.
+ */
+export function exitTvApp(host: ExitHost = window as unknown as ExitHost, on: TvPlatform = platform): void {
   try {
     const app = host.tizen?.application?.getCurrentApplication()
     if (app) { app.exit(); return }
   } catch { /* not Tizen after all */ }
+  if (on === 'tizen' && host.parent && host.parent !== (host as unknown)) {
+    host.parent.postMessage({ type: 'juntos-tv:exit' }, '*')
+    return
+  }
   host.close()
 }

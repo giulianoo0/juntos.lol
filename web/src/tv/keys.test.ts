@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { exitTvApp, registerTvKeys, tvKeyAction, type TvKeyAction } from './keys'
+import { exitTvApp, registerTvKeys, shellPlatform, tvKeyAction, type TvKeyAction } from './keys'
 
 const press = (key: string, keyCode = 0) => ({ key, keyCode })
 
@@ -50,14 +50,35 @@ describe('registerTvKeys', () => {
 })
 
 describe('exitTvApp', () => {
-  it('fecha pelo Tizen quando ele existe, e pela janela no webOS', () => {
+  it('fecha pelo Tizen quando ele existe', () => {
     const exit = vi.fn()
     const close = vi.fn()
     exitTvApp({ tizen: { application: { getCurrentApplication: () => ({ exit }) } }, close })
     expect(exit).toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
+  })
 
-    exitTvApp({ close })
+  it('dentro da casca do Samsung, pede a ela para sair', () => {
+    const postMessage = vi.fn()
+    const close = vi.fn()
+    exitTvApp({ close, parent: { postMessage } }, 'tizen')
+    expect(postMessage).toHaveBeenCalledWith({ type: 'juntos-tv:exit' }, '*')
+    expect(close).not.toHaveBeenCalled()
+  })
+
+  it('no webOS e no navegador fecha a janela', () => {
+    const close = vi.fn()
+    exitTvApp({ close }, 'webos')
     expect(close).toHaveBeenCalled()
+  })
+})
+
+describe('shellPlatform', () => {
+  it('a casca diz a plataforma; sem ela, o navegador a revela', () => {
+    expect(shellPlatform({ type: 'juntos-tv:shell', platform: 'tizen', keys: [] }, '')).toBe('tizen')
+    expect(shellPlatform(null, 'Mozilla/5.0 (Web0S; Linux/SmartTV) Chrome/94')).toBe('webos')
+    expect(shellPlatform(null, 'Mozilla/5.0 (SMART-TV; Linux; Tizen 7.0) Chrome/94')).toBe('tizen')
+    expect(shellPlatform(null, 'Mozilla/5.0 (Macintosh) Chrome/140')).toBe('browser')
+    expect(shellPlatform({ type: 'outra coisa' }, 'Mozilla/5.0 (Macintosh)')).toBe('browser')
   })
 })
