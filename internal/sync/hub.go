@@ -230,7 +230,11 @@ func (h *Hub) Live() (rooms, members int) {
 			continue
 		}
 		rooms++
-		members += len(room)
+		for memberID := range room {
+			if !strings.HasPrefix(memberID, ClientTV) {
+				members++
+			}
+		}
 	}
 	return rooms, members
 }

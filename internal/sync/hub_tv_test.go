@@ -196,3 +196,31 @@ func TestApprovalRoomLetsInTheTVOfSomeoneSeated(t *testing.T) {
 	require.Equal(t, "welcome", seated.Type, "a TV de quem já está na sala entra direto")
 	require.Equal(t, "lobby", stranger.Type, "a TV de quem não está espera como qualquer um")
 }
+
+func TestTheHostsTVDrivesThePlayback(t *testing.T) {
+	_, _, server := newTVHub(t, config.Config{})
+	ana := dialAs(t, server, 7)
+	helloHubClient(t, ana, "ana", 1)
+	tv := dialTV(t, server, "r1", 7)
+	helloTV(t, tv, Inbound{})
+
+	require.NoError(t, tv.WriteJSON(Inbound{Type: "play", PositionMs: 12_000, Rate: 1}))
+
+	state := readUntil(t, ana, "state")
+	require.True(t, state.State.Playing)
+	require.Equal(t, int64(12_000), state.State.PositionMs)
+}
+
+func TestAGuestsTVCannotDrive(t *testing.T) {
+	_, _, server := newTVHub(t, config.Config{})
+	ana := dialAs(t, server, 7)
+	helloHubClient(t, ana, "ana", 1)
+	bia := dialAs(t, server, 8)
+	helloHubClient(t, bia, "bia", 2)
+	tv := dialTV(t, server, "r1", 8)
+	helloTV(t, tv, Inbound{})
+
+	require.NoError(t, tv.WriteJSON(Inbound{Type: "play", PositionMs: 12_000, Rate: 1}))
+
+	require.Equal(t, "not_controller", readUntil(t, tv, "error").ErrCode)
+}

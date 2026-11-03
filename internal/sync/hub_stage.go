@@ -272,6 +272,14 @@ func (r *roomConn) seated(memberID string) bool {
 // mayDrive reports whether a member may play, pause, seek or change the
 // rate: the host, and whoever opened the media.
 func (r *roomConn) mayDrive(ctx context.Context, sender *client) bool {
+	if sender.isTV() {
+		for _, seat := range r.seats() {
+			if !seat.isTV() && seat.identity.AccountID == sender.identity.AccountID && r.mayDrive(ctx, seat) {
+				return true
+			}
+		}
+		return false
+	}
 	if sender.id == r.controllerID {
 		return true
 	}
