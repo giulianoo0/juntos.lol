@@ -99,6 +99,13 @@ describe('RoomView', () => {
     expect(container.querySelector('[data-member="ana"] [data-app]')).toBeNull()
   })
 
+  it('marca no rosto quem tem a TV na sala', () => {
+    render(<RoomView vm={model({ requests: [], people: [person('giu', 'Giu', { tv: true }), person('ana', 'Ana')] })} />)
+    const tile = (id: string) => document.querySelector(`[data-member="${id}"]`) as HTMLElement
+    expect(within(tile('giu')).getByLabelText('Na TV')).toBeInTheDocument()
+    expect(within(tile('ana')).queryByLabelText('Na TV')).toBeNull()
+  })
+
   it('sends what was typed, trimmed, and empties the composer', () => {
     const vm = model()
     render(<RoomView vm={vm} />)

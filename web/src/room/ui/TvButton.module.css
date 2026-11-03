@@ -1,0 +1,145 @@
+/* No account: the button keeps its place, in the faint ink, and still
+   opens the way to sign in. */
+.locked[data-locked] {
+  --pill-ink: var(--text-faint);
+}
+
+.ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.askText {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  min-height: var(--space-16);
+  color: var(--text-muted);
+}
+
+/* The TV's sound: the stage, then each person; the shortcut and the stop. */
+.mix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 var(--space-1) var(--space-1);
+}
+
+.mix > button {
+  margin-top: var(--space-3);
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-2);
+}
+
+.mark,
+.face {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--space-10);
+  height: var(--space-10);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+}
+
+.mark {
+  background: var(--hover);
+}
+
+.who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.name {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The track fills up to the level; the thumb is a small white disc. */
+.level {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: var(--space-6);
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.level::-webkit-slider-runnable-track {
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: linear-gradient(to right, var(--text) var(--level), var(--line-strong) var(--level));
+}
+
+.level::-moz-range-track {
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: linear-gradient(to right, var(--text) var(--level), var(--line-strong) var(--level));
+}
+
+.level::-webkit-slider-thumb {
+  width: var(--space-5);
+  height: var(--space-5);
+  margin-top: calc((var(--space-1) - var(--space-5)) / 2);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--white);
+  box-shadow: var(--shadow-chip);
+  -webkit-appearance: none;
+  appearance: none;
+  transition: scale var(--duration-press) var(--ease-out);
+}
+
+.level::-moz-range-thumb {
+  width: var(--space-5);
+  height: var(--space-5);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--white);
+  box-shadow: var(--shadow-chip);
+  transition: scale var(--duration-press) var(--ease-out);
+}
+
+.level:active::-webkit-slider-thumb {
+  scale: 1.1;
+}
+
+.level:active::-moz-range-thumb {
+  scale: 1.1;
+}
+
+.level:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-full);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .level::-webkit-slider-thumb,
+  .level::-moz-range-thumb {
+    transition: none;
+  }
+}

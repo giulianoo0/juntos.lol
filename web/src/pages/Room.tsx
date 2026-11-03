@@ -29,6 +29,7 @@ import { canDriveMedia, canOpenStage, currentSpotlight, hasMedia, stagesOf } fro
 import { useStageHosts } from '../room/stageHosts'
 import { EntryScreen, EntrySkeleton, RoomView, WaitingRoom } from '../room/ui'
 import { useRoomStrings } from '../room/ui/strings'
+import { useRoomTv } from '../tvlink/useRoomTv'
 import type { ChatMessage as ViewChatMessage, EntryViewModel, Person, RoomViewModel, ShareSource, Stage as ViewStage } from '../room/model'
 import { claimOwnerFromHash, fetchRoomPreview, noteLeft, rememberForReload, requestJoinTicket, setRoomAccess, takeLeft, takeReload, type JoinMode, type LeftReason, type RoomPreview } from '../join'
 import { useLocalMedia } from '../call/useLocalMedia'
@@ -923,6 +924,8 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   }
 
   const strings = useRoomStrings()
+  const { me: account } = useMe()
+  const tv = useRoomTv({ roomId: room.id, signedIn: Boolean(account), loginUrl: discordLoginUrl(`/room/${room.id}`) })
   const hosts = useStageHosts()
   const callSend = useCallback((message: CallMessage) => {
     const { type, ...payload } = message
@@ -967,6 +970,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     accountId: member.accountId || undefined,
     avatar: member.avatar || undefined,
     app: member.client === 'desktop',
+    tv: member.tv || undefined,
   }))
   const roomStages = stagesOf(stageRoom)
   const viewStages: ViewStage[] = roomStages.map((stage) => ({
@@ -1012,6 +1016,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     // YouTube is opened from the app; a browser still watches it.
     appOnly: isDesktop() ? [] : ['youtube'],
     levelOf: call.levelOf,
+    tv,
     actions: {
       setMic: call.setMic,
       setCam: call.setCam,

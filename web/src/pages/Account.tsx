@@ -1,5 +1,5 @@
 import { LostPage } from '../components/LostPage'
-import { Check, Clock, Film, History, Lock, LogOut, Monitor, Pencil, Plus, Radio, Send, X } from 'lucide-react'
+import { Check, Clock, Film, History, Lock, LogOut, Monitor, MonitorOff, Pencil, Plus, Radio, Send, Tv, Unlink, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -38,10 +38,12 @@ import { Modal } from '../ui/Modal'
 import { Pill, PillLink } from '../ui/Pill'
 import { Segmented } from '../ui/Segmented'
 import { Skeleton } from '../ui/Shimmer'
-import { SpringPopover } from '../ui/SpringPopover'
+import { SpringPopover, SpringRow } from '../ui/SpringPopover'
 import { Tip } from '../ui/Tip'
 import { useToast } from '../ui/toastContext'
 import { SiteHeader } from '../components/SiteHeader'
+import { fetchTvDevices, renameTv, unlinkTv, type TvDevice } from '../tvlink/api'
+import { LinkTvDialog } from '../tvlink/LinkTvDialog'
 import styles from './Account.module.css'
 
 type DiscordVisibility = Me['discordVisibility']
@@ -171,6 +173,7 @@ function OwnAccount({ me }: { me: Me }) {
         ) : (
           <>
             <FriendsPanel friends={friends} requests={requests} reload={load} />
+            <TvPanel />
             <HistoryPanel history={history} loading={history === null} visibility={me.visibility} discordVisibility={me.discordVisibility} own />
           </>
         )}
@@ -493,6 +496,121 @@ function FriendsPanel({ friends, requests, reload }: { friends: Friend[] | null;
         </ul>
       )}
     </section>
+  )
+}
+
+/** The TVs linked to the account: rename one, unlink one, link another. */
+function TvPanel() {
+  const t = useT()
+  const [devices, setDevices] = useState<TvDevice[] | null>(null)
+  const [linking, setLinking] = useState(false)
+
+  const load = useCallback(async () => {
+    setDevices(await fetchTvDevices().catch(() => []))
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const rename = async (device: TvDevice, name: string) => {
+    await renameTv(device.id, name)
+    setDevices((list) => list?.map((each) => (each.id === device.id ? { ...each, name } : each)) ?? list)
+  }
+
+  const unlink = async (device: TvDevice) => {
+    setDevices((list) => list?.filter((each) => each.id !== device.id) ?? list)
+    await unlinkTv(device.id).catch(() => undefined)
+    await load()
+  }
+
+  return (
+    <section className={styles.panel} aria-labelledby="tv-title" aria-busy={devices === null || undefined}>
+      <div className={styles.panelHead}>
+        <h2 id="tv-title" className={styles.panelTitle}>{t('tv.devices')}</h2>
+        <button type="button" className={styles.addTrigger} onClick={() => setLinking(true)}>
+          <Plus size={15} aria-hidden="true" />{t('tv.link')}
+        </button>
+      </div>
+      {devices === null ? (
+        <ul className={styles.people}>
+          {[0, 1].map((index) => <PersonSkeleton key={index} index={index} />)}
+        </ul>
+      ) : devices.length === 0 ? (
+        <Empty title={t('tv.empty')} />
+      ) : (
+        <ul className={styles.people}>
+          {devices.map((device, index) => (
+            <TvRow key={device.id} device={device} index={index} rename={(name) => rename(device, name)} onUnlink={() => { void unlink(device) }} />
+          ))}
+        </ul>
+      )}
+      <LinkTvDialog open={linking} onOpenChange={setLinking} onLinked={() => { void load() }} />
+    </section>
+  )
+}
+
+function TvRow({ device, index, rename, onUnlink }: { device: TvDevice; index: number; rename: (name: string) => Promise<void>; onUnlink: () => void }) {
+  const t = useT()
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(device.name)
+  const [error, setError] = useState('')
+  const shown = device.name
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    const name = draft.trim()
+    if (!name || name === shown) {
+      setRenaming(false)
+      return
+    }
+    try {
+      await rename(name)
+      setRenaming(false)
+      setError('')
+    } catch {
+      setError(t('tv.saveFailed'))
+    }
+  }
+
+  return (
+    <li className={styles.person} style={stagger(index)}>
+      <Tip label={t(device.online ? 'tv.online' : 'tv.offline')}>
+        <span className={styles.tvMark} data-off={device.online ? undefined : ''} aria-hidden="true">
+          {device.online ? <Tv size={18} /> : <MonitorOff size={18} />}
+        </span>
+      </Tip>
+      {renaming ? (
+        <form className={styles.tvRename} onSubmit={(event) => { void save(event) }}>
+          <Field
+            aria-label={t('tv.name')}
+            value={draft}
+            maxLength={40}
+            autoFocus
+            error={error || undefined}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Escape') setRenaming(false) }}
+          />
+        </form>
+      ) : (
+        <span className={styles.tvName}>{shown}</span>
+      )}
+      <div className={styles.personActions}>
+        {renaming ? null : (
+          <IconPill size="sm" label={t('tv.rename').replace('{name}', shown)} icon={<Pencil size={14} />} onClick={() => { setDraft(shown); setError(''); setRenaming(true) }} />
+        )}
+        <SpringPopover
+          triggerRender={<IconPill size="sm" label={t('tv.unlink').replace('{name}', shown)} icon={<Unlink size={14} />} />}
+          triggerLabel={t('tv.unlink').replace('{name}', shown)}
+          align="end"
+          width="13rem"
+        >
+          {({ close }) => (
+            <div role="menu" aria-label={shown}>
+              <SpringRow icon={<Unlink size={16} />} label={t('tv.unlinkConfirm')} tone="danger" onSelect={() => { close(); onUnlink() }} />
+            </div>
+          )}
+        </SpringPopover>
+      </div>
+    </li>
   )
 }
 

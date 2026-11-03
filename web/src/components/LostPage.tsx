@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Mascot } from '../mascot'
+import { Mascot, type MascotExpression } from '../mascot'
 import { avatarOf } from '../room/avatar'
 import { arrive } from '../ui/arrive'
 import { useT } from '../i18n/useT'
@@ -8,12 +8,12 @@ import { SiteHeader } from './SiteHeader'
 import styles from './LostPage.module.css'
 
 /** Nothing here: a puzzled creature in the middle of the page, what is missing, and a way on. */
-export function LostPage({ title, action, seed = 'lost' }: { title: string; action: ReactNode; seed?: string }) {
+export function LostPage({ title, action, seed = 'lost', expression = 'thinking' }: { title: string; action: ReactNode; seed?: string; expression?: MascotExpression }) {
   const spec = avatarOf(undefined, seed)
   return (
     <div className={`${styles.lost} ${arrive}`}>
       <div className={styles.bob}>
-        <Mascot kind={spec.kind} accessory={spec.accessory} expression="thinking" size={132} />
+        <Mascot kind={spec.kind} accessory={spec.accessory} expression={expression} size={132} />
       </div>
       <h1 className={styles.title}>{title}</h1>
       {action}

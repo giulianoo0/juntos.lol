@@ -1,4 +1,7 @@
 import type { ReactNode } from 'react'
+import type { Mix } from '../tvlink/api'
+
+export type { Mix }
 
 /**
  * What the room's screens (`room/ui`) draw and what they can ask for. The
@@ -28,6 +31,8 @@ export interface Person {
   avatar?: string
   /** In the desktop app rather than a browser. */
   app?: boolean
+  /** Their account has a TV in the room. */
+  tv?: boolean
 }
 
 export type StageKind = 'media' | 'live' | 'screen'
@@ -120,6 +125,33 @@ export interface RoomActions {
   getApp?: () => void
 }
 
+/** A TV linked to the viewer's account. */
+export interface RoomTvDevice {
+  id: string
+  name: string
+  online: boolean
+  /** It plays this room now. */
+  here: boolean
+  mix: Mix
+}
+
+/** "Espelhar na TV": the viewer's TVs and what can be asked of them. */
+export interface RoomTv {
+  signedIn: boolean
+  /** Where "Entrar com Discord" goes, coming back to this room. */
+  loginUrl: string
+  /** Null until the first answer. */
+  devices: RoomTvDevice[] | null
+  /** The TV menu opened or closed: the list keeps fresh while it is open. */
+  watch: (open: boolean) => void
+  /** Throws `tv_offline`, `not_in_room` or `failed`. */
+  cast: (deviceId: string) => Promise<void>
+  stop: (deviceId: string) => void
+  setMix: (deviceId: string, mix: Mix) => void
+  /** Links the TV showing `code`; throws `code_not_found`. */
+  link: (code: string) => Promise<unknown>
+}
+
 export interface RoomSlots {
   /** Someone's camera, or yours; called only for tiles on screen with the
       camera on. */
@@ -158,6 +190,8 @@ export interface RoomViewModel {
   appOnly?: ShareSource[]
   /** 0..1, how loud someone's voice is now; read on the mascot's frame. */
   levelOf?: (memberId: string) => number
+  /** Absent: no TV button (a room without accounts behind it). */
+  tv?: RoomTv
   actions: RoomActions
   slots: RoomSlots
 }

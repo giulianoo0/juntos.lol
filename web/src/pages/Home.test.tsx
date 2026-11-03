@@ -144,10 +144,10 @@ describe('Home', () => {
     expect(go).toBeDisabled()
   })
 
-  it('with an account, the corner leads to it and creating asks nothing', async () => {
+  it('with an account, the corner shows it and creating asks nothing', async () => {
     await signedIn(giu)
     const createRoom = renderHome()
-    expect(screen.getByRole('link', { name: 'giu #128' })).toHaveAttribute('href', '/c/128')
+    expect(screen.getByRole('button', { name: 'giu #128' })).toBeInTheDocument()
     const panel = await openCreate()
     expect(within(panel).queryByRole('link', { name: 'Entrar com Discord' })).toBeNull()
     fireEvent.click(within(panel).getByRole('button', { name: 'Criar' }))

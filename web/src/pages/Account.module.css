@@ -660,3 +660,34 @@
     }
   }
 }
+
+/* A linked TV: its mark (dimmed while it is off), its name, the actions. */
+.tvMark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--space-12);
+  height: var(--space-12);
+  border-radius: var(--radius-xl);
+  background: var(--frame-content);
+  color: var(--text);
+}
+
+.tvMark[data-off] {
+  color: var(--text-faint);
+}
+
+.tvName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tvRename {
+  flex: 1;
+  min-width: 0;
+}
