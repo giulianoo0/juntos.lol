@@ -31,6 +31,16 @@ if (window.crypto && !('randomUUID' in window.crypto)) {
   })
 }
 
+// Element#replaceChildren (86): the subtitle layer clears and refills with it.
+type Parent = { replaceChildren?: (...nodes: Array<Node | string>) => void; firstChild: Node | null; removeChild(node: Node): Node; append(...nodes: Array<Node | string>): void }
+for (const proto of [Element.prototype, DocumentFragment.prototype] as unknown as Parent[]) {
+  if (typeof proto.replaceChildren === 'function') continue
+  proto.replaceChildren = function replaceChildren(this: Parent, ...nodes: Array<Node | string>) {
+    while (this.firstChild) this.removeChild(this.firstChild)
+    this.append(...nodes)
+  }
+}
+
 // Intl.NumberFormat#formatToParts (64): the animated numbers read the parts.
 // Rebuilt from format() and the locale's own separators.
 type Part = { type: string; value: string }
