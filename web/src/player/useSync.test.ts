@@ -6,6 +6,17 @@ import { useSync } from './useSync'
 
 const localRoomFakes = vi.hoisted(() => ({ needBrowserMedia: vi.fn(), browserMediaIdle: vi.fn() }))
 vi.mock('../desktop/localRoom', () => localRoomFakes)
+// The bot check is the server's door; here it has always just been passed, unless a test says otherwise.
+const humanFakes = vi.hoisted(() => ({ ready: true, forgotten: 0 }))
+vi.mock('../human', () => ({
+  humanReady: () => humanFakes.ready,
+  ensureHuman: () => new Promise<void>(() => undefined),
+  forgetHuman: () => { humanFakes.forgotten += 1 },
+}))
+beforeEach(() => {
+  humanFakes.ready = true
+  humanFakes.forgotten = 0
+})
 
 class FakeWebSocket {
   static OPEN = 1
@@ -120,6 +131,33 @@ describe('useSync', () => {
     act(() => socket.receive({ type: 'browserMediaIdle' }))
     expect(localRoomFakes.browserMediaIdle).toHaveBeenCalledWith('r1')
     unmount()
+  })
+
+  it('a TV entra pelo token: sem teste de humano, hello de cliente tv com o ticket do cast e nada do navegador', () => {
+    humanFakes.ready = false
+    savePickedAvatar('cat-preto.beanie')
+    const videoRef: RefObject<HTMLVideoElement | null> = { current: null }
+    const { unmount } = renderHook(() => useSync('r1', 'Giuli', videoRef, undefined, undefined, undefined, undefined, { token: 'tok/1', ticket: 'k1' }))
+    const socket = FakeWebSocket.instances[0]
+    expect(socket.url).toBe('ws://localhost/ws/rooms/r1?tv=tok%2F1')
+    act(() => socket.onopen?.())
+    const hello = JSON.parse(socket.send.mock.calls[0][0] as string)
+    expect(hello).toMatchObject({ type: 'hello', nickname: 'Giuli', client: 'tv', ticket: 'k1' })
+    expect(hello.avatar).toBeUndefined()
+    expect(hello.device).toBeUndefined()
+    expect(hello.ownerToken).toBeUndefined()
+
+    // The TV never prepares media for the room, whatever the room asks.
+    localRoomFakes.needBrowserMedia.mockClear()
+    act(() => socket.receive({ type: 'welcome', memberId: 'm1', capability: 'cap', controllerId: 'm2', members: [] }))
+    act(() => socket.receive({ type: 'needBrowserMedia', generation: 4 }))
+    expect(localRoomFakes.needBrowserMedia).not.toHaveBeenCalled()
+
+    act(() => socket.onclose?.())
+    expect(humanFakes.forgotten).toBe(0)
+    unmount()
+    humanFakes.ready = true
+    localStorage.clear()
   })
 
   it('names the same browser in the hello of every tab', () => {

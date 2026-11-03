@@ -159,6 +159,15 @@ async function roomGone(roomId: string): Promise<boolean> {
   }
 }
 
+/**
+ * A TV mirroring the room for its account: it comes in with the TV's token
+ * instead of the bot check, and with the cast's ticket instead of a password.
+ */
+export interface TvSeat {
+  token: string
+  ticket: string
+}
+
 export function useSync(
   roomId: string,
   nickname: string,
@@ -167,7 +176,10 @@ export function useSync(
   coldWaitRef?: RefObject<boolean>,
   remoteSteerAtRef?: RefObject<number>,
   coldForRef?: RefObject<((ms: number) => boolean) | null>,
+  tv?: TvSeat,
 ): SyncResult {
+  const tvToken = tv?.token ?? ''
+  const tvTicket = tv?.ticket ?? ''
   const socketRef = useRef<WebSocket | null>(null)
   const offsetRef = useRef(0)
   /** The seat this browser holds in the room; a reconnect asks for it back so nobody sees us leave. */
@@ -294,14 +306,15 @@ export function useSync(
     // The socket only opens for a browser that passed the bot check lately.
     const connect = () => {
       if (disposed) return
-      if (humanReady()) open()
+      if (tvToken || humanReady()) open()
       else void ensureHuman().catch(() => undefined).finally(open)
     }
 
     const open = () => {
       if (disposed) return
       const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}`)
+      const door = tvToken ? `?tv=${encodeURIComponent(tvToken)}` : ''
+      const socket = new WebSocket(`${scheme}//${window.location.host}/ws/rooms/${encodeURIComponent(roomId)}${door}`)
       socketRef.current = socket
       knownMembersRef.current = null
 
@@ -368,6 +381,18 @@ export function useSync(
         setConnected(true)
         const clientTimeMs = Date.now()
         const seat = seatRef.current?.roomId === roomId ? seatRef.current : null
+        if (tvToken) {
+          // The account's name and face come from the token; nothing of this browser goes with them.
+          socket.send(JSON.stringify({
+            type: 'hello',
+            nickname,
+            clientTimeMs,
+            client: 'tv',
+            ticket: tvTicket,
+            ...(seat ? { memberId: seat.memberId, capability: seat.capability } : {}),
+          }))
+          return
+        }
         const picked = loadPickedAvatar()
         socket.send(JSON.stringify({
           type: 'hello',
@@ -385,7 +410,7 @@ export function useSync(
         setConnected(false)
         // Refused at the upgrade, which the socket cannot tell apart: the
         // day's check ran out, or the room is no more.
-        if (!opened) forgetHuman()
+        if (!opened && !tvToken) forgetHuman()
         if (disposed || halted || socketRef.current !== socket) return
         const backoff = Math.min(RECONNECT_MIN_MS * 2 ** attempt, RECONNECT_MAX_MS)
         attempt += 1
@@ -502,7 +527,7 @@ export function useSync(
             break
           case 'needBrowserMedia': {
             const held = seatRef.current
-            if (held?.roomId === roomId) void needBrowserMedia(roomId, { memberId: held.memberId, capability: held.capability }, message.generation ?? 0)
+            if (held?.roomId === roomId && !tvToken) void needBrowserMedia(roomId, { memberId: held.memberId, capability: held.capability }, message.generation ?? 0)
             break
           }
           case 'browserMediaIdle':
@@ -598,7 +623,7 @@ export function useSync(
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [nickname, roomId, send, sendReadiness, videoRef, left, doorNonce, sayGoodbye])
+  }, [nickname, roomId, send, sendReadiness, videoRef, left, doorNonce, sayGoodbye, tvToken, tvTicket])
   const leave = useCallback(() => {
     sayGoodbye()
     setLeft(true)
