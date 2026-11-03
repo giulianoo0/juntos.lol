@@ -1,0 +1,98 @@
+/*
+ * The TV at ten feet: the room's own tokens, everything a size up (the root
+ * font follows the screen's height, so a 960×540 TV at 2x and a 1920×1080 one
+ * at 1x look alike), no glass, and motion only in transform and opacity.
+ */
+:global(html[data-tv]) {
+  font-size: clamp(12px, calc(100vh / 45), 48px);
+  overflow: hidden;
+}
+
+:global(html[data-tv]) :focus-visible {
+  outline: 0.1875rem solid var(--focus);
+  outline-offset: 0.1875rem;
+}
+
+/* The Magic Remote is pointing: the arrows' ring would show two cursors. */
+:global(html[data-tv][data-pointer]) :focus-visible {
+  outline: none;
+}
+
+.screen {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--background);
+  font-family: var(--font-sans);
+}
+
+/* Pareamento */
+
+.pairing {
+  composes: screen;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 2rem;
+}
+
+.pairingMark {
+  height: 2.5rem;
+  width: auto;
+  color: var(--text);
+}
+
+.pairingTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.03em;
+}
+
+.pairingBody {
+  display: flex;
+  align-items: center;
+  gap: 3.5rem;
+  opacity: 0.4;
+  transition: opacity var(--duration-slow) var(--ease-out);
+}
+
+.pairingBody[data-ready] {
+  opacity: 1;
+}
+
+.qr {
+  width: 15rem;
+  height: 15rem;
+  padding: 1.25rem;
+  border-radius: var(--radius-3xl);
+  background: var(--white);
+}
+
+.qr img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pairingCode {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.pairingUrl {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 5rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
