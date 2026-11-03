@@ -33,6 +33,8 @@ export interface Member {
   avatar?: string
   /** `desktop` for the app; absent for a browser. */
   client?: string
+  /** The account has a TV in the room (the TV itself is never a member). */
+  tv?: boolean
 }
 
 export interface ChatMessage {
