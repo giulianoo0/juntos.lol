@@ -31,6 +31,7 @@ interface FakeMemberWatch {
   levelValue: number
   audioAt: number | undefined
   audioReopened: number
+  volume: number
   closed: boolean
 }
 
@@ -52,13 +53,13 @@ beforeEach(() => {
   vi.mocked(media.localLevel).mockImplementation(() => ({ level: () => selfLevel, close: vi.fn() }))
   vi.mocked(media.openCallWatch).mockResolvedValue({
     watch: (memberId: string) => {
-      const watch: FakeMemberWatch = { memberId, audio: false, canvas: null, levelValue: 0, audioAt: undefined, audioReopened: 0, closed: false }
+      const watch: FakeMemberWatch = { memberId, audio: false, canvas: null, levelValue: 0, audioAt: undefined, audioReopened: 0, volume: 1, closed: false }
       watches.push(watch)
       return {
         status: { peek: () => 'live' as const, subscribe: () => () => undefined },
         setCanvas: (canvas) => { watch.canvas = canvas },
         setAudio: (enabled) => { watch.audio = enabled },
-        setVolume: () => undefined,
+        setVolume: (volume) => { watch.volume = volume },
         level: () => watch.levelValue,
         audioAt: () => watch.audioAt,
         reopenAudio: () => { watch.audioReopened += 1 },
@@ -138,6 +139,19 @@ describe('useCall', () => {
 
     rerender({ members: [{ id: 'm1' }, { id: 'm3' }] })
     await waitFor(() => expect(live(watches[0])).toBe(false))
+  })
+
+  it('toca cada voz no volume pedido, 1 para quem não está na lista', async () => {
+    const members: CallMember[] = [{ id: 'm1' }, { id: 'm2', mic: true }, { id: 'm3', mic: true }]
+    const { rerender } = renderHook((props: { volumes: Record<string, number> }) => useCall(options({ members, ...props })), { initialProps: { volumes: { m2: 0 } } })
+    await waitFor(() => expect(watches).toHaveLength(2))
+    const voice = (id: string) => watches.find((watch) => watch.memberId === id)!
+    expect(voice('m2').volume).toBe(0)
+    expect(voice('m3').volume).toBe(1)
+
+    rerender({ volumes: { m2: 0.5, m3: 0.2 } })
+    await waitFor(() => expect(voice('m3').volume).toBe(0.2))
+    expect(voice('m2').volume).toBe(0.5)
   })
 
   it('reopens a voice that stopped arriving', async () => {
