@@ -162,10 +162,12 @@ export function isScreenShareCancelled(error: unknown): boolean {
 export interface ScreenRelay {
   url: string
   /**
-   * The WebSocket way onto the same broadcasts, for a browser whose
-   * WebTransport the MoQ client refuses (WebKit). Read-only; may be relative.
+   * The WebSocket way onto the same broadcasts, for WebKit and for a network
+   * that drops UDP. Read-only; may be relative.
    */
   bridge?: string
+  /** The bridge that also takes this member's own screen; only with the publish token. */
+  publishBridge?: string
   /** The prefix every screen of this room hangs off. */
   base: string
   /** This member's own broadcast path. */
@@ -320,7 +322,7 @@ export async function publishScreen(relay: ScreenRelay, stream: MediaStream, qua
   const [audioTrack] = stream.getAudioTracks()
   if (!videoTrack) throw new Error('screen stream has no video track')
 
-  const connection = relayConnection(Net, relay.url)
+  const connection = relayConnection(Net, relay.url, relay.publishBridge)
   // Our own signals stand behind the encoders' inputs, so a switch mid-share is one `set`.
   const videoSource = new Signals.Signal<Publish.Video.Source | undefined>(videoTrack as Publish.Video.Source)
   const audioSource = new Signals.Signal<Publish.Audio.Source | undefined>(audioTrack ? { track: audioTrack as Publish.Audio.StreamTrack, kind: 'music' } : undefined)
@@ -703,7 +705,7 @@ function probeCodec(source: EncodedSource): Promise<string> {
 export async function publishEncodedScreen(relay: ScreenRelay, initial: EncodedSource, audioTrack?: MediaStreamTrack): Promise<ScreenPublisher> {
   const [Publish, Hang] = await Promise.all([import('@moq/publish'), import('@moq/hang/container')])
   const { Net, Signals } = Publish
-  const connection = relayConnection(Net, relay.url)
+  const connection = relayConnection(Net, relay.url, relay.publishBridge)
   const source = new Signals.Signal<EncodedSource>(initial)
   const display = new Signals.Signal<{ width: number; height: number } | undefined>({ width: initial.width, height: initial.height })
   const broadcast = new Publish.Broadcast({ connection: connection.established, enabled: true, name: Net.Path.from(relay.path), display })

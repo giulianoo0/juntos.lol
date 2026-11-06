@@ -1,11 +1,13 @@
-// ss-moq-bridge: the MoQ relay for WebKit. Safari stalls long WebTransport
-// sessions and the Cloudflare relay speaks nothing else, so a WebKit viewer
-// connects here over WebSocket (qmux) instead, read-only.
+// ss-moq-bridge: the MoQ relay over WebSocket (qmux). Safari stalls long
+// WebTransport sessions and a network that drops UDP never opens one, and the
+// Cloudflare relay speaks nothing else, so those browsers connect here.
 //
 // Every room has a relay of its own, so the server signs each viewer a
 // ticket naming the room's relay and broadcast base. One QUIC session per
 // relay is shared by the viewers on it and closed when the last one leaves;
-// a viewer sees only the broadcasts under its room's base.
+// a viewer sees only the broadcasts under its room's base. A ticket that
+// also names a publish relay and a path lets its holder write that one
+// broadcast, handed on through a QUIC session of its own.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -31,6 +33,23 @@ struct Ticket {
     u: String,
     /// Unix seconds after which the ticket opens nothing.
     e: u64,
+    /// The room's relay with its publish token, for a member who writes.
+    #[serde(default)]
+    p: Option<String>,
+    /// The one broadcast that member may write.
+    #[serde(default)]
+    w: Option<String>,
+}
+
+impl Ticket {
+    fn write(&self) -> Option<(url::Url, String)> {
+        let path = self.w.as_ref()?;
+        let inside = path.strip_prefix(self.b.as_str())?.strip_prefix('/')?;
+        if inside.is_empty() {
+            return None;
+        }
+        Some((self.p.as_ref()?.parse().ok()?, path.clone()))
+    }
 }
 
 fn verify(key: &hmac::Key, ticket: &str) -> Option<Ticket> {
@@ -130,15 +149,31 @@ async fn main() -> anyhow::Result<()> {
             tokio::spawn(request.close(403));
             continue;
         };
+        let mut request = request.with_publisher(scoped);
+        let mut forward = None;
+        if let Some((relay, path)) = ticket.write() {
+            let local = moq_net::Origin::random().produce();
+            let Some(ingress) = local.scope(&[moq_net::Path::new(&path).to_owned()]) else {
+                tokio::spawn(request.close(403));
+                continue;
+            };
+            request = request.with_subscriber(ingress);
+            forward = Some((client.clone().with_publisher(local.consume()).reconnect(relay), path));
+        }
         tokio::spawn(async move {
-            match request.with_publisher(scoped).ok().await {
+            let room = ticket.b.split('/').nth(1).unwrap_or("").to_owned();
+            match request.ok().await {
                 Ok(session) => {
-                    tracing::info!(room = %ticket.b.split('/').nth(1).unwrap_or(""), "viewer connected");
+                    match &forward {
+                        Some((_, path)) => tracing::info!(%room, broadcast = path.rsplit('/').next().unwrap_or(""), "publisher connected"),
+                        None => tracing::info!(%room, "viewer connected"),
+                    }
                     let reason = session.closed().await;
                     tracing::info!(%reason, "viewer left");
                 }
                 Err(err) => tracing::debug!(%err, "handshake failed"),
             }
+            drop(forward);
             drop(held);
         });
     }
@@ -162,6 +197,20 @@ mod tests {
         let opened = verify(&hmac::Key::new(hmac::HMAC_SHA256, key), &ticket).expect("valid ticket");
         assert_eq!(opened.b, "juntos/ROOM/secret");
         assert_eq!(opened.u, "https://relay/token");
+    }
+
+    #[test]
+    fn a_publish_ticket_writes_only_its_own_path_inside_the_room() {
+        let key = b"0123456789abcdef0123456789abcdef";
+        let open = |payload: &str| verify(&hmac::Key::new(hmac::HMAC_SHA256, key), &sign(key, payload)).expect("valid ticket");
+        let mine = open(r#"{"b":"juntos/ROOM/secret","u":"https://relay/sub","e":99999999999,"p":"https://relay/pub","w":"juntos/ROOM/secret/m2.hang"}"#);
+        let (relay, path) = mine.write().expect("a publish grant");
+        assert_eq!(relay.as_str(), "https://relay/pub");
+        assert_eq!(path, "juntos/ROOM/secret/m2.hang");
+        let elsewhere = open(r#"{"b":"juntos/ROOM/secret","u":"https://relay/sub","e":99999999999,"p":"https://relay/pub","w":"juntos/OTHER/secret/m2.hang"}"#);
+        assert!(elsewhere.write().is_none());
+        let watching = open(r#"{"b":"juntos/ROOM/secret","u":"https://relay/sub","e":99999999999}"#);
+        assert!(watching.write().is_none());
     }
 
     #[test]

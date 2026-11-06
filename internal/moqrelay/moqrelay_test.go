@@ -319,3 +319,26 @@ func TestABridgeTicketCarriesTheRoomSigned(t *testing.T) {
 		t.Fatalf("ticket = %+v", ticket)
 	}
 }
+
+func TestAPublishTicketNamesTheOnePathItMayWrite(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	secret := "0123456789abcdef0123456789abcdef"
+	decode := func(raw string) map[string]any {
+		parsed, _ := url.Parse(raw)
+		payload, _, _ := strings.Cut(parsed.Query().Get("t"), ".")
+		body, _ := base64.RawURLEncoding.DecodeString(payload)
+		var ticket map[string]any
+		if err := json.Unmarshal(body, &ticket); err != nil {
+			t.Fatal(err)
+		}
+		return ticket
+	}
+	ticket := decode(BridgePublishURL("/moq-bridge", secret, "juntos/ROOM/secret", "https://relay.example/sub", "https://relay.example/pub", "juntos/ROOM/secret/m2.hang", now))
+	if ticket["p"] != "https://relay.example/pub" || ticket["w"] != "juntos/ROOM/secret/m2.hang" || ticket["b"] != "juntos/ROOM/secret" {
+		t.Fatalf("publish ticket = %+v", ticket)
+	}
+	watching := decode(BridgeURL("/moq-bridge", secret, "juntos/ROOM/secret", "https://relay.example/sub", now))
+	if _, ok := watching["p"]; ok {
+		t.Fatalf("a watch ticket carries a publish token: %+v", watching)
+	}
+}

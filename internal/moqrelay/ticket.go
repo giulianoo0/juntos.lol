@@ -17,11 +17,26 @@ const TicketTTL = 12 * time.Hour
 // BridgeURL is the bridge with a ticket for one room: ss-moq-bridge serves
 // the viewer only broadcasts under base, pulled from upstream.
 func BridgeURL(bridge, secret, base, upstream string, now time.Time) string {
-	payload, _ := json.Marshal(struct {
-		B string `json:"b"`
-		U string `json:"u"`
-		E int64  `json:"e"`
-	}{base, upstream, now.Add(TicketTTL).Unix()})
+	return signTicket(bridge, secret, ticket{B: base, U: upstream, E: now.Add(TicketTTL).Unix()})
+}
+
+// BridgePublishURL is BridgeURL for a member who also writes: the bridge takes
+// the one broadcast at path from them and hands it on to the relay through
+// publish. It is how a network that drops UDP still shares a screen or a camera.
+func BridgePublishURL(bridge, secret, base, upstream, publish, path string, now time.Time) string {
+	return signTicket(bridge, secret, ticket{B: base, U: upstream, E: now.Add(TicketTTL).Unix(), P: publish, W: path})
+}
+
+type ticket struct {
+	B string `json:"b"`
+	U string `json:"u"`
+	E int64  `json:"e"`
+	P string `json:"p,omitempty"`
+	W string `json:"w,omitempty"`
+}
+
+func signTicket(bridge, secret string, t ticket) string {
+	payload, _ := json.Marshal(t)
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(encoded))

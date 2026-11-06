@@ -64,13 +64,15 @@ func callToken(store *room.Store, cfg config.Config, relays *moqrelay.Rooms, aut
 			return
 		}
 		base := ScreenBroadcastBase(roomID, secret)
+		path := CallBroadcastPath(roomID, secret, request.MemberID)
 		c.JSON(http.StatusOK, gin.H{
-			"url":        relay.SubscribeURL(),
-			"publishUrl": relay.PublishURL(),
-			"base":       base,
-			"path":       CallBroadcastPath(roomID, secret, request.MemberID),
-			"bridge":     bridgeURL(cfg, relay, base),
-			"epoch":      relay.Epoch,
+			"url":           relay.SubscribeURL(),
+			"publishUrl":    relay.PublishURL(),
+			"base":          base,
+			"path":          path,
+			"bridge":        bridgeURL(cfg, relay, base),
+			"publishBridge": publishBridgeURL(cfg, relay, base, path),
+			"epoch":         relay.Epoch,
 		})
 	}
 }

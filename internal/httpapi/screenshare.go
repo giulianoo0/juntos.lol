@@ -91,6 +91,14 @@ func bridgeURL(cfg config.Config, relay moqrelay.Relay, base string) string {
 	return moqrelay.BridgeURL(cfg.MoqBridgeURL, cfg.MoqBridgeSecret, base, relay.SubscribeURL(), time.Now())
 }
 
+// publishBridgeURL is the bridge for a member who may write path; empty without a bridge.
+func publishBridgeURL(cfg config.Config, relay moqrelay.Relay, base, path string) string {
+	if cfg.MoqBridgeURL == "" {
+		return ""
+	}
+	return moqrelay.BridgePublishURL(cfg.MoqBridgeURL, cfg.MoqBridgeSecret, base, relay.SubscribeURL(), relay.PublishURL(), path, time.Now())
+}
+
 func screenshareRelay(store *room.Store, cfg config.Config, relays *moqrelay.Rooms, authorizer stageAuthorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.ScreenshareEnabled() {
@@ -114,21 +122,24 @@ func screenshareRelay(store *room.Store, cfg config.Config, relays *moqrelay.Roo
 		if !ok {
 			return
 		}
-		url := relay.SubscribeURL()
+		base := ScreenBroadcastBase(storedRoom.ID, secret)
+		path := ScreenBroadcastPath(storedRoom.ID, secret, request.MemberID)
+		url, publishBridge := relay.SubscribeURL(), ""
 		// Asking for the token comes before the screen starts, so it only
 		// looks at a grant; starting is what spends it.
 		publish := authorizer.AuthorizeStage(storedRoom, request.MemberID, request.Capability, room.StageScreen, false)
 		if publish && request.Publish {
 			url = relay.PublishURL()
+			publishBridge = publishBridgeURL(cfg, relay, base, path)
 		}
-		base := ScreenBroadcastBase(storedRoom.ID, secret)
 		c.JSON(http.StatusOK, gin.H{
-			"url":     url,
-			"base":    base,
-			"path":    ScreenBroadcastPath(storedRoom.ID, secret, request.MemberID),
-			"publish": publish,
-			"bridge":  bridgeURL(cfg, relay, base),
-			"epoch":   relay.Epoch,
+			"url":           url,
+			"base":          base,
+			"path":          path,
+			"publish":       publish,
+			"bridge":        bridgeURL(cfg, relay, base),
+			"publishBridge": publishBridge,
+			"epoch":         relay.Epoch,
 		})
 	}
 }

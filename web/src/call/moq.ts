@@ -9,6 +9,8 @@ import type * as Publish from '@moq/publish'
 const RELAY_RETRY = { initial: 1000, multiplier: 2, max: 5000, timeout: 0 }
 /** How long a publisher may take to get its broadcast onto the relay before it counts as failed. */
 const PUBLISH_READY_MS = 15_000
+/** QUIC's head start on the bridge: a reachable relay answers well inside it, so the VPS only carries viewers whose UDP is gone. */
+const BRIDGE_HEADSTART_MS = 2000
 
 type Net = typeof Publish.Net
 
@@ -30,9 +32,16 @@ export function relayPublishSupported(): boolean {
     && !isWebKit()
 }
 
-export function relayConnection(net: Net, url: string): Publish.Net.Connection.Reload {
-  // The relay speaks QUIC only; racing a WebSocket it will never answer just delays the connect.
-  return new net.Connection.Reload({ url: new URL(url), enabled: true, websocket: { enabled: false }, delay: RELAY_RETRY })
+/**
+ * The relay over QUIC, raced against the bridge over TCP when the server
+ * names one. The relay itself never answers a WebSocket, so without a bridge
+ * there is nothing to race.
+ */
+export function relayConnection(net: Net, url: string, bridge?: string): Publish.Net.Connection.Reload {
+  const websocket = bridge
+    ? { enabled: true, url: new URL(bridge, location.href), delay: BRIDGE_HEADSTART_MS }
+    : { enabled: false }
+  return new net.Connection.Reload({ url: new URL(url), enabled: true, websocket, delay: RELAY_RETRY })
 }
 
 /**
@@ -42,13 +51,17 @@ export function relayConnection(net: Net, url: string): Publish.Net.Connection.R
  * within seconds. The MoQ client only spots Safari by its version: the Mac
  * app's WKWebView, which names none, has to be caught here. The bridge
  * speaks WebSocket only.
+ *
+ * Everyone else races the relay over QUIC against the bridge over TCP, the
+ * bridge starting late: a network that drops UDP never answers QUIC, and
+ * without the bridge that viewer would sit on "connecting" in every browser.
  */
 export function watchConnection(net: Net, relay: { url: string; bridge?: string }): Publish.Net.Connection.Reload {
   if (relay.bridge && (isWebKit() || !net.Connection.isWebTransportSupported())) {
-    const url = new URL(relay.bridge, location.href)
-    return new net.Connection.Reload({ url, enabled: true, websocket: { enabled: true, delay: 0 }, delay: RELAY_RETRY })
+    const bridge = new URL(relay.bridge, location.href)
+    return new net.Connection.Reload({ url: bridge, enabled: true, websocket: { enabled: true, delay: 0 }, delay: RELAY_RETRY })
   }
-  return relayConnection(net, relay.url)
+  return relayConnection(net, relay.url, relay.bridge)
 }
 
 /**

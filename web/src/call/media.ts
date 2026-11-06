@@ -20,8 +20,10 @@ export interface CallRelay {
   url: string
   /** The relay with the publish token: every member may send their own camera and voice. */
   publishUrl: string
-  /** The WebSocket way onto the same broadcasts, for WebKit. Read-only; may be relative. */
+  /** The WebSocket way onto the same broadcasts, for WebKit and for a network that drops UDP. Read-only; may be relative. */
   bridge?: string
+  /** The bridge that also takes this member's own camera and voice. */
+  publishBridge?: string
   base: string
   /** This member's own broadcast path. */
   path: string
@@ -100,7 +102,7 @@ export interface CallPublisher {
 export async function publishCall(relay: CallRelay): Promise<CallPublisher> {
   const Publish = await import('@moq/publish')
   const { Net, Signals } = Publish
-  const connection = relayConnection(Net, relay.publishUrl)
+  const connection = relayConnection(Net, relay.publishUrl, relay.publishBridge)
   const videoSource = new Signals.Signal<Publish.Video.Source | undefined>(undefined)
   const videoEnabled = new Signals.Signal(false)
   const audioSource = new Signals.Signal<Publish.Audio.Source | undefined>(undefined)

@@ -16,11 +16,12 @@ import (
 )
 
 type callRelayResponse struct {
-	URL        string `json:"url"`
-	PublishURL string `json:"publishUrl"`
-	Base       string `json:"base"`
-	Path       string `json:"path"`
-	Bridge     string `json:"bridge"`
+	URL           string `json:"url"`
+	PublishURL    string `json:"publishUrl"`
+	Base          string `json:"base"`
+	Path          string `json:"path"`
+	Bridge        string `json:"bridge"`
+	PublishBridge string `json:"publishBridge"`
 }
 
 func newCallRouter(t *testing.T, cfg config.Config, authorizer memberAuthorizer) *gin.Engine {
@@ -48,6 +49,7 @@ func TestCallTokenGivesEveryMemberTheirOwnPath(t *testing.T) {
 		require.Regexp(t, `^juntos/r1/[0-9a-f]{32}$`, relay.Base)
 		require.Equal(t, relay.Base+"/av/"+member+".hang", relay.Path)
 		require.True(t, strings.HasPrefix(relay.Bridge, "/moq-bridge?t="), relay.Bridge)
+		require.Equal(t, relay.Path, bridgeTicket(t, relay.PublishBridge)["w"])
 	}
 }
 

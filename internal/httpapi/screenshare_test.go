@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -55,11 +57,12 @@ var screenshareCfg = config.Config{
 }
 
 type relayResponse struct {
-	URL     string `json:"url"`
-	Base    string `json:"base"`
-	Path    string `json:"path"`
-	Publish bool   `json:"publish"`
-	Bridge  string `json:"bridge"`
+	URL           string `json:"url"`
+	Base          string `json:"base"`
+	Path          string `json:"path"`
+	Publish       bool   `json:"publish"`
+	Bridge        string `json:"bridge"`
+	PublishBridge string `json:"publishBridge"`
 }
 
 func newScreenshareRouter(t *testing.T, notify func(string), stages ...string) (*gin.Engine, *room.Store) {
@@ -99,6 +102,7 @@ func TestScreenshareRelayByRole(t *testing.T) {
 	require.True(t, host.Publish)
 	require.Regexp(t, `^juntos/r1/[0-9a-f]{32}$`, host.Base)
 	require.Equal(t, host.Base+"/m1.hang", host.Path)
+	require.Equal(t, host.Path, bridgeTicket(t, host.PublishBridge)["w"], "a network without UDP shares through the bridge, under its own path only")
 
 	// A guest the host has not let share only watches.
 	w = doScreenshareJSON(router, "/api/rooms/r1/screenshare/token", `{"memberId":"m2","capability":"secret-capability","publish":true}`)
@@ -107,6 +111,7 @@ func TestScreenshareRelayByRole(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &guest))
 	require.Equal(t, "https://relay.example.test/sub-token", guest.URL)
 	require.False(t, guest.Publish)
+	require.Empty(t, guest.PublishBridge)
 	require.Equal(t, host.Base, guest.Base, "every screen of a room hangs off one base")
 	require.Equal(t, host.Base+"/m2.hang", guest.Path)
 }
@@ -219,4 +224,18 @@ func TestScreenshareCapsSimultaneousScreens(t *testing.T) {
 	w := doScreenshareJSON(router, "/api/rooms/r1/screenshare/live", `{"memberId":"m9","capability":"secret-capability","live":true}`)
 	require.Equal(t, http.StatusConflict, w.Code)
 	require.JSONEq(t, `{"error":"too_many_screens"}`, w.Body.String())
+}
+
+// bridgeTicket opens the payload of a bridge URL's ticket.
+func bridgeTicket(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	require.True(t, strings.HasPrefix(raw, "/moq-bridge?t="), raw)
+	parsed, err := url.Parse(raw)
+	require.NoError(t, err)
+	payload, _, _ := strings.Cut(parsed.Query().Get("t"), ".")
+	body, err := base64.RawURLEncoding.DecodeString(payload)
+	require.NoError(t, err)
+	var ticket map[string]any
+	require.NoError(t, json.Unmarshal(body, &ticket))
+	return ticket
 }
