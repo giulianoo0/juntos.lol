@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": []
+  },
+  "include": ["src/sdk.ts", "src/sdk-entry.ts", "test/sdk.test.ts"],
+  "exclude": []
+}

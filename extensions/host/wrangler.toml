@@ -1,0 +1,23 @@
+name = "juntos-ext"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[build]
+command = "node scripts/build-sdk.mjs"
+
+[vars]
+JUNTOS_ORIGIN = "http://127.0.0.1:8090"
+JUNTOS_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:8090,http://localhost:8090"
+EXT_BASE = "localhost:8787"
+EXT_SCHEME = "http"
+
+[env.production]
+name = "juntos-ext"
+workers_dev = false
+routes = [{ pattern = "*.santamagia.com/*", zone_name = "santamagia.com" }]
+
+[env.production.vars]
+JUNTOS_ORIGIN = "https://juntos.lol"
+JUNTOS_ORIGINS = "https://juntos.lol"
+EXT_BASE = "santamagia.com"
+EXT_SCHEME = "https"

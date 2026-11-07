@@ -1,0 +1,793 @@
+{
+ "_doc": "O que um juntos.json pode ser. Go (internal/extension), o host de extensões (extensions/host) e o site (web/src/extensions) leem esta tabela nos testes. accept: base com set aplicado e unset removido; expect diz o resultado normalizado (null = ausente). refuse: base com set, ou replace no lugar do manifesto inteiro.",
+ "base": {
+  "id": "exemplo",
+  "name": "Exemplo",
+  "version": "1.0.0",
+  "protocol": 1,
+  "entry": "dist/index.html",
+  "icon": "public/icon.svg",
+  "hosts": {
+   "connect": [
+    "api.exemplo.dev"
+   ],
+   "images": [
+    "img.exemplo.dev"
+   ],
+   "media": [
+    "*.cdn.exemplo.dev"
+   ]
+  },
+  "captcha": "hcaptcha"
+ },
+ "accept": [
+  {
+   "case": "o manifesto completo",
+   "set": {},
+   "expect": {
+    "name": "Exemplo",
+    "icon": "public/icon.svg",
+    "captcha": "hcaptcha",
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "sem hosts, ícone nem captcha",
+   "unset": [
+    "hosts",
+    "icon",
+    "captcha"
+   ],
+   "expect": {
+    "hosts": {
+     "connect": [],
+     "images": [],
+     "media": []
+    },
+    "icon": null,
+    "captcha": null
+   }
+  },
+  {
+   "case": "hosts nulo",
+   "set": {
+    "hosts": null
+   },
+   "expect": {
+    "hosts": {
+     "connect": [],
+     "images": [],
+     "media": []
+    }
+   }
+  },
+  {
+   "case": "listas de hosts ausentes ou nulas",
+   "set": {
+    "hosts": {
+     "connect": null,
+     "images": [
+      "img.exemplo.dev"
+     ]
+    }
+   },
+   "expect": {
+    "hosts": {
+     "connect": [],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": []
+    }
+   }
+  },
+  {
+   "case": "ícone e captcha vazios contam como ausentes",
+   "set": {
+    "icon": "",
+    "captcha": ""
+   },
+   "expect": {
+    "name": "Exemplo",
+    "icon": null,
+    "captcha": null
+   }
+  },
+  {
+   "case": "ícone e captcha nulos contam como ausentes",
+   "set": {
+    "icon": null,
+    "captcha": null
+   },
+   "expect": {
+    "name": "Exemplo",
+    "icon": null,
+    "captcha": null
+   }
+  },
+  {
+   "case": "versão de 64 caracteres",
+   "set": {
+    "version": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+   }
+  },
+  {
+   "case": "nome com espaços em volta",
+   "set": {
+    "name": "  Exemplo  "
+   },
+   "expect": {
+    "name": "Exemplo"
+   }
+  },
+  {
+   "case": "nome de 64 letras acentuadas",
+   "set": {
+    "name": "ãããããããããããããããããããããããããããããããããããããããããããããããããããããããããããããããã"
+   }
+  },
+  {
+   "case": "entry na raiz",
+   "set": {
+    "entry": "index.html"
+   }
+  },
+  {
+   "case": "ícone png",
+   "set": {
+    "icon": "icon.png"
+   }
+  },
+  {
+   "case": "16 hosts",
+   "set": {
+    "hosts": {
+     "connect": [
+      "h0.exemplo.dev",
+      "h1.exemplo.dev",
+      "h2.exemplo.dev",
+      "h3.exemplo.dev",
+      "h4.exemplo.dev",
+      "h5.exemplo.dev",
+      "h6.exemplo.dev",
+      "h7.exemplo.dev",
+      "h8.exemplo.dev",
+      "h9.exemplo.dev",
+      "h10.exemplo.dev",
+      "h11.exemplo.dev",
+      "h12.exemplo.dev",
+      "h13.exemplo.dev",
+      "h14.exemplo.dev",
+      "h15.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "chave desconhecida é ignorada",
+   "set": {
+    "homepage": "https://exemplo.dev"
+   }
+  },
+  {
+   "case": "host que só termina parecido com o juntos",
+   "set": {
+    "hosts": {
+     "connect": [
+      "notjuntos.lol"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  }
+ ],
+ "refuse": [
+  {
+   "case": "não é objeto",
+   "replace": [
+    "exemplo"
+   ]
+  },
+  {
+   "case": "id curto",
+   "set": {
+    "id": "ab"
+   }
+  },
+  {
+   "case": "id maiúsculo",
+   "set": {
+    "id": "Exemplo"
+   }
+  },
+  {
+   "case": "id começando com número",
+   "set": {
+    "id": "1exemplo"
+   }
+  },
+  {
+   "case": "id com 33 caracteres",
+   "set": {
+    "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  },
+  {
+   "case": "id reservado",
+   "set": {
+    "id": "host"
+   }
+  },
+  {
+   "case": "nome vazio",
+   "set": {
+    "name": ""
+   }
+  },
+  {
+   "case": "nome só com espaços",
+   "set": {
+    "name": "   "
+   }
+  },
+  {
+   "case": "nome de 65 letras acentuadas",
+   "set": {
+    "name": "ããããããããããããããããããããããããããããããããããããããããããããããããããããããããããããããããã"
+   }
+  },
+  {
+   "case": "nome que não é texto",
+   "set": {
+    "name": 7
+   }
+  },
+  {
+   "case": "versão vazia",
+   "set": {
+    "version": ""
+   }
+  },
+  {
+   "case": "versão de 65 caracteres",
+   "set": {
+    "version": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+   }
+  },
+  {
+   "case": "versão número",
+   "set": {
+    "version": 1
+   }
+  },
+  {
+   "case": "protocolo 2",
+   "set": {
+    "protocol": 2
+   }
+  },
+  {
+   "case": "protocolo texto",
+   "set": {
+    "protocol": "1"
+   }
+  },
+  {
+   "case": "entry que não é html",
+   "set": {
+    "entry": "index.js"
+   }
+  },
+  {
+   "case": "entry com ..",
+   "set": {
+    "entry": "../index.html"
+   }
+  },
+  {
+   "case": "entry com .. no meio",
+   "set": {
+    "entry": "a/../index.html"
+   }
+  },
+  {
+   "case": "entry absoluto",
+   "set": {
+    "entry": "/index.html"
+   }
+  },
+  {
+   "case": "entry URL",
+   "set": {
+    "entry": "https://evil.com/x.html"
+   }
+  },
+  {
+   "case": "entry em pasta oculta",
+   "set": {
+    "entry": ".x/index.html"
+   }
+  },
+  {
+   "case": "entry com segmento vazio",
+   "set": {
+    "entry": "a//index.html"
+   }
+  },
+  {
+   "case": "entry com espaço",
+   "set": {
+    "entry": "a b.html"
+   }
+  },
+  {
+   "case": "entry com barra invertida",
+   "set": {
+    "entry": "a\\index.html"
+   }
+  },
+  {
+   "case": "entry com %",
+   "set": {
+    "entry": "a%2findex.html"
+   }
+  },
+  {
+   "case": "entry vazio",
+   "set": {
+    "entry": ""
+   }
+  },
+  {
+   "case": "ícone js",
+   "set": {
+    "icon": "icon.js"
+   }
+  },
+  {
+   "case": "ícone com ..",
+   "set": {
+    "icon": "../icon.png"
+   }
+  },
+  {
+   "case": "captcha desconhecido",
+   "set": {
+    "captcha": "recaptcha"
+   }
+  },
+  {
+   "case": "hosts lista",
+   "set": {
+    "hosts": [
+     "api.exemplo.dev"
+    ]
+   }
+  },
+  {
+   "case": "lista de hosts texto",
+   "set": {
+    "hosts": {
+     "connect": "api.exemplo.dev",
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host IPv4",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "10.0.0.1"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host IPv6",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "[::1]"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "localhost",
+   "set": {
+    "hosts": {
+     "connect": [
+      "localhost"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "subdomínio de localhost",
+   "set": {
+    "hosts": {
+     "connect": [
+      "x.localhost"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host maiúsculo",
+   "set": {
+    "hosts": {
+     "connect": [
+      "A.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host com porta",
+   "set": {
+    "hosts": {
+     "connect": [
+      "a.com:443"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host com esquema",
+   "set": {
+    "hosts": {
+     "connect": [
+      "https://a.com"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host com caminho",
+   "set": {
+    "hosts": {
+     "connect": [
+      "a.com/x"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host sem ponto",
+   "set": {
+    "hosts": {
+     "connect": [
+      "intranet"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "host com hífen na ponta",
+   "set": {
+    "hosts": {
+     "connect": [
+      "-a.com"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga em connect",
+   "set": {
+    "hosts": {
+     "connect": [
+      "*.a.com"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga em images",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "*.a.com"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga nu",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga de TLD",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.com"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga no meio",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "a.*.com"
+     ]
+    }
+   }
+  },
+  {
+   "case": "17 hosts",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "h0.exemplo.dev",
+      "h1.exemplo.dev",
+      "h2.exemplo.dev",
+      "h3.exemplo.dev",
+      "h4.exemplo.dev",
+      "h5.exemplo.dev",
+      "h6.exemplo.dev",
+      "h7.exemplo.dev",
+      "h8.exemplo.dev",
+      "h9.exemplo.dev",
+      "h10.exemplo.dev",
+      "h11.exemplo.dev",
+      "h12.exemplo.dev",
+      "h13.exemplo.dev",
+      "h14.exemplo.dev",
+      "h15.exemplo.dev",
+      "h16.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "chave conhecida com outra caixa",
+   "set": {
+    "ID": "outra"
+   }
+  },
+  {
+   "case": "hosts com outra caixa",
+   "set": {
+    "Hosts": {
+     "connect": [
+      "x.com"
+     ]
+    }
+   }
+  },
+  {
+   "case": "lista com outra caixa",
+   "set": {
+    "hosts": {
+     "Connect": [
+      "x.com"
+     ]
+    }
+   }
+  },
+  {
+   "case": "entry .HTML",
+   "set": {
+    "entry": "index.HTML"
+   }
+  },
+  {
+   "case": "ícone .PNG",
+   "set": {
+    "icon": "icon.PNG"
+   }
+  },
+  {
+   "case": "o próprio juntos como host",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "juntos.lol"
+     ]
+    }
+   }
+  },
+  {
+   "case": "subdomínio do juntos",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.juntos.lol"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga do juntos",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.juntos.lol"
+     ]
+    }
+   }
+  },
+  {
+   "case": "o host de extensões",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.santamagia.com"
+     ]
+    }
+   }
+  },
+  {
+   "case": "outra extensão",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "lczfxd2q74zxknb5.santamagia.com"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  }
+ ]
+}

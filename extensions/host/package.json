@@ -1,0 +1,22 @@
+{
+  "name": "juntos-ext",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build:sdk": "node scripts/build-sdk.mjs",
+    "dev": "wrangler dev --port 8787",
+    "pretest": "npm run build:sdk",
+    "test": "vitest run",
+    "build": "npm run build:sdk && tsc -b tsconfig.json tsconfig.sdk.json",
+    "deploy": "npm run build:sdk && wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261107.1",
+    "esbuild": "0.28.2",
+    "happy-dom": "21.0.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wrangler": "4.158.0"
+  }
+}
