@@ -205,6 +205,12 @@ pub fn run() {
                 init.push('\n');
                 init.push_str(&extra);
             }
+            // And one for every frame, extensions' included.
+            #[cfg(debug_assertions)]
+            let window = match std::env::var("JUNTOS_E2E_FRAMES_SCRIPT").ok().and_then(|path| std::fs::read_to_string(path).ok()) {
+                Some(script) => window.initialization_script_for_all_frames(script),
+                None => window,
+            };
             let window = if e2e { window.incognito(true).focused(false) } else { window };
             window
                 .title("Juntos")
