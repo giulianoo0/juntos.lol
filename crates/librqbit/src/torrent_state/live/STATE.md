@@ -223,8 +223,17 @@ Care must be taken when modifying state transition logic to maintain this orderi
 
 `PieceTracker::acquire_piece()` uses a three-phase strategy:
 
+0. **Take a stalled window piece** (ss patch) - A piece in a stream's window
+   whose peers have all delivered nothing for `STALL_TIMEOUT` (1 s) goes to the
+   asking peer, even one with no average piece time yet
 1. **Try steal (10x threshold)** - Very slow peers get pieces stolen first
 2. **Try reserve** - Check priority pieces, then queue_pieces
 3. **Try steal (3x threshold)** - Moderately slow peers as fallback
 
 This balances fairness with efficiency - we prefer reserving new pieces but will steal from slow peers to avoid bottlenecks.
+
+A requester only asks for chunks not written yet, and re-checks before every
+request that the piece is still its own (`should_request_chunk`), so a peer
+that lost a piece stops at the next chunk. Requests unanswered for 8 s (a later
+one was answered, or the peer went silent) are cancelled and the peer gives the
+piece back (`release_piece_from`), keeping the chunks already written.

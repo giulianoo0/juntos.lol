@@ -314,6 +314,21 @@ impl ChunkTracker {
             .unwrap_or_default()
     }
 
+    pub fn is_chunk_downloaded(&self, chunk: &ChunkInfo) -> bool {
+        self.chunk_status
+            .get(self.lengths.chunk_range(chunk.piece_index))
+            .and_then(|s| s.get(chunk.chunk_index as usize).map(|b| *b))
+            .unwrap_or(false)
+    }
+
+    /// ss patch: puts an in-flight piece back in the queue keeping the chunks
+    /// already written, so whoever takes it next only fetches the rest.
+    pub fn requeue_piece_keep_chunks(&mut self, index: ValidPieceIndex) {
+        if !self.is_piece_have(index) {
+            self.queue_pieces.set(index.get() as usize, true);
+        }
+    }
+
     pub fn is_chunk_ready_to_upload(&self, chunk: &ChunkInfo) -> bool {
         self.have
             .as_slice()

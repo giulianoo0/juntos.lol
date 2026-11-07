@@ -15,7 +15,7 @@ use std::{
 };
 
 use buffers::ByteBuf;
-use librqbit_core::lengths::ValidPieceIndex;
+use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
 use peer_binary_protocol::Piece;
 
 use crate::{
@@ -32,7 +32,13 @@ pub struct InflightPiece {
     // original owner for steal accounting.
     pub peers: Vec<PeerHandle>,
     pub started: Instant,
+    // ss patch: when a chunk of it last arrived, or it last changed hands.
+    pub last_progress: Instant,
 }
+
+/// ss patch: a peer with work out that has delivered nothing for this long is
+/// stalled, and its pieces in a stream's window go to the next peer that asks.
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Result of attempting to acquire a piece.
 #[derive(Debug)]
@@ -85,6 +91,9 @@ where
 pub struct PieceTracker {
     chunks: ChunkTracker,
     inflight: HashMap<ValidPieceIndex, InflightPiece>,
+    // ss patch: per peer, when it last delivered a chunk we kept, or when it
+    // got work while holding none.
+    last_data: HashMap<PeerHandle, Instant>,
 }
 
 impl PieceTracker {
@@ -95,6 +104,7 @@ impl PieceTracker {
         Self {
             chunks,
             inflight: HashMap::new(),
+            last_data: HashMap::new(),
         }
     }
 
@@ -137,6 +147,10 @@ impl PieceTracker {
         // one below instead of wandering off to the far side of the file.
         let priority: Vec<ValidPieceIndex> = req.priority_pieces.by_ref().collect();
 
+        if let Some(result) = self.try_steal_stalled(&req, &priority) {
+            return result;
+        }
+
         // 1. Try steal with 10x threshold (very slow peer)
         // ss patch: while a reader is waiting on priority pieces, a steal
         // only takes one of those. With the whole file selected behind the
@@ -173,6 +187,7 @@ impl PieceTracker {
                         continue;
                     }
                     info.peers.push(req.peer);
+                    self.note_assigned(req.peer, piece);
                     return AcquireResult::Joined(piece);
                 }
                 Some(_) => continue,
@@ -192,6 +207,7 @@ impl PieceTracker {
                     continue;
                 }
                 info.peers.push(req.peer);
+                self.note_assigned(req.peer, piece);
                 return AcquireResult::Joined(piece);
             }
         }
@@ -220,14 +236,73 @@ impl PieceTracker {
     /// Reserve a piece: remove from queue, add to inflight.
     fn reserve_piece(&mut self, piece: ValidPieceIndex, peer: PeerHandle) -> AcquireResult {
         self.chunks.reserve_needed_piece(piece);
+        let now = Instant::now();
         self.inflight.insert(
             piece,
             InflightPiece {
                 peers: vec![peer],
-                started: Instant::now(),
+                started: now,
+                last_progress: now,
             },
         );
+        self.note_assigned(peer, piece);
         AcquireResult::Reserved(piece)
+    }
+
+    // A peer that held no work starts its stall clock when it gets some.
+    fn note_assigned(&mut self, peer: PeerHandle, piece: ValidPieceIndex) {
+        let holds_other = self
+            .inflight
+            .iter()
+            .any(|(p, info)| *p != piece && info.peers.contains(&peer));
+        if !holds_other {
+            self.last_data.insert(peer, Instant::now());
+        }
+    }
+
+    fn is_stalled(&self, peer: PeerHandle, now: Instant) -> bool {
+        self.last_data
+            .get(&peer)
+            .is_some_and(|t| now.saturating_duration_since(*t) >= STALL_TIMEOUT)
+            && self.inflight.values().any(|info| info.peers.contains(&peer))
+    }
+
+    /// ss patch: a piece in a stream's window whose peers have all gone
+    /// quiet is handed to the asking peer right away, whether or not it has
+    /// a piece time of its own to compare against. The old owners' requests
+    /// for it are cancelled by `on_steal`, and their requester loop stops at
+    /// the next chunk once it sees the piece is no longer theirs.
+    fn try_steal_stalled<I, P, S>(
+        &mut self,
+        req: &AcquireRequest<I, P, S>,
+        priority: &[ValidPieceIndex],
+    ) -> Option<AcquireResult>
+    where
+        I: Iterator<Item = ValidPieceIndex>,
+        P: Fn(ValidPieceIndex) -> bool,
+        S: Fn(ValidPieceIndex) -> bool,
+    {
+        let now = Instant::now();
+        if priority.is_empty() || self.is_stalled(req.peer, now) {
+            return None;
+        }
+        let piece = priority.iter().copied().find(|p| {
+            (req.peer_has_piece)(*p)
+                && self.inflight.get(p).is_some_and(|info| {
+                    !info.peers.contains(&req.peer)
+                        && now.saturating_duration_since(info.last_progress) >= STALL_TIMEOUT
+                        && info.peers.iter().all(|q| self.is_stalled(*q, now))
+                })
+                && (req.can_steal)(*p)
+        })?;
+
+        self.note_assigned(req.peer, piece);
+        let info = self.inflight.get_mut(&piece)?;
+        let from_peer = *info.peers.first()?;
+        info.peers = vec![req.peer];
+        info.started = now;
+        info.last_progress = now;
+        Some(AcquireResult::Stolen { piece, from_peer })
     }
 
     /// Try to steal a piece from a slower peer.
@@ -265,9 +340,11 @@ impl PieceTracker {
         }
 
         // Update ownership (piece stays in inflight, just changes owner)
+        self.note_assigned(req.peer, piece);
         let info = self.inflight.get_mut(&piece)?;
         info.peers = vec![req.peer];
         info.started = Instant::now();
+        info.last_progress = info.started;
 
         Some(AcquireResult::Stolen {
             piece,
@@ -314,6 +391,7 @@ impl PieceTracker {
             })
             .collect();
 
+        self.last_data.remove(&peer);
         let mut count = 0;
         for (piece, abandoned) in pieces_to_release {
             if !abandoned {
@@ -324,6 +402,33 @@ impl PieceTracker {
             self.chunks.mark_piece_broken_if_not_have(piece);
         }
         count
+    }
+
+    /// ss patch: `peer` gives up one piece (its requests for it went
+    /// unanswered). Co-downloaders keep it; if nobody is left it goes back to
+    /// the queue with the chunks already written. Returns true if requeued.
+    pub fn release_piece_from(&mut self, piece: ValidPieceIndex, peer: PeerHandle) -> bool {
+        let Some(info) = self.inflight.get_mut(&piece) else {
+            return false;
+        };
+        info.peers.retain(|other| *other != peer);
+        if !info.peers.is_empty() {
+            return false;
+        }
+        self.inflight.remove(&piece);
+        self.chunks.requeue_piece_keep_chunks(piece);
+        true
+    }
+
+    /// ss patch: checked right before each request goes out. None once the
+    /// piece is no longer this peer's to fetch (stolen, released, done),
+    /// Some(false) when another peer already brought the chunk.
+    pub fn should_request_chunk(&self, peer: PeerHandle, chunk: &ChunkInfo) -> Option<bool> {
+        let info = self.inflight.get(&chunk.piece_index)?;
+        if !info.peers.contains(&peer) {
+            return None;
+        }
+        Some(!self.chunks.is_chunk_downloaded(chunk))
     }
 
     // === QUERIES ===
@@ -350,9 +455,21 @@ impl PieceTracker {
     /// Mark a chunk as downloaded. Returns the result indicating if the piece is complete.
     pub fn mark_chunk_downloaded(
         &mut self,
+        peer: PeerHandle,
         piece: &Piece<ByteBuf<'_>>,
     ) -> Option<ChunkMarkingResult> {
-        self.chunks.mark_chunk_downloaded(piece)
+        let result = self.chunks.mark_chunk_downloaded(piece)?;
+        let now = Instant::now();
+        self.last_data.insert(peer, now);
+        if let Some(info) = self
+            .chunks
+            .get_lengths()
+            .validate_piece_index(piece.index)
+            .and_then(|p| self.inflight.get_mut(&p))
+        {
+            info.last_progress = now;
+        }
+        Some(result)
     }
 
     /// Update which files are selected for download.
@@ -920,5 +1037,180 @@ mod tests {
 
         let again = acquire(&mut tracker);
         assert!(matches!(again, AcquireResult::NoneAvailable), "piece 1 handed out twice: {again:?}");
+    }
+
+    // Pieces of four chunks, so partial progress inside a piece shows.
+    const CHUNK: u32 = 16384;
+    const PIECE: u32 = CHUNK * 4;
+
+    fn multi_chunk_tracker(num_pieces: u32) -> (PieceTracker, FileInfos) {
+        let total_length = PIECE as u64 * num_pieces as u64;
+        let lengths = Lengths::new(total_length, PIECE).unwrap();
+        let bf_len = lengths.piece_bitfield_bytes();
+        let have = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        let mut selected = BF::from_boxed_slice(vec![0u8; bf_len].into_boxed_slice());
+        for i in 0..num_pieces as usize {
+            selected.set(i, true);
+        }
+        let file_infos = vec![crate::file_info::FileInfo {
+            relative_filename: "test.dat".into(),
+            offset_in_torrent: 0,
+            len: total_length,
+            piece_range: 0..num_pieces,
+            attrs: Default::default(),
+        }];
+        let chunks = ChunkTracker::new(have.into_dyn(), selected, lengths, &file_infos).unwrap();
+        (PieceTracker::new(chunks), file_infos)
+    }
+
+    fn acquire_as(
+        tracker: &mut PieceTracker,
+        file_infos: &FileInfos,
+        who: PeerHandle,
+        priority: &[u32],
+    ) -> AcquireResult {
+        let lengths = *tracker.chunks().get_lengths();
+        let file_priorities = make_default_file_priorities(file_infos);
+        let priority: Vec<_> = priority
+            .iter()
+            .map(|i| lengths.validate_piece_index(*i).unwrap())
+            .collect();
+        tracker.acquire_piece(AcquireRequest {
+            peer: who,
+            peer_avg_time: None,
+            priority_pieces: priority.into_iter(),
+            file_priorities: &file_priorities,
+            file_infos,
+            peer_has_piece: |_| true,
+            can_steal: |_| true,
+        })
+    }
+
+    fn deliver(tracker: &mut PieceTracker, who: PeerHandle, piece: u32, chunk: u32) {
+        let data = vec![0u8; CHUNK as usize];
+        let msg = Piece::from_data(piece, chunk * CHUNK, &data);
+        tracker.mark_chunk_downloaded(who, &msg).unwrap();
+    }
+
+    fn chunk(tracker: &PieceTracker, piece: u32, chunk: u32) -> ChunkInfo {
+        let lengths = tracker.chunks().get_lengths();
+        let piece = lengths.validate_piece_index(piece).unwrap();
+        lengths.iter_chunk_infos(piece).nth(chunk as usize).unwrap()
+    }
+
+    // Moves every stall clock back, as if `by` had passed with no data.
+    fn age(tracker: &mut PieceTracker, by: Duration) {
+        for t in tracker.last_data.values_mut() {
+            *t -= by;
+        }
+        for info in tracker.inflight.values_mut() {
+            info.last_progress -= by;
+            info.started -= by;
+        }
+    }
+
+    #[test]
+    fn a_stalled_window_piece_goes_to_a_peer_with_no_piece_time() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        let (slow, fresh) = (peer(1), peer(2));
+        assert!(matches!(acquire_as(&mut tracker, &files, slow, &[0, 1]), AcquireResult::Reserved(p) if p.get() == 0));
+        age(&mut tracker, STALL_TIMEOUT);
+
+        match acquire_as(&mut tracker, &files, fresh, &[0, 1]) {
+            AcquireResult::Stolen { piece, from_peer } => {
+                assert_eq!(piece.get(), 0);
+                assert_eq!(from_peer, slow);
+            }
+            other => panic!("expected the stalled piece, got {other:?}"),
+        }
+        assert_eq!(tracker.should_request_chunk(slow, &chunk(&tracker, 0, 1)), None);
+        assert_eq!(tracker.should_request_chunk(fresh, &chunk(&tracker, 0, 1)), Some(true));
+    }
+
+    #[test]
+    fn a_quiet_piece_is_not_stolen_while_its_peer_delivers_other_pieces() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        let (busy, other) = (peer(1), peer(2));
+        acquire_as(&mut tracker, &files, busy, &[0]);
+        acquire_as(&mut tracker, &files, busy, &[1]);
+        deliver(&mut tracker, busy, 1, 0);
+        age(&mut tracker, STALL_TIMEOUT / 2);
+        let p0 = tracker.chunks().get_lengths().validate_piece_index(0).unwrap();
+        tracker.inflight.get_mut(&p0).unwrap().last_progress -= STALL_TIMEOUT;
+
+        let result = acquire_as(&mut tracker, &files, other, &[0, 1]);
+        assert!(!matches!(result, AcquireResult::Stolen { .. }), "{result:?}");
+    }
+
+    #[test]
+    fn a_stalled_piece_outside_every_window_waits_for_the_usual_steal() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        acquire_as(&mut tracker, &files, peer(1), &[]);
+        age(&mut tracker, STALL_TIMEOUT * 5);
+
+        let result = acquire_as(&mut tracker, &files, peer(2), &[]);
+        assert!(matches!(result, AcquireResult::Reserved(p) if p.get() != 0), "{result:?}");
+        let result = acquire_as(&mut tracker, &files, peer(3), &[2]);
+        assert!(matches!(result, AcquireResult::Reserved(p) if p.get() == 2), "{result:?}");
+    }
+
+    #[test]
+    fn a_stalled_peer_does_not_take_another_stalled_piece() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        let (a, b) = (peer(1), peer(2));
+        acquire_as(&mut tracker, &files, a, &[0]);
+        acquire_as(&mut tracker, &files, b, &[3]);
+        age(&mut tracker, STALL_TIMEOUT);
+
+        let result = acquire_as(&mut tracker, &files, b, &[0]);
+        assert!(!matches!(result, AcquireResult::Stolen { .. }), "{result:?}");
+    }
+
+    #[test]
+    fn a_chunk_arriving_keeps_the_piece_with_its_peer() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        acquire_as(&mut tracker, &files, peer(1), &[0]);
+        age(&mut tracker, STALL_TIMEOUT);
+        deliver(&mut tracker, peer(1), 0, 0);
+
+        let result = acquire_as(&mut tracker, &files, peer(2), &[0]);
+        assert!(!matches!(result, AcquireResult::Stolen { .. }), "{result:?}");
+    }
+
+    #[test]
+    fn a_chunk_a_co_downloader_brought_is_not_requested_again() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        acquire_as(&mut tracker, &files, peer(1), &[0]);
+        assert!(matches!(acquire_as(&mut tracker, &files, peer(2), &[0]), AcquireResult::Joined(_)));
+        deliver(&mut tracker, peer(2), 0, 3);
+
+        assert_eq!(tracker.should_request_chunk(peer(1), &chunk(&tracker, 0, 3)), Some(false));
+        assert_eq!(tracker.should_request_chunk(peer(1), &chunk(&tracker, 0, 2)), Some(true));
+        assert_eq!(tracker.should_request_chunk(peer(3), &chunk(&tracker, 0, 2)), None);
+    }
+
+    #[test]
+    fn a_released_piece_is_queued_again_with_the_chunks_it_had() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        acquire_as(&mut tracker, &files, peer(1), &[]);
+        deliver(&mut tracker, peer(1), 0, 0);
+        deliver(&mut tracker, peer(1), 0, 1);
+        let p0 = tracker.chunks().get_lengths().validate_piece_index(0).unwrap();
+
+        assert!(tracker.release_piece_from(p0, peer(1)));
+        assert!(!tracker.is_inflight(p0));
+        assert!(matches!(acquire_as(&mut tracker, &files, peer(2), &[]), AcquireResult::Reserved(p) if p == p0));
+        assert_eq!(tracker.chunks().missing_chunks(p0), vec![false, false, true, true]);
+    }
+
+    #[test]
+    fn a_released_co_downloaded_piece_stays_with_the_others() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        acquire_as(&mut tracker, &files, peer(1), &[0]);
+        acquire_as(&mut tracker, &files, peer(2), &[0]);
+        let p0 = tracker.chunks().get_lengths().validate_piece_index(0).unwrap();
+
+        assert!(!tracker.release_piece_from(p0, peer(1)));
+        assert_eq!(tracker.get_inflight(p0).unwrap().peers, vec![peer(2)]);
     }
 }

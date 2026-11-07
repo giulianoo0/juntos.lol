@@ -1,8 +1,9 @@
 pub mod stats;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, atomic::Ordering};
+use std::time::{Duration, Instant};
 
 use librqbit_core::hash_id::Id20;
 use librqbit_core::lengths::{ChunkInfo, ValidPieceIndex};
@@ -261,12 +262,19 @@ pub(crate) struct LivePeerState {
     pub bitfield: BF,
 
     // When the peer sends us data this is used to track if we asked for it.
-    inflight_requests: HashSet<InflightRequest>,
+    // ss patch: with the time each request went out, so unanswered ones expire.
+    inflight_requests: HashMap<InflightRequest, Instant>,
 
     // Bounded tolerance for chunks that arrive after we cancel requests.
     // This is intentionally approximate: we track a count instead of storing every
     // canceled chunk, so a peer is not disconnected for racing our cancel messages.
     late_cancelled_request_tolerance: u32,
+
+    // ss patch: when the peer last sent us a chunk, and the send time of the
+    // newest request it has answered. Peers answer in order, so a request
+    // older than that one was dropped.
+    last_chunk_at: Instant,
+    newest_answered_sent: Option<Instant>,
 
     request_slots_changed: Arc<Notify>,
 
@@ -290,6 +298,8 @@ impl LivePeerState {
             bitfield: BF::default(),
             inflight_requests: Default::default(),
             late_cancelled_request_tolerance: 0,
+            last_chunk_at: Instant::now(),
+            newest_answered_sent: None,
             request_slots_changed: Default::default(),
             tx,
             connection_kind,
@@ -309,11 +319,17 @@ impl LivePeerState {
     }
 
     pub fn add_inflight_request(&mut self, chunk: ChunkInfo) -> bool {
-        self.inflight_requests.insert(chunk)
+        if self.inflight_requests.contains_key(&chunk) {
+            return false;
+        }
+        self.inflight_requests.insert(chunk, Instant::now());
+        true
     }
 
     pub fn remove_inflight_request(&mut self, chunk: &ChunkInfo) -> RemoveInflightRequestResult {
-        if self.inflight_requests.remove(chunk) {
+        self.last_chunk_at = Instant::now();
+        if let Some(sent) = self.inflight_requests.remove(chunk) {
+            self.newest_answered_sent = self.newest_answered_sent.max(Some(sent));
             self.request_slots_changed.notify_waiters();
             return RemoveInflightRequestResult::Expected;
         }
@@ -332,7 +348,7 @@ impl LivePeerState {
         let tx = &self.tx;
         let late_cancelled_request_tolerance = &mut self.late_cancelled_request_tolerance;
         let before = self.inflight_requests.len();
-        self.inflight_requests.retain(|req| {
+        self.inflight_requests.retain(|req, _| {
             if req.piece_index == piece {
                 let _ = tx.send(WriterRequest::Message(Message::Cancel(Request {
                     index: piece.get(),
@@ -352,11 +368,38 @@ impl LivePeerState {
     }
 
     pub fn inflight_requests(&self) -> impl Iterator<Item = &InflightRequest> {
-        self.inflight_requests.iter()
+        self.inflight_requests.keys()
     }
 
-    pub fn inflight_requests_debug(&self) -> &HashSet<InflightRequest> {
+    pub fn inflight_requests_debug(&self) -> &HashMap<InflightRequest, Instant> {
         &self.inflight_requests
+    }
+
+    /// ss patch: a request older than `timeout` that the peer skipped (it
+    /// answered a later one) or that sits behind a peer silent for `timeout`
+    /// will never be answered — choked peers drop what they had queued. Every
+    /// request for its piece is cancelled, and those pieces are returned so
+    /// the caller can hand them back. A slow peer still working through a
+    /// deep queue in order is left alone.
+    pub fn expire_stale_requests(&mut self, timeout: Duration) -> Vec<ValidPieceIndex> {
+        let now = Instant::now();
+        let silent = now.saturating_duration_since(self.last_chunk_at) >= timeout;
+        let newest_answered = self.newest_answered_sent;
+        let mut pieces: Vec<ValidPieceIndex> = self
+            .inflight_requests
+            .iter()
+            .filter(|(_, sent)| {
+                now.saturating_duration_since(**sent) >= timeout
+                    && (silent || newest_answered.is_some_and(|n| n > **sent))
+            })
+            .map(|(req, _)| req.piece_index)
+            .collect();
+        pieces.sort_unstable_by_key(|p| p.get());
+        pieces.dedup();
+        for piece in &pieces {
+            self.cancel_inflight_requests_for_piece(*piece);
+        }
+        pieces
     }
 }
 
@@ -364,4 +407,81 @@ pub(crate) enum RemoveInflightRequestResult {
     Expected,
     LateCanceled,
     Unexpected,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use librqbit_core::lengths::Lengths;
+
+    const TIMEOUT: Duration = Duration::from_secs(8);
+
+    fn live_peer() -> (LivePeerState, PeerRx, Lengths) {
+        let (tx, rx) = unbounded_channel();
+        let live = LivePeerState::new(Id20::default(), tx, false, ConnectionKind::Tcp);
+        (live, rx, Lengths::new(16384 * 8, 16384 * 4).unwrap())
+    }
+
+    fn chunks(lengths: &Lengths, piece: u32) -> Vec<ChunkInfo> {
+        lengths
+            .iter_chunk_infos(lengths.validate_piece_index(piece).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_request_behind_a_silent_peer_expires_with_the_rest_of_its_piece() {
+        let (mut live, mut rx, lengths) = live_peer();
+        let p0 = lengths.validate_piece_index(0).unwrap();
+        let old = &chunks(&lengths, 0)[..2];
+        let fresh = chunks(&lengths, 1)[0];
+        for c in old.iter().chain([&fresh]) {
+            assert!(live.add_inflight_request(*c));
+        }
+        *live.inflight_requests.get_mut(&old[0]).unwrap() -= TIMEOUT;
+        live.last_chunk_at -= TIMEOUT;
+
+        assert_eq!(live.expire_stale_requests(TIMEOUT), vec![p0]);
+        assert_eq!(live.inflight_requests().copied().collect::<Vec<_>>(), vec![fresh]);
+        let mut cancels = 0;
+        while let Ok(WriterRequest::Message(Message::Cancel(r))) = rx.try_recv() {
+            assert_eq!(r.index, 0);
+            cancels += 1;
+        }
+        assert_eq!(cancels, 2);
+        assert!(matches!(
+            live.remove_inflight_request(&old[1]),
+            RemoveInflightRequestResult::LateCanceled
+        ));
+    }
+
+    #[test]
+    fn a_slow_peer_answering_in_order_keeps_its_old_requests() {
+        let (mut live, _rx, lengths) = live_peer();
+        let c = chunks(&lengths, 0);
+        for x in &c {
+            live.add_inflight_request(*x);
+        }
+        for x in &c[1..] {
+            *live.inflight_requests.get_mut(x).unwrap() -= TIMEOUT;
+        }
+        *live.inflight_requests.get_mut(&c[0]).unwrap() -= TIMEOUT * 2;
+        live.remove_inflight_request(&c[0]);
+
+        assert!(live.expire_stale_requests(TIMEOUT).is_empty());
+        assert_eq!(live.requested_inflight_count(), 3);
+    }
+
+    #[test]
+    fn a_request_the_peer_skipped_expires_while_it_answers_later_ones() {
+        let (mut live, _rx, lengths) = live_peer();
+        let p0 = lengths.validate_piece_index(0).unwrap();
+        let (dropped, later) = (chunks(&lengths, 0)[0], chunks(&lengths, 1)[0]);
+        live.add_inflight_request(dropped);
+        live.add_inflight_request(later);
+        *live.inflight_requests.get_mut(&dropped).unwrap() -= TIMEOUT * 2;
+        *live.inflight_requests.get_mut(&later).unwrap() -= TIMEOUT;
+        live.remove_inflight_request(&later);
+
+        assert_eq!(live.expire_stale_requests(TIMEOUT), vec![p0]);
+    }
 }

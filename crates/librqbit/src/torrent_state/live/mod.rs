@@ -1036,6 +1036,10 @@ impl TorrentStateLive {
 
 const DEFAULT_PEER_REQUEST_WINDOW: usize = 128;
 
+// ss patch: a request the peer has not answered in this long is cancelled and
+// its piece handed back.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+
 struct PeerFlowControl {
     i_am_choked: bool,
     request_window: usize,
@@ -1654,8 +1658,39 @@ impl PeerHandler {
             if self.can_send_request() {
                 return;
             }
-            notified.await;
+            // ss patch: a peer that stops answering would park us here with
+            // a full window forever; wake up to expire what it never sent.
+            if tokio::time::timeout(Duration::from_secs(1), notified)
+                .await
+                .is_err()
+            {
+                self.expire_stale_requests();
+            }
         }
+    }
+
+    fn expire_stale_requests(&self) {
+        let Some(pieces) = self
+            .state
+            .peers
+            .with_live_mut(self.addr, "expire_stale_requests", |live| {
+                live.expire_stale_requests(REQUEST_TIMEOUT)
+            })
+        else {
+            return;
+        };
+        if pieces.is_empty() {
+            return;
+        }
+        debug!(?pieces, "requests unanswered for {REQUEST_TIMEOUT:?}, giving the pieces back");
+        let mut g = self.state.lock_write("expire_stale_requests");
+        if let Ok(tracker) = g.get_pieces_mut() {
+            for piece in pieces {
+                tracker.release_piece_from(piece, self.addr);
+            }
+        }
+        drop(g);
+        self.state.new_pieces_notify.notify_waiters();
     }
 
     // The job of this is to request chunks and also to keep peer alive.
@@ -1711,6 +1746,7 @@ impl PeerHandler {
             }
 
             update_interest(self, true)?;
+            self.expire_stale_requests();
             aframe!(self.wait_for_request_slot()).await;
 
             // Acquire a piece using the strategy: try steal (10x) → reserve → steal (3x).
@@ -1719,9 +1755,22 @@ impl PeerHandler {
                 Some(next) => next,
                 None => {
                     debug!("no pieces to request");
+                    // ss patch: while a stream is reading, look again soon: a
+                    // stalled peer's window piece is free to take after
+                    // STALL_TIMEOUT, and nothing else would wake us for it.
+                    let streaming = self
+                        .state
+                        .streams
+                        .iter_next_pieces(&self.state.lengths)
+                        .next()
+                        .is_some();
                     match aframe!(tokio::time::timeout(
                         // Half of default rw timeout not to race with it.
-                        Duration::from_secs(5),
+                        if streaming {
+                            Duration::from_millis(500)
+                        } else {
+                            Duration::from_secs(5)
+                        },
                         new_piece_notify
                     ))
                     .await
@@ -1733,26 +1782,25 @@ impl PeerHandler {
                 }
             };
 
-            // ss patch: a joiner fetches the chunks the owner has not
-            // downloaded yet, back to front, so co-downloaders meet in the
-            // middle instead of duplicating each other's requests.
-            let mut chunks: Vec<_> = if joined {
+            // ss patch: only the chunks not written yet are asked for — a
+            // stolen or requeued piece keeps what its last owner brought. A
+            // joiner goes back to front, so co-downloaders meet in the middle
+            // instead of duplicating each other's requests.
+            let mut chunks: Vec<_> = {
                 let missing = self
                     .state
-                    .lock_read("joined_missing_chunks")
+                    .lock_read("missing_chunks")
                     .get_chunks()?
                     .missing_chunks(next);
-                let mut v: Vec<_> = self
-                    .state
+                self.state
                     .lengths
                     .iter_chunk_infos(next)
                     .filter(|c| missing.get(c.chunk_index as usize).map(|b| *b).unwrap_or(false))
-                    .collect();
-                v.reverse();
-                v
-            } else {
-                self.state.lengths.iter_chunk_infos(next).collect()
+                    .collect()
             };
+            if joined {
+                chunks.reverse();
+            }
             for chunk in chunks.drain(..) {
                 let request = Request {
                     index: next.get(),
@@ -1776,14 +1824,43 @@ impl PeerHandler {
 
                 aframe!(self.wait_for_request_slot()).await;
 
-                match self
+                // ss patch: the piece may have been stolen or released while
+                // we waited for a slot, or a co-downloader may have brought
+                // this chunk. Check, insert and send happen under the locks
+                // the stealer takes, so a steal either sees this request and
+                // cancels it after it went out, or this sees the steal and stops.
+                enum Outcome {
+                    Sent,
+                    AlreadyHave,
+                    AlreadyRequested,
+                    NotOurs,
+                    Closed,
+                }
+                let outcome = self
                     .state
                     .peers
                     .with_live_mut(handle, "add chunk request", |live| {
-                        live.add_inflight_request(chunk)
-                    }) {
-                    Some(true) => {}
-                    Some(false) => {
+                        let g = self.state.lock_read("should_request_chunk");
+                        match g.get_pieces().ok().and_then(|p| p.should_request_chunk(handle, &chunk)) {
+                            None => return Outcome::NotOurs,
+                            Some(false) => return Outcome::AlreadyHave,
+                            Some(true) => {}
+                        }
+                        if !live.add_inflight_request(chunk) {
+                            return Outcome::AlreadyRequested;
+                        }
+                        match live.tx.send(WriterRequest::Message(Message::Request(request))) {
+                            Ok(()) => Outcome::Sent,
+                            Err(_) => Outcome::Closed,
+                        }
+                    });
+                match outcome {
+                    Some(Outcome::Sent | Outcome::AlreadyHave) => {}
+                    Some(Outcome::NotOurs) => {
+                        debug!("piece {} is no longer ours, stop requesting it", next);
+                        break;
+                    }
+                    Some(Outcome::AlreadyRequested) => {
                         // This request was already in-flight for this peer for this chunk.
                         // This might happen in theory, but not very likely.
                         //
@@ -1797,18 +1874,9 @@ impl PeerHandler {
                             "we already requested {:?} previously",
                             chunk
                         );
-                        continue;
                     }
                     // peer died
-                    None => return Ok(()),
-                };
-
-                if self
-                    .tx
-                    .send(WriterRequest::Message(Message::Request(request)))
-                    .is_err()
-                {
-                    return Ok(());
+                    None | Some(Outcome::Closed) => return Ok(()),
                 }
             }
         }
@@ -1951,7 +2019,7 @@ impl PeerHandler {
 
             let full_piece_download_time = {
                 let mut g = state.lock_write("mark_chunk_downloaded");
-                let chunk_marking_result = g.get_pieces_mut()?.mark_chunk_downloaded(piece);
+                let chunk_marking_result = g.get_pieces_mut()?.mark_chunk_downloaded(addr, piece);
                 trace!(?piece, chunk_marking_result=?chunk_marking_result);
 
                 match chunk_marking_result {
