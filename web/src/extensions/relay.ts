@@ -23,3 +23,12 @@ export function extensionRelay(sub: string, place?: ExtensionPlace, get: typeof 
     owns: (url) => url.startsWith(prefix),
   }
 }
+
+/**
+ * Where an extension's media goes when the browser cannot read it. One that
+ * reaches any host has no proxy: the Worker would be a relay to anywhere.
+ */
+export function relayFor(extension: { sub: string; manifest: { hosts: { media: readonly string[] } } }, place?: ExtensionPlace): MediaRelay | undefined {
+  if (extension.manifest.hosts.media.includes('*')) return undefined
+  return extensionRelay(extension.sub, place)
+}

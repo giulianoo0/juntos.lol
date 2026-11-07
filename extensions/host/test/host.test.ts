@@ -247,6 +247,16 @@ describe('CSP', () => {
     expect(p.get('img-src')).toBe("'self' data:")
     expect(res.headers.get('content-security-policy')).not.toContain('hcaptcha')
   })
+
+  it('com qualquer host, libera https e nada além disso', async () => {
+    const open = { ...plainManifest, hosts: { connect: ['*'], images: ['*'], media: ['*'] } }
+    const res = await get(`/@${SHA}/app.html`, { sub: GH_SUB, upstream: { [`https://raw.githubusercontent.com/dono/repo/${SHA}/juntos.json`]: json(open) } })
+    const p = csp(res)
+    expect(p.get('connect-src')).toBe("'self' https:")
+    expect(p.get('img-src')).toBe("'self' data: https:")
+    expect(p.get('script-src')).toBe("'self'")
+    expect(p.get('frame-src')).toBe("'none'")
+  })
 })
 
 describe('SDK', () => {
@@ -418,6 +428,19 @@ describe('proxy de mídia', () => {
     const res = await fromJuntos(await path(), { upstream: { [seg]: () => new Response('x') } })
     expect(res.status).toBe(403)
     expect(res.calls.some((c) => c.url === seg)).toBe(false)
+  })
+
+  it('não lê nada para extensão de qualquer host: isso é do app', async () => {
+    const open = { ...plainManifest, hosts: { connect: ['*'], images: ['*'], media: ['*'] } }
+    const u = 'https://cdn.qualquer.dev/a.mp4'
+    const t = await signTicket('chave-de-teste', GH_SUB, u, EXP)
+    const res = await get(`/_juntos/media?u=${encodeURIComponent(u)}&t=${encodeURIComponent(t)}`, {
+      sub: GH_SUB,
+      init: { headers: { origin: 'https://juntos.lol' } },
+      upstream: { [`https://raw.githubusercontent.com/dono/repo/${SHA}/juntos.json`]: json(open), [u]: () => new Response('x') },
+    })
+    expect(res.status).toBe(403)
+    expect(res.calls.some((c) => c.url === u)).toBe(false)
   })
 
   it('sem chave configurada não deixa nada passar', async () => {

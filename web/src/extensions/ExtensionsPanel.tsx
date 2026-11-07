@@ -33,9 +33,9 @@ function errorKey(error: unknown): string {
   return `extensions.error.${error instanceof ExtensionError ? error.code : 'failed'}`
 }
 
-function reachedHosts(manifest: ExtensionManifest): string[] {
+function reachedHosts(manifest: ExtensionManifest, anyHost: string): string[] {
   const { connect, images, media } = manifest.hosts
-  return [...new Set([...connect, ...images, ...media])]
+  return [...new Set([...connect, ...images, ...media].map((host) => host === '*' ? anyHost : host))]
 }
 
 
@@ -194,7 +194,7 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
             <div className={styles.body}>
               <h3 id="extension-hosts" className={styles.section}>{t('extensions.reaches')}</h3>
               <ul className={styles.hosts} aria-labelledby="extension-hosts">
-                {reachedHosts(view.extension.manifest).map((host) => <li key={host}>{host}</li>)}
+                {reachedHosts(view.extension.manifest, t('extensions.anyHost')).map((host) => <li key={host}>{host}</li>)}
               </ul>
               <div className={styles.actions}>
                 <Button variant="primary" onClick={() => approve(view.extension)}>

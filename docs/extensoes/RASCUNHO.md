@@ -295,6 +295,15 @@ versão e pelo site antes de abrir.
 | `captcha` | não | `"hcaptcha"` libera o hCaptcha na CSP (e os hosts dele vão em `connect`/`images`). Nenhum outro valor existe; `""` e `null` contam como ausente. |
 
 `hosts` e cada uma das listas podem faltar ou ser `null`: contam como `[]`.
+
+**Qualquer host.** Uma lista que é exatamente `["*"]` vale para qualquer host
+`https`: é para a extensão que alcança o que a pessoa manda (um cliente de
+um protocolo aberto, que lê catálogos de endereços colados). `connect` vira
+`connect-src https:`, `images` vira `img-src https:`, e `media` aceita
+qualquer host na `source.url`. Na aprovação aparece "Qualquer endereço da
+internet". O `*` não se mistura com outros hosts na mesma lista, e o próprio
+juntos continua fora. O proxy de mídia do Worker não lê nada para essas
+extensões: mídia sem CORS delas só toca pelo app (seção 7).
 As chaves são lidas exatamente como escritas: `ID` ou `Hosts` no lugar de
 `id` ou `hosts` recusam o manifesto. Chaves desconhecidas são ignoradas.
 

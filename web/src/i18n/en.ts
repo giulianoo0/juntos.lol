@@ -203,6 +203,7 @@ export const en: Record<string, string> = {
   'extensions.publish': 'Publish extension',
   'extensions.publishSubmit': 'Publish',
   'extensions.fetch': 'Fetch',
+  'extensions.anyHost': 'Any address on the internet',
   'extensions.reaches': 'Will reach',
   'extensions.install': 'Install',
   'extensions.update': 'Update',

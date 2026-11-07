@@ -200,6 +200,64 @@
      ]
     }
    }
+  },
+  {
+   "case": "qualquer host, em cada lista",
+   "set": {
+    "hosts": {
+     "connect": [
+      "*"
+     ],
+     "images": [
+      "*"
+     ],
+     "media": [
+      "*"
+     ]
+    }
+   },
+   "expect": {
+    "hosts": {
+     "connect": [
+      "*"
+     ],
+     "images": [
+      "*"
+     ],
+     "media": [
+      "*"
+     ]
+    }
+   }
+  },
+  {
+   "case": "qualquer host só na mídia",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*"
+     ]
+    }
+   },
+   "expect": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*"
+     ]
+    }
+   }
   }
  ],
  "refuse": [
@@ -592,22 +650,6 @@
    }
   },
   {
-   "case": "curinga nu",
-   "set": {
-    "hosts": {
-     "connect": [
-      "api.exemplo.dev"
-     ],
-     "images": [
-      "img.exemplo.dev"
-     ],
-     "media": [
-      "*"
-     ]
-    }
-   }
-  },
-  {
    "case": "curinga de TLD",
    "set": {
     "hosts": {
@@ -785,6 +827,56 @@
      ],
      "media": [
       "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "qualquer host junto de outro",
+   "set": {
+    "hosts": {
+     "connect": [
+      "*",
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "qualquer host repetido",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "*",
+      "*"
+     ],
+     "media": [
+      "*.cdn.exemplo.dev"
+     ]
+    }
+   }
+  },
+  {
+   "case": "curinga com ponto só",
+   "set": {
+    "hosts": {
+     "connect": [
+      "api.exemplo.dev"
+     ],
+     "images": [
+      "img.exemplo.dev"
+     ],
+     "media": [
+      "*."
      ]
     }
    }

@@ -82,6 +82,17 @@ describe('painel de extensões', () => {
     expect(installedExtension('exemplo')).toMatchObject({ sub: 'lczfxd2q74zxknb5', version: SHA_A })
   })
 
+  it('diz "qualquer endereço" para a extensão que alcança qualquer host', async () => {
+    const aberta = { ...exemplo, hosts: { connect: ['*'], images: ['*'], media: ['*'] } }
+    serve({ ...exemploRoutes, [`GET https://raw.githubusercontent.com/dono/exemplo/${SHA_A}/juntos.json`]: () => reply(200, aberta) })
+    mount()
+
+    await addByID('exemplo')
+
+    const hosts = await screen.findByRole('list', { name: 'Vai acessar' })
+    expect(within(hosts).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['Qualquer endereço da internet'])
+  })
+
   it('diz quando nenhuma extensão tem esse id', async () => {
     serve({})
     mount()

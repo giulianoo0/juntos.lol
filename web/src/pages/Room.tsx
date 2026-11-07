@@ -52,7 +52,7 @@ const ExtensionsPanel = lazy(() => import('../extensions/ExtensionsPanel').then(
 import { refreshSource, type LoadedExtension } from '../extensions/bridge'
 import { freshInstalled, installedExtension } from '../extensions/installed'
 import type { ExtPlay } from '../extensions/protocol'
-import { extensionRelay } from '../extensions/relay'
+import { relayFor } from '../extensions/relay'
 import { extensionPlace, loadPublicConfig, usePublicConfig } from '../publicConfig'
 import { UnsupportedMediaError } from '../pipeline/unsupported'
 import { WorkerProbes } from '../components/WorkerProbes'
@@ -489,7 +489,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           const fresh = await refreshSource(extension, place, source.ref, t.language)
           if (!fresh) throw new Error('the extension gave no source back')
           const title = source.title ?? source.fileName
-          const opened = await openExtensionSource(fresh, { relay: extensionRelay(extension.sub, place), hosts: extension.manifest.hosts.media })
+          const opened = await openExtensionSource(fresh, { relay: relayFor(extension, place), hosts: extension.manifest.hosts.media })
           const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', title)
           startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: source.ref, title, source: fresh }, opened)
           return
@@ -759,7 +759,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     setExtensionsOpen(false)
     const title = play.subtitle ? `${play.title} · ${play.subtitle}` : play.title
     void swapSource(async () => {
-      const opened = await openExtensionSource(play.source, { relay: extensionRelay(extension.sub, place), hosts: extension.manifest.hosts.media })
+      const opened = await openExtensionSource(play.source, { relay: relayFor(extension, place), hosts: extension.manifest.hosts.media })
       const next = await openMedia('upload', title)
       startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: play.ref, title, source: play.source }, opened)
     })

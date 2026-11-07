@@ -19,6 +19,7 @@ const KEYS = ['id', 'name', 'version', 'protocol', 'entry', 'icon', 'hosts', 'ca
 const HOST_KEYS = ['connect', 'images', 'media']
 // juntos itself and the extensions' own place are never an extension's host.
 const RESERVED = ['juntos.lol', 'santamagia.com']
+export const ANY_HOST = '*'
 
 type Plain = Record<string, unknown>
 const isPlain = (v: unknown): v is Plain => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -38,6 +39,8 @@ function validHost(entry: string, wildcard: boolean): boolean {
 function hostList(v: unknown, wildcard: boolean): string[] | null {
   if (v === undefined || v === null) return []
   if (!Array.isArray(v) || v.length > 16) return null
+  // ["*"], alone, is any host: an extension that reaches what the person tells it to.
+  if (v.length === 1 && v[0] === ANY_HOST) return [ANY_HOST]
   return v.every((h) => typeof h === 'string' && validHost(h, wildcard)) ? [...v] as string[] : null
 }
 

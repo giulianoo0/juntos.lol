@@ -71,9 +71,9 @@ function text(value: unknown, max = MAX_TEXT): string | null {
   return typeof value === 'string' && value.length <= max ? value : null
 }
 
-/** Whether `host` is one of `allowed`; `*.domain` takes any subdomain, not the domain itself. */
+/** Whether `host` is one of `allowed`; `*.domain` takes any subdomain, not the domain itself, and `*` any host. */
 export function hostAllowed(host: string, allowed: readonly string[]): boolean {
-  return allowed.some((entry) => entry.startsWith('*.')
+  return allowed.some((entry) => entry === '*' || entry.startsWith('*.')
     ? host.endsWith(entry.slice(1)) && host.length > entry.length - 1
     : host === entry)
 }

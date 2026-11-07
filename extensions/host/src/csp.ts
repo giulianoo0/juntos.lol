@@ -1,9 +1,10 @@
-import type { ExtensionManifest } from './manifest'
+import { ANY_HOST, type ExtensionManifest } from './manifest'
 
 const HCAPTCHA = 'https://hcaptcha.com https://*.hcaptcha.com'
 
 export function cspFor(m: ExtensionManifest, juntosOrigins: string[]): string {
-  const https = (hosts: string[]) => hosts.map((h) => ` https://${h}`).join('')
+  // Any host is any https origin; http stays out, as do other schemes.
+  const https = (hosts: string[]) => hosts.includes(ANY_HOST) ? ' https:' : hosts.map((h) => ` https://${h}`).join('')
   const captcha = m.captcha === 'hcaptcha'
   return [
     "default-src 'self'",

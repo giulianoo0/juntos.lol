@@ -203,6 +203,7 @@ export const ptBR: Record<string, string> = {
   'extensions.publish': 'Publicar extensão',
   'extensions.publishSubmit': 'Publicar',
   'extensions.fetch': 'Buscar',
+  'extensions.anyHost': 'Qualquer endereço da internet',
   'extensions.reaches': 'Vai acessar',
   'extensions.install': 'Instalar',
   'extensions.update': 'Atualizar',

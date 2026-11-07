@@ -70,7 +70,7 @@ func TestParseManifestRefuses(t *testing.T) {
 		"host sem ponto":            func(m map[string]any) { hosts(m)["connect"] = []string{"intranet"} },
 		"curinga em connect":        func(m map[string]any) { hosts(m)["connect"] = []string{"*.a.com"} },
 		"curinga em images":         func(m map[string]any) { hosts(m)["images"] = []string{"*.a.com"} },
-		"curinga nu em media":       func(m map[string]any) { hosts(m)["media"] = []string{"*"} },
+		"qualquer host com outro":   func(m map[string]any) { hosts(m)["media"] = []string{"*", "a.com"} },
 		"curinga de TLD em media":   func(m map[string]any) { hosts(m)["media"] = []string{"*.com"} },
 		"curinga no meio em media":  func(m map[string]any) { hosts(m)["media"] = []string{"a.*.com"} },
 		"mais de 16 hosts":          func(m map[string]any) { hosts(m)["connect"] = many },

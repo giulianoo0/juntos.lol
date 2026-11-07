@@ -45,6 +45,7 @@ const SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._@+-]{0,127}$/
 const KEYS = ['id', 'name', 'version', 'protocol', 'entry', 'icon', 'hosts', 'captcha']
 const HOST_KEYS = ['connect', 'images', 'media']
 const RESERVED = ['juntos.lol', 'santamagia.com']
+export const ANY_HOST = '*'
 const MAX_HOSTS = 16
 
 /** Length in code points, as Go counts runes. */
@@ -71,6 +72,8 @@ function validHost(entry: string, wildcard: boolean): boolean {
 function hostList(value: unknown, wildcard: boolean): string[] | null {
   if (value === undefined || value === null) return []
   if (!Array.isArray(value) || value.length > MAX_HOSTS) return null
+  // ["*"], alone, is any host: an extension that reaches what the person tells it to.
+  if (value.length === 1 && value[0] === ANY_HOST) return [ANY_HOST]
   return value.every((entry) => typeof entry === 'string' && validHost(entry, wildcard)) ? [...value] as string[] : null
 }
 

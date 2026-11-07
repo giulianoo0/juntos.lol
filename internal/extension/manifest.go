@@ -36,6 +36,8 @@ const (
 	maxNameLen      = 64
 	maxVersionLen   = 64
 	maxPathLen      = 256
+	// AnyHost, as a list's only entry, lets the extension reach any https host.
+	AnyHost = "*"
 )
 
 var (
@@ -106,6 +108,10 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	}{{"connect", m.Hosts.Connect, false}, {"images", m.Hosts.Images, false}, {"media", m.Hosts.Media, true}} {
 		if len(list.hosts) > maxHostsPerList {
 			return Manifest{}, badManifest("hosts.%s: more than %d", list.name, maxHostsPerList)
+		}
+		// ["*"], alone, is any host: an extension that reaches what the person tells it to.
+		if len(list.hosts) == 1 && list.hosts[0] == AnyHost {
+			continue
 		}
 		for _, host := range list.hosts {
 			if !validHost(host, list.wildcard) {
