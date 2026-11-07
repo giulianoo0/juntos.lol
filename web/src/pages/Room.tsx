@@ -54,7 +54,7 @@ import { freshInstalled, installedExtension } from '../extensions/installed'
 import { needsApp, torrentMagnet, type ExtPlay } from '../extensions/protocol'
 import { appReads, appRelay, relayFor } from '../extensions/relay'
 import { importExtensionSubtitles } from '../extensions/subtitles'
-import { extensionPlace, loadPublicConfig, usePublicConfig } from '../publicConfig'
+import { extensionDefaults, extensionPlace, loadPublicConfig, usePublicConfig } from '../publicConfig'
 import { UnsupportedMediaError } from '../pipeline/unsupported'
 import { WorkerProbes } from '../components/WorkerProbes'
 import { TorrentPicker } from '../components/TorrentPicker'
@@ -654,6 +654,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const [extensionsMounted, setExtensionsMounted] = useState(false)
   const publicConfig = usePublicConfig()
   const place = useMemo(() => extensionPlace(publicConfig), [publicConfig])
+  const defaults = useMemo(() => extensionDefaults(publicConfig), [publicConfig])
   useEffect(() => {
     if (!sync.memberId || !sync.connected) return
     const origin = sourceOriginFor(room.id)
@@ -1236,6 +1237,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           canPlay={mayOpenMedia}
           canPublish={account?.canPublishExtensions === true}
           place={place}
+          defaults={defaults}
           onClose={closeExtensions}
           onPlay={playFromExtension}
           onToast={toastText}

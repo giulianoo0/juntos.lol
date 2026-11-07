@@ -106,8 +106,7 @@
   overflow-y: auto;
 }
 
-.list,
-.hosts {
+.list {
   display: grid;
   gap: var(--space-1);
   margin: 0;
@@ -151,22 +150,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.section {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-}
-
-.hosts li {
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-lg);
-  background: var(--field);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
 }
 
 .actions {
@@ -255,5 +238,142 @@
     filter: none;
     transform: none;
     opacity: 0;
+  }
+}
+
+/* The question before an extension runs: the room dims a little more, and
+   the card springs from the middle like every popover here. */
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--layer-dialog) + 1);
+  background: var(--veil);
+  transition: opacity var(--duration-spring-settle) var(--ease-out);
+}
+
+.confirmBackdrop[data-starting-style],
+.confirmBackdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.confirm {
+  position: fixed;
+  z-index: calc(var(--layer-dialog) + 1);
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(24rem, calc(100vw - var(--space-8)));
+  padding: var(--space-6);
+  translate: -50% -50%;
+  border-radius: var(--radius-3xl);
+  background: var(--overlay);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  text-align: center;
+  outline: none;
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    filter var(--duration-spring-pop) var(--ease-spring-pop),
+    opacity var(--duration-base) var(--ease-out);
+}
+
+.confirm[data-starting-style],
+.confirm[data-ending-style] {
+  scale: 0;
+  filter: blur(var(--blur-md));
+  opacity: 0;
+}
+
+.confirm[data-ending-style] {
+  transition-duration: var(--duration-spring-settle);
+  transition-timing-function: var(--ease-spring-settle);
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: var(--space-16);
+  height: var(--space-16);
+  margin-block-end: var(--space-1);
+  border-radius: var(--radius-2xl);
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+.confirmTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  overflow-wrap: anywhere;
+}
+
+/* Two equal pills: "Cancelar" grey, the yes in the brand. */
+.confirmActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  width: 100%;
+  margin-top: var(--space-3);
+}
+
+.cancel,
+.accept {
+  height: calc(var(--control-height) + var(--space-2));
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: var(--transition-tint), var(--transition-button);
+}
+
+.cancel {
+  border: 1px solid var(--line);
+  background: var(--button-secondary-bg);
+  color: var(--text);
+}
+
+.accept {
+  border: 0;
+  background: var(--brand);
+  color: var(--on-brand);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .cancel:hover {
+    background: var(--button-secondary-hover);
+  }
+
+  .accept:hover {
+    background: var(--brand-hover);
+  }
+}
+
+.cancel:active,
+.accept:active {
+  transform: scale(var(--press-scale));
+}
+
+.cancel:focus-visible,
+.accept:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm,
+  .confirm[data-ending-style] {
+    transition: opacity var(--duration-base) var(--ease-out);
+  }
+
+  .confirm[data-starting-style],
+  .confirm[data-ending-style] {
+    scale: 1;
+    filter: none;
   }
 }

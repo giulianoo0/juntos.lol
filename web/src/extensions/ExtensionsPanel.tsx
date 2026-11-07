@@ -1,21 +1,23 @@
+import { AlertDialog } from '@base-ui/react/alert-dialog'
 import { Dialog } from '@base-ui/react/dialog'
 import { ChevronLeft, Plus, Puzzle, Upload, X } from 'lucide-react'
-import { useCallback, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useT } from '../i18n/useT'
 import { Button } from '../ui/Button'
 import { Field } from '../ui/Field'
 import type { LoadedExtension } from './bridge'
 import { ExtensionFrame } from './ExtensionFrame'
-import { installedExtension, listInstalled, saveInstalled, updateFor, type InstalledExtension } from './installed'
-import type { ExtPlay, ExtToHost, ExtensionManifest, ExtensionPlace } from './protocol'
+import { ensureDefaults, installedExtension, listInstalled, saveInstalled, updateFor, type InstalledExtension } from './installed'
+import type { ExtPlay, ExtToHost, ExtensionPlace } from './protocol'
 import { ExtensionError, latestExtension, parseRepo, registerExtension } from './registry'
 import styles from './ExtensionsPanel.module.css'
+
+const NO_DEFAULTS: readonly string[] = []
 
 type View =
   | { kind: 'list' }
   | { kind: 'add' }
   | { kind: 'publish' }
-  | { kind: 'confirm'; extension: LoadedExtension; update: boolean }
   | { kind: 'open'; extension: LoadedExtension }
 
 interface ExtensionsPanelProps {
@@ -24,6 +26,8 @@ interface ExtensionsPanelProps {
   /** The account may register new extension ids. */
   canPublish?: boolean
   place?: ExtensionPlace
+  /** Ids installed here without asking, and kept current the same way. */
+  defaults?: readonly string[]
   onClose: () => void
   onPlay: (extension: LoadedExtension, play: ExtPlay) => void
   onToast: (text: string) => void
@@ -33,9 +37,11 @@ function errorKey(error: unknown): string {
   return `extensions.error.${error instanceof ExtensionError ? error.code : 'failed'}`
 }
 
-function reachedHosts(manifest: ExtensionManifest, anyHost: string): string[] {
-  const { connect, images, media } = manifest.hosts
-  return [...new Set([...connect, ...images, ...media].map((host) => host === '*' ? anyHost : host))]
+/** A version waiting for the person's yes; `current` opens instead when they say no to an update. */
+interface Pending {
+  extension: LoadedExtension
+  update: boolean
+  current?: LoadedExtension
 }
 
 
@@ -45,7 +51,7 @@ function reachedHosts(manifest: ExtensionManifest, anyHost: string): string[] {
  * installed, and nothing reaches a new host before this device saw the hosts
  * and said yes. Each extension runs in its own origin inside the panel.
  */
-export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onClose, onPlay, onToast }: ExtensionsPanelProps) {
+export function ExtensionsPanel({ open, canPlay, canPublish = false, place, defaults = NO_DEFAULTS, onClose, onPlay, onToast }: ExtensionsPanelProps) {
   const t = useT()
   const [view, setView] = useState<View>({ kind: 'list' })
   const [installed, setInstalled] = useState<InstalledExtension[]>(listInstalled)
@@ -53,6 +59,14 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
   const [repo, setRepo] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState<Pending | null>(null)
+
+  useEffect(() => {
+    if (!open || defaults.length === 0) return
+    let live = true
+    void ensureDefaults(defaults, place?.raw).then(() => { if (live) setInstalled(listInstalled()) })
+    return () => { live = false }
+  }, [open, defaults, place?.raw])
 
   const close = useCallback(() => {
     setError(null)
@@ -71,8 +85,8 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
     }
   }
 
-  const confirm = (extension: LoadedExtension) => {
-    setView({ kind: 'confirm', extension, update: installedExtension(extension.id) !== null })
+  const confirm = (extension: LoadedExtension, current?: LoadedExtension) => {
+    setPending({ extension, update: installedExtension(extension.id) !== null, current })
   }
 
   const openInstalled = (entry: InstalledExtension) => attempt(async () => {
@@ -81,8 +95,8 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
     const update = updateFor(current, next)
     if (update.kind === 'current') {
       setView({ kind: 'open', extension: current })
-    } else if (update.kind === 'approve') {
-      confirm(next)
+    } else if (update.kind === 'approve' && !defaults.includes(entry.id)) {
+      confirm(next, current)
     } else {
       saveInstalled(next)
       setInstalled(listInstalled())
@@ -103,6 +117,7 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
   }
 
   const approve = (extension: LoadedExtension) => {
+    setPending(null)
     saveInstalled(extension)
     setInstalled(listInstalled())
     setId('')
@@ -118,7 +133,13 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
   }, [view, canPlay, onPlay, close, onToast])
 
   const go = (next: View) => { setError(null); setView(next) }
-  const title = view.kind === 'open' || view.kind === 'confirm' ? view.extension.manifest.name : t('extensions.title')
+  const decline = () => {
+    const current = pending?.current
+    setPending(null)
+    if (current) setView({ kind: 'open', extension: current })
+  }
+
+  const title = view.kind === 'open' ? view.extension.manifest.name : t('extensions.title')
   const opened = useMemo(() => view.kind === 'open' ? view.extension : null, [view])
 
   return (
@@ -190,25 +211,52 @@ export function ExtensionsPanel({ open, canPlay, canPublish = false, place, onCl
             </form>
           ) : null}
 
-          {view.kind === 'confirm' ? (
-            <div className={styles.body}>
-              <h3 id="extension-hosts" className={styles.section}>{t('extensions.reaches')}</h3>
-              <ul className={styles.hosts} aria-labelledby="extension-hosts">
-                {reachedHosts(view.extension.manifest, t('extensions.anyHost')).map((host) => <li key={host}>{host}</li>)}
-              </ul>
-              <div className={styles.actions}>
-                <Button variant="primary" onClick={() => approve(view.extension)}>
-                  {t(view.update ? 'extensions.update' : 'extensions.install')}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
           {opened ? (
             <ExtensionFrame className={styles.frame} extension={opened} place={place} canPlay={canPlay} onMessage={onMessage} />
           ) : null}
+          <ConfirmExtension pending={pending} onConfirm={approve} onCancel={decline} />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+interface ConfirmExtensionProps {
+  pending: Pending | null
+  onConfirm: (extension: LoadedExtension) => void
+  onCancel: () => void
+}
+
+/**
+ * The one question before an extension runs, or before a new version of it
+ * does. "Cancelar" comes first, so it takes the initial focus: Enter on an
+ * unread dialog never installs.
+ */
+function ConfirmExtension({ pending, onConfirm, onCancel }: ConfirmExtensionProps) {
+  const t = useT()
+  // The question stays while the dialog springs back.
+  const [shown, setShown] = useState(pending)
+  if (pending !== null && pending !== shown) setShown(pending)
+  const name = shown?.extension.manifest.name ?? ''
+  return (
+    <AlertDialog.Root open={pending !== null} onOpenChange={(next) => { if (!next) onCancel() }}>
+      <AlertDialog.Portal>
+        <AlertDialog.Backdrop className={styles.confirmBackdrop} />
+        <AlertDialog.Popup className={styles.confirm}>
+          <span className={styles.badge} aria-hidden="true">
+            <Puzzle size={26} />
+          </span>
+          <AlertDialog.Title className={styles.confirmTitle}>
+            {t(shown?.update ? 'extensions.confirmUpdate' : 'extensions.confirmInstall').replace('{name}', name)}
+          </AlertDialog.Title>
+          <div className={styles.confirmActions}>
+            <AlertDialog.Close className={styles.cancel}>{t('extensions.cancel')}</AlertDialog.Close>
+            <button type="button" className={styles.accept} onClick={() => { if (shown) onConfirm(shown.extension) }}>
+              {t(shown?.update ? 'extensions.update' : 'extensions.install')}
+            </button>
+          </div>
+        </AlertDialog.Popup>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
   )
 }

@@ -12,11 +12,12 @@ import (
 // identifiers, never secrets. Empty values mean the feature is off.
 func publicConfig(cfg config.Config) gin.HandlerFunc {
 	body := gin.H{
-		"turnstileSiteKey": "",
-		"discordAppId":     cfg.DiscordAppID,
-		"extensionBase":    cfg.ExtensionBase,
-		"extensionScheme":  cfg.ExtensionScheme,
-		"extensionRaw":     cfg.GitHubRawBase,
+		"turnstileSiteKey":  "",
+		"discordAppId":      cfg.DiscordAppID,
+		"extensionBase":     cfg.ExtensionBase,
+		"extensionScheme":   cfg.ExtensionScheme,
+		"extensionRaw":      cfg.GitHubRawBase,
+		"extensionDefaults": append([]string{}, cfg.ExtensionDefaults...),
 	}
 	if cfg.TurnstileSecret != "" {
 		body["turnstileSiteKey"] = cfg.TurnstileSiteKey

@@ -1,7 +1,8 @@
 /**
  * The extensions this device approved, and at which version. An update that
  * reaches the same hosts goes through on its own; one that asks for new
- * hosts waits for the person to see them.
+ * hosts waits for the person to see them. The server's defaults come
+ * installed and stay current without asking.
  */
 import type { ExtensionManifest } from './protocol'
 import { latestExtension, parseManifest } from './registry'
@@ -45,7 +46,7 @@ export function installedExtension(id: string): InstalledExtension | null {
   return readAll()[id] ?? null
 }
 
-/** Everything this device installed, by name; nothing comes installed. */
+/** Everything this device installed, by name. */
 export function listInstalled(): InstalledExtension[] {
   return Object.values(readAll()).sort((a, b) => a.manifest.name.localeCompare(b.manifest.name))
 }
@@ -72,6 +73,14 @@ export function updateFor(installed: InstalledExtension | null, next: { version:
     return { kind: 'silent', ...next }
   }
   return { kind: 'approve', ...next }
+}
+
+/** Installs the server's defaults this device lacks and brings them to the version served now. */
+export async function ensureDefaults(ids: readonly string[], raw?: string): Promise<void> {
+  await Promise.all(ids.map(async (id) => {
+    const next = await latestExtension(id, raw).catch(() => null)
+    if (next && updateFor(installedExtension(id), next).kind !== 'current') saveInstalled(next)
+  }))
 }
 
 /**

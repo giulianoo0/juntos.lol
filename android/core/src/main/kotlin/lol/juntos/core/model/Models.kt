@@ -127,6 +127,7 @@ data class PublicConfig(
     val extensionBase: String = "santamagia.com",
     val extensionScheme: String = "https",
     val extensionRaw: String = "https://raw.githubusercontent.com",
+    val extensionDefaults: List<String> = emptyList(),
 )
 
 /** POST /api/rooms. */

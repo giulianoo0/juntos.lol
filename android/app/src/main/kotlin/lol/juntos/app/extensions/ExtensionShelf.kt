@@ -18,7 +18,7 @@ import lol.juntos.core.extensions.validSha
 import lol.juntos.core.model.PublicConfig
 
 /** Where extensions run and their code is read: the server says, juntos.lol's by default. */
-data class Place(val base: String, val scheme: String, val raw: String)
+data class Place(val base: String, val scheme: String, val raw: String, val defaults: List<String> = emptyList())
 
 /** What a newer commit of an installed extension needs: nothing, or the person's eyes on new hosts. */
 sealed interface Fresh {
@@ -29,14 +29,14 @@ sealed interface Fresh {
 class ExtensionError(val code: String) : Exception(code)
 
 /**
- * The extensions this phone approved, as the site's installed.ts keeps them: nothing comes
- * installed, and an update that asks for new hosts waits for the person to see them.
+ * The extensions this phone approved, as the site's installed.ts keeps them: the server's
+ * defaults come installed, and any other update that asks for new hosts waits for the person.
  */
 class ExtensionShelf(private val api: JuntosApi, private val prefs: Prefs) {
     private var place: Place? = null
 
     suspend fun place(): Place = place ?: runCatching { api.config() }.getOrElse { PublicConfig() }
-        .let { Place(it.extensionBase, it.extensionScheme, it.extensionRaw.trimEnd('/')) }
+        .let { config -> Place(config.extensionBase, config.extensionScheme, config.extensionRaw.trimEnd('/'), config.extensionDefaults.filter(::validId)) }
         .also { place = it }
 
     private fun readAll(): Map<String, Pair<Installed, JsonElement>> {
@@ -88,14 +88,22 @@ class ExtensionShelf(private val api: JuntosApi, private val prefs: Prefs) {
         writeAll(readAll() - id)
     }
 
-    /** Before opening: a newer commit that reaches the same hosts goes in on its own. */
+    /** The server's defaults: installed when missing and brought to the newest commit, without asking. */
+    suspend fun ensureDefaults() {
+        for (id in place().defaults) {
+            val newest = runCatching { latest(id) }.getOrNull() ?: continue
+            if (readAll()[id]?.first?.version != newest.first.version) install(newest)
+        }
+    }
+
+    /** Before opening: a newer commit that reaches the same hosts (or of a default) goes in on its own. */
     suspend fun fresh(extension: Installed): Fresh {
         val newest = runCatching { latest(extension.id) }.getOrNull() ?: return Fresh.Ready(extension)
         if (newest.first.version == extension.version) return Fresh.Ready(extension)
         val old = extension.manifest.hosts
         val new = newest.first.manifest.hosts
         val same = new.media.all { it in old.media } && new.connect.all { it in old.connect } && new.images.all { it in old.images }
-        if (!same) return Fresh.Approve(newest)
+        if (!same && extension.id !in place().defaults) return Fresh.Approve(newest)
         install(newest)
         return Fresh.Ready(newest.first)
     }

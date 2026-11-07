@@ -38,8 +38,8 @@ const exemploRoutes = {
   [`GET https://raw.githubusercontent.com/dono/exemplo/${SHA_A}/juntos.json`]: () => reply(200, exemplo),
 }
 
-function mount({ onPlay = vi.fn(), canPublish = false } = {}) {
-  render(<ExtensionsPanel open canPlay canPublish={canPublish} place={{ base: 'santamagia.com', scheme: 'https' }} onPlay={onPlay} onClose={vi.fn()} onToast={vi.fn()} />)
+function mount({ onPlay = vi.fn(), canPublish = false, defaults = [] as string[] } = {}) {
+  render(<ExtensionsPanel open canPlay canPublish={canPublish} place={{ base: 'santamagia.com', scheme: 'https' }} defaults={defaults} onPlay={onPlay} onClose={vi.fn()} onToast={vi.fn()} />)
   return { onPlay }
 }
 
@@ -64,33 +64,53 @@ describe('painel de extensões', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('instala pelo id mostrando nome e hosts antes de confirmar', async () => {
+  it('instala pelo id depois de uma pergunta só, sem listar endereços', async () => {
     serve(exemploRoutes)
     mount()
 
     await addByID('exemplo')
 
-    expect(await screen.findByRole('heading', { name: 'Exemplo' })).toBeInTheDocument()
-    const hosts = screen.getByRole('list', { name: 'Vai acessar' })
-    expect(within(hosts).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['api.exemplo.com', 'img.exemplo.com', '*.cdn.exemplo.com'])
+    const question = await screen.findByRole('alertdialog', { name: 'Instalar Exemplo?' })
+    expect(question).not.toHaveTextContent('api.exemplo.com')
     expect(frame()).toBeNull()
     expect(installedExtension('exemplo')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Instalar' }))
+    fireEvent.click(within(question).getByRole('button', { name: 'Instalar' }))
 
     await waitFor(() => expect(frame()).toHaveAttribute('src', `https://lczfxd2q74zxknb5.santamagia.com/@${SHA_A}/index.html`))
     expect(installedExtension('exemplo')).toMatchObject({ sub: 'lczfxd2q74zxknb5', version: SHA_A })
   })
 
-  it('diz "qualquer endereço" para a extensão que alcança qualquer host', async () => {
-    const aberta = { ...exemplo, hosts: { connect: ['*'], images: ['*'], media: ['*'] } }
-    serve({ ...exemploRoutes, [`GET https://raw.githubusercontent.com/dono/exemplo/${SHA_A}/juntos.json`]: () => reply(200, aberta) })
+  it('cancelar a instalação não instala nem abre nada', async () => {
+    serve(exemploRoutes)
     mount()
 
     await addByID('exemplo')
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
 
-    const hosts = await screen.findByRole('list', { name: 'Vai acessar' })
-    expect(within(hosts).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['Qualquer endereço da internet'])
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(installedExtension('exemplo')).toBeNull()
+    expect(frame()).toBeNull()
+  })
+
+  it('a extensão padrão do servidor vem instalada e atualiza sem perguntar', async () => {
+    saveInstalled({ id: 'cool', sub: 'abcdefghijklmnop', version: SHA_A, manifest: cool })
+    const next = { ...cool, hosts: { ...cool.hosts, media: ['*'] } }
+    serve({
+      ...exemploRoutes,
+      'GET /api/extensions/cool': () => reply(200, COOL),
+      'GET /api/extensions/cool/latest': () => reply(200, { sha: SHA_B }),
+      [`GET https://raw.githubusercontent.com/dono/cool/${SHA_B}/juntos.json`]: () => reply(200, next),
+    })
+    mount({ defaults: ['exemplo', 'cool'] })
+
+    const list = await screen.findByRole('list', { name: 'Extensões' })
+    await waitFor(() => expect(within(list).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['Cool', 'Exemplo']))
+    expect(installedExtension('cool')).toMatchObject({ version: SHA_B })
+    fireEvent.click(within(list).getByRole('button', { name: 'Cool' }))
+
+    await waitFor(() => expect(frame()).toHaveAttribute('src', `https://abcdefghijklmnop.santamagia.com/@${SHA_B}/app/index.html`))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('diz quando nenhuma extensão tem esse id', async () => {
@@ -126,13 +146,29 @@ describe('painel de extensões', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Cool' }))
 
-    const hosts = await screen.findByRole('list', { name: 'Vai acessar' })
-    expect(within(hosts).getByText('cdn.other.tv')).toBeInTheDocument()
+    const question = await screen.findByRole('alertdialog', { name: 'Atualizar Cool?' })
     expect(frame()).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Atualizar' }))
+    fireEvent.click(within(question).getByRole('button', { name: 'Atualizar' }))
 
     await waitFor(() => expect(frame()).toHaveAttribute('src', `https://abcdefghijklmnop.santamagia.com/@${SHA_B}/app/index.html`))
+  })
+
+  it('recusar a atualização abre a versão que já estava aprovada', async () => {
+    saveInstalled({ id: 'cool', sub: 'abcdefghijklmnop', version: SHA_A, manifest: cool })
+    const next = { ...cool, hosts: { ...cool.hosts, media: ['media.cool.tv', 'cdn.other.tv'] } }
+    serve({
+      'GET /api/extensions/cool': () => reply(200, COOL),
+      'GET /api/extensions/cool/latest': () => reply(200, { sha: SHA_B }),
+      [`GET https://raw.githubusercontent.com/dono/cool/${SHA_B}/juntos.json`]: () => reply(200, next),
+    })
+    mount()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Cool' }))
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+
+    await waitFor(() => expect(frame()).toHaveAttribute('src', `https://abcdefghijklmnop.santamagia.com/@${SHA_A}/app/index.html`))
+    expect(installedExtension('cool')).toMatchObject({ version: SHA_A })
   })
 
   it('não oferece publicar a quem não pode', async () => {
@@ -143,7 +179,7 @@ describe('painel de extensões', () => {
     expect(screen.queryByRole('button', { name: 'Publicar extensão' })).not.toBeInTheDocument()
   })
 
-  it('quem pode publica por dono/repo e confirma os hosts', async () => {
+  it('quem pode publica por dono/repo e confirma', async () => {
     const fetchMock = serve({
       'POST /api/extensions': () => reply(201, { id: 'cool', sub: 'abcdefghijklmnop', sha: SHA_A, manifest: cool }),
     })
@@ -153,11 +189,10 @@ describe('painel de extensões', () => {
     fireEvent.change(screen.getByLabelText('Repositório'), { target: { value: 'https://github.com/dono/cool' } })
     fireEvent.click(screen.getByRole('button', { name: 'Publicar' }))
 
-    const hosts = await screen.findByRole('list', { name: 'Vai acessar' })
-    expect(within(hosts).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['api.cool.tv', 'media.cool.tv'])
+    const question = await screen.findByRole('alertdialog', { name: 'Instalar Cool?' })
     expect(fetchMock).toHaveBeenCalledWith('/api/extensions', expect.objectContaining({ body: JSON.stringify({ repo: 'dono/cool' }) }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Instalar' }))
+    fireEvent.click(within(question).getByRole('button', { name: 'Instalar' }))
 
     await waitFor(() => expect(frame()).toHaveAttribute('src', `https://abcdefghijklmnop.santamagia.com/@${SHA_A}/app/index.html`))
   })

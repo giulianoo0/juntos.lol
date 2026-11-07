@@ -32,8 +32,8 @@ import lol.juntos.app.extensions.ExtensionError
 import lol.juntos.app.extensions.ExtensionShelf
 import lol.juntos.app.extensions.Fresh
 import lol.juntos.app.extensions.extensionErrorText
-import lol.juntos.core.extensions.ANY_HOST
 import lol.juntos.core.extensions.Installed
+import lol.juntos.design.ConfirmDialog
 import lol.juntos.design.Field
 import lol.juntos.design.IconPill
 import lol.juntos.design.Juntos
@@ -54,14 +54,10 @@ private sealed interface Step {
     data class Files(val torrent: OpenedTorrent) : Step
     data object Extensions : Step
     data object AddExtension : Step
-    data class Confirm(val extension: Pair<Installed, JsonElement>, val update: Boolean) : Step
 }
 
-/** Every host the manifest reaches, `*` in words. */
-private fun reachedHosts(extension: Installed): List<String> {
-    val hosts = extension.manifest.hosts
-    return (hosts.connect + hosts.images + hosts.media).map { if (it == ANY_HOST) "Qualquer endereço da internet" else it }.distinct()
-}
+/** A version waiting for the person's yes; [current] opens instead when they say no to an update. */
+private data class Pending(val extension: Pair<Installed, JsonElement>, val update: Boolean, val current: Installed? = null)
 
 /**
  * Compartilhar, as the site's menu: the sources this phone can bring to the room. The
@@ -83,6 +79,7 @@ internal fun ShareSheet(
     var error by remember { mutableStateOf<String?>(null) }
     var installed by remember { mutableStateOf(shelf.installed()) }
     var extensionId by remember { mutableStateOf("") }
+    var pending by remember { mutableStateOf<Pending?>(null) }
 
     fun go(next: Step) {
         error = null
@@ -130,13 +127,13 @@ internal fun ShareSheet(
                 installed = shelf.installed()
                 openExtension(fresh.extension)
             }
-            is Fresh.Approve -> go(Step.Confirm(fresh.extension, update = true))
+            is Fresh.Approve -> pending = Pending(fresh.extension, update = true, current = extension)
         }
     }
 
     fun fetchExtension() = run("Não deu certo. Tente de novo") {
         val found = shelf.latest(extensionId)
-        go(Step.Confirm(found, update = installed.any { it.id == found.first.id }))
+        pending = Pending(found, update = installed.any { it.id == found.first.id })
     }
 
     JuntosSheet(onDismiss) {
@@ -144,7 +141,7 @@ internal fun ShareSheet(
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val back = when (step) {
                     Step.Menu -> null
-                    Step.AddExtension, is Step.Confirm -> Step.Extensions
+                    Step.AddExtension -> Step.Extensions
                     else -> Step.Menu
                 }
                 if (back != null) IconPill("Voltar", JuntosIcons.Back, onClick = { go(back) }, size = 36.dp)
@@ -165,7 +162,14 @@ internal fun ShareSheet(
                     Step.Menu -> Column {
                         SpringRow("YouTube", icon = JuntosIcons.Youtube, onClick = { link = ""; go(Step.Link(torrent = false)) })
                         SpringRow("Torrent", icon = JuntosIcons.Magnet, onClick = { link = ""; go(Step.Link(torrent = true)) })
-                        SpringRow("Extensões", icon = JuntosIcons.Puzzle, onClick = { installed = shelf.installed(); go(Step.Extensions) })
+                        SpringRow("Extensões", icon = JuntosIcons.Puzzle, onClick = {
+                            installed = shelf.installed()
+                            go(Step.Extensions)
+                            scope.launch {
+                                runCatching { shelf.ensureDefaults() }
+                                installed = shelf.installed()
+                            }
+                        })
                     }
                     Step.Extensions -> Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                         if (installed.isEmpty()) {
@@ -185,26 +189,6 @@ internal fun ShareSheet(
                             onSubmit = { fetchExtension() },
                         )
                         Pill("Buscar", onClick = { fetchExtension() }, tone = PillTone.Brand, size = PillSize.Lg, loading = busy, enabled = extensionId.isNotBlank(), modifier = Modifier.fillMaxWidth())
-                    }
-                    is Step.Confirm -> Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Vai acessar", color = c.textMuted, fontSize = JuntosTextSize.sm, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 4.dp))
-                        Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
-                            reachedHosts(shown.extension.first).forEach { reached ->
-                                Text(reached, color = c.text, fontSize = JuntosTextSize.sm, modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp))
-                            }
-                        }
-                        Pill(
-                            if (shown.update) "Atualizar" else "Instalar",
-                            onClick = {
-                                shelf.install(shown.extension)
-                                installed = shelf.installed()
-                                extensionId = ""
-                                openExtension(shown.extension.first)
-                            },
-                            tone = PillTone.Brand,
-                            size = PillSize.Lg,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                     }
                     is Step.Link -> Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Field(
@@ -241,6 +225,25 @@ internal fun ShareSheet(
             error?.let { Text(it, color = c.danger, fontSize = JuntosTextSize.xs, modifier = Modifier.padding(top = 8.dp, start = 4.dp)) }
         }
     }
+    pending?.let { asked ->
+        val name = asked.extension.first.manifest.name
+        ConfirmDialog(
+            title = if (asked.update) "Atualizar $name?" else "Instalar $name?",
+            confirm = if (asked.update) "Atualizar" else "Instalar",
+            icon = JuntosIcons.Puzzle,
+            onConfirm = {
+                pending = null
+                shelf.install(asked.extension)
+                installed = shelf.installed()
+                extensionId = ""
+                openExtension(asked.extension.first)
+            },
+            onCancel = {
+                pending = null
+                asked.current?.let(::openExtension)
+            },
+        )
+    }
 }
 
 /** What went wrong, in words: the producer's codes and the usual failures, else [fallback]. */
@@ -264,5 +267,4 @@ private fun titleOf(step: Step): String = when (step) {
     is Step.Link -> if (step.torrent) "Torrent" else "YouTube"
     is Step.Files -> step.torrent.name
     Step.Extensions, Step.AddExtension -> "Extensões"
-    is Step.Confirm -> step.extension.first.manifest.name
 }

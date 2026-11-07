@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -98,6 +99,9 @@ type Config struct {
 	// ExtensionPublishers are the accounts that may register an extension
 	// id: EXTENSION_PUBLISHERS, comma separated, account 1 by default.
 	ExtensionPublishers []int64
+	// ExtensionDefaults are the ids every device installs on its own and keeps
+	// up to date without asking: EXTENSION_DEFAULTS, comma separated.
+	ExtensionDefaults []string
 	// The key media tickets are signed with, shared with the extension host
 	// Worker: EXTENSION_MEDIA_KEY. Without it the media proxy lets nothing through.
 	ExtensionMediaKey string
@@ -135,6 +139,9 @@ func (c Config) DiscordRedirectURI() string {
 func (c Config) DiscordEnabled() bool {
 	return c.DiscordAppID != "" && len(c.DiscordPublicKey) == ed25519.PublicKeySize
 }
+
+// extensionID is the registry's id rule (internal/extension).
+var extensionID = regexp.MustCompile(`^[a-z][a-z0-9-]{2,31}$`)
 
 func Load() (Config, error) {
 	cfg := Config{
@@ -281,6 +288,15 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("EXTENSION_PUBLISHERS must be account ids separated by commas")
 		}
 		cfg.ExtensionPublishers = append(cfg.ExtensionPublishers, id)
+	}
+	for _, field := range strings.Split(os.Getenv("EXTENSION_DEFAULTS"), ",") {
+		if field = strings.TrimSpace(field); field == "" {
+			continue
+		}
+		if !extensionID.MatchString(field) {
+			return Config{}, fmt.Errorf("EXTENSION_DEFAULTS must be extension ids separated by commas")
+		}
+		cfg.ExtensionDefaults = append(cfg.ExtensionDefaults, field)
 	}
 	cfg.ExtensionMediaKey = strings.TrimSpace(os.Getenv("EXTENSION_MEDIA_KEY"))
 	cfg.TurnstileSiteKey = strings.TrimSpace(os.Getenv("TURNSTILE_SITE_KEY"))

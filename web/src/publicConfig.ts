@@ -9,6 +9,8 @@ export interface PublicConfig {
   extensionBase?: string
   extensionScheme?: string
   extensionRaw?: string
+  /** Extension ids every device installs on its own. */
+  extensionDefaults?: string[]
 }
 
 let loaded: Promise<PublicConfig> | null = null
@@ -33,6 +35,12 @@ export function usePublicConfig(): PublicConfig | null {
     return () => { live = false }
   }, [])
   return config
+}
+
+/** The ids the server installs everywhere, the valid ones. */
+export function extensionDefaults(config: PublicConfig | null): string[] {
+  const ids = config?.extensionDefaults
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string' && /^[a-z][a-z0-9-]{2,31}$/.test(id)) : []
 }
 
 /** The extensions' place from the config; undefined (production's) when it says nothing usable. */
