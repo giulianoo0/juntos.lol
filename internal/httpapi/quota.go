@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,15 +18,11 @@ type Quota struct {
 	dispatchPerHour int
 	concurrentJobs  int
 	bytesPerDay     int64
-	// pluginFetchPerHour caps the requests one session may send through the
-	// plugin hop. A field rather than a constant so a test can lower it.
-	pluginFetchPerHour int
 }
 
 // NewQuota returns a Quota; a zero limit disables that budget.
 func NewQuota(rdb *redis.Client, dispatchPerHour, concurrentJobs int, bytesPerDay int64) *Quota {
-	return &Quota{rdb: rdb, dispatchPerHour: dispatchPerHour, concurrentJobs: concurrentJobs, bytesPerDay: bytesPerDay,
-		pluginFetchPerHour: pluginFetchPerHour}
+	return &Quota{rdb: rdb, dispatchPerHour: dispatchPerHour, concurrentJobs: concurrentJobs, bytesPerDay: bytesPerDay}
 }
 
 func dispatchKey(sid string) string {
@@ -105,16 +102,18 @@ func (q *Quota) CheckProbes(ctx context.Context, sid string) (bool, error) {
 	return n <= probeListPerHour, nil
 }
 
-const pluginFetchPerHour = 600
+// extensionRegisterPerHour caps how many repositories one account may try
+// to register; each try reads GitHub twice.
+const extensionRegisterPerHour = 10
 
-func pluginFetchKey(sid string) string {
-	return "quota:" + sid + ":pluginfetch:" + time.Now().UTC().Format("2006010215")
+func extensionRegisterKey(accountID int64) string {
+	return "quota:account:" + strconv.FormatInt(accountID, 10) + ":extregister:" + time.Now().UTC().Format("2006010215")
 }
 
-// CheckPluginFetch spends one hop request from the session's hourly budget;
-// false means the budget is gone.
-func (q *Quota) CheckPluginFetch(ctx context.Context, sid string) (bool, error) {
-	key := pluginFetchKey(sid)
+// CheckExtensionRegister spends one try from the account's hour; false means
+// the hour is gone.
+func (q *Quota) CheckExtensionRegister(ctx context.Context, accountID int64) (bool, error) {
+	key := extensionRegisterKey(accountID)
 	n, err := q.rdb.Incr(ctx, key).Result()
 	if err != nil {
 		return true, err
@@ -122,29 +121,7 @@ func (q *Quota) CheckPluginFetch(ctx context.Context, sid string) (bool, error) 
 	if n == 1 {
 		q.rdb.Expire(ctx, key, time.Hour)
 	}
-	return n <= int64(q.pluginFetchPerHour), nil
-}
-
-// PluginFetch is the plugin hop's middleware: 429 once the session spent its hour.
-func (q *Quota) PluginFetch() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		sid := SessionID(c)
-		if sid == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "no_session"})
-			return
-		}
-		ok, err := q.CheckPluginFetch(c.Request.Context(), sid)
-		if err != nil {
-			slog.ErrorContext(c.Request.Context(), "plugin fetch quota check", "error", err)
-			c.AbortWithStatus(http.StatusInternalServerError)
-			return
-		}
-		if !ok {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "quota_exceeded", "reason": "plugin_fetch_limit"})
-			return
-		}
-		c.Next()
-	}
+	return n <= extensionRegisterPerHour, nil
 }
 
 // AcquireJob records a running job against the session, refusing when the concurrent

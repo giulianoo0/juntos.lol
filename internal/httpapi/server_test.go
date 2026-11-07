@@ -142,25 +142,6 @@ func TestEveryBuildFolderIsServedAsFiles(t *testing.T) {
 	require.Equal(t, "png", rec.Body.String(), "an emoji must not come back as the app shell")
 }
 
-func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets", "plugin-worker"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "plugin-worker", "abc.js"), []byte("//"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "app-abc.js"), []byte("//"), 0o644))
-	server := newServerWithWebDir(t, dir)
-
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/plugin-worker/abc.js", nil))
-	policy := rec.Header().Get("Content-Security-Policy")
-	require.Contains(t, policy, "default-src 'none'")
-	require.Contains(t, policy, "script-src blob:")
-	require.NotContains(t, policy, "https:")
-
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil))
-	require.Empty(t, rec.Header().Get("Content-Security-Policy"))
-}
-
 // The shell carries Last-Modified; without Cache-Control the browser kept it
 // by heuristic and reopened /c/5 from disk, pointing at chunks of an older
 // build. It must be asked again every time.

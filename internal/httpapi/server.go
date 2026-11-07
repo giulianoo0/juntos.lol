@@ -27,8 +27,7 @@ type serverOptions struct {
 	clientMediaHooks  ClientMediaHooks
 	torrentAccess     TorrentAccess
 	workerLink        gin.HandlerFunc
-	pluginSessions    *Sessions
-	pluginQuota       *Quota
+	extensions        *ExtensionAccess
 	discord           http.Handler
 	accounts          *account.Store
 	tv                *TVAccess
@@ -41,12 +40,9 @@ func WithRelays(relays *moqrelay.Rooms) ServerOption {
 	return func(o *serverOptions) { o.relays = relays }
 }
 
-// WithPluginFetch puts a session and an hourly budget on the plugin hop.
-func WithPluginFetch(sessions *Sessions, quota *Quota) ServerOption {
-	return func(o *serverOptions) {
-		o.pluginSessions = sessions
-		o.pluginQuota = quota
-	}
+// WithExtensions mounts the extension registry under /api/extensions.
+func WithExtensions(access ExtensionAccess) ServerOption {
+	return func(o *serverOptions) { o.extensions = &access }
 }
 
 func WithTorrents(access TorrentAccess, workerLink gin.HandlerFunc) ServerOption {
@@ -176,7 +172,9 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 			RegisterTVRoutes(r, cfg, options.accounts, *options.tv, rooms)
 		}
 	}
-	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
+	if options.extensions != nil {
+		RegisterExtensionRoutes(r.Group("/api"), cfg, *options.extensions)
+	}
 	registerFrontend(r, cfg.WebDir)
 	return r
 }
@@ -188,9 +186,6 @@ func privacyHeaders() gin.HandlerFunc {
 		// The Samsung app's local shell shows /tv in an iframe.
 		if c.Request.URL.Path != "/tv" {
 			c.Header("X-Frame-Options", "DENY")
-		}
-		if strings.HasPrefix(c.Request.URL.Path, "/assets/plugin-worker/") {
-			c.Header("Content-Security-Policy", "default-src 'none'; script-src blob:")
 		}
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") {
 			c.Header("Cache-Control", "no-store")

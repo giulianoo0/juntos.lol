@@ -197,3 +197,56 @@ func TestTheBridgeNeedsItsTicketKey(t *testing.T) {
 	_, err = Load()
 	require.NoError(t, err)
 }
+
+func TestLoadExtensionOrigin(t *testing.T) {
+	setMediaEnv(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "santamagia.com", cfg.ExtensionBase)
+	require.Equal(t, "https", cfg.ExtensionScheme)
+
+	t.Setenv("EXTENSION_BASE", "localhost:8787")
+	t.Setenv("EXTENSION_SCHEME", "http")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, "localhost:8787", cfg.ExtensionBase)
+	require.Equal(t, "http", cfg.ExtensionScheme)
+
+	t.Setenv("EXTENSION_SCHEME", "javascript")
+	_, err = Load()
+	require.Error(t, err)
+}
+
+func TestLoadExtensionPublishers(t *testing.T) {
+	setMediaEnv(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.True(t, cfg.CanPublishExtensions(1), "o dono publica por padrão")
+	require.False(t, cfg.CanPublishExtensions(2))
+	require.False(t, cfg.CanPublishExtensions(0))
+
+	t.Setenv("EXTENSION_PUBLISHERS", " 7, 9 ")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.True(t, cfg.CanPublishExtensions(9))
+	require.False(t, cfg.CanPublishExtensions(1))
+
+	t.Setenv("EXTENSION_PUBLISHERS", "7,dono")
+	_, err = Load()
+	require.ErrorContains(t, err, "EXTENSION_PUBLISHERS")
+}
+
+func TestLoadGitHubBases(t *testing.T) {
+	setMediaEnv(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "https://api.github.com", cfg.GitHubAPIBase)
+	require.Equal(t, "https://raw.githubusercontent.com", cfg.GitHubRawBase)
+
+	t.Setenv("GITHUB_API_BASE", "http://127.0.0.1:9000/api/")
+	t.Setenv("GITHUB_RAW_BASE", "http://127.0.0.1:9000/raw")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:9000/api", cfg.GitHubAPIBase)
+	require.Equal(t, "http://127.0.0.1:9000/raw", cfg.GitHubRawBase)
+}

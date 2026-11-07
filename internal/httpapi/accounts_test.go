@@ -486,3 +486,16 @@ func jsonField(t *testing.T, w *httptest.ResponseRecorder, field string) string 
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
 	return string(body[field])
 }
+
+// The site offers publishing an extension only to the accounts that may.
+func TestMeSaysWhetherTheAccountPublishesExtensions(t *testing.T) {
+	rig := newAccountRig(t, nil)
+	ana, anaSession := rig.signIn(t, "1", "Ana")
+	_, biaSession := rig.signIn(t, "2", "Bia")
+	cfg := config.Config{PublicOrigin: "https://juntos.test", ExtensionPublishers: []int64{ana.ID}}
+	rig.router = gin.New()
+	RegisterAccountRoutes(rig.router.Group("/api"), cfg, rig.accounts, rig.rooms, nil)
+
+	require.JSONEq(t, `true`, jsonField(t, rig.do(http.MethodGet, "/api/me", "", anaSession), "canPublishExtensions"))
+	require.JSONEq(t, `false`, jsonField(t, rig.do(http.MethodGet, "/api/me", "", biaSession), "canPublishExtensions"))
+}

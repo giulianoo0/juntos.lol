@@ -426,6 +426,7 @@ func (a *accountRoutes) writeMe(c *gin.Context, me account.Account) {
 		"id": me.ID, "nickname": me.Nickname, "avatar": me.Avatar, "visibility": me.Visibility,
 		"discord": discordNamesOf(me), "discordVisibility": me.DiscordVisibility,
 		"createdAt": me.CreatedAt, "stats": stats, "guildPending": a.guildPending(me),
+		"canPublishExtensions": a.cfg.CanPublishExtensions(me.ID),
 	})
 }
 

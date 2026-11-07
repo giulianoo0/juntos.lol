@@ -14,7 +14,9 @@ func publicConfig(cfg config.Config) gin.HandlerFunc {
 	body := gin.H{
 		"turnstileSiteKey": "",
 		"discordAppId":     cfg.DiscordAppID,
-		"catalogAddonUrl":  cfg.CatalogAddonURL,
+		"extensionBase":    cfg.ExtensionBase,
+		"extensionScheme":  cfg.ExtensionScheme,
+		"extensionRaw":     cfg.GitHubRawBase,
 	}
 	if cfg.TurnstileSecret != "" {
 		body["turnstileSiteKey"] = cfg.TurnstileSiteKey

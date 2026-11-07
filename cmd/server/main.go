@@ -19,6 +19,7 @@ import (
 	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/db"
+	"github.com/giulianoo0/ss/internal/extension"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/moqrelay"
@@ -191,7 +192,8 @@ func main() {
 		httpapi.WithSourceHooks(sourceHooks),
 		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents,
 			Remux: remuxOrch, Authorizer: hub.AuthorizeMember}, workerHub.HandleLink),
-		httpapi.WithPluginFetch(sessions, quota),
+		httpapi.WithExtensions(httpapi.ExtensionAccess{Registry: extension.NewRegistry(pool), GitHub: extension.NewGitHub(cfg.GitHubAPIBase, cfg.GitHubRawBase, cfg.GitHubToken),
+			Accounts: accounts, Quota: quota}),
 		httpapi.WithDiscord(httpapi.DiscordApp(cfg, store, rdb, hub, accounts)),
 		httpapi.WithAccounts(accounts),
 		httpapi.WithTV(tvAccess),

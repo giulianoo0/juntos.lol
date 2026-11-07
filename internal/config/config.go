@@ -71,8 +71,6 @@ type Config struct {
 	// on unless "false" or "0".
 	YoutubeFleetEnabled bool
 
-	PluginFetchProxy string
-
 	// RoomsPerIPPerHour caps room creation per client address; 0 turns it off.
 	RoomsPerIPPerHour int
 
@@ -93,9 +91,19 @@ type Config struct {
 	DiscordGuildID      string
 	DiscordMemberRoleID string
 
-	// CatalogAddonURL is the Stremio-protocol addon the catalog reads, in the
-	// browser; the server only hands its address over.
-	CatalogAddonURL string
+	// Where extensions are served, one subdomain each: <sub>.ExtensionBase
+	// over ExtensionScheme. EXTENSION_BASE and EXTENSION_SCHEME.
+	ExtensionBase   string
+	ExtensionScheme string
+	// ExtensionPublishers are the accounts that may register an extension
+	// id: EXTENSION_PUBLISHERS, comma separated, account 1 by default.
+	ExtensionPublishers []int64
+	// Where extensions are read from on GitHub: GITHUB_API_BASE and
+	// GITHUB_RAW_BASE, GitHub itself by default and a local server in dev.
+	GitHubAPIBase string
+	// GITHUB_TOKEN, optional: lifts the API's limit of 60 calls an hour.
+	GitHubToken   string
+	GitHubRawBase string
 
 	// Turnstile in front of opening and entering rooms; without a secret
 	// nobody is asked. Hostnames are where the widget may have been solved.
@@ -105,6 +113,11 @@ type Config struct {
 }
 
 // DiscordLoginEnabled reports whether accounts can be signed into through Discord.
+// CanPublishExtensions says whether the account may register extension ids.
+func (c Config) CanPublishExtensions(accountID int64) bool {
+	return accountID != 0 && slices.Contains(c.ExtensionPublishers, accountID)
+}
+
 func (c Config) DiscordLoginEnabled() bool {
 	return c.DiscordClientID != "" && c.DiscordClientSecret != "" && c.PublicOrigin != ""
 }
@@ -140,6 +153,10 @@ func Load() (Config, error) {
 		TorrentBytesPerDayGB:   60,
 		RoomsPerIPPerHour:      30,
 		DiscordAPIBase:         "https://discord.com/api/v10",
+		ExtensionBase:          "santamagia.com",
+		ExtensionScheme:        "https",
+		GitHubAPIBase:          "https://api.github.com",
+		GitHubRawBase:          "https://raw.githubusercontent.com",
 	}
 
 	var err error
@@ -226,22 +243,41 @@ func Load() (Config, error) {
 	default:
 		cfg.YoutubeFleetEnabled = true
 	}
-	cfg.PluginFetchProxy = strings.TrimSpace(os.Getenv("PLUGIN_FETCH_PROXY"))
-	if cfg.PluginFetchProxy != "" {
-		u, err := url.Parse(cfg.PluginFetchProxy)
-		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") {
-			return Config{}, fmt.Errorf("PLUGIN_FETCH_PROXY must be an http, https or socks5 url")
-		}
-	}
 	if cfg.RemoteRemuxAPIBase == "" {
 		cfg.RemoteRemuxAPIBase = cfg.PublicOrigin
 	}
 	if cfg.RoomsPerIPPerHour, err = envInt("ROOMS_PER_IP_PER_HOUR", cfg.RoomsPerIPPerHour); err != nil {
 		return Config{}, err
 	}
-	cfg.CatalogAddonURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("CATALOG_ADDON_URL")), "/")
-	if cfg.CatalogAddonURL == "" {
-		cfg.CatalogAddonURL = "https://tmdb.elfhosted.com"
+	if v := strings.TrimSpace(os.Getenv("EXTENSION_BASE")); v != "" {
+		cfg.ExtensionBase = v
+	}
+	if v := strings.TrimSpace(os.Getenv("EXTENSION_SCHEME")); v != "" {
+		cfg.ExtensionScheme = v
+	}
+	if cfg.ExtensionScheme != "https" && cfg.ExtensionScheme != "http" {
+		return Config{}, fmt.Errorf("EXTENSION_SCHEME must be https or http")
+	}
+	if v := strings.TrimSpace(os.Getenv("GITHUB_API_BASE")); v != "" {
+		cfg.GitHubAPIBase = strings.TrimSuffix(v, "/")
+	}
+	cfg.GitHubToken = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	if v := strings.TrimSpace(os.Getenv("GITHUB_RAW_BASE")); v != "" {
+		cfg.GitHubRawBase = strings.TrimSuffix(v, "/")
+	}
+	publishers := "1"
+	if v, ok := os.LookupEnv("EXTENSION_PUBLISHERS"); ok {
+		publishers = v
+	}
+	for _, field := range strings.Split(publishers, ",") {
+		if field = strings.TrimSpace(field); field == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(field, 10, 64)
+		if err != nil || id <= 0 {
+			return Config{}, fmt.Errorf("EXTENSION_PUBLISHERS must be account ids separated by commas")
+		}
+		cfg.ExtensionPublishers = append(cfg.ExtensionPublishers, id)
 	}
 	cfg.TurnstileSiteKey = strings.TrimSpace(os.Getenv("TURNSTILE_SITE_KEY"))
 	cfg.TurnstileSecret = strings.TrimSpace(os.Getenv("TURNSTILE_SECRET"))
