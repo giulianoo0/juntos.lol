@@ -70,6 +70,8 @@ export class ReadGate {
 export interface RangeReaderOptions {
   url: () => string
   size: number
+  /** The whole file's size, when the reads are of one file: an answer for another is refused. */
+  total?: number
   gate: ReadGate
   maxAttempts?: number
   firstByteMs?: number
@@ -104,9 +106,9 @@ function sleep(ms: number, gate: ReadGate, signal: AbortSignal): Promise<void> {
   })
 }
 
-function contentRangeStart(response: Response): number | null {
+function contentRange(response: Response): { start: number; total: number | null } | null {
   const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(response.headers.get('Content-Range') ?? '')
-  return match ? Number(match[1]) : null
+  return match ? { start: Number(match[1]), total: match[3] === '*' ? null : Number(match[3]) } : null
 }
 
 /**
@@ -177,10 +179,15 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
       throw new ReadFailedError(200, 'origin ignored Range')
     }
     if (response.status === 206) {
-      const answered = contentRangeStart(response)
-      if (answered !== null && answered !== cursor) {
+      const answered = contentRange(response)
+      if (answered && answered.start !== cursor) {
         response.body?.cancel().catch(() => {})
-        throw new ReadFailedError(206, `origin answered byte ${answered} for byte ${cursor}`)
+        throw new ReadFailedError(206, `origin answered byte ${answered.start} for byte ${cursor}`)
+      }
+      // A host out of connections may hand out a short "blocked" video in its place.
+      if (opts.total !== undefined && answered?.total != null && answered.total !== opts.total) {
+        response.body?.cancel().catch(() => {})
+        throw new ReadFailedError(206, `origin answered another file (${answered.total} bytes, not ${opts.total})`)
       }
     }
     if (!response.body) return null

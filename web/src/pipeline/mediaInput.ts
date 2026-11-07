@@ -51,6 +51,7 @@ export function rangeInput(url: string, name: string, size: number, { external =
   const opts = (hint?: ReadHint) => ({
     url: () => (hint?.prio && !external ? withParam(url, 'prio', hint.prio) : url),
     size,
+    total: size,
     gate,
     ...(external ? { fetch: strict } : {}),
   })

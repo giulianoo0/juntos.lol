@@ -111,6 +111,12 @@ describe('rangeBytes', () => {
     await expect(rangeBytes(opts(), 10, 50)).rejects.toBeInstanceOf(ReadFailedError)
   })
 
+  it('refuses another file answered in its place, as a host that hands out a "blocked" video does', async () => {
+    install((s) => new Response(new Uint8Array(10), { status: 206, headers: { 'Content-Range': `bytes ${s}-${s + 9}/101390` } }))
+    await expect(rangeBytes({ ...opts(), total: SIZE }, 0, 50)).rejects.toThrow(/another file/)
+    expect(calls).toHaveLength(1)
+  })
+
   it('clamps the end to the file size and answers empty past it', async () => {
     install((s, e) => body(s, e))
     expect(await rangeBytes(opts(), 990, 2000)).toEqual(FILE.subarray(990))
