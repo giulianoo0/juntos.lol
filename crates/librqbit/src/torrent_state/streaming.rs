@@ -124,35 +124,36 @@ impl TorrentStreams {
         self.next_stream_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn mark_critical(&self, stream_id: StreamId) {
-        if let Some(mut s) = self.streams.get_mut(&stream_id) {
-            s.critical = true;
-        }
+    // Returns true if the stream was not critical yet.
+    fn mark_critical(&self, stream_id: StreamId) -> bool {
+        self.streams
+            .get_mut(&stream_id)
+            .is_some_and(|mut s| !std::mem::replace(&mut s.critical, true))
     }
 
-    fn register_waker(&self, stream_id: StreamId, waker: Waker) {
+    fn register_waker(&self, stream_id: StreamId, waker: Waker) -> bool {
         if let Some(mut s) = self.streams.get_mut(&stream_id) {
-            let vm = s.value_mut();
-            vm.waker = Some(waker);
-            vm.critical = true;
+            s.value_mut().waker = Some(waker);
         }
+        self.mark_critical(stream_id)
     }
 
     /// Ends the critical phase of streams that got half their window.
-    /// Returns true if any did, so idle peers can widen their selection.
+    /// Returns true if any stream was critical: peers that went idle on a
+    /// critical window must look again, as it either slid or ended.
     pub(crate) fn settle_critical(
         &self,
         lengths: &Lengths,
         have: impl Fn(ValidPieceIndex) -> bool,
     ) -> bool {
-        let mut settled = false;
+        let mut any = false;
         for mut s in self.streams.iter_mut() {
-            if s.critical && s.critical_reached(lengths, &have) {
-                s.critical = false;
-                settled = true;
+            if s.critical {
+                any = true;
+                s.critical = !s.critical_reached(lengths, &have);
             }
         }
-        settled
+        any
     }
 
     /// Pieces to try first for a peer, and whether the selection must stop at
@@ -306,14 +307,19 @@ impl AsyncRead for FileStream {
 
         // if the piece is not there, register to wake when it is
         // check if we have the piece for real
+        let mut entered_critical = false;
         let have = poll_try_io!(self.torrent.with_chunk_tracker(|ct| {
             let have = ct.get_have_pieces().as_slice()[current.id.get() as usize];
             if !have {
-                self.streams
+                entered_critical = self
+                    .streams
                     .register_waker(self.stream_id, cx.waker().clone());
             }
             have
         }));
+        if entered_critical {
+            self.torrent.notify_new_pieces();
+        }
         if !have {
             debug!(stream_id = self.stream_id, file_id = self.file_id, piece_id = %current.id, "poll pending, not have");
             return Poll::Pending;
@@ -444,6 +450,14 @@ impl ManagedTorrent {
         true
     }
 
+    // Peers idle on the old selection pick up a new critical window now
+    // instead of on their 5 s timer.
+    fn notify_new_pieces(&self) {
+        if let Some(live) = self.live() {
+            live.notify_new_pieces();
+        }
+    }
+
     fn is_file_finished(&self, file_id: usize) -> bool {
         let metadata = self.metadata.load();
         let metadata = match metadata.as_ref() {
@@ -494,6 +508,7 @@ impl ManagedTorrent {
         );
         streams.changed.notify_one();
 
+        s.torrent.notify_new_pieces();
         debug!(stream_id = s.stream_id, file_id, "started stream");
 
         Ok(s)
@@ -559,6 +574,10 @@ mod tests {
         (streams, lengths)
     }
 
+    fn is_critical(s: &TorrentStreams) -> bool {
+        s.streams.get(&0).unwrap().critical
+    }
+
     fn ids(pieces: &[ValidPieceIndex]) -> Vec<u32> {
         let mut v: Vec<_> = pieces.iter().map(|p| p.get()).collect();
         v.sort();
@@ -586,8 +605,11 @@ mod tests {
     #[test]
     fn critical_ends_once_half_the_window_arrived() {
         let (s, l) = streams(MIB, &[(10 * MIB + MIB / 2, true)]);
-        assert!(!s.settle_critical(&l, |p| p.get() == 10));
+        assert!(s.settle_critical(&l, |p| p.get() == 10));
+        assert!(is_critical(&s));
         assert!(s.settle_critical(&l, |p| p.get() == 10 || p.get() == 11));
+        assert!(!is_critical(&s));
+        assert!(!s.settle_critical(&l, |_| false));
 
         let (pieces, critical) = s.next_pieces(&l, |_| false, |_| true);
         assert!(!critical);
@@ -598,8 +620,10 @@ mod tests {
     #[test]
     fn large_piece_window_ends_only_with_the_piece() {
         let (s, l) = streams(8 * MIB, &[(MIB, true)]);
-        assert!(!s.settle_critical(&l, |_| false));
-        assert!(s.settle_critical(&l, |p| p.get() == 0));
+        s.settle_critical(&l, |_| false);
+        assert!(is_critical(&s));
+        s.settle_critical(&l, |p| p.get() == 0);
+        assert!(!is_critical(&s));
     }
 
     #[test]
@@ -608,19 +632,20 @@ mod tests {
         let (pieces, critical) = s.next_pieces(&l, |_| false, |p| p.get() > 11);
         assert!(!critical);
         assert_eq!(pieces.len(), 64);
-        assert!(s.streams.get(&0).unwrap().critical);
+        assert!(is_critical(&s));
     }
 
     #[test]
     fn seek_and_block_reenter_critical() {
         let (s, l) = streams(MIB, &[(0, true)]);
-        assert!(s.settle_critical(&l, |p| p.get() == 0));
-        s.mark_critical(0);
+        s.settle_critical(&l, |p| p.get() == 0);
+        assert!(s.mark_critical(0));
+        assert!(!s.mark_critical(0));
         s.streams.get_mut(&0).unwrap().position = 50 * MIB;
         assert_eq!(ids(&s.next_pieces(&l, |p| p.get() == 0, |_| true).0), vec![50, 51]);
 
         s.settle_critical(&l, |_| true);
-        s.register_waker(0, std::task::Waker::noop().clone());
+        assert!(s.register_waker(0, std::task::Waker::noop().clone()));
         assert!(s.next_pieces(&l, |_| false, |_| true).1);
     }
 }

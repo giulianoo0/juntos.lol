@@ -1023,6 +1023,10 @@ impl TorrentStateLive {
         }
     }
 
+    pub(crate) fn notify_new_pieces(&self) {
+        self.new_pieces_notify.notify_waiters();
+    }
+
     pub(crate) fn reconnect_all_not_needed_peers(&self) {
         self.peers
             .states
