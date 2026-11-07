@@ -122,7 +122,12 @@ data class RoomInfo(
 
 /** GET /api/config: what the server names for the client. */
 @Serializable
-data class PublicConfig(val turnstileSiteKey: String? = null)
+data class PublicConfig(
+    val turnstileSiteKey: String? = null,
+    val extensionBase: String = "santamagia.com",
+    val extensionScheme: String = "https",
+    val extensionRaw: String = "https://raw.githubusercontent.com",
+)
 
 /** POST /api/rooms. */
 @Serializable

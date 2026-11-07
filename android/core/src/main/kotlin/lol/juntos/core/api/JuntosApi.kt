@@ -44,6 +44,22 @@ interface JuntosApi {
 
     /** The job's worker remuxes into the room; progress arrives through the room as any guest's. */
     suspend fun startFleetRemux(jobId: String, roomId: String, mediaGeneration: Int, seat: Seat): Unit = throw UnsupportedOperationException()
+
+    /** A registered extension id, as the server answers it (unchecked JSON). */
+    suspend fun extension(id: String): kotlinx.serialization.json.JsonElement = throw UnsupportedOperationException()
+
+    /** The commit an extension runs at now. */
+    suspend fun extensionSha(id: String): String = throw UnsupportedOperationException()
+
+    /** A file read off the internet as text: an extension's manifest at a commit. */
+    suspend fun fetchJson(url: String): kotlinx.serialization.json.JsonElement = throw UnsupportedOperationException()
+
+    /** A small file off the internet, without this app's cookies; null when it fails or passes [max] bytes. */
+    suspend fun fetchBytes(url: String, max: Int): ByteArray? = throw UnsupportedOperationException()
+
+    /** The host's subtitle for the whole room, as WebVTT. */
+    suspend fun importSubtitle(roomId: String, seat: Seat, mediaGeneration: Int, language: String, title: String, vtt: String): Unit =
+        throw UnsupportedOperationException()
 }
 
 /** A fleet job: `listed` once the worker has the torrent's files. */

@@ -27,6 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonElement
+import lol.juntos.app.extensions.ExtensionError
+import lol.juntos.app.extensions.ExtensionShelf
+import lol.juntos.app.extensions.Fresh
+import lol.juntos.app.extensions.extensionErrorText
+import lol.juntos.core.extensions.ANY_HOST
+import lol.juntos.core.extensions.Installed
 import lol.juntos.design.Field
 import lol.juntos.design.IconPill
 import lol.juntos.design.Juntos
@@ -45,6 +52,15 @@ private sealed interface Step {
     data object Menu : Step
     data class Link(val torrent: Boolean) : Step
     data class Files(val torrent: OpenedTorrent) : Step
+    data object Extensions : Step
+    data object AddExtension : Step
+    data class Confirm(val extension: Pair<Installed, JsonElement>, val update: Boolean) : Step
+}
+
+/** Every host the manifest reaches, `*` in words. */
+private fun reachedHosts(extension: Installed): List<String> {
+    val hosts = extension.manifest.hosts
+    return (hosts.connect + hosts.images + hosts.media).map { if (it == ANY_HOST) "Qualquer endereço da internet" else it }.distinct()
 }
 
 /**
@@ -52,13 +68,21 @@ private sealed interface Step {
  * drawer grows and shrinks with each step on the spring: the list, a link, a torrent's files.
  */
 @Composable
-internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, onDismiss: () -> Unit) {
+internal fun ShareSheet(
+    host: LocalHost,
+    shelf: ExtensionShelf,
+    onHost: suspend (LocalSource) -> Unit,
+    onOpenExtension: (Installed) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val c = Juntos.colors
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf<Step>(Step.Menu) }
     var link by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var installed by remember { mutableStateOf(shelf.installed()) }
+    var extensionId by remember { mutableStateOf("") }
 
     fun go(next: Step) {
         error = null
@@ -72,6 +96,8 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
         scope.launch {
             try {
                 block()
+            } catch (e: ExtensionError) {
+                error = extensionErrorText(e.code)
             } catch (e: Exception) {
                 android.util.Log.w("ShareSheet", fallback, e)
                 error = shareError(e.message, fallback)
@@ -93,14 +119,40 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
         }
     }
 
+    fun openExtension(extension: Installed) {
+        onOpenExtension(extension)
+        onDismiss()
+    }
+
+    fun openInstalled(extension: Installed) = run("Não deu certo. Tente de novo") {
+        when (val fresh = shelf.fresh(extension)) {
+            is Fresh.Ready -> {
+                installed = shelf.installed()
+                openExtension(fresh.extension)
+            }
+            is Fresh.Approve -> go(Step.Confirm(fresh.extension, update = true))
+        }
+    }
+
+    fun fetchExtension() = run("Não deu certo. Tente de novo") {
+        val found = shelf.latest(extensionId)
+        go(Step.Confirm(found, update = installed.any { it.id == found.first.id }))
+    }
+
     JuntosSheet(onDismiss) {
         Column(Modifier.fillMaxWidth().animateContentSize(pop())) {
             Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (step != Step.Menu) IconPill("Voltar", JuntosIcons.Back, onClick = { go(Step.Menu) }, size = 36.dp)
+                val back = when (step) {
+                    Step.Menu -> null
+                    Step.AddExtension, is Step.Confirm -> Step.Extensions
+                    else -> Step.Menu
+                }
+                if (back != null) IconPill("Voltar", JuntosIcons.Back, onClick = { go(back) }, size = 36.dp)
                 Text(titleOf(step), color = c.text, fontSize = JuntosTextSize.lg, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.weight(1f))
-                if (busy && step is Step.Files) {
+                if (busy && (step is Step.Files || step == Step.Extensions)) {
                     androidx.compose.material3.CircularProgressIndicator(color = c.textMuted, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                 }
+                if (step == Step.Extensions) IconPill("Adicionar", JuntosIcons.Plus, onClick = { extensionId = ""; go(Step.AddExtension) }, size = 36.dp)
             }
             val enter = pop<Float>()
             val exit = settle<Float>()
@@ -113,6 +165,46 @@ internal fun ShareSheet(host: LocalHost, onHost: suspend (LocalSource) -> Unit, 
                     Step.Menu -> Column {
                         SpringRow("YouTube", icon = JuntosIcons.Youtube, onClick = { link = ""; go(Step.Link(torrent = false)) })
                         SpringRow("Torrent", icon = JuntosIcons.Magnet, onClick = { link = ""; go(Step.Link(torrent = true)) })
+                        SpringRow("Extensões", icon = JuntosIcons.Puzzle, onClick = { installed = shelf.installed(); go(Step.Extensions) })
+                    }
+                    Step.Extensions -> Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        if (installed.isEmpty()) {
+                            Text("Nenhuma extensão.", color = c.textMuted, fontSize = JuntosTextSize.sm, modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp))
+                        }
+                        installed.forEach { extension ->
+                            SpringRow(extension.manifest.name, icon = JuntosIcons.Puzzle, onClick = { if (!busy) openInstalled(extension) })
+                        }
+                    }
+                    Step.AddExtension -> Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Field(
+                            value = extensionId,
+                            onValueChange = { extensionId = it },
+                            label = "ID da extensão",
+                            mono = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            onSubmit = { fetchExtension() },
+                        )
+                        Pill("Buscar", onClick = { fetchExtension() }, tone = PillTone.Brand, size = PillSize.Lg, loading = busy, enabled = extensionId.isNotBlank(), modifier = Modifier.fillMaxWidth())
+                    }
+                    is Step.Confirm -> Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Vai acessar", color = c.textMuted, fontSize = JuntosTextSize.sm, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 4.dp))
+                        Column(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                            reachedHosts(shown.extension.first).forEach { reached ->
+                                Text(reached, color = c.text, fontSize = JuntosTextSize.sm, modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp))
+                            }
+                        }
+                        Pill(
+                            if (shown.update) "Atualizar" else "Instalar",
+                            onClick = {
+                                shelf.install(shown.extension)
+                                installed = shelf.installed()
+                                extensionId = ""
+                                openExtension(shown.extension.first)
+                            },
+                            tone = PillTone.Brand,
+                            size = PillSize.Lg,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                     is Step.Link -> Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Field(
@@ -171,4 +263,6 @@ private fun titleOf(step: Step): String = when (step) {
     Step.Menu -> "Compartilhar"
     is Step.Link -> if (step.torrent) "Torrent" else "YouTube"
     is Step.Files -> step.torrent.name
+    Step.Extensions, Step.AddExtension -> "Extensões"
+    is Step.Confirm -> step.extension.first.manifest.name
 }

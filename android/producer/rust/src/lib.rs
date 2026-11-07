@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 use serde::Deserialize;
+use axum::response::IntoResponse;
 use serde_json::{json, Value};
 use ss_remux::youtube;
 
@@ -26,10 +27,17 @@ mod upload_plan;
 mod uploader;
 #[path = "../../../../desktop/src-tauri/src/torrent.rs"]
 mod torrent;
+#[path = "../../../../desktop/src-tauri/src/proxy.rs"]
+#[allow(dead_code)]
+mod proxy;
+#[path = "../../../../desktop/src-tauri/src/url_source.rs"]
+mod url_source;
 
 mod jni_bridge;
 
 use local::{Input, Producer};
+use proxy::MediaProxy;
+use url_source::UrlSource;
 use torrent::Torrents;
 use uploader::{Target, Upload};
 
@@ -47,6 +55,10 @@ pub struct State {
     ytdlp: youtube::Config,
     resolver: tokio::sync::OnceCell<Option<Arc<youtube::Resolver>>>,
     uploads: Mutex<HashMap<String, (String, Arc<Upload>)>>,
+    /// What an extension's address is read through: public addresses only.
+    proxy: Arc<MediaProxy>,
+    /// The proxy on the loopback, for FFmpeg to read an HLS playlist through.
+    loopback: tokio::sync::OnceCell<u16>,
 }
 
 static STATE: OnceLock<State> = OnceLock::new();
@@ -65,6 +77,8 @@ pub fn init(data_dir: PathBuf, site: String, tools: Tools) {
         ytdlp: tools.ytdlp,
         resolver: tokio::sync::OnceCell::new(),
         uploads: Mutex::new(HashMap::new()),
+        proxy: Arc::new(MediaProxy::new()),
+        loopback: tokio::sync::OnceCell::new(),
         }
     });
 }
@@ -112,6 +126,56 @@ fn arg<T: for<'de> Deserialize<'de>>(args: &Value, name: &str) -> Result<T, Stri
     serde_json::from_value(args.get(name).cloned().unwrap_or(Value::Null)).map_err(|e| format!("{name}: {e}"))
 }
 
+/// The proxy's address for `url`, as the desktop's page builds it.
+fn proxied(port: u16, url: &str, key: &str, headers: &[(&'static str, String)]) -> String {
+    use base64::Engine;
+    let encode = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
+    let mut out = format!("http://127.0.0.1:{port}/_proxy?u={}&k={}", encode(url), encode(key));
+    if !headers.is_empty() {
+        let object: serde_json::Map<String, Value> = headers.iter().map(|(n, v)| (n.to_string(), Value::String(v.clone()))).collect();
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Value::Object(object).to_string());
+        out.push_str("&h=");
+        out.push_str(&raw);
+    }
+    out
+}
+
+/// A cache key for an address: the same address is the same film.
+fn short_hash(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// The media proxy on 127.0.0.1, an ephemeral port; FFmpeg is its only reader.
+async fn serve_proxy(proxy: Arc<MediaProxy>) -> anyhow::Result<u16> {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let port = listener.local_addr()?.port();
+    let app = axum::Router::new().route(
+        "/_proxy",
+        axum::routing::get(move |request: axum::extract::Request| {
+            let proxy = proxy.clone();
+            async move {
+                let (parts, _) = request.into_parts();
+                let uri = format!("http://127.0.0.1:{port}{}", parts.uri).parse::<http::Uri>();
+                let Ok(uri) = uri else { return axum::http::StatusCode::BAD_REQUEST.into_response() };
+                let mut asked = http::Request::builder().method(parts.method).uri(uri);
+                for (name, value) in &parts.headers {
+                    asked = asked.header(name, value);
+                }
+                let Ok(asked) = asked.body(Vec::new()) else { return axum::http::StatusCode::BAD_REQUEST.into_response() };
+                let (parts, body) = proxy.handle(&asked).await.into_parts();
+                axum::response::Response::from_parts(parts, axum::body::Body::from(body))
+            }
+        }),
+    );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok(port)
+}
+
 fn valid_room(room_id: &str) -> bool {
     !room_id.is_empty() && room_id.len() <= 64 && room_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
@@ -119,6 +183,11 @@ fn valid_room(room_id: &str) -> bool {
 impl State {
     async fn torrents(&self) -> Result<&Torrents, String> {
         self.torrents.get_or_try_init(|| Torrents::new(self.data_dir.join("torrents"))).await.map_err(err)
+    }
+
+    async fn loopback(&self) -> Result<u16, String> {
+        let proxy = self.proxy.clone();
+        self.loopback.get_or_try_init(|| serve_proxy(proxy)).await.copied().map_err(err)
     }
 
     async fn resolver(&self) -> Result<Arc<youtube::Resolver>, String> {
@@ -172,6 +241,21 @@ async fn dispatch(state: &State, method: &str, args: Value) -> Result<Value, Str
                 Some("youtube") => {
                     let resolver = state.resolver().await?;
                     (format!("y-{}", field("videoId")?), field("title")?, Input::Youtube(resolver, field("url")?))
+                }
+                Some(kind @ ("url" | "hls")) => {
+                    let url = field("url")?;
+                    let headers = match source.get("headers") {
+                        Some(Value::Object(map)) => proxy::headers_from(map.clone()).ok_or("bad headers")?,
+                        _ => Vec::new(),
+                    };
+                    let key = format!("u-{}", short_hash(&url));
+                    let input = if kind == "hls" {
+                        let port = state.loopback().await?;
+                        Input::Url(proxied(port, &url, state.proxy.key(), &headers))
+                    } else {
+                        Input::Container(Arc::new(UrlSource::open(state.proxy.clone(), &url, headers).await.map_err(err)?))
+                    };
+                    (key, field("title")?, input)
                 }
                 _ => return Err("unknown source kind".into()),
             };

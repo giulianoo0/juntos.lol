@@ -68,6 +68,11 @@ import lol.juntos.design.Juntos
 import lol.juntos.design.ToastHost
 import lol.juntos.design.pop
 import lol.juntos.design.rememberToastState
+import lol.juntos.app.extensions.ExtensionFrame
+import lol.juntos.app.extensions.ExtensionShelf
+import lol.juntos.app.extensions.Place
+import lol.juntos.app.extensions.importExtensionSubtitles
+import lol.juntos.core.extensions.Installed
 import lol.juntos.player.PlayerControls
 import lol.juntos.player.PlayerIntents
 import lol.juntos.player.PlayerSurface
@@ -102,6 +107,8 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
     val state = raw.copy(members = raw.members.map { if (it.id == raw.memberId && it.avatar == null) it.copy(avatar = entry.avatar) else it })
     val toasts = rememberToastState()
     var sheet by remember { mutableStateOf<Sheet?>(null) }
+    val shelf = remember { ExtensionShelf(graph.api, graph.prefs) }
+    var opened by remember { mutableStateOf<Pair<Installed, Place>?>(null) }
     var pinned by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
     val bursts = remember { Bursts() }
@@ -314,12 +321,46 @@ fun RoomScreen(graph: AppGraph, entry: RoomEntry, onLeave: () -> Unit) {
         Sheet.People -> PeopleSheet(state.members, state.memberId, state.controllerId, pinned, onPin = { pinned = if (pinned == it) null else it }, onDismiss = { sheet = null })
         Sheet.Settings -> SettingsSheet(player, onDismiss = { sheet = null })
         Sheet.Share -> host?.let {
-            ShareSheet(it, onHost = { source ->
-                val seat = session.state.value.seat() ?: error("no seat")
-                it.host(seat, source)
-            }, onDismiss = { sheet = null })
+            ShareSheet(
+                it,
+                shelf,
+                onHost = { source ->
+                    val seat = session.state.value.seat() ?: error("no seat")
+                    it.host(seat, source)
+                },
+                onOpenExtension = { extension -> scope.launch { opened = extension to shelf.place() } },
+                onDismiss = { sheet = null },
+            )
         }
         null -> Unit
+    }
+    val local = host
+    opened?.let { (extension, place) ->
+        ExtensionFrame(
+            extension,
+            place,
+            canPlay = local != null && state.isController,
+            onPlay = { play ->
+                opened = null
+                if (local != null) {
+                    scope.launch {
+                        runCatching {
+                            val seat = session.state.value.seat() ?: error("no seat")
+                            local.host(seat, extensionSource(local, play))
+                            val generation = local.media.value?.generation
+                            if (generation != null && play.subtitles.isNotEmpty()) {
+                                importExtensionSubtitles(graph.api, entry.roomId, seat, generation, play.subtitles)
+                            }
+                        }.onFailure {
+                            android.util.Log.w("RoomScreen", "extension play", it)
+                            toasts.show(shareError(it.message, "Não deu para abrir esse vídeo."))
+                        }
+                    }
+                }
+            },
+            onToast = { text -> scope.launch { toasts.show(text) } },
+            onClose = { opened = null },
+        )
     }
 }
 

@@ -1572,6 +1572,12 @@ version = "0.1.0"
 dependencies = [
  "android_logger",
  "anyhow",
+ "async-trait",
+ "axum 0.7.9",
+ "base64 0.22.1",
+ "bytes",
+ "futures",
+ "http",
  "jni 0.21.1",
  "juntos-tauri-shim",
  "librqbit",
@@ -1585,6 +1591,7 @@ dependencies = [
  "ss-remux",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

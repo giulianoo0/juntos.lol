@@ -73,6 +73,36 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
         send(post(url("api", "torrents", jobId, "remux"), body))
     }
 
+    override suspend fun extension(id: String): kotlinx.serialization.json.JsonElement =
+        JuntosJson.parseToJsonElement(send(get(url("api", "extensions", id))))
+
+    override suspend fun extensionSha(id: String): String =
+        read<LatestReply>(get(url("api", "extensions", id, "latest"))).sha
+
+    override suspend fun fetchJson(url: String): kotlinx.serialization.json.JsonElement =
+        JuntosJson.parseToJsonElement(send(Request.Builder().url(url.toHttpUrl()).build()))
+
+    private val stranger by lazy { client.newBuilder().cookieJar(okhttp3.CookieJar.NO_COOKIES).build() }
+
+    override suspend fun fetchBytes(url: String, max: Int): ByteArray? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            stranger.newCall(Request.Builder().url(url.toHttpUrl()).build()).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = response.body ?: return@use null
+                if (body.contentLength() > max) return@use null
+                val bytes = body.source().let { source ->
+                    source.request(max.toLong() + 1)
+                    source.buffer.readByteArray(minOf(source.buffer.size, max.toLong() + 1))
+                }
+                bytes.takeIf { it.size in 1..max }
+            }
+        }.getOrNull()
+    }
+
+    override suspend fun importSubtitle(roomId: String, seat: Seat, mediaGeneration: Int, language: String, title: String, vtt: String) {
+        send(post(url("api", "rooms", roomId, "subtitles", "import"), SubtitleImportBody(seat.memberId, seat.capability, mediaGeneration, language, title, vtt)))
+    }
+
     private fun url(vararg segments: String): HttpUrl =
         base.newBuilder().apply { segments.forEach(::addPathSegment) }.build()
 
@@ -116,6 +146,15 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
 
     @Serializable private class SeatBody(val memberId: String, val capability: String)
 
+    @Serializable private class SubtitleImportBody(
+        val memberId: String,
+        val capability: String,
+        val mediaGeneration: Int,
+        val language: String,
+        val title: String,
+        val vtt: String,
+    )
+
     @Serializable private class FleetStartBody(val infoHash: String, val trackers: List<String>, val dn: String, val preferred: List<String> = emptyList())
 
     @Serializable private class FleetStarted(val jobId: String)
@@ -125,6 +164,8 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
     @Serializable private class FleetRemuxBody(val roomId: String, val mediaGeneration: Int, val requestId: String, val startMs: Long, val auth: SeatBody)
 
     @Serializable private class ErrorBody(val error: String? = null)
+
+    @Serializable private class LatestReply(val sha: String)
 
     private companion object {
         val JSON = "application/json".toMediaType()

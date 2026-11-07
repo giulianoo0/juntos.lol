@@ -22,6 +22,9 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.longOrNull
 import lol.juntos.core.api.JuntosApi
 import lol.juntos.core.api.LocalCopy
+import lol.juntos.core.extensions.ExtMessage
+import lol.juntos.core.extensions.ExtSource
+import lol.juntos.core.extensions.torrentMagnet
 import lol.juntos.core.media.regionFor
 import lol.juntos.core.media.regionHolds
 import lol.juntos.core.model.MediaRegion
@@ -36,6 +39,9 @@ sealed interface LocalSource {
 
     data class Youtube(val url: String, val videoId: String, override val title: String, val durationMs: Long) : LocalSource
     data class Torrent(val id: String, val index: Int, override val title: String, val magnet: String, val size: Long = 0) : LocalSource
+
+    /** An address an extension handed out, read through the producer's proxy: the room keeps no copy of it. */
+    data class Url(val hls: Boolean, val url: String, val headers: Map<String, String>, override val title: String) : LocalSource
 
     /** A file of a torrent the fleet holds: this phone never downloads it, it watches like a guest. */
     data class Fleet(val jobId: String, val index: Int, override val title: String, val fileName: String) : LocalSource
@@ -156,6 +162,7 @@ class LocalHost(
             val copy = when (source) {
                 is LocalSource.Youtube -> LocalCopy(kind = "youtube", url = source.url, videoId = source.videoId)
                 is LocalSource.Torrent -> LocalCopy(kind = "torrent", magnet = source.magnet, index = source.index)
+                is LocalSource.Url -> null
                 is LocalSource.Fleet -> error("the fleet hosts it")
             }
             val duration = (source as? LocalSource.Youtube)?.durationMs ?: 0
@@ -164,6 +171,7 @@ class LocalHost(
             val prepare = when (source) {
                 is LocalSource.Youtube -> mapOf("kind" to "youtube", "url" to source.url, "videoId" to source.videoId, "title" to source.title)
                 is LocalSource.Torrent -> mapOf("kind" to "torrent", "id" to source.id, "index" to source.index, "title" to source.title)
+                is LocalSource.Url -> mapOf("kind" to if (source.hls) "hls" else "url", "url" to source.url, "headers" to source.headers, "title" to source.title)
                 is LocalSource.Fleet -> error("the fleet hosts it")
             }
             val meta = producer.call("local_prepare", mapOf("source" to prepare)).jsonObject
@@ -171,7 +179,13 @@ class LocalHost(
             val hls = File(producer.call("hls_dir", mapOf("key" to key)).jsonPrimitive.content)
             _media.value = LocalMedia(key, generation, meta["durationMs"]?.jsonPrimitive?.longOrNull ?: duration, emptyList(), hls)
             purge(keepKey = key, keepTorrent = (source as? LocalSource.Torrent)?.id)
-            session.announceSource(if (source is LocalSource.Youtube) "youtube" else "torrent")
+            session.announceSource(
+                when (source) {
+                    is LocalSource.Youtube -> "youtube"
+                    is LocalSource.Url -> "url"
+                    else -> "torrent"
+                },
+            )
             scope.launch {
                 runCatching {
                     producer.call(
@@ -355,5 +369,23 @@ class LocalHost(
         const val UPLOAD_WATCH_MS = 5_000L
         const val FOLLOW_DEBOUNCE_MS = 3_000L
         const val SAME_PLACE_MS = 2_000L
+    }
+}
+
+/** What an extension's play stands for on this phone: the address itself, the video, or the torrent's file. */
+internal suspend fun extensionSource(host: LocalHost, play: ExtMessage.Play): LocalSource {
+    val title = play.subtitle?.let { "${play.title} · $it" } ?: play.title
+    return when (val source = play.source) {
+        is ExtSource.Media -> LocalSource.Url(source.hls, source.url, source.headers, title)
+        is ExtSource.Youtube -> host.resolveYoutube("https://www.youtube.com/watch?v=${source.id}")
+        is ExtSource.Torrent -> {
+            val opened = host.openTorrent(torrentMagnet(source, play.title))
+            val file = source.fileIdx?.let { index -> opened.files.firstOrNull { it.index == index } }
+                ?: opened.files.maxByOrNull { it.size }
+                ?: throw IllegalStateException("the torrent has no video")
+            val name = file.path.substringAfterLast('/')
+            opened.fleetJob?.let { LocalSource.Fleet(it, file.index, title, name) }
+                ?: LocalSource.Torrent(opened.id, file.index, title, opened.magnet, file.size)
+        }
     }
 }
