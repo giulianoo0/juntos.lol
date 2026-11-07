@@ -81,6 +81,7 @@ export const en: Record<string, string> = {
   'room.aspectOriginal': 'Original',
   'room.aspectFill': 'Fill',
   'room.aspectStretch': 'Stretch',
+  'room.steadyAudio': 'Steady audio',
   'room.audio': 'Audio',
   'room.subtitles': 'Subtitles',
   'room.off': 'Off',

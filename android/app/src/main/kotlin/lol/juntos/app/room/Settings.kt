@@ -60,6 +60,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import lol.juntos.player.PictureAspect
+import lol.juntos.player.PictureAspects
 import kotlinx.coroutines.withContext
 import lol.juntos.design.Field
 import lol.juntos.design.Juntos
@@ -74,7 +76,7 @@ import lol.juntos.design.rememberToastState
 import lol.juntos.design.pressScale
 import lol.juntos.player.JuntosPlayer
 
-private enum class Tab(val label: String) { Audio("Áudio"), Subtitles("Legendas"), Quality("Qualidade") }
+private enum class Tab(val label: String) { Audio("Áudio"), Subtitles("Legendas"), Video("Vídeo") }
 
 private val SUBTITLE_TYPES = arrayOf("application/x-subrip", "text/vtt", "text/x-ssa", "text/plain", "application/octet-stream")
 private const val HOLD_DELAY_MS = 450L
@@ -92,11 +94,18 @@ fun SettingsSheet(player: JuntosPlayer, onDismiss: () -> Unit) {
     }
 }
 
-/** Áudio, Legendas and, when the stream has them, Qualidade: what this viewer picks for themselves. */
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, color = Juntos.colors.textMuted, fontSize = JuntosTextSize.sm, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp))
+}
+
+/** Vídeo (qualidade when the stream has them, and proporção), Áudio and Legendas: what this viewer picks for themselves. */
 @Composable
 fun SettingsPanel(player: JuntosPlayer, onNotice: (String) -> Unit) {
     val snapshot by player.snapshot.collectAsState()
-    val tabs = listOfNotNull(Tab.Audio, Tab.Subtitles, Tab.Quality.takeIf { snapshot.qualities.isNotEmpty() })
+    val tabs = listOf(Tab.Video, Tab.Audio, Tab.Subtitles)
+    val aspect by PictureAspects.current.collectAsState()
+    val context = LocalContext.current
     var tab by remember { mutableStateOf(Tab.Audio) }
     // A video with two dozen dubs would push the tabs under the status bar: the list scrolls below them instead.
     Column(Modifier.heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.8f).dp)) {
@@ -109,8 +118,13 @@ fun SettingsPanel(player: JuntosPlayer, onNotice: (String) -> Unit) {
         ) { current ->
             Column(Modifier.fillMaxWidth().heightIn(min = 160.dp).verticalScroll(rememberScrollState()).padding(top = 4.dp)) {
                 when (current) {
-                    Tab.Audio -> snapshot.audio.forEach { track ->
-                        SpringRow(track.label, onClick = { player.selectAudio(track.index) }, checked = track.selected)
+                    Tab.Audio -> {
+                        snapshot.audio.forEach { track ->
+                            SpringRow(track.label, onClick = { player.selectAudio(track.index) }, checked = track.selected)
+                        }
+                        Box(Modifier.padding(top = if (snapshot.audio.isEmpty()) 0.dp else 12.dp)) {
+                            SpringRow("Áudio estável", onClick = { player.setSteadyAudio(!snapshot.steadyAudio) }, checked = snapshot.steadyAudio)
+                        }
                     }
                     Tab.Subtitles -> {
                         SpringRow("Desligadas", onClick = { player.selectSubtitle(null) }, checked = snapshot.subtitles.none { it.selected })
@@ -132,10 +146,17 @@ fun SettingsPanel(player: JuntosPlayer, onNotice: (String) -> Unit) {
                             DelayControl(snapshot.subtitleDelayMs, onChange = player::setSubtitleDelay)
                         }
                     }
-                    Tab.Quality -> {
-                        SpringRow("Automática", onClick = { player.selectQuality(null) }, checked = snapshot.qualities.none { it.selected })
-                        snapshot.qualities.forEach { q ->
-                            SpringRow(q.label, onClick = { player.selectQuality(q.index) }, checked = q.selected)
+                    Tab.Video -> {
+                        if (snapshot.qualities.isNotEmpty()) {
+                            SectionLabel("Qualidade")
+                            SpringRow("Automática", onClick = { player.selectQuality(null) }, checked = snapshot.qualities.none { it.selected })
+                            snapshot.qualities.forEach { q ->
+                                SpringRow(q.label, onClick = { player.selectQuality(q.index) }, checked = q.selected)
+                            }
+                        }
+                        SectionLabel("Proporção")
+                        PictureAspect.entries.forEach { entry ->
+                            SpringRow(entry.label, onClick = { PictureAspects.choose(context, entry) }, checked = entry == aspect)
                         }
                     }
                 }

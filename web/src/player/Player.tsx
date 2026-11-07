@@ -18,7 +18,7 @@ import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
 import { expectedPositionMs } from './position'
 import { heading, inBox } from './safeHover'
-import { boostOf, canBoost, setBoost } from './audioBoost'
+import { boostOf, canBoost, setBoost, setSteady } from './audioBoost'
 import { MAX_LEVEL, snapLevel, VolumeSlider } from '../ui/VolumeSlider'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { plog } from './playerLog'
@@ -290,6 +290,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
   volumeOpenRef.current = volumeOpen
   const [volume, setVolume] = useState(1)
   const [boost, setBoostState] = useState(1)
+  const [steady, setSteadyState] = useState(false)
   const [muted, setMuted] = useState(false)
   const [feedback, setFeedback] = useState<{ id: number; node: ReactNode } | null>(null)
   const [unplayable, setUnplayable] = useState<{ cause: 'codec' | 'playback'; reason: string } | null>(null)
@@ -1081,6 +1082,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     }
   }, [aspect, videoRef])
 
+  const steadyAvailable = videoRef.current !== null && canBoost(videoRef.current)
   const settingGroups: SettingGroup[] = useMemo(() => {
     const groups: SettingGroup[] = [{
       id: 'subtitles',
@@ -1156,6 +1158,20 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
         ],
       })
     }
+    if (steadyAvailable) {
+      groups.push({
+        id: 'steady',
+        tab: 'audio',
+        label: t('room.steadyAudio'),
+        toggle: true,
+        current: steady ? 1 : 0,
+        onPick: () => {
+          const video = videoRef.current
+          if (video) setSteadyState(setSteady(video, !steady))
+        },
+        options: [{ value: 1, label: t('room.steadyAudio') }],
+      })
+    }
     groups.push({
       id: 'aspect',
       tab: 'video',
@@ -1169,7 +1185,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
       options: ASPECTS.map((entry, index) => ({ value: index, label: ASPECT_LABELS[entry] ? t(ASPECT_LABELS[entry]) : entry })),
     })
     return groups
-  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, aspect, t])
+  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, aspect, steadyAvailable, steady, videoRef, t])
 
   useEffect(() => { onSettings?.(settingGroups) }, [onSettings, settingGroups])
 

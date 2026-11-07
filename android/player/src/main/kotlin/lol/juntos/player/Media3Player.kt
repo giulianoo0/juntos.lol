@@ -137,7 +137,10 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
         }
     }
 
+    private val steady = SteadyAudio()
+
     init {
+        PictureAspects.load(context)
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
@@ -145,6 +148,9 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
             override fun onTracksChanged(tracks: Tracks) = indexTracks(tracks)
             override fun onTrackSelectionParametersChanged(parameters: TrackSelectionParameters) = publish()
             override fun onEvents(player: Player, events: Player.Events) = publish()
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                if (steady.on) steady.set(audioSessionId, true)
+            }
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 _videoSize.value = videoSize
             }
@@ -304,7 +310,13 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
         exo.trackSelectionParameters = params.build()
     }
 
+    override fun setSteadyAudio(on: Boolean) {
+        steady.set(exo.audioSessionId, on)
+        publish()
+    }
+
     override fun release() {
+        steady.release()
         released = true
         handler.removeCallbacks(tick)
         exo.release()
@@ -384,6 +396,7 @@ class Media3Player(context: Context, private val client: OkHttpClient = OkHttpCl
             droppedFrames = counters?.droppedBufferCount?.toLong() ?: 0,
             decodedFrames = counters?.frames?.toLong() ?: 0,
             subtitleDelayMs = delayMs,
+            steadyAudio = steady.on,
         )
     }
 

@@ -81,6 +81,7 @@ export const ptBR: Record<string, string> = {
   'room.aspectOriginal': 'Original',
   'room.aspectFill': 'Preencher',
   'room.aspectStretch': 'Esticar',
+  'room.steadyAudio': 'Áudio estável',
   'room.audio': 'Áudio',
   'room.subtitles': 'Legendas',
   'room.off': 'Desligadas',

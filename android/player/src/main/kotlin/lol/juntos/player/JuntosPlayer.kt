@@ -33,6 +33,8 @@ data class PlayerSnapshot(
     val decodedFrames: Long = 0,
     /** This viewer's shift of the subtitles: positive shows them later. */
     val subtitleDelayMs: Long = 0,
+    /** Áudio estável is on; false too where the device has no effect for it. */
+    val steadyAudio: Boolean = false,
 )
 
 /** The room's player. Positions are room time; [load] takes care of the region offset. */
@@ -55,6 +57,9 @@ interface JuntosPlayer : PlaybackTarget {
 
     /** Null is automatic. */
     fun selectQuality(index: Int?)
+
+    /** Áudio estável: dialogue and explosions brought closer together, for this viewer alone. */
+    fun setSteadyAudio(on: Boolean) = Unit
     fun release()
 }
 

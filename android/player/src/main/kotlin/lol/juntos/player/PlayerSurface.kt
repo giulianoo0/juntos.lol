@@ -7,14 +7,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -36,7 +38,7 @@ import lol.juntos.design.settle
 /** Where the video draws, letterboxed in black, with the subtitles on the picture. Any player but [Media3Player] draws only black. */
 @Composable
 fun PlayerSurface(player: JuntosPlayer, modifier: Modifier = Modifier, pictureInPicture: Boolean = false) {
-    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(modifier.background(Color.Black).clipToBounds(), contentAlignment = Alignment.Center) {
         if (player is Media3Player) Media3Surface(player, pictureInPicture)
     }
 }
@@ -45,16 +47,26 @@ fun PlayerSurface(player: JuntosPlayer, modifier: Modifier = Modifier, pictureIn
 private fun Media3Surface(player: Media3Player, pictureInPicture: Boolean) {
     val size by player.videoSize.collectAsState()
     val snapshot by player.snapshot.collectAsState()
-    val aspect = if (size.width > 0 && size.height > 0) size.width * size.pixelWidthHeightRatio / size.height else 16f / 9f
+    val chosen by PictureAspects.current.collectAsState()
+    val videoAspect = if (size.width > 0 && size.height > 0) size.width * size.pixelWidthHeightRatio / size.height else 16f / 9f
 
-    Box(Modifier.aspectRatio(aspect).testTag("player-video")) {
-        AndroidView(
-            factory = { context -> SurfaceView(context).also(player::attach) },
-            update = { it.keepScreenOn = snapshot.playing },
-            onRelease = player::detach,
-            modifier = Modifier.fillMaxSize(),
-        )
-        Subtitles(player, pictureInPicture)
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val box = maxWidth.value to maxHeight.value
+        val (frameWidth, frameHeight) = if (box.first > 0f && box.second > 0f) pictureFrame(chosen, box.first, box.second, videoAspect) else box
+        val width by animateDpAsState(frameWidth.dp, settle(), label = "picture-width")
+        val height by animateDpAsState(frameHeight.dp, settle(), label = "picture-height")
+        Box(Modifier.requiredSize(width, height).testTag("player-video")) {
+            AndroidView(
+                factory = { context -> SurfaceView(context).also(player::attach) },
+                update = { it.keepScreenOn = snapshot.playing },
+                onRelease = player::detach,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // On what shows of the picture: a filled one runs past the box.
+        Box(Modifier.size(minOf(width, maxWidth), minOf(height, maxHeight))) {
+            Subtitles(player, pictureInPicture)
+        }
     }
 }
 

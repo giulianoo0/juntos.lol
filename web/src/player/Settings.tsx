@@ -37,6 +37,8 @@ export interface SettingGroup {
   actions?: SettingAction[]
   /** What the closed row reads when no option matches the current value. */
   valueLabel?: string
+  /** One row that turns on and off: no heading, its option ticked while on. */
+  toggle?: boolean
   /** A control of its own beside the group's name, in place of the options. */
   panel?: ReactNode
 }
@@ -134,7 +136,7 @@ export const Settings = memo(function Settings({ groups, t, tipRoot }: { groups:
               ) : null}
               <MorphSize step={current} axis="height">
                 <div className={styles.view}>
-                  {inTab.map((group) => <Group key={group.id} group={group} headed={!group.panel && lists > 1} />)}
+                  {inTab.map((group) => <Group key={group.id} group={group} headed={!group.panel && !group.toggle && lists > 1} />)}
                 </div>
               </MorphSize>
             </div>
