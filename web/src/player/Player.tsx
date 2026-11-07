@@ -752,7 +752,6 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
   }, [coldWaitRef, requestPlay, videoRef])
 
   const notReadyRef = useRef(false)
-  const [opened, setOpened] = useState(false)
 
   useEffect(() => { catchUp() }, [catchUp, syncState, coldWait])
 
@@ -1165,7 +1164,6 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     currentTime,
     sealed: activeRegion !== null && !activeRegion.growing,
     gatedStart,
-    opening: !opened,
   })
   const bufferGate = !coldWait && holdsForBuffer({
     aheadSec: bufferAheadSec,
@@ -1183,7 +1181,6 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
   useEffect(() => {
     if (!(duration > 0)) return
     onWaitRef.current?.({ secondsLeft: bufferGate ? waitLeft : null, cold: coldWait })
-    if (!bufferGate && !coldWait) setOpened(true)
   }, [bufferGate, coldWait, duration, waitLeft])
   useEffect(() => {
     const at = resumeAtMsRef.current

@@ -8,7 +8,7 @@ import { SlotText } from '../ui/SlotText'
 import { Loading, Skeleton } from '../ui/Shimmer'
 import NumberFlow from '@number-flow/react'
 import { numbersAnimate } from '../engine'
-import { GATE_OPEN_SEC } from '../player/gate'
+import { GATE_BASE_SEC } from '../player/gate'
 
 /** What the player under the card is waiting on, once the room has media. */
 export interface OpeningWait {
@@ -102,7 +102,7 @@ export function UploadAvailability({
 
   const buffering = wait !== null && wait !== undefined
   const bufferLeft = buffering && !wait.cold ? wait.secondsLeft : null
-  const bufferPct = bufferLeft === null ? 0 : Math.max(0, Math.min(100, Math.round((1 - bufferLeft / GATE_OPEN_SEC) * 100)))
+  const bufferPct = bufferLeft === null ? 0 : Math.max(0, Math.min(100, Math.round((1 - bufferLeft / GATE_BASE_SEC) * 100)))
   const stageKey = !buffering ? label ?? 'waiting' : wait.cold ? 'cold' : 'buffer'
   const shownPct = buffering ? bufferPct : barPct
 
