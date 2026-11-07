@@ -21,7 +21,7 @@
 - compartilhamento de tela ao vivo por MoQ (Media over QUIC) através de um relay da Cloudflare, com o áudio da tela quando o navegador o oferece;
 - interface em português e inglês;
 - histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
-- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [juntos.lol/docs](https://juntos.lol/docs).
+- extensões com interface própria, de código aberto, cada uma na sua origem isolada, que entregam à sala um HLS ou um arquivo para tocar (ver [Extensões](#extensões)).
 
 ## Como funciona
 
@@ -46,7 +46,7 @@ flowchart LR
 O servidor não processa vídeo. Um arquivo local ou uma url custam CPU na máquina de quem abre a sala; um torrent custa CPU no ss-worker que já o baixa (ver abaixo):
 
 1. O navegador cria a sala com `POST /api/rooms` e reivindica o direito de produzir a mídia dela (`/client-media/claim`).
-2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local ou url de um plugin — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
+2. O [mediabunny](https://mediabunny.dev) lê a fonte — arquivo local, url ou o HLS que uma extensão entregou — copia o vídeo (H.264, HEVC, VP9, AV1), transcodifica o áudio para AAC e muxa CMAF/HLS em segmentos de 4 segundos.
 3. Cada segmento é enviado por `PUT` direto ao bucket, com uma URL assinada pelo servidor (`/client-media/presign`).
 4. A cada poucos segundos o navegador entrega as playlists (`/client-media/publish`). O servidor confirma no bucket que cada objeto nomeado existe antes de publicar, então um viewer nunca recebe uma URL que dá 404.
 5. A sala passa para `ready` no primeiro segmento confirmado; o remux continua por trás.
@@ -76,7 +76,7 @@ Um link do YouTube não toca por embed: o navegador não consegue nem resolver n
 3. O FFmpeg lê cada stream pela bridge de loopback do crate `ss-remux` (`crates/ss-remux/`, compartilhado pelo worker e pelo app); o `ss-youtube` (`crates/ss-youtube/`) busca o `googlevideo` em pedaços de 10 MiB pelo parâmetro `range=` da própria URL e guarda as bordas do arquivo em memória para os seeks; cada faixa de áudio é um `-i` separado. Legendas são publicadas inteiras em `/subtitles/fleet` antes do primeiro segmento.
 4. Seek fora do produzido: para a frota, o servidor segue a posição da sala como no torrent; para o jlocal, o próprio navegador do host orquestra (`POST /youtube/run` com a região seguinte, depois de mover a cerca em `POST /rooms/:id/client-media/run`).
 
-Na VPS o worker sai por um proxy (`YOUTUBE_PROXY`, o mesmo tipo do `PLUGIN_FETCH_PROXY`): o CDN recusa endereços de datacenter como robô. Playlists e vídeos acima de 1080p ficam de fora.
+Na VPS o worker sai por um proxy (`YOUTUBE_PROXY`, `http` ou `socks5`): o CDN recusa endereços de datacenter como robô. Playlists e vídeos acima de 1080p ficam de fora.
 
 #### Lives
 
@@ -87,6 +87,20 @@ Uma live não é preparada no bucket: não há timeline, seek nem pausa sincroni
 3. O TS entra no importador `moq-mux` e sai pelo `moq-native` para o relay, em `juntos/{sala}/{segredo}/live.hang`, no mesmo container e catálogo que o `@moq/watch` do site já lê.
 
 A sala fica `sourceKind: "live"` e o status segue o produtor: `ready` quando o stream está no relay (heartbeat do worker, ou `POST /api/rooms/:id/live/state` vindo do host no caso do jlocal), `error` com `live_ended` quando a live acaba. O espectador vê a live num canvas com o botão "Ir para o vivo", que reassina e cai no grupo mais novo do relay. Cada worker aceita `SS_WORKER_LIVE_SLOTS` lives ao mesmo tempo (padrão 2).
+
+### Extensões
+
+O site não tem catálogo próprio. Uma extensão é um app web pequeno, de código aberto num repositório público do GitHub, com interface própria (login no serviço dela, catálogo, busca) que roda no painel **Extensões** da sala e, quando a pessoa escolhe um vídeo, entrega ao juntos um HLS ou um arquivo por HTTPS. O navegador do host prepara essa fonte pelo mesmo pipeline de url; convidados não precisam da extensão.
+
+- **Isolamento.** Cada extensão roda no próprio subdomínio, `https://<sub>.santamagia.com`, servida pelo Worker `juntos-ext` (`extensions/host/`). O `sub` sai do id (`base32(sha256("juntos-ext:" + id))`, 16 caracteres), e o id é globalmente único no registro do servidor (`internal/extension/`). O juntos.lol a embute num iframe com `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"`, sem navegar o topo e sem permissões; o Worker monta a CSP de cada resposta a partir do `juntos.json` (rede, imagens e captcha só dos hosts declarados, `frame-ancestors` só o juntos) e não grava cookie. O token do serviço fica no `localStorage` da origem da extensão, fora do alcance do juntos.lol e das outras extensões.
+- **Protocolo.** Juntos e extensão só conversam por `postMessage`, no protocolo v1 (`web/src/extensions/protocol.ts` e o SDK `/_juntos/sdk.js`), validado dos dois lados: origem e janela conferidas, campos com tamanho máximo, URL de vídeo só `https:` dos hosts de mídia declarados, nada vira HTML.
+- **O que não protege.** A extensão vê o que a pessoa digita nela e escolhe o que tocar; roda sempre o HEAD do repositório, e código novo com os mesmos hosts entra sem perguntar (hosts novos pedem aprovação de novo). Por isso publicar é fechado (`EXTENSION_PUBLISHERS`) e o repositório precisa ser público e ter licença.
+- **Proxy de mídia.** Se o CDN do vídeo não manda CORS, o host lê por `https://<sub>.santamagia.com/_juntos/media?u=<url>`: só GET/HEAD, só hosts de `hosts.media`, repassa `Range` e reescreve as URIs das playlists.
+- **Instalar.** O painel começa vazio; a pessoa instala digitando o id, vê os hosts que a extensão vai alcançar e confirma.
+
+O rascunho completo — manifesto, SDK, protocolo, proxy, como escrever e testar uma extensão local, publicação e instalação — está em [`docs/extensoes/RASCUNHO.md`](docs/extensoes/RASCUNHO.md).
+
+Para rodar local: o servidor com `EXTENSION_BASE=localhost:8787 EXTENSION_SCHEME=http` (o Worker de desenvolvimento espera o juntos em `http://127.0.0.1:8090`, então `PORT=8090`) e o host com `cd extensions/host && npm ci && npm run dev` (`wrangler dev` em :8787). O Chrome resolve `*.localhost`, e cada `http://<sub>.localhost:8787` continua sendo uma origem própria.
 
 ### Sincronização e controle
 
@@ -191,12 +205,12 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `MOQ_SUBSCRIBE_TOKEN` | vazio | Sem a API: token fixo só com `subscribe` do relay único. |
 | `MOQ_BRIDGE_URL` | vazio (`/moq-bridge` no Compose) | Onde o WebKit assiste telas e lives. O cliente MoQ recusa o WebTransport de todo WebKit (o Safari trava sessões longas) e o relay da Cloudflare não fala WebSocket; o `ss-moq-bridge` aceita WebSocket e puxa os broadcasts do relay da sala por QUIC, só leitura. |
 | `MOQ_BRIDGE_SECRET` | vazio | Chave (32+ caracteres) que assina o ticket de cada viewer da ponte: a sala, o relay dela e a validade. O `ss-moq-bridge` recebe a mesma chave em `SS_MOQ_BRIDGE_SECRET` e só serve broadcasts da sala do ticket. |
+| `EXTENSION_BASE` | `santamagia.com` | Domínio sob o qual cada extensão tem o seu subdomínio, `<sub>.EXTENSION_BASE`. Em desenvolvimento, `localhost:8787`, onde o `wrangler dev` escuta. Vai ao site por `/api/config` (`extensionBase`). |
+| `EXTENSION_SCHEME` | `https` | `https` ou `http` (só para desenvolvimento local). Vai ao site como `extensionScheme`. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 
 `WORKER_LIVE_SLOTS` (padrão 2) vira `SS_WORKER_LIVE_SLOTS`, o número de lives do YouTube que um worker mantém no relay ao mesmo tempo. `YOUTUBE_PROXY` e `YOUTUBE_COOKIES` (opcionais) chegam ao worker como `SS_WORKER_YOUTUBE_PROXY` e `SS_WORKER_YOUTUBE_COOKIES`: o proxy `http`/`socks5` por onde o yt-dlp e a leitura do `googlevideo` saem (obrigatório numa VPS, que o YouTube bloqueia como robô) e um arquivo de cookies no formato Netscape para vídeos que exigem login.
-
-`PLUGIN_FETCH_PROXY` (opcional) é um proxy `http`, `https` ou `socks5` por onde saem as requisições que o servidor faz em nome dos plugins (`GET /api/plugins/fetch`). Serve para quando um addon recusa o endereço da própria instância — o Torrentio bloqueia faixas de datacenter — e a saída precisa vir de outro lugar. A resolução de nomes passa a acontecer no proxy, então a guarda contra endereços privados vale para a rede dele; a política de URL (só `https`, só nomes, nunca o próprio servidor, em cada redirect) continua aqui.
 
 ## Produção
 
@@ -245,7 +259,10 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 | `POST` | `/api/rooms/:id/subtitles` | Recebe legendas extraídas pelo navegador. |
 | `POST` | `/api/rooms/:id/screenshare/token` | Entrega a URL do relay MoQ com o token do papel do membro e o caminho do broadcast da sala. |
 | `POST` | `/api/rooms/:id/screenshare/live` | O controlador avisa que começou ou parou de publicar a tela. |
-| `GET` | `/api/plugins/fetch?url=` | Faz, em nome de um plugin, a requisição que o navegador não consegue fazer sem carimbar a própria origem. Só `https`, só nomes que resolvem para endereço público, corpo limitado, com sessão e cota por hora. |
+| `GET` | `/api/extensions/:id` | A extensão registrada com esse id: `id`, `name`, `sub`, `source` e `icon`. |
+| `GET` | `/api/extensions/host/:sub` | `{id, source}` do subdomínio, para o host de extensões; 404 se ninguém o tem. |
+| `POST` | `/api/extensions` | Registra o id do `juntos.json` de um repositório público e com licença do GitHub (`{"repo": "dono/repo"}`); só contas de `EXTENSION_PUBLISHERS`, com cota por hora. |
+| `GET` | `/api/extensions/:id/latest` | O sha do HEAD do repositório de uma extensão. |
 
 ## Persistência e segurança
 
@@ -271,6 +288,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 cmd/server/          entrada do servidor Go
 cmd/migrate-redis/   importação única das contas e workers do Redis para o Postgres
 internal/config/     configuração por ambiente
+internal/extension/  registro global de extensões: manifesto, subdomínio e leitura do GitHub
 internal/account/    contas, amigos, histórico e sessões no Postgres
 internal/db/         conexão e migrações SQL do Postgres
 internal/httpapi/    rotas HTTP, mídia, legendas e relay de tela
@@ -279,6 +297,7 @@ internal/objectstore/ bucket R2
 internal/room/       modelo, Redis e expiração
 internal/sync/       WebSocket, presença, chat e relógio
 web/src/             aplicação React/TypeScript
+extensions/host/     Worker que serve cada extensão no seu subdomínio, com o SDK e o proxy de mídia
 ```
 
 ## Contribuindo
