@@ -117,6 +117,7 @@ pub(crate) struct TorrentStreams {
     streams: DashMap<StreamId, StreamState>,
     // ss patch: a stream opened, closed or seeked.
     changed: Notify,
+    bytes_per_sec: DashMap<usize, u64>,
 }
 
 impl TorrentStreams {
@@ -156,9 +157,20 @@ impl TorrentStreams {
         any
     }
 
+    fn set_bytes_per_sec(&self, file_id: usize, bytes_per_sec: u64) {
+        self.bytes_per_sec.insert(file_id, bytes_per_sec);
+        for mut s in self.streams.iter_mut() {
+            if s.file_id == file_id {
+                s.bytes_per_sec = bytes_per_sec;
+            }
+        }
+    }
+
     /// Pieces to try first for a peer, and whether the selection must stop at
-    /// them. While a stream is critical, that is only the critical windows,
-    /// unless the peer has none of the missing pieces in them.
+    /// them. While a stream is critical, that is only the critical windows
+    /// and the piece right after each, so a peer that finds the window full
+    /// keeps the pipe going next to it. Unless the peer has none of the
+    /// missing pieces in the windows.
     pub(crate) fn next_pieces(
         &self,
         lengths: &Lengths,
@@ -166,12 +178,15 @@ impl TorrentStreams {
         peer_has: impl Fn(ValidPieceIndex) -> bool,
     ) -> (Vec<ValidPieceIndex>, bool) {
         self.settle_critical(lengths, &have);
-        let mut critical: Vec<_> = self
-            .streams
-            .iter()
-            .filter(|s| s.critical)
-            .map(|s| s.critical_queue(lengths))
-            .collect();
+        let mut critical = Vec::new();
+        let mut after = Vec::new();
+        for s in self.streams.iter().filter(|s| s.critical) {
+            critical.push(s.critical_queue(lengths));
+            after.extend(s.critical_queue(lengths).last().and_then(|p| {
+                let next = lengths.validate_piece_index(p.get() + 1)?;
+                (lengths.piece_offset(next) < s.file_abs_offset + s.file_len).then_some(next)
+            }));
+        }
         if !critical.is_empty() {
             use rand::seq::SliceRandom;
             critical.shuffle(&mut rand::rng());
@@ -182,6 +197,11 @@ impl TorrentStreams {
                 }
             }
             if pieces.iter().any(|p| !have(*p) && peer_has(*p)) {
+                for p in after {
+                    if !pieces.contains(&p) {
+                        pieces.push(p);
+                    }
+                }
                 return (pieces, true);
             }
         }
@@ -450,6 +470,14 @@ impl ManagedTorrent {
         true
     }
 
+    /// Media bitrate of a file in bytes per second, once known. It sizes the
+    /// window fetched first after a stream of it opens, seeks or blocks
+    /// (1.5 s of media, at least 2 MiB), for open streams and later ones.
+    pub fn set_stream_bytes_per_sec(&self, file_id: usize, bytes_per_sec: u64) -> anyhow::Result<()> {
+        self.streams()?.set_bytes_per_sec(file_id, bytes_per_sec);
+        Ok(())
+    }
+
     // Peers idle on the old selection pick up a new critical window now
     // instead of on their 5 s timer.
     fn notify_new_pieces(&self) {
@@ -501,7 +529,7 @@ impl ManagedTorrent {
                 position: 0,
                 waker: None,
                 critical: true,
-                bytes_per_sec: 0,
+                bytes_per_sec: streams.bytes_per_sec.get(&file_id).map(|b| *b).unwrap_or(0),
                 file_len: fd_len,
                 file_abs_offset: fd_offset,
             },
@@ -536,15 +564,6 @@ impl FileStream {
 
     pub fn len(&self) -> u64 {
         self.file_len
-    }
-
-    /// Media bitrate in bytes per second, when known. It sizes the window
-    /// fetched first after opening, seeking or blocking (1.5 s of media,
-    /// at least 2 MiB). 0 keeps the 2 MiB default.
-    pub fn set_bytes_per_sec(&mut self, bytes_per_sec: u64) {
-        if let Some(mut s) = self.streams.streams.get_mut(&self.stream_id) {
-            s.bytes_per_sec = bytes_per_sec;
-        }
     }
 }
 
@@ -589,17 +608,21 @@ mod tests {
         let (s, l) = streams(MIB, &[(10 * MIB, true), (100 * MIB, false)]);
         let (pieces, critical) = s.next_pieces(&l, |_| false, |_| true);
         assert!(critical);
-        assert_eq!(ids(&pieces), vec![10, 11]);
+        assert_eq!(ids(&pieces), vec![10, 11, 12]);
+        assert_eq!(pieces.last().map(|p| p.get()), Some(12));
     }
 
     #[test]
     fn window_grows_with_bitrate_and_covers_at_least_a_piece() {
         let (s, l) = streams(MIB, &[(0, true)]);
-        s.streams.get_mut(&0).unwrap().bytes_per_sec = 4 * MIB;
-        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), (0..6).collect::<Vec<_>>());
+        s.set_bytes_per_sec(0, 4 * MIB);
+        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), (0..7).collect::<Vec<_>>());
 
         let (s, l) = streams(8 * MIB, &[(MIB, true)]);
-        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), vec![0]);
+        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), vec![0, 1]);
+
+        let (s, l) = streams(MIB, &[(255 * MIB, true)]);
+        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), vec![255]);
     }
 
     #[test]
@@ -642,7 +665,7 @@ mod tests {
         assert!(s.mark_critical(0));
         assert!(!s.mark_critical(0));
         s.streams.get_mut(&0).unwrap().position = 50 * MIB;
-        assert_eq!(ids(&s.next_pieces(&l, |p| p.get() == 0, |_| true).0), vec![50, 51]);
+        assert_eq!(ids(&s.next_pieces(&l, |p| p.get() == 0, |_| true).0), vec![50, 51, 52]);
 
         s.settle_critical(&l, |_| true);
         assert!(s.register_waker(0, std::task::Waker::noop().clone()));
