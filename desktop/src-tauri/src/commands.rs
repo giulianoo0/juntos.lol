@@ -26,6 +26,7 @@ pub struct AppState {
     pub data_dir: std::path::PathBuf,
     pub tools: Tools,
     pub producer: Arc<Producer>,
+    pub proxy: Arc<crate::proxy::MediaProxy>,
     torrents: OnceCell<Torrents>,
     resolver: OnceCell<Option<Arc<youtube::Resolver>>>,
     uploads: Mutex<HashMap<String, (String, Arc<Upload>)>>,
@@ -39,6 +40,7 @@ impl AppState {
             data_dir,
             tools,
             producer,
+            proxy: Arc::new(crate::proxy::MediaProxy::new()),
             torrents: OnceCell::new(),
             resolver: OnceCell::new(),
             uploads: Mutex::new(HashMap::new()),
@@ -74,8 +76,9 @@ fn err(error: impl std::fmt::Display) -> String {
 }
 
 #[tauri::command]
-pub fn app_hello(app: tauri::AppHandle, protocol_version: u32, min_protocol_version: Option<u32>) -> site::Hello {
-    site::hello(min_protocol_version.unwrap_or(protocol_version), &app.package_info().version.to_string(), cfg!(windows))
+pub fn app_hello(app: tauri::AppHandle, state: State<'_, AppState>, protocol_version: u32, min_protocol_version: Option<u32>) -> site::Hello {
+    let version = app.package_info().version.to_string();
+    site::hello(min_protocol_version.unwrap_or(protocol_version), &version, cfg!(windows), state.proxy.key())
 }
 
 #[tauri::command]

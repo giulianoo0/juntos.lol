@@ -3,6 +3,7 @@ pub mod commands;
 pub mod hls;
 pub mod local;
 pub mod pip;
+pub mod proxy;
 pub mod screen;
 pub mod serve;
 pub mod site;
@@ -92,7 +93,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(serve::SCHEME, |ctx, request, responder| {
-            let root: PathBuf = ctx.app_handle().state::<AppState>().producer.root().to_path_buf();
+            let state = ctx.app_handle().state::<AppState>();
+            if request.uri().path() == "/_proxy" {
+                let proxy = state.proxy.clone();
+                tauri::async_runtime::spawn(async move { responder.respond(proxy.handle(&request).await) });
+                return;
+            }
+            let root: PathBuf = state.producer.root().to_path_buf();
             let path = request.uri().path().to_string();
             let range = request.headers().get(tauri::http::header::RANGE).cloned();
             tauri::async_runtime::spawn_blocking(move || responder.respond(serve::serve(&root, &path, range.as_ref())));

@@ -25,7 +25,10 @@ pub fn site_origin(env: Option<&str>) -> Url {
 const SIGN_IN_HOSTS: &[&str] = &["discord.com", "www.discord.com"];
 /// Frames the site embeds: macOS asks about a frame's navigation as it asks
 /// about the window's, so the human check would otherwise open in the browser.
-const FRAME_HOSTS: &[&str] = &["challenges.cloudflare.com"];
+const FRAME_HOSTS: &[&str] = &["challenges.cloudflare.com", "hcaptcha.com"];
+/// Domains whose subdomains are frames too: each extension runs on its own
+/// `<sub>.santamagia.com`, and hCaptcha (which an extension may embed) on its own.
+const FRAME_DOMAINS: &[&str] = &["santamagia.com", "hcaptcha.com"];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Navigation {
@@ -51,7 +54,12 @@ pub fn navigation(target: &Url, site: &Url) -> Navigation {
     if target.origin() == site.origin() || target.host_str() == Some("tauri.localhost") {
         return Navigation::Allow;
     }
-    if target.scheme() == "https" && target.host_str().is_some_and(|host| SIGN_IN_HOSTS.contains(&host) || FRAME_HOSTS.contains(&host)) {
+    let framed = |host: &str| {
+        SIGN_IN_HOSTS.contains(&host)
+            || FRAME_HOSTS.contains(&host)
+            || FRAME_DOMAINS.iter().any(|domain| host.strip_suffix(domain).is_some_and(|rest| rest.ends_with('.') && rest.len() > 1))
+    };
+    if target.scheme() == "https" && target.host_str().is_some_and(framed) {
         return Navigation::Allow;
     }
     Navigation::External
@@ -80,10 +88,13 @@ pub struct Hello {
     pub update_required: bool,
     pub features: Vec<&'static str>,
     pub media_root: String,
+    /// Opens `<media_root>/_proxy`; only the site, over IPC, ever learns it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_proxy_key: Option<String>,
 }
 
 /// `site_min` is the oldest protocol the site still talks to.
-pub fn hello(site_min: u32, version: &str, windows: bool) -> Hello {
+pub fn hello(site_min: u32, version: &str, windows: bool, proxy_key: &str) -> Hello {
     let compatible = site_min <= PROTOCOL_VERSION;
     Hello {
         protocol_version: PROTOCOL_VERSION,
@@ -93,12 +104,13 @@ pub fn hello(site_min: u32, version: &str, windows: bool) -> Hello {
         features: if !compatible {
             Vec::new()
         } else if cfg!(any(target_os = "macos", windows)) {
-            vec!["localSource", "titleBar", "screenCapture"]
+            vec!["localSource", "titleBar", "screenCapture", "mediaProxy"]
         } else {
-            vec!["localSource"]
+            vec!["localSource", "mediaProxy"]
         },
         // WebView2 maps custom schemes to http://<scheme>.localhost.
         media_root: if windows { "http://juntos-media.localhost".into() } else { "juntos-media://localhost".into() },
+        media_proxy_key: compatible.then(|| proxy_key.to_string()),
     }
 }
 
@@ -108,27 +120,30 @@ mod tests {
 
     #[test]
     fn hello_serves_any_site_that_accepts_this_protocol() {
-        let ok = hello(PROTOCOL_VERSION, "0.1.0", false);
+        let ok = hello(PROTOCOL_VERSION, "0.1.0", false, "k");
         assert!(ok.compatible);
         assert!(!ok.update_required);
         assert_eq!(ok.features[0], "localSource");
         assert_eq!(ok.features.contains(&"titleBar"), cfg!(any(target_os = "macos", windows)));
         assert_eq!(ok.features.contains(&"screenCapture"), cfg!(any(target_os = "macos", windows)));
         assert_eq!(ok.media_root, "juntos-media://localhost");
-        assert!(hello(PROTOCOL_VERSION - 1, "0.1.0", false).compatible);
+        assert!(ok.features.contains(&"mediaProxy"));
+        assert_eq!(ok.media_proxy_key.as_deref(), Some("k"));
+        assert!(hello(PROTOCOL_VERSION - 1, "0.1.0", false, "k").compatible);
     }
 
     #[test]
     fn a_site_past_this_protocol_requires_the_update() {
-        let old = hello(PROTOCOL_VERSION + 1, "0.1.0", false);
+        let old = hello(PROTOCOL_VERSION + 1, "0.1.0", false, "k");
         assert!(!old.compatible);
         assert!(old.update_required);
         assert!(old.features.is_empty());
+        assert!(old.media_proxy_key.is_none());
     }
 
     #[test]
     fn windows_reaches_the_cache_over_http() {
-        assert_eq!(hello(PROTOCOL_VERSION, "0.1.0", true).media_root, "http://juntos-media.localhost");
+        assert_eq!(hello(PROTOCOL_VERSION, "0.1.0", true, "k").media_root, "http://juntos-media.localhost");
     }
 
     #[test]
@@ -173,6 +188,17 @@ mod tests {
         assert_eq!(at("https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv/abc"), Navigation::Allow);
         assert_eq!(at("about:srcdoc"), Navigation::Allow);
         assert_eq!(at("http://challenges.cloudflare.com/"), Navigation::External);
+    }
+
+    #[test]
+    fn an_extension_and_its_captcha_load_in_their_frames() {
+        let site = site_origin(None);
+        let at = |s: &str| navigation(&Url::parse(s).unwrap(), &site);
+        assert_eq!(at("https://pbosap5oxsmmteeo.santamagia.com/@abc/dist/index.html"), Navigation::Allow);
+        assert_eq!(at("https://newassets.hcaptcha.com/captcha/v1/abc/static/hcaptcha.html"), Navigation::Allow);
+        assert_eq!(at("https://santamagia.com/"), Navigation::External);
+        assert_eq!(at("https://evilsantamagia.com/"), Navigation::External);
+        assert_eq!(at("http://pbosap5oxsmmteeo.santamagia.com/"), Navigation::External);
     }
 
     #[test]
