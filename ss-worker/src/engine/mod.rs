@@ -573,6 +573,12 @@ impl Engine {
         tracing::info!(infohash, "last lease gone; dropped to pins");
     }
 
+    pub fn set_bitrate(&self, infohash: &str, index: usize, bytes_per_sec: u64) {
+        if let Some(handle) = self.handle(infohash) {
+            let _ = handle.set_stream_bytes_per_sec(index, bytes_per_sec);
+        }
+    }
+
     pub fn file_size(&self, infohash: &str, index: usize) -> anyhow::Result<u64> {
         let handle = self.handle(infohash).context("unknown torrent")?;
         let guard = handle.metadata.load();

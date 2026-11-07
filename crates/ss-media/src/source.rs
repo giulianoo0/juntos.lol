@@ -12,6 +12,8 @@ pub trait ByteSource: Send + Sync {
     /// A sequential reader starting at `position`. `reader` tags the caller
     /// in logs and lets a source order its work per consumer.
     async fn open(&self, reader: &str, position: u64) -> anyhow::Result<Box<dyn SourceReader>>;
+    /// The media's bytes per second, once a probe knows its duration.
+    fn set_bitrate(&self, _bytes_per_sec: u64) {}
 }
 
 #[async_trait]

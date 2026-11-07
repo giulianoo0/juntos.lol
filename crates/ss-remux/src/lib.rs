@@ -358,7 +358,9 @@ impl Remux {
                         self.keyframe_before(&bridge, &bytes, spec),
                     );
                     bridge.revoke(&probe_cap, "");
-                    (vec![bytes], plan::plan_streams(&probed?)?, Vec::new(), keyframe)
+                    let plan = plan::plan_streams(&probed?)?;
+                    bytes.set_bitrate(bytes.size().saturating_mul(1000) / plan.duration_ms);
+                    (vec![bytes], plan, Vec::new(), keyframe)
                 }
                 RunInput::Youtube(request) => {
                     let resolver = self.youtube.clone().context("youtube_disabled")?;

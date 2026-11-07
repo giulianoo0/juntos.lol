@@ -51,6 +51,9 @@ pub trait TorrentFiles: Send + Sync {
         index: usize,
         position: u64,
     ) -> anyhow::Result<Box<dyn SourceReader>>;
+    /// Sizes the window the swarm fetches first after a reader opens, seeks
+    /// or blocks.
+    fn set_bitrate(&self, _infohash: &str, _index: usize, _bytes_per_sec: u64) {}
 }
 
 /// One file of a torrent as the remux reads it, reopened by the bridge at
@@ -81,5 +84,9 @@ impl ByteSource for TorrentSource {
 
     async fn open(&self, reader: &str, position: u64) -> anyhow::Result<Box<dyn SourceReader>> {
         self.files.open_playhead(&self.infohash, reader, self.file_index, position).await
+    }
+
+    fn set_bitrate(&self, bytes_per_sec: u64) {
+        self.files.set_bitrate(&self.infohash, self.file_index, bytes_per_sec);
     }
 }

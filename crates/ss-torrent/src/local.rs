@@ -152,6 +152,12 @@ impl TorrentFiles for Local {
         stream.seek(SeekFrom::Start(position)).await?;
         Ok(Box::new(FocusReader { stream: Box::new(stream), focus, kind, position }))
     }
+
+    fn set_bitrate(&self, infohash: &str, index: usize, bytes_per_sec: u64) {
+        if let Ok(handle) = self.handle(infohash) {
+            let _ = handle.set_stream_bytes_per_sec(index, bytes_per_sec);
+        }
+    }
 }
 
 /// The bridge tags readers per run; the window keys them per role, so a new

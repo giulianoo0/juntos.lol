@@ -24,6 +24,10 @@ impl TorrentFiles for Engine {
         let inner = self.open(infohash, reader, index, position, Prio::Playhead).await?;
         Ok(Box::new(TorrentReader(inner)))
     }
+
+    fn set_bitrate(&self, infohash: &str, index: usize, bytes_per_sec: u64) {
+        Engine::set_bitrate(self, infohash, index, bytes_per_sec)
+    }
 }
 
 struct TorrentReader(Reader);
