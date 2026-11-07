@@ -29,12 +29,20 @@ type StreamId = usize;
 // 32 mb lookahead by default.
 const PER_STREAM_BUF_DEFAULT: u64 = 64 * 1024 * 1024;
 
+// ss patch: right after a stream opens, seeks or blocks, piece selection is
+// narrowed to max(2 MiB, 1.5 s of media) ahead of it until half of that has
+// arrived, so the swarm converges on the playhead instead of spreading over
+// the 64 MiB read-ahead. Same idea as torrentplayer's critical window.
+const CRITICAL_MIN_BYTES: u64 = 2 * 1024 * 1024;
+
 struct StreamState {
     file_id: usize,
     file_len: u64,
     file_abs_offset: u64,
     position: u64,
     waker: Option<Waker>,
+    critical: bool,
+    bytes_per_sec: u64,
 }
 
 impl StreamState {
@@ -43,12 +51,63 @@ impl StreamState {
     }
 
     fn queue<'a>(&self, lengths: &'a Lengths) -> impl Iterator<Item = ValidPieceIndex> + use<'a> {
+        self.pieces_ahead(lengths, PER_STREAM_BUF_DEFAULT)
+    }
+
+    fn critical_len(&self) -> u64 {
+        CRITICAL_MIN_BYTES.max(self.bytes_per_sec.saturating_mul(3) / 2)
+    }
+
+    fn critical_queue<'a>(
+        &self,
+        lengths: &'a Lengths,
+    ) -> impl Iterator<Item = ValidPieceIndex> + use<'a> {
+        self.pieces_ahead(lengths, self.critical_len())
+    }
+
+    // Half of the critical window is contiguous on disk from the position.
+    fn critical_reached(&self, lengths: &Lengths, have: &impl Fn(ValidPieceIndex) -> bool) -> bool {
         let start = self.file_abs_offset + self.position;
-        let end = (start + PER_STREAM_BUF_DEFAULT).min(self.file_abs_offset + self.file_len);
+        let end = (start + self.critical_len()).min(self.file_abs_offset + self.file_len);
+        let mut reached = start;
+        for piece in self.pieces_ahead(lengths, end - start) {
+            if !have(piece) {
+                break;
+            }
+            reached = lengths.piece_offset(piece) + lengths.piece_length(piece) as u64;
+        }
+        reached.min(end) - start >= (end - start) / 2
+    }
+
+    fn pieces_ahead<'a>(
+        &self,
+        lengths: &'a Lengths,
+        len: u64,
+    ) -> impl Iterator<Item = ValidPieceIndex> + use<'a> {
+        let start = self.file_abs_offset + self.position;
+        let end = (start + len).min(self.file_abs_offset + self.file_len);
         let dpl = lengths.default_piece_length();
         let start_id = (start / dpl as u64).try_into().unwrap();
         let end_id = end.div_ceil(dpl as u64).try_into().unwrap();
         (start_id..end_id).filter_map(|i| lengths.validate_piece_index(i))
+    }
+}
+
+struct Interleave<I> {
+    all: VecDeque<I>,
+}
+
+impl<I: Iterator<Item = ValidPieceIndex>> Iterator for Interleave<I> {
+    type Item = ValidPieceIndex;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(mut it) = self.all.pop_front() {
+            if let Some(piece) = it.next() {
+                self.all.push_back(it);
+                return Some(piece);
+            }
+        }
+        None
     }
 }
 
@@ -65,11 +124,67 @@ impl TorrentStreams {
         self.next_stream_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    fn mark_critical(&self, stream_id: StreamId) {
+        if let Some(mut s) = self.streams.get_mut(&stream_id) {
+            s.critical = true;
+        }
+    }
+
     fn register_waker(&self, stream_id: StreamId, waker: Waker) {
         if let Some(mut s) = self.streams.get_mut(&stream_id) {
             let vm = s.value_mut();
             vm.waker = Some(waker);
+            vm.critical = true;
         }
+    }
+
+    /// Ends the critical phase of streams that got half their window.
+    /// Returns true if any did, so idle peers can widen their selection.
+    pub(crate) fn settle_critical(
+        &self,
+        lengths: &Lengths,
+        have: impl Fn(ValidPieceIndex) -> bool,
+    ) -> bool {
+        let mut settled = false;
+        for mut s in self.streams.iter_mut() {
+            if s.critical && s.critical_reached(lengths, &have) {
+                s.critical = false;
+                settled = true;
+            }
+        }
+        settled
+    }
+
+    /// Pieces to try first for a peer, and whether the selection must stop at
+    /// them. While a stream is critical, that is only the critical windows,
+    /// unless the peer has none of the missing pieces in them.
+    pub(crate) fn next_pieces(
+        &self,
+        lengths: &Lengths,
+        have: impl Fn(ValidPieceIndex) -> bool,
+        peer_has: impl Fn(ValidPieceIndex) -> bool,
+    ) -> (Vec<ValidPieceIndex>, bool) {
+        self.settle_critical(lengths, &have);
+        let mut critical: Vec<_> = self
+            .streams
+            .iter()
+            .filter(|s| s.critical)
+            .map(|s| s.critical_queue(lengths))
+            .collect();
+        if !critical.is_empty() {
+            use rand::seq::SliceRandom;
+            critical.shuffle(&mut rand::rng());
+            let mut pieces = Vec::new();
+            for p in (Interleave { all: critical.into() }) {
+                if !pieces.contains(&p) {
+                    pieces.push(p);
+                }
+            }
+            if pieces.iter().any(|p| !have(*p) && peer_has(*p)) {
+                return (pieces, true);
+            }
+        }
+        (self.iter_next_pieces(lengths).collect(), false)
     }
 
     // Interleave 1st, 2nd etc pieces from each active stream in turn until they get 1/10th of the file .
@@ -77,24 +192,6 @@ impl TorrentStreams {
         &'a self,
         lengths: &'a Lengths,
     ) -> impl Iterator<Item = ValidPieceIndex> + 'a {
-        struct Interleave<I> {
-            all: VecDeque<I>,
-        }
-
-        impl<I: Iterator<Item = ValidPieceIndex>> Iterator for Interleave<I> {
-            type Item = ValidPieceIndex;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                while let Some(mut it) = self.all.pop_front() {
-                    if let Some(piece) = it.next() {
-                        self.all.push_back(it);
-                        return Some(piece);
-                    }
-                }
-                None
-            }
-        }
-
         let mut all: Vec<_> = self.streams.iter().map(|s| s.queue(lengths)).collect();
 
         // Shuffle to decrease determinism and make queueing fairer.
@@ -389,6 +486,8 @@ impl ManagedTorrent {
                 file_id,
                 position: 0,
                 waker: None,
+                critical: true,
+                bytes_per_sec: 0,
                 file_len: fd_len,
                 file_abs_offset: fd_offset,
             },
@@ -422,5 +521,106 @@ impl FileStream {
 
     pub fn len(&self) -> u64 {
         self.file_len
+    }
+
+    /// Media bitrate in bytes per second, when known. It sizes the window
+    /// fetched first after opening, seeking or blocking (1.5 s of media,
+    /// at least 2 MiB). 0 keeps the 2 MiB default.
+    pub fn set_bytes_per_sec(&mut self, bytes_per_sec: u64) {
+        if let Some(mut s) = self.streams.streams.get_mut(&self.stream_id) {
+            s.bytes_per_sec = bytes_per_sec;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIB: u64 = 1024 * 1024;
+
+    fn streams(piece_len: u64, positions: &[(u64, bool)]) -> (TorrentStreams, Lengths) {
+        let lengths = Lengths::new(256 * MIB, piece_len as u32).unwrap();
+        let streams = TorrentStreams::default();
+        for &(position, critical) in positions {
+            streams.streams.insert(
+                streams.next_id(),
+                StreamState {
+                    file_id: 0,
+                    file_len: 256 * MIB,
+                    file_abs_offset: 0,
+                    position,
+                    waker: None,
+                    critical,
+                    bytes_per_sec: 0,
+                },
+            );
+        }
+        (streams, lengths)
+    }
+
+    fn ids(pieces: &[ValidPieceIndex]) -> Vec<u32> {
+        let mut v: Vec<_> = pieces.iter().map(|p| p.get()).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn critical_stream_narrows_selection_to_its_window() {
+        let (s, l) = streams(MIB, &[(10 * MIB, true), (100 * MIB, false)]);
+        let (pieces, critical) = s.next_pieces(&l, |_| false, |_| true);
+        assert!(critical);
+        assert_eq!(ids(&pieces), vec![10, 11]);
+    }
+
+    #[test]
+    fn window_grows_with_bitrate_and_covers_at_least_a_piece() {
+        let (s, l) = streams(MIB, &[(0, true)]);
+        s.streams.get_mut(&0).unwrap().bytes_per_sec = 4 * MIB;
+        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), (0..6).collect::<Vec<_>>());
+
+        let (s, l) = streams(8 * MIB, &[(MIB, true)]);
+        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), vec![0]);
+    }
+
+    #[test]
+    fn critical_ends_once_half_the_window_arrived() {
+        let (s, l) = streams(MIB, &[(10 * MIB + MIB / 2, true)]);
+        assert!(!s.settle_critical(&l, |p| p.get() == 10));
+        assert!(s.settle_critical(&l, |p| p.get() == 10 || p.get() == 11));
+
+        let (pieces, critical) = s.next_pieces(&l, |_| false, |_| true);
+        assert!(!critical);
+        assert_eq!(pieces.len(), 65);
+        assert_eq!(pieces.first().map(|p| p.get()), Some(10));
+    }
+
+    #[test]
+    fn large_piece_window_ends_only_with_the_piece() {
+        let (s, l) = streams(8 * MIB, &[(MIB, true)]);
+        assert!(!s.settle_critical(&l, |_| false));
+        assert!(s.settle_critical(&l, |p| p.get() == 0));
+    }
+
+    #[test]
+    fn peer_without_critical_pieces_keeps_normal_selection() {
+        let (s, l) = streams(MIB, &[(10 * MIB, true)]);
+        let (pieces, critical) = s.next_pieces(&l, |_| false, |p| p.get() > 11);
+        assert!(!critical);
+        assert_eq!(pieces.len(), 64);
+        assert!(s.streams.get(&0).unwrap().critical);
+    }
+
+    #[test]
+    fn seek_and_block_reenter_critical() {
+        let (s, l) = streams(MIB, &[(0, true)]);
+        assert!(s.settle_critical(&l, |p| p.get() == 0));
+        s.mark_critical(0);
+        s.streams.get_mut(&0).unwrap().position = 50 * MIB;
+        assert_eq!(ids(&s.next_pieces(&l, |p| p.get() == 0, |_| true).0), vec![50, 51]);
+
+        s.settle_critical(&l, |_| true);
+        s.register_waker(0, std::task::Waker::noop().clone());
+        assert!(s.next_pieces(&l, |_| false, |_| true).1);
     }
 }

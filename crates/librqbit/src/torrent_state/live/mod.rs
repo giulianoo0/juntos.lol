@@ -977,6 +977,12 @@ impl TorrentStateLive {
 
         self.streams
             .wake_streams_on_piece_completed(id, self.metadata.lengths());
+        if self
+            .streams
+            .settle_critical(self.metadata.lengths(), |p| pieces.chunks().is_piece_have(p))
+        {
+            self.new_pieces_notify.notify_waiters();
+        }
 
         locked.unflushed_bitv_bytes += self.metadata.lengths().piece_length(id) as u64;
         if locked.unflushed_bitv_bytes >= FLUSH_BITV_EVERY_BYTES {
@@ -1651,11 +1657,18 @@ impl PeerHandler {
                     ..
                 } = &mut **g;
                 let pieces = pieces.as_mut().ok_or(Error::ChunkTrackerEmpty)?;
+                let (priority_pieces, critical) = self.state.streams.next_pieces(
+                    &self.state.lengths,
+                    |p| pieces.chunks().is_piece_have(p),
+                    |p| bf.get(p.get() as usize).map(|v| *v) == Some(true),
+                );
+                // A critical window keeps the peer off the rest of the file.
+                let no_files = FilePriorities::new();
                 let result = pieces.acquire_piece(AcquireRequest {
                     peer: self.addr,
                     peer_avg_time: self.counters.average_piece_download_time(),
-                    priority_pieces: self.state.streams.iter_next_pieces(&self.state.lengths),
-                    file_priorities,
+                    priority_pieces: priority_pieces.into_iter(),
+                    file_priorities: if critical { &no_files } else { &*file_priorities },
                     file_infos: &self.state.metadata.file_infos,
                     peer_has_piece: |p| bf.get(p.get() as usize).map(|v| *v) == Some(true),
                     can_steal: |p| {
