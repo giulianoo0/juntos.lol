@@ -194,6 +194,8 @@ export async function openExtension(page, { manifest, origin }, ready) {
     await until('installed', async () => (await row.isVisible()) || (await iframe.isVisible()), 30_000)
   }
   if (await row.isVisible()) await row.click()
+  // The frame of a panel just closed lingers while it animates out.
+  await until('one extension frame', async () => (await page.locator(`iframe[src^="${origin}/"]`).count()) === 1, 10_000).catch(() => {})
   await extensionFrame(page, origin).locator(ready).first().waitFor({ timeout: 30_000 })
 }
 
