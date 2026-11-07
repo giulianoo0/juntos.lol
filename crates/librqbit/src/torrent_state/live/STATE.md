@@ -237,3 +237,11 @@ request that the piece is still its own (`should_request_chunk`), so a peer
 that lost a piece stops at the next chunk. Requests unanswered for 8 s (a later
 one was answered, or the peer went silent) are cancelled and the peer gives the
 piece back (`release_piece_from`), keeping the chunks already written.
+
+(ss patch) Each peer gets requests for about 0.5 s of its recent rate (EMA of
+200 ms samples, idle time left out), between 4 and its reqq cap of 128 chunks;
+32 until the first sample. When a stream opens, closes or seeks, and the
+readers' windows have pieces nobody is fetching, the pieces peers hold far from
+every reader are handed back. Their requests already out are left to arrive and
+are written; a piece completed that way is hash-checked like any other
+(`take_completed`).

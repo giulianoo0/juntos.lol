@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     io::SeekFrom,
+    ops::Range,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -15,7 +16,7 @@ use dashmap::DashMap;
 use librqbit_core::lengths::{CurrentPiece, Lengths, ValidPieceIndex};
 use tokio::{
     io::{AsyncRead, AsyncSeek},
-    sync::OwnedSemaphorePermit,
+    sync::{Notify, OwnedSemaphorePermit},
 };
 use tracing::{debug, trace};
 
@@ -55,6 +56,8 @@ impl StreamState {
 pub(crate) struct TorrentStreams {
     next_stream_id: AtomicUsize,
     streams: DashMap<StreamId, StreamState>,
+    // ss patch: a stream opened, closed or seeked.
+    changed: Notify,
 }
 
 impl TorrentStreams {
@@ -122,7 +125,24 @@ impl TorrentStreams {
 
     fn drop_stream(&self, stream_id: StreamId) -> Option<StreamState> {
         debug!(stream_id, "dropping stream");
-        self.streams.remove(&stream_id).map(|s| s.1)
+        let s = self.streams.remove(&stream_id).map(|s| s.1);
+        self.changed.notify_one();
+        s
+    }
+
+    pub(crate) async fn wait_changed(&self) {
+        self.changed.notified().await
+    }
+
+    /// ss patch: absolute byte range each stream reads ahead of its position.
+    pub(crate) fn reader_windows(&self) -> Vec<Range<u64>> {
+        self.streams
+            .iter()
+            .map(|s| {
+                let start = s.file_abs_offset + s.position;
+                start..(start + PER_STREAM_BUF_DEFAULT).min(s.file_abs_offset + s.file_len)
+            })
+            .collect()
     }
 
     pub(crate) fn streamed_file_ids(&self) -> impl Iterator<Item = usize> + '_ {
@@ -262,7 +282,11 @@ impl AsyncSeek for FileStream {
             ));
         }
 
+        let old_pos = self.position;
         self.as_mut().set_position(map_io_err!(new_pos.try_into())?);
+        if self.position != old_pos {
+            self.streams.changed.notify_one();
+        }
         debug!(stream_id = self.stream_id, position = self.position, "seek");
         Ok(())
     }
@@ -369,6 +393,7 @@ impl ManagedTorrent {
                 file_abs_offset: fd_offset,
             },
         );
+        streams.changed.notify_one();
 
         debug!(stream_id = s.stream_id, file_id, "started stream");
 

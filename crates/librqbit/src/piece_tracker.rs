@@ -364,6 +364,14 @@ impl PieceTracker {
         Some(inflight.started.elapsed())
     }
 
+    /// ss patch: the last chunk of a piece came in. It leaves the flight and
+    /// the queue, also when it was handed back while its last requests were
+    /// still out. The time in flight is None in that case.
+    pub fn take_completed(&mut self, piece: ValidPieceIndex) -> Option<Duration> {
+        self.chunks.reserve_needed_piece(piece);
+        self.take_inflight(piece)
+    }
+
     /// Mark piece as downloaded after successful hash verification.
     pub fn mark_piece_hash_ok(&mut self, piece: ValidPieceIndex) {
         self.chunks.mark_piece_downloaded(piece);
@@ -1201,6 +1209,31 @@ mod tests {
         assert!(!tracker.is_inflight(p0));
         assert!(matches!(acquire_as(&mut tracker, &files, peer(2), &[]), AcquireResult::Reserved(p) if p == p0));
         assert_eq!(tracker.chunks().missing_chunks(p0), vec![false, false, true, true]);
+    }
+
+    #[test]
+    fn a_handed_back_piece_whose_last_chunk_comes_in_leaves_the_queue() {
+        let (mut tracker, files) = multi_chunk_tracker(4);
+        acquire_as(&mut tracker, &files, peer(1), &[]);
+        for c in 0..3 {
+            deliver(&mut tracker, peer(1), 0, c);
+        }
+        let p0 = tracker.chunks().get_lengths().validate_piece_index(0).unwrap();
+        assert!(tracker.release_piece_from(p0, peer(1)));
+        assert!(matches!(acquire_as(&mut tracker, &files, peer(2), &[]), AcquireResult::Reserved(p) if p == p0));
+
+        let data = vec![0u8; CHUNK as usize];
+        let last = Piece::from_data(0, 3 * CHUNK, &data);
+        assert!(matches!(tracker.mark_chunk_downloaded(peer(1), &last), Some(ChunkMarkingResult::Completed)));
+        assert!(tracker.take_completed(p0).is_some());
+        assert_eq!(tracker.should_request_chunk(peer(2), &chunk(&tracker, 0, 3)), None);
+
+        let other = acquire_as(&mut tracker, &files, peer(3), &[]);
+        assert!(matches!(other, AcquireResult::Reserved(p) if p != p0), "{other:?}");
+        tracker.release_piece_from(p0, peer(2));
+        assert!(tracker.take_completed(p0).is_none());
+        let again = acquire_as(&mut tracker, &files, peer(4), &[]);
+        assert!(matches!(again, AcquireResult::Reserved(p) if p != p0), "{again:?}");
     }
 
     #[test]

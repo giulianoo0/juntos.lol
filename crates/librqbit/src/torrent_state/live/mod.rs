@@ -338,6 +338,27 @@ impl TorrentStateLive {
             format!("[{}]upload_scheduler", state.shared.id),
             state.clone().task_upload_scheduler(ratelimit_upload_rx),
         );
+
+        state.spawn(
+            debug_span!(parent: state.shared.span.clone(), "far_piece_release"),
+            format!("[{}]far_piece_release", state.shared.id),
+            {
+                let state = Arc::downgrade(&state);
+                async move {
+                    loop {
+                        let Some(streams) = state.upgrade().map(|s| s.streams.clone()) else {
+                            return Ok(());
+                        };
+                        streams.wait_changed().await;
+                        tokio::time::sleep(SEEK_SETTLE).await;
+                        let Some(state) = state.upgrade() else {
+                            return Ok(());
+                        };
+                        state.release_pieces_far_from_readers();
+                    }
+                }
+            },
+        );
         Ok(state)
     }
 
@@ -877,6 +898,63 @@ impl TorrentStateLive {
             )
     }
 
+    /// ss patch: once readers moved (seek, stream opened or closed) and their
+    /// windows have pieces nobody is fetching, pieces far from every reader
+    /// are handed back with the chunks they have, so peers move on to the new
+    /// position instead of finishing the old one. Requests already out are
+    /// not cancelled: with the window sized to the peer's rate they are a
+    /// fraction of a second, and many peers send the data anyway.
+    fn release_pieces_far_from_readers(&self) {
+        let readers = self.streams.reader_windows();
+        if readers.is_empty() {
+            return;
+        }
+        {
+            let g = self.lock_read("release_far_pieces_needed");
+            let Ok(pieces) = g.get_pieces() else {
+                return;
+            };
+            let wanted = self
+                .streams
+                .iter_next_pieces(&self.lengths)
+                .any(|p| !pieces.chunks().is_piece_have(p) && !pieces.is_inflight(p));
+            if !wanted {
+                return;
+            }
+        }
+
+        let addrs: Vec<PeerHandle> = self.peers.states.iter().map(|e| *e.key()).collect();
+        let mut released = 0;
+        for addr in addrs {
+            // Peer lock, then state lock, as the requester and stealers take them.
+            released += self
+                .peers
+                .with_live_mut(addr, "release_far_pieces", |live| {
+                    let far = pieces_far_from_readers(
+                        &self.lengths,
+                        live.inflight_requests().map(|r| r.piece_index),
+                        &readers,
+                    );
+                    if far.is_empty() {
+                        return 0;
+                    }
+                    let mut g = self.lock_write("release_far_pieces");
+                    let Ok(tracker) = g.get_pieces_mut() else {
+                        return 0;
+                    };
+                    for piece in &far {
+                        tracker.release_piece_from(*piece, addr);
+                    }
+                    debug!(peer = ?addr, pieces = ?far, "handed back pieces far from every reader");
+                    far.len()
+                })
+                .unwrap_or(0);
+        }
+        if released > 0 {
+            self.new_pieces_notify.notify_waiters();
+        }
+    }
+
     fn on_piece_completed(&self, id: ValidPieceIndex) -> anyhow::Result<()> {
         if let Err(e) = self.files.on_piece_completed(id) {
             debug!(?id, "file storage errored in on_piece_completed(): {e:#}");
@@ -1040,9 +1118,23 @@ const DEFAULT_PEER_REQUEST_WINDOW: usize = 128;
 // its piece handed back.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
+// ss patch: a peer gets requests for about this much of its recent rate, so a
+// slow peer does not sit on seconds of queue in front of a new piece.
+const PEER_REQUEST_QUEUE_TIME: Duration = Duration::from_millis(500);
+const MIN_PEER_REQUEST_WINDOW: usize = 4;
+const INITIAL_PEER_REQUEST_WINDOW: usize = 32;
+const PEER_RATE_SAMPLE: Duration = Duration::from_millis(200);
+
+// ss patch: after a seek settles, pieces far from every reader are handed back.
+const SEEK_SETTLE: Duration = Duration::from_millis(200);
+const NEAR_READER_BEHIND: u64 = 4 * 1024 * 1024;
+const NEAR_READER_AHEAD: u64 = 16 * 1024 * 1024;
+
 struct PeerFlowControl {
     i_am_choked: bool,
+    // Upper bound, from the peer's reqq.
     request_window: usize,
+    rate: PeerRate,
 }
 
 impl Default for PeerFlowControl {
@@ -1050,8 +1142,87 @@ impl Default for PeerFlowControl {
         Self {
             i_am_choked: true,
             request_window: DEFAULT_PEER_REQUEST_WINDOW,
+            rate: PeerRate::new(Instant::now()),
         }
     }
+}
+
+impl PeerFlowControl {
+    fn window(&self) -> usize {
+        request_window_for_rate(self.rate.bytes_per_sec, self.request_window)
+    }
+}
+
+/// ss patch: the peer's download rate as an EMA of short samples. Time with
+/// nothing asked of the peer is left out, so an idle peer keeps its rate.
+struct PeerRate {
+    since: Instant,
+    last_bytes_at: Instant,
+    bytes: u64,
+    bytes_per_sec: Option<f64>,
+}
+
+impl PeerRate {
+    fn new(now: Instant) -> Self {
+        Self {
+            since: now,
+            last_bytes_at: now,
+            bytes: 0,
+            bytes_per_sec: None,
+        }
+    }
+
+    fn on_bytes(&mut self, len: u64, now: Instant) {
+        self.bytes += len;
+        self.last_bytes_at = now;
+        let elapsed = now.saturating_duration_since(self.since);
+        if elapsed < PEER_RATE_SAMPLE {
+            return;
+        }
+        let sample = self.bytes as f64 / elapsed.as_secs_f64();
+        self.bytes_per_sec = Some(match self.bytes_per_sec {
+            Some(r) => (r + sample) / 2.,
+            None => sample,
+        });
+        self.since = now;
+        self.bytes = 0;
+    }
+
+    // The peer had nothing to answer since its last chunk until now.
+    fn on_idle_end(&mut self, now: Instant) {
+        let idle_from = self.last_bytes_at.max(self.since);
+        self.since += now.saturating_duration_since(idle_from);
+    }
+}
+
+fn request_window_for_rate(bytes_per_sec: Option<f64>, max: usize) -> usize {
+    let min = MIN_PEER_REQUEST_WINDOW.min(max);
+    let Some(rate) = bytes_per_sec else {
+        return INITIAL_PEER_REQUEST_WINDOW.clamp(min, max);
+    };
+    let chunks = rate * PEER_REQUEST_QUEUE_TIME.as_secs_f64() / CHUNK_SIZE as f64;
+    (chunks.ceil() as usize).clamp(min, max)
+}
+
+/// ss patch: of the pieces a peer has requests out for, those outside every
+/// reader's window and its margins.
+fn pieces_far_from_readers(
+    lengths: &Lengths,
+    pieces: impl Iterator<Item = ValidPieceIndex>,
+    readers: &[std::ops::Range<u64>],
+) -> Vec<ValidPieceIndex> {
+    let mut far: Vec<_> = pieces
+        .filter(|p| {
+            let start = lengths.piece_offset(*p);
+            let end = start + lengths.piece_length(*p) as u64;
+            !readers.iter().any(|r| {
+                start < r.end + NEAR_READER_AHEAD && end > r.start.saturating_sub(NEAR_READER_BEHIND)
+            })
+        })
+        .collect();
+    far.sort_unstable_by_key(|p| p.get());
+    far.dedup();
+    far
 }
 
 // All peer state that would never be used by other actors should pe put here.
@@ -1830,7 +2001,7 @@ impl PeerHandler {
                 // the stealer takes, so a steal either sees this request and
                 // cancels it after it went out, or this sees the steal and stops.
                 enum Outcome {
-                    Sent,
+                    Sent { was_idle: bool },
                     AlreadyHave,
                     AlreadyRequested,
                     NotOurs,
@@ -1846,16 +2017,22 @@ impl PeerHandler {
                             Some(false) => return Outcome::AlreadyHave,
                             Some(true) => {}
                         }
+                        let was_idle = live.requested_inflight_count() == 0;
                         if !live.add_inflight_request(chunk) {
                             return Outcome::AlreadyRequested;
                         }
                         match live.tx.send(WriterRequest::Message(Message::Request(request))) {
-                            Ok(()) => Outcome::Sent,
+                            Ok(()) => Outcome::Sent { was_idle },
                             Err(_) => Outcome::Closed,
                         }
                     });
                 match outcome {
-                    Some(Outcome::Sent | Outcome::AlreadyHave) => {}
+                    Some(Outcome::Sent { was_idle: true }) => {
+                        self.lock_flow_control("peer rate")
+                            .rate
+                            .on_idle_end(Instant::now());
+                    }
+                    Some(Outcome::Sent { was_idle: false } | Outcome::AlreadyHave) => {}
                     Some(Outcome::NotOurs) => {
                         debug!("piece {} is no longer ours, stop requesting it", next);
                         break;
@@ -1894,7 +2071,11 @@ impl PeerHandler {
 
     fn on_i_am_unchoked(&self) {
         trace!("we are unchoked");
-        self.lock_flow_control("i_am_choked = false").i_am_choked = false;
+        {
+            let mut flow = self.lock_flow_control("i_am_choked = false");
+            flow.i_am_choked = false;
+            flow.rate.on_idle_end(Instant::now());
+        }
         self.notify_request_slots_changed();
     }
 
@@ -1920,6 +2101,9 @@ impl PeerHandler {
             .fetched_bytes
             .fetch_add(piece.len() as u64, Ordering::Relaxed);
         self.counters.fetched_chunks.fetch_add(1, Ordering::Relaxed);
+        self.lock_flow_control("peer rate")
+            .rate
+            .on_bytes(piece.len() as u64, Instant::now());
 
         let should_process = self
             .state
@@ -2026,7 +2210,7 @@ impl PeerHandler {
                     Some(ChunkMarkingResult::Completed) => {
                         trace!("piece={} done, will write and checksum", piece.index);
                         // Remove from inflight to prevent others from stealing it during hash check.
-                        g.get_pieces_mut()?.take_inflight(chunk_info.piece_index)
+                        Some(g.get_pieces_mut()?.take_completed(chunk_info.piece_index))
                     }
                     Some(ChunkMarkingResult::PreviouslyCompleted) => {
                         // TODO: we might need to send cancellations here.
@@ -2082,14 +2266,18 @@ impl PeerHandler {
                         .stats
                         .have_bytes
                         .fetch_add(piece_len, Ordering::Relaxed);
-                    #[allow(clippy::cast_possible_truncation)]
-                    state.stats.total_piece_download_ms.fetch_add(
-                        full_piece_download_time.as_millis() as u64,
-                        Ordering::Relaxed,
-                    );
+                    // ss patch: None for a piece handed back before its last
+                    // chunk came in; it has no download time of its own.
+                    if let Some(full_piece_download_time) = full_piece_download_time {
+                        #[allow(clippy::cast_possible_truncation)]
+                        state.stats.total_piece_download_ms.fetch_add(
+                            full_piece_download_time.as_millis() as u64,
+                            Ordering::Relaxed,
+                        );
 
-                    // Per-peer piece counters.
-                    counters.on_piece_completed(piece_len, full_piece_download_time);
+                        // Per-peer piece counters.
+                        counters.on_piece_completed(piece_len, full_piece_download_time);
+                    }
                     state.peers.reset_peer_backoff(addr);
 
                     trace!(piece = index, "successfully downloaded and verified");
@@ -2190,7 +2378,7 @@ impl PeerHandler {
     fn can_send_request(&self) -> bool {
         let (i_am_choked, request_window) = {
             let flow = self.lock_flow_control("can_send_request");
-            (flow.i_am_choked, flow.request_window)
+            (flow.i_am_choked, flow.window())
         };
 
         if i_am_choked {
@@ -2228,4 +2416,60 @@ fn format_peer_client_name(value: &ByteBuf<'_>) -> Option<String> {
     }
 
     Some(client_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KIB: f64 = 1024.;
+    const MIB: u64 = 1024 * 1024;
+
+    #[test]
+    fn a_peer_gets_about_half_a_second_of_its_rate_in_requests() {
+        assert_eq!(request_window_for_rate(None, 128), INITIAL_PEER_REQUEST_WINDOW);
+        assert_eq!(request_window_for_rate(Some(20. * KIB), 128), MIN_PEER_REQUEST_WINDOW);
+        assert_eq!(request_window_for_rate(Some(512. * KIB), 128), 16);
+        assert_eq!(request_window_for_rate(Some(8. * 1024. * KIB), 128), 128);
+        assert_eq!(request_window_for_rate(Some(8. * 1024. * KIB), 64), 64);
+        assert_eq!(request_window_for_rate(None, 2), 2);
+    }
+
+    #[test]
+    fn the_rate_follows_recent_samples() {
+        let t0 = Instant::now();
+        let mut rate = PeerRate::new(t0);
+        rate.on_bytes(100 * 1024, t0 + PEER_RATE_SAMPLE / 2);
+        assert_eq!(rate.bytes_per_sec, None);
+        rate.on_bytes(100 * 1024, t0 + PEER_RATE_SAMPLE);
+        let first = rate.bytes_per_sec.unwrap();
+        assert!((first - 1000. * KIB).abs() < 1., "{first}");
+
+        rate.on_bytes(0, t0 + PEER_RATE_SAMPLE * 2);
+        rate.on_bytes(0, t0 + PEER_RATE_SAMPLE * 3);
+        assert!(rate.bytes_per_sec.unwrap() < first / 3.);
+    }
+
+    #[test]
+    fn time_with_nothing_asked_does_not_count_against_the_rate() {
+        let t0 = Instant::now();
+        let mut rate = PeerRate::new(t0);
+        rate.on_bytes(100 * 1024, t0 + PEER_RATE_SAMPLE / 2);
+        let resumed = t0 + Duration::from_secs(10);
+        rate.on_idle_end(resumed);
+        rate.on_bytes(100 * 1024, resumed + PEER_RATE_SAMPLE / 2);
+        let r = rate.bytes_per_sec.unwrap();
+        assert!((r - 1000. * KIB).abs() < 1., "{r}");
+    }
+
+    #[test]
+    fn only_pieces_far_from_every_reader_are_handed_back() {
+        let lengths = Lengths::new(512 * MIB, MIB as u32).unwrap();
+        let p = |i| lengths.validate_piece_index(i).unwrap();
+        let readers = [100 * MIB..164 * MIB, 400 * MIB..410 * MIB];
+        let inflight = [10, 95, 96, 150, 150, 179, 180, 200, 399, 425, 426];
+        let far = pieces_far_from_readers(&lengths, inflight.iter().map(|i| p(*i)), &readers);
+        let far: Vec<u32> = far.iter().map(|p| p.get()).collect();
+        assert_eq!(far, vec![10, 95, 180, 200, 426]);
+    }
 }
