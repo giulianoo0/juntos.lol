@@ -4,7 +4,7 @@ import { installJuntos } from '../src/sdk'
 
 const ORIGINS = ['https://juntos.lol', 'http://localhost:5173']
 const theme = { mode: 'light' as const, vars: { '--bg': '#fff', '--accent': 'rgb(1 2 3)' } }
-const init = { juntos: 1, type: 'init', theme, locale: 'pt-BR', canPlay: true }
+const init = { juntos: 1, type: 'init', theme, locale: 'pt-BR', canPlay: true, app: true }
 
 function setup(ancestor?: string) {
   const posted: { data: unknown; origin: string }[] = []
@@ -38,6 +38,15 @@ describe('SDK', () => {
     expect(cb).toHaveBeenCalledWith(init)
     expect(document.documentElement.style.getPropertyValue('--bg')).toBe('#fff')
     expect(document.documentElement.dataset.theme).toBe('light')
+  })
+
+  it('um juntos sem app no init vale como fora do app', () => {
+    const { sdk, send } = setup()
+    const cb = vi.fn()
+    sdk.onInit(cb)
+    const { app: _app, ...old } = init
+    send(old)
+    expect(cb).toHaveBeenCalledWith({ ...old, app: false })
   })
 
   it('entrega o init a quem se inscreve depois', () => {

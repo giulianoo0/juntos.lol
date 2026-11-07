@@ -51,8 +51,9 @@ import type { ChatEntry, LocalCopy, Member, PresenceEvent, RoomInfo, RoomWaiting
 const ExtensionsPanel = lazy(() => import('../extensions/ExtensionsPanel').then((module) => ({ default: module.ExtensionsPanel })))
 import { refreshSource, type LoadedExtension } from '../extensions/bridge'
 import { freshInstalled, installedExtension } from '../extensions/installed'
-import type { ExtPlay } from '../extensions/protocol'
-import { relayFor } from '../extensions/relay'
+import { needsApp, torrentMagnet, type ExtPlay } from '../extensions/protocol'
+import { appReads, appRelay, relayFor } from '../extensions/relay'
+import { importExtensionSubtitles } from '../extensions/subtitles'
 import { extensionPlace, loadPublicConfig, usePublicConfig } from '../publicConfig'
 import { UnsupportedMediaError } from '../pipeline/unsupported'
 import { WorkerProbes } from '../components/WorkerProbes'
@@ -488,8 +489,9 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           if (!extension) throw new Error('the extension changed what it reaches and waits for approval in Extensões')
           const fresh = await refreshSource(extension, place, source.ref, t.language)
           if (!fresh) throw new Error('the extension gave no source back')
+          if (fresh.kind !== 'hls' && fresh.kind !== 'file') throw new Error('the extension answered with another kind of source')
           const title = source.title ?? source.fileName
-          const opened = await openExtensionSource(fresh, { relay: relayFor(extension, place), hosts: extension.manifest.hosts.media })
+          const opened = await openExtensionSource(fresh, { relay: appRelay(fresh.headers) ?? relayFor(extension, place), hosts: extension.manifest.hosts.media })
           const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', title)
           startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: source.ref, title, source: fresh }, opened)
           return
@@ -718,7 +720,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     })
   }
 
-  const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession) => {
+  const chooseTorrent = (file: TorrentVideoFile, session: TorrentSession, opened?: (mediaGeneration: number) => void) => {
     void swapSource(async () => {
       let next
       try {
@@ -728,6 +730,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         throw error
       }
       startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
+      opened?.(next.mediaGeneration)
     })
   }
 
@@ -756,12 +759,42 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   // The extension's url is signed for seconds: the playlist is opened before
   // anything else, the room's switch included.
   const playFromExtension = (extension: LoadedExtension, play: ExtPlay) => {
-    setExtensionsOpen(false)
+    const { source } = play
     const title = play.subtitle ? `${play.title} · ${play.subtitle}` : play.title
+    const onlyInApp = source.kind === 'youtube' ? !isDesktop() : (source.kind === 'hls' || source.kind === 'file') && needsApp(source) && !appReads()
+    setExtensionsOpen(false)
+    if (onlyInApp) {
+      toast(t('extensions.needsApp'))
+      openDownloadApp()
+      return
+    }
+    if (source.kind === 'youtube') {
+      void swapSource(async () => {
+        const session = await openYoutube(`https://www.youtube.com/watch?v=${source.id}`)
+        chooseYoutube(session)
+      })
+      return
+    }
+    if (source.kind === 'torrent') {
+      void swapSource(async () => {
+        const session = await openTorrent(torrentMagnet(source, play.title))
+        const file = (source.fileIdx !== undefined ? session.files.find((each) => each.index === source.fileIdx) : undefined)
+          ?? [...session.files].sort((a, b) => b.size - a.size)[0]
+        if (!file) {
+          session.destroy()
+          throw new Error('the torrent has no video')
+        }
+        await session.select(file.path)
+        const { subtitles } = play
+        chooseTorrent(file, session, subtitles ? (generation) => void importExtensionSubtitles(room.id, sync.memberId, sync.capability, generation, subtitles) : undefined)
+      })
+      return
+    }
     void swapSource(async () => {
-      const opened = await openExtensionSource(play.source, { relay: relayFor(extension, place), hosts: extension.manifest.hosts.media })
+      const opened = await openExtensionSource(source, { relay: appRelay(source.headers) ?? relayFor(extension, place), hosts: extension.manifest.hosts.media })
       const next = await openMedia('upload', title)
-      startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: play.ref, title, source: play.source }, opened)
+      startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: play.ref, title, source }, opened)
+      if (play.subtitles) void importExtensionSubtitles(room.id, sync.memberId, sync.capability, next.mediaGeneration, play.subtitles)
     })
   }
   const closeExtensions = useCallback(() => setExtensionsOpen(false), [])

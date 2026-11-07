@@ -2,13 +2,26 @@ export interface ThemeTokens {
   mode: 'dark' | 'light'
   vars: Record<string, string>
 }
-export type ExtSource = { kind: 'hls' | 'file'; url: string }
+/** Headers the CDN insists on: `user-agent`, `referer`, `origin`. A source with them, in http or with a port, plays only in the app. */
+export type ExtHeaders = Partial<Record<'user-agent' | 'referer' | 'origin', string>>
+export type ExtSource =
+  | { kind: 'hls' | 'file'; url: string; headers?: ExtHeaders }
+  | { kind: 'torrent'; infoHash: string; fileIdx?: number; trackers?: string[] }
+  | { kind: 'youtube'; id: string }
+export interface ExtSubtitle {
+  url: string
+  /** ISO 639-2 (`por`, `eng`) or a BCP 47 tag. */
+  lang: string
+  label?: string
+}
 export interface InitMessage {
   juntos: 1
   type: 'init'
   theme: ThemeTokens
   locale: string
   canPlay: boolean
+  /** The page is the desktop app, which plays what only it reads. */
+  app: boolean
 }
 export interface PlayRequest {
   title: string
@@ -16,6 +29,7 @@ export interface PlayRequest {
   poster?: string
   ref: string
   source: ExtSource
+  subtitles?: ExtSubtitle[]
 }
 
 type SdkWindow = Pick<Window, 'parent' | 'document' | 'addEventListener'> & {
@@ -70,7 +84,7 @@ export function installJuntos(win: SdkWindow, origins: string[]) {
     if (parentOrigin && e.origin !== parentOrigin) return
     if (d.type === 'init' && isTheme(d.theme) && typeof d.locale === 'string' && typeof d.canPlay === 'boolean') {
       parentOrigin = e.origin
-      init = { juntos: 1, type: 'init', theme: d.theme, locale: d.locale, canPlay: d.canPlay }
+      init = { juntos: 1, type: 'init', theme: d.theme, locale: d.locale, canPlay: d.canPlay, app: d.app === true }
       applyTheme(init.theme)
       for (const cb of initCbs) cb(init)
     } else if (d.type === 'theme' && isTheme(d.theme)) {

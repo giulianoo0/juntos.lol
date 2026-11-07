@@ -1,5 +1,6 @@
 import type { MediaRelay } from '../pipeline/hlsInput'
-import { extensionOrigin, type ExtensionPlace } from './protocol'
+import { settledDesktop, type DesktopApp } from '../platform'
+import { extensionOrigin, type ExtHeaders, type ExtensionPlace } from './protocol'
 
 /**
  * The extension's media proxy, for a CDN that sends no CORS. Each url it
@@ -31,4 +32,29 @@ export function extensionRelay(sub: string, place?: ExtensionPlace, get: typeof 
 export function relayFor(extension: { sub: string; manifest: { hosts: { media: readonly string[] } } }, place?: ExtensionPlace): MediaRelay | undefined {
   if (extension.manifest.hosts.media.includes('*')) return undefined
   return extensionRelay(extension.sub, place)
+}
+
+function base64url(text: string): string {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/**
+ * The desktop app's media proxy: reads on the person's own network, any
+ * scheme the source came with, with the headers the CDN wants. Undefined in
+ * a browser or an app that does not have it.
+ */
+export function appRelay(headers?: ExtHeaders, app: DesktopApp | null = settledDesktop()): MediaRelay | undefined {
+  if (!app?.mediaProxyKey || !app.features.includes('mediaProxy')) return undefined
+  const prefix = `${app.mediaRoot}/_proxy?`
+  const key = encodeURIComponent(app.mediaProxyKey)
+  const sent = headers && Object.keys(headers).length > 0 ? `&h=${base64url(JSON.stringify(headers))}` : ''
+  return {
+    via: async (url) => `${prefix}u=${encodeURIComponent(url)}&k=${key}${sent}`,
+    owns: (url) => url.startsWith(prefix),
+  }
+}
+
+/** Whether this page can play what only the app reads. */
+export function appReads(): boolean {
+  return appRelay() !== undefined
 }

@@ -341,11 +341,11 @@ Ele define `window.juntos` (congelado; não é redefinido se já existir):
 
 | Método | O que faz |
 | --- | --- |
-| `juntos.onInit(cb)` | `cb({ juntos: 1, type: 'init', theme, locale, canPlay })` quando o juntos responde ao `ready`. Se o `init` já chegou, chama na hora. |
+| `juntos.onInit(cb)` | `cb({ juntos: 1, type: 'init', theme, locale, canPlay, app })` quando o juntos responde ao `ready`. Se o `init` já chegou, chama na hora. |
 | `juntos.onTheme(cb)` | `cb(theme)` quando o tema do juntos muda (claro/escuro). |
 | `juntos.onRefresh(cb)` | `cb(ref) → Promise<{kind, url} \| null>`: devolve uma fonte nova para um `ref` dado antes. Só um callback (o último vale). |
 | `juntos.ready()` | Avisa que a extensão está pronta. O juntos só manda `init` (e `refresh`) depois disso. |
-| `juntos.play(p)` | Pede para tocar: `{ title, subtitle?, poster?, ref, source: { kind: 'hls' \| 'file', url } }`. |
+| `juntos.play(p)` | Pede para tocar: `{ title, subtitle?, poster?, ref, source, subtitles? }` (fontes na seção 7). |
 | `juntos.close()` | Fecha o painel. |
 | `juntos.toast(text)` | Mostra um aviso curto no juntos. |
 
@@ -372,9 +372,14 @@ Tipos para TypeScript:
 
 ```ts
 interface ThemeTokens { mode: 'dark' | 'light'; vars: Record<string, string> }
-type ExtSource = { kind: 'hls' | 'file'; url: string }
-interface InitMessage { theme: ThemeTokens; locale: string; canPlay: boolean }
-interface PlayRequest { title: string; subtitle?: string; poster?: string; ref: string; source: ExtSource }
+type ExtHeaders = Partial<Record<'user-agent' | 'referer' | 'origin', string>>
+type ExtSource =
+  | { kind: 'hls' | 'file'; url: string; headers?: ExtHeaders }
+  | { kind: 'torrent'; infoHash: string; fileIdx?: number; trackers?: string[] }
+  | { kind: 'youtube'; id: string }
+interface ExtSubtitle { url: string; lang: string; label?: string }
+interface InitMessage { theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean }
+interface PlayRequest { title: string; subtitle?: string; poster?: string; ref: string; source: ExtSource; subtitles?: ExtSubtitle[] }
 interface Juntos {
   onInit(cb: (init: InitMessage) => void): void
   onTheme(cb: (theme: ThemeTokens) => void): void
@@ -397,7 +402,7 @@ direto precisa pôr.
 ### juntos → extensão
 
 ```ts
-{ juntos: 1, type: 'init', theme: ThemeTokens, locale: string, canPlay: boolean }
+{ juntos: 1, type: 'init', theme: ThemeTokens, locale: string, canPlay: boolean, app: boolean }
 { juntos: 1, type: 'theme', theme: ThemeTokens }
 { juntos: 1, type: 'refresh', nonce: string, ref: string }
 ```
@@ -407,13 +412,15 @@ direto precisa pôr.
 - `canPlay` diz se quem abriu pode trocar a mídia da sala. Com `false`, um
   `play` é ignorado. (Hoje o painel só abre para quem pode, então na prática
   vem `true`.)
+- `app` diz se o juntos está no app desktop, que toca também o que só ele lê
+  (seção 7). Fora dele, marque essas fontes e não ofereça tocar.
 - `refresh` só é mandado ao iframe oculto da retomada.
 
 ### extensão → juntos
 
 ```ts
 { juntos: 1, type: 'ready' }
-{ juntos: 1, type: 'play', title: string, subtitle?: string, poster?: string, ref: string, source: ExtSource }
+{ juntos: 1, type: 'play', title: string, subtitle?: string, poster?: string, ref: string, source: ExtSource, subtitles?: ExtSubtitle[] }
 { juntos: 1, type: 'refreshed', nonce: string, source: ExtSource | null }
 { juntos: 1, type: 'close' }
 { juntos: 1, type: 'toast', text: string }
@@ -425,9 +432,15 @@ Validação no juntos (qualquer falha descarta a mensagem inteira):
 | --- | --- |
 | `title`, `subtitle`, `text` | string até 300 caracteres. |
 | `ref`, `nonce` | string até 128 caracteres. |
-| `source.kind` | `hls` ou `file`. |
-| `source.url` | até 2048 caracteres; `https:`, sem porta, sem usuário/senha; host em `hosts.media`. |
-| `poster` | mesma regra de URL, host em `hosts.images`. |
+| `source.kind` | `hls`, `file`, `torrent` ou `youtube`. |
+| `source.url` | até 2048 caracteres; `https:` ou `http:`, sem usuário/senha; host em `hosts.media`; nunca `localhost`, IP de rede local ou IPv6 literal. `http:` e porta tocam só no app. |
+| `source.headers` | opcional; só `user-agent`, `referer` e `origin` (qualquer caixa, sem repetir), cada um até 512 caracteres sem quebra de linha. Toca só no app. |
+| `source.infoHash` | 40 caracteres hexadecimais (guardado em minúsculas). |
+| `source.fileIdx` | opcional; inteiro de 0 a 9999, o índice do arquivo no torrent. |
+| `source.trackers` | opcional; até 20 URLs `udp:`, `http:` ou `https:` de até 300 caracteres, fora da rede local. |
+| `source.id` | id do YouTube, 11 caracteres `[A-Za-z0-9_-]`. |
+| `subtitles` | opcional; até 16 `{ url, lang, label? }`: `url` na regra do `poster` mas com `hosts.media`; `lang` de 2 a 16 caracteres `[A-Za-z0-9-]`; `label` até 64. |
+| `poster` | `https:`, sem porta nem usuário/senha, host em `hosts.images`. |
 | mensagem e `source` | objeto simples (nada de array, classe ou protótipo estranho). Campos extras são ignorados. |
 
 `ref` é opaco para o juntos: é o que a extensão usa para achar o vídeo de novo
@@ -439,6 +452,28 @@ retomável da sala e volta no `refresh`.
 ---
 
 ## 7. Fontes de vídeo e proxy de mídia
+
+| `kind` | No navegador | No app |
+| --- | --- | --- |
+| `hls`, `file` em `https:` | sim; sem CORS, pelo proxy de mídia (extensão com hosts declarados) | sim; sem CORS, pelo proxy do app |
+| `hls`, `file` com `http:`, porta ou `headers` | não: o juntos avisa e oferece o app | sim, pelo proxy do app desde o primeiro pedido |
+| `torrent` | sim, pela frota (com a cota dela) | sim, no próprio app |
+| `youtube` | não: o juntos oferece o app | sim |
+
+O proxy do app roda no computador de quem abriu: lê pela rede da pessoa,
+manda os `headers`, segue redirecionamentos e reescreve playlists para si.
+Nunca lê um endereço da rede local.
+
+**Torrent.** O juntos monta o magnet (`xt`, `dn` com o título, `tr` com os
+trackers) e abre como um torrent colado; com `fileIdx`, escolhe o arquivo
+desse índice, e sem ele o maior. A retomada é a do torrent, sem `refresh`.
+
+**YouTube.** Vira `https://www.youtube.com/watch?v=<id>` e segue o caminho
+do YouTube do juntos.
+
+**Legendas.** Depois que a sala troca de fonte, o navegador do host baixa
+cada uma (precisa de CORS), converte SRT, ASS ou VTT e importa para a sala
+inteira, na ordem. A que falha é pulada.
 
 ### HLS (`kind: 'hls'`)
 

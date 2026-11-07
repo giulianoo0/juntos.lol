@@ -204,6 +204,7 @@ export const ptBR: Record<string, string> = {
   'extensions.publishSubmit': 'Publicar',
   'extensions.fetch': 'Buscar',
   'extensions.anyHost': 'Qualquer endereço da internet',
+  'extensions.needsApp': 'Esse vídeo só toca no app',
   'extensions.reaches': 'Vai acessar',
   'extensions.install': 'Instalar',
   'extensions.update': 'Atualizar',

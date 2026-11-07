@@ -3,7 +3,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
-import { changeRoomSource, openExtensionSource, startExtensionUpload, startUrlUpload } from '../upload'
+import { changeRoomSource, startTorrentUpload, openExtensionSource, startExtensionUpload, startUrlUpload } from '../upload'
+import { openTorrent } from '../torrent'
 import { refreshSource } from '../extensions/bridge'
 import { freshInstalled, saveInstalled } from '../extensions/installed'
 import { refreshMe } from '../account'
@@ -45,7 +46,12 @@ vi.mock('../upload', async (importOriginal) => ({
   startUrlUpload: vi.fn(),
   openExtensionSource: vi.fn(),
   startExtensionUpload: vi.fn(),
+  startTorrentUpload: vi.fn(),
 }))
+vi.mock('../torrent', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../torrent')>()
+  return { ...actual, openTorrent: vi.fn(actual.openTorrent) }
+})
 vi.mock('../extensions/bridge', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../extensions/bridge')>()),
   refreshSource: vi.fn(),
@@ -463,8 +469,49 @@ describe('extensões', () => {
       opened,
     ))
     expect(order).toEqual(['playlist', 'room'])
-    expect(openExtensionSource).toHaveBeenCalledWith(source, { proxy: `https://${SUB}.santamagia.com`, hosts: ['*.cdn.exemplo.com'] })
+    expect(openExtensionSource).toHaveBeenCalledWith(source, expect.objectContaining({ relay: expect.objectContaining({ via: expect.any(Function) }), hosts: ['*.cdn.exemplo.com'] }))
     expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'upload', 'Série · 1. Episódio', undefined, undefined)
+  })
+
+  const playFromFrame = (play: Record<string, unknown>) => act(() => {
+    window.dispatchEvent(new MessageEvent('message', {
+      data: { juntos: 1, type: 'play', ref: 'r1', ...play },
+      origin: `https://${SUB}.santamagia.com`,
+      source: document.querySelector('iframe')!.contentWindow,
+    }))
+  })
+
+  it('o torrent da extensão abre o arquivo do índice pedido pelo caminho de torrent', async () => {
+    serveWithExtensions()
+    const select = vi.fn(async () => {})
+    const files = [
+      { name: 'a.mkv', path: 'x/a.mkv', index: 0, size: 900, type: 'video/x-matroska', progress: 0, downloaded: 0 },
+      { name: 'b.mkv', path: 'x/b.mkv', index: 1, size: 100, type: 'video/x-matroska', progress: 0, downloaded: 0 },
+    ]
+    vi.mocked(openTorrent).mockResolvedValueOnce({ name: 'x', files, subtitleFiles: [], stats: () => null, select, destroy: vi.fn() } as never)
+    await joined('m1')
+    await pickShare('Extensões')
+    await install()
+
+    playFromFrame({ title: 'Filme', source: { kind: 'torrent', infoHash: 'F'.repeat(40), fileIdx: 1, trackers: ['udp://t.example:80/announce'] } })
+
+    await waitFor(() => expect(startTorrentUpload).toHaveBeenCalled())
+    expect(openTorrent).toHaveBeenCalledWith(`magnet:?xt=urn:btih:${'f'.repeat(40)}&dn=Filme&tr=${encodeURIComponent('udp://t.example:80/announce')}`)
+    expect(select).toHaveBeenCalledWith('x/b.mkv')
+    expect(vi.mocked(startTorrentUpload).mock.calls[0][2]).toMatchObject({ file: { index: 1 } })
+  })
+
+  it('no navegador, o que só o app lê avisa e oferece o app em vez de trocar a fonte', async () => {
+    serveWithExtensions()
+    await joined('m1')
+    await pickShare('Extensões')
+    await install()
+
+    playFromFrame({ title: 'Canal', source: { kind: 'hls', url: 'http://a.cdn.exemplo.com/live.m3u8' } })
+
+    expect(await screen.findByText('Esse vídeo só toca no app')).toBeInTheDocument()
+    expect(openExtensionSource).not.toHaveBeenCalled()
+    expect(changeRoomSource).not.toHaveBeenCalled()
   })
 
   it('retoma o preparo pedindo à extensão uma fonte nova', async () => {

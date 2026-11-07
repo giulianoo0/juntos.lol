@@ -16,6 +16,8 @@ export interface DesktopApp {
   mediaRoot: string
   /** What this app does beyond the protocol, such as `titleBar`: the page draws the window's title bar. */
   features: string[]
+  /** Opens the app's media proxy (`<mediaRoot>/_proxy?k=`); only the site, over IPC, learns it. */
+  mediaProxyKey?: string
   invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>
 }
 
@@ -26,6 +28,7 @@ interface Hello {
   updateRequired?: boolean
   features?: string[]
   mediaRoot: string
+  mediaProxyKey?: string
 }
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>
@@ -63,6 +66,7 @@ export function desktop(): Promise<DesktopApp | null> {
         version: hello.version,
         mediaRoot: hello.mediaRoot,
         features: hello.features ?? [],
+        mediaProxyKey: typeof hello.mediaProxyKey === 'string' ? hello.mediaProxyKey : undefined,
         invoke: <T,>(cmd: string, args?: Record<string, unknown>) => invoke(cmd, args) as Promise<T>,
       }
       return settled

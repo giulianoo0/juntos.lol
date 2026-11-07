@@ -402,6 +402,19 @@ describe('fonte de uma extensão', () => {
     expect(opened.kind === 'hls' && opened.plan.size).toBe(700)
   })
 
+  it('o que só o app lê vai por ele desde o primeiro pedido, e sem ele nem começa', async () => {
+    const fetch = vi.fn(async (url: RequestInfo | URL) => new Response(null, { status: 200, headers: { 'Content-Length': String(url).startsWith('juntos-media:') ? '900' : '1' } }))
+    const relay = { via: async (url: string) => `juntos-media://localhost/_proxy?u=${encodeURIComponent(url)}&k=k`, owns: (url: string) => url.startsWith('juntos-media://localhost/_proxy?') }
+    const source = { kind: 'file' as const, url: 'http://files.example.com/a.mkv', headers: { referer: 'https://site.example/' } }
+
+    await expect(openExtensionSource(source, { fetch, hosts: ['files.example.com'] })).rejects.toThrow('desktop app')
+    expect(fetch).not.toHaveBeenCalled()
+
+    const opened = await openExtensionSource(source, { fetch, relay, hosts: ['files.example.com'] })
+    expect(opened).toEqual({ kind: 'file', url: `juntos-media://localhost/_proxy?u=${encodeURIComponent('http://files.example.com/a.mkv')}&k=k`, size: 900 })
+    expect(fetch.mock.calls.every(([url]) => String(url).startsWith('juntos-media:'))).toBe(true)
+  })
+
   it('não guarda a fonte para retomar quando o preparo nem começa', async () => {
     const fetch = vi.fn(async () => new Response('nope', { status: 403 }))
 

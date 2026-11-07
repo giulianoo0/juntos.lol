@@ -20,7 +20,7 @@ import { backendFor, type YoutubeSession } from './youtube'
 import { openRemoteTorrent } from './remoteTorrent'
 import { probeSize } from './pipeline/probeSize'
 import type { HlsPlan, MediaRelay } from './pipeline/hlsInput'
-import { urlAllowed, type ExtSource } from './extensions/protocol'
+import { needsApp, urlAllowed, type ExtUrlSource } from './extensions/protocol'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -506,13 +506,21 @@ export function startUrlUpload(
   startRoomUpload(roomID, mediaGeneration, { kind: 'url', url, name: fileName, size }, sideFiles)
 }
 
+/** The source plays only through the desktop app: plain http, a port, or headers. */
+export class ExtensionNeedsAppError extends Error {
+  constructor() {
+    super('this source plays only in the desktop app')
+    this.name = 'ExtensionNeedsAppError'
+  }
+}
+
 /** What an extension asked the room to play. */
 export interface ExtensionPick {
   extensionId: string
   sub: string
   ref: string
   title: string
-  source: ExtSource
+  source: ExtUrlSource
 }
 
 /** An extension's source, opened while its signed url still holds. */
@@ -529,15 +537,26 @@ export type OpenedExtensionSource =
  * `hosts` are the extension's media hosts: its playlist may lead only there,
  * or to the relay.
  */
-export async function openExtensionSource(source: ExtSource, opts: { fetch?: typeof fetch; relay?: MediaRelay; hosts: readonly string[] }): Promise<OpenedExtensionSource> {
+export async function openExtensionSource(
+  source: ExtUrlSource,
+  opts: { fetch?: typeof fetch; relay?: MediaRelay; hosts: readonly string[] },
+): Promise<OpenedExtensionSource> {
   const { relay } = opts
+  // What only the app reads goes through it from the first request.
+  const through = needsApp(source)
+  if (through && !relay) throw new ExtensionNeedsAppError()
   if (source.kind === 'hls') {
     const { openHls } = await import('./pipeline/hlsInput')
     const allow = (url: string) => urlAllowed(url, opts.hosts) || (relay?.owns(url) ?? false)
-    return { kind: 'hls', url: source.url, plan: await openHls(source.url, { fetch: opts.fetch, relay, allow }) }
+    const start = through ? await relay!.via(source.url) : source.url
+    return { kind: 'hls', url: start, plan: await openHls(start, { fetch: opts.fetch, relay: through ? undefined : relay, allow }) }
   }
   const get = opts.fetch ?? fetch
   const strict: typeof fetch = (input, init) => get(input, { ...init, redirect: 'error' })
+  if (through) {
+    const url = await relay!.via(source.url)
+    return { kind: 'file', url, size: (await probeSize(url, { fetch: strict })).size }
+  }
   try {
     return { kind: 'file', url: source.url, size: (await probeSize(source.url, { fetch: strict })).size }
   } catch (error) {
