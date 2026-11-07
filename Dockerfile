@@ -19,6 +19,8 @@ COPY web/scripts ./scripts
 COPY web/patches ./patches
 RUN npm ci
 COPY web/ ./
+# The manifest rules the page shares with Go and the extension host, read by its tests.
+COPY extensions/manifest-cases.json /src/extensions/manifest-cases.json
 RUN npm run build
 
 FROM golang:1.27-bookworm AS go-build
