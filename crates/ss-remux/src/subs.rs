@@ -117,7 +117,7 @@ pub fn extractor_args(input_url: &str, dir: &Path, plan: &SourcePlan, start_ms: 
         args.extend(["-ss".into(), format!("{:.3}", seek_ms as f64 / 1000.0)]);
     }
     args.push("-copyts".into());
-    args.extend(crate::plan::INPUT_GUARD.iter().map(|s| s.to_string()));
+    args.extend(crate::plan::input_guard(input_url).iter().map(|s| s.to_string()));
     args.extend(["-i".into(), input_url.into()]);
     let to: Vec<String> = if end_ms > 0 {
         vec!["-to".into(), format!("{:.3}", (end_ms + TAIL_MS) as f64 / 1000.0)]
@@ -283,7 +283,7 @@ impl Extractor {
             Duration::from_secs(120),
             tokio::process::Command::from(ss_media::tools::command(&self.ffmpeg_path))
                 .args(["-nostdin", "-v", "error", "-dump_attachment:t", ""])
-                .args(crate::plan::INPUT_GUARD)
+                .args(crate::plan::input_guard(&self.input_url))
                 .args(["-i", &self.input_url, "-t", "0", "-f", "null", "/dev/null"])
                 .current_dir(&fonts_dir)
                 .env_clear()

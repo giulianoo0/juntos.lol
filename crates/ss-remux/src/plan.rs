@@ -373,8 +373,30 @@ pub const INPUT_GUARD: [&str; 4] = [
     "-format_whitelist", "matroska,mov,avi,mpegts,flv,asf,ogg",
 ];
 
+/// Where the app's media proxy serves an extension's HLS playlist on
+/// loopback. Every address in that playlist was rewritten back through the
+/// proxy, which reaches public hosts only, so this one input may use the HLS
+/// demuxer, and its segments may wear any name (hosts disguise them as .js).
+pub const PROXY_PLAYLIST: &str = "/_proxy?";
+
+pub const HLS_GUARD: [&str; 8] = [
+    "-protocol_whitelist", "http,tcp",
+    "-format_whitelist", "hls,mpegts,mov,matroska,aac,mp3,webvtt",
+    "-allowed_extensions", "ALL",
+    "-extension_picky", "0",
+];
+
+/// The guard for `input`: the HLS one for the proxy's playlist on loopback.
+pub fn input_guard(input: &str) -> &'static [&'static str] {
+    let playlist = input
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(port, path)| port.bytes().all(|b| b.is_ascii_digit()) && format!("/{path}").starts_with(PROXY_PLAYLIST));
+    if playlist { &HLS_GUARD } else { &INPUT_GUARD }
+}
+
 fn guarded(input: &str) -> impl Iterator<Item = String> + '_ {
-    INPUT_GUARD.iter().map(|s| s.to_string()).chain(["-i".to_string(), input.to_string()])
+    input_guard(input).iter().map(|s| s.to_string()).chain(["-i".to_string(), input.to_string()])
 }
 
 /// ffprobe's look at a container: streams, format and chapters.
@@ -452,7 +474,14 @@ pub fn ffmpeg_args(
     for (out_index, audio) in plan.audios.iter().enumerate() {
         args.extend(["-map".into(), format!("{}:a:{}", audio.input_file, audio.input_index)]);
         match &audio.action {
-            AudioAction::Copy => args.extend([format!("-c:a:{out_index}"), "copy".into()]),
+            // AAC out of MPEG-TS comes in ADTS frames, which the fMP4
+            // segments refuse; the filter leaves any other AAC as it is.
+            AudioAction::Copy => args.extend([
+                format!("-c:a:{out_index}"),
+                "copy".into(),
+                format!("-bsf:a:{out_index}"),
+                "aac_adtstoasc".into(),
+            ]),
             AudioAction::ConvertAac => args.extend([
                 format!("-c:a:{out_index}"),
                 "aac".into(),
@@ -639,7 +668,7 @@ mod tests {
         assert!(joined.contains("r2_master.m3u8"));
         assert!(joined.ends_with("r2_client_stream_%v.m3u8"));
         assert!(joined.contains("v:0,agroup:aud a:0,agroup:aud,language:eng,default:yes a:1,agroup:aud,language:por"));
-        assert!(joined.contains("-c:a:0 copy"));
+        assert!(joined.contains("-c:a:0 copy -bsf:a:0 aac_adtstoasc"));
         assert!(joined.contains("-b:a:1 160000"));
         assert!(joined.contains("-hls_segment_options movflags=+frag_discont"));
     }
@@ -664,6 +693,10 @@ mod tests {
 
     #[test]
     fn every_probe_opens_its_input_with_the_guard() {
+        assert_eq!(input_guard("http://127.0.0.1:38517/_proxy?u=https%3A%2F%2Fa.example%2Fp.m3u8&k=x"), &HLS_GUARD);
+        assert_eq!(input_guard("http://127.0.0.1:38517/in/c?u=/_proxy?"), &INPUT_GUARD);
+        assert_eq!(input_guard("http://10.0.0.1:80/_proxy?u=x"), &INPUT_GUARD);
+        assert_eq!(input_guard("http://127.0.0.1:9/in/c"), &INPUT_GUARD);
         let guard = INPUT_GUARD.join(" ");
         assert!(probe_args("http://127.0.0.1:9/in/c").join(" ").contains(&format!("{guard} -i http://127.0.0.1:9/in/c")));
         assert!(keyframe_args("http://127.0.0.1:9/in/c", 61.5).join(" ").contains(&format!("{guard} -i http://127.0.0.1:9/in/c")));
