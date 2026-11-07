@@ -3,7 +3,7 @@
 // a preparo resumes by asking the extension for a fresh source (`refresh`).
 //
 // Needs redis, MinIO, Postgres and the Go server at BASE (default :8095) with
-// EXTENSION_BASE=localhost:8787 EXTENSION_SCHEME=http and
+// EXTENSION_BASE=localhost:8787 EXTENSION_SCHEME=http EXTENSION_MEDIA_KEY=e2e-media-key and
 // GITHUB_API_BASE=GITHUB_RAW_BASE=http://127.0.0.1:8797 (see the e2e-local
 // memory). The script plays GitHub on :8797, serving EXT_DIR as the repo
 // e2e/<id> at one sha, registers the id straight in DATABASE_URL, starts the
@@ -200,7 +200,9 @@ function hostAnswers() {
 async function startExtensionHost() {
   const args = ['wrangler', 'dev', '--port', String(EXT_PORT), '--ip', '127.0.0.1',
     '--var', `JUNTOS_ORIGIN:${base}`, '--var', `JUNTOS_ORIGINS:${base}`,
-    '--var', `EXT_BASE:localhost:${EXT_PORT}`, '--var', 'EXT_SCHEME:http', '--var', `GITHUB_RAW:http://127.0.0.1:${GH_PORT}`]
+    '--var', `EXT_BASE:localhost:${EXT_PORT}`, '--var', 'EXT_SCHEME:http', '--var', `GITHUB_RAW:http://127.0.0.1:${GH_PORT}`,
+    // The server at BASE signs media tickets with the same EXTENSION_MEDIA_KEY.
+    '--var', `MEDIA_KEY:${process.env.EXTENSION_MEDIA_KEY ?? 'e2e-media-key'}`]
   if (mode === 'mock') {
     args.splice(2, 0, path.join(repo, 'web/dev/e2e-extensions-host.ts'),
       '--var', `FAKE_CDN:127.0.0.1:${CDN_PORT}`, '--var', `FAKE_CDN_HOSTS:${manifest.hosts.media.join(',')}`)
