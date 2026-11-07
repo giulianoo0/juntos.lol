@@ -20,8 +20,11 @@ export interface SettingAction {
   onSelect: () => void
 }
 
-/** Which of the two tabs a group lives in. */
-export type SettingTab = 'audio' | 'subtitles'
+/** Which tab a group lives in. */
+export type SettingTab = 'video' | 'audio' | 'subtitles'
+
+const TABS: readonly SettingTab[] = ['video', 'audio', 'subtitles']
+const TAB_LABELS = { video: 'room.video', audio: 'room.audio', subtitles: 'room.subtitles' } as const
 
 export interface SettingGroup {
   id: string
@@ -75,7 +78,7 @@ function Group({ group, headed }: { group: SettingGroup; headed: boolean }) {
 /**
  * Everything about how the room is being watched, in the button that opens it:
  * the gear widens into the panel rather than raising a second surface over it.
- * Inside, Áudio and Legendas trade places through a short blur while the
+ * Inside, Vídeo, Áudio and Legendas trade places through a short blur while the
  * panel follows the new height.
  */
 export const Settings = memo(function Settings({ groups, t, tipRoot }: { groups: SettingGroup[]; t: Translator; tipRoot: HTMLElement | null }) {
@@ -98,7 +101,7 @@ export const Settings = memo(function Settings({ groups, t, tipRoot }: { groups:
 
   if (groups.length === 0) return null
 
-  const tabs = (['audio', 'subtitles'] as const).filter((name) => groups.some((group) => group.tab === name))
+  const tabs = TABS.filter((name) => groups.some((group) => group.tab === name))
   const current = tabs.includes(tab) ? tab : tabs[0] ?? 'subtitles'
   const inTab = groups.filter((group) => group.tab === current)
   const lists = inTab.filter((group) => !group.panel).length
@@ -124,10 +127,7 @@ export const Settings = memo(function Settings({ groups, t, tipRoot }: { groups:
                 <Segmented
                   className={styles.tabs}
                   label={label}
-                  options={[
-                    { value: 'audio', label: t('room.audio') },
-                    { value: 'subtitles', label: t('room.subtitles') },
-                  ]}
+                  options={tabs.map((name) => ({ value: name, label: t(TAB_LABELS[name]) }))}
                   value={current}
                   onChange={setTab}
                 />

@@ -23,6 +23,7 @@ import { MAX_LEVEL, snapLevel, VolumeSlider } from '../ui/VolumeSlider'
 import { MAX_RECOVERIES, nextRecovery, type Recoveries } from './recovery'
 import { plog } from './playerLog'
 import { Settings, type SettingGroup } from './Settings'
+import { ASPECTS, aspectScale, saveAspect, savedAspect, type Aspect } from './aspect'
 import { AssLayer } from './AssLayer'
 import { SubtitleLayer } from './SubtitleLayer'
 import { Timecode } from './Timecode'
@@ -82,6 +83,12 @@ const PLAY_INTENT_TTL_MS = 5_000
 const REMOTE_ECHO_MS = 500
 // Boxes that change no layout on the page, around what a PiP window takes.
 const PIP_SLOT_STYLE = { display: 'contents' } as const
+
+const ASPECT_LABELS: Partial<Record<Aspect, 'room.aspectOriginal' | 'room.aspectFill' | 'room.aspectStretch'>> = {
+  original: 'room.aspectOriginal',
+  fill: 'room.aspectFill',
+  stretch: 'room.aspectStretch',
+}
 
 /**
  * The region to load for a position: the one already loaded if it still
@@ -200,6 +207,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
   const [audioTracks, setAudioTracks] = useState<Array<{ name: string; lang?: string }>>(
     () => (mocksEnabled ? MOCK_AUDIO_TRACKS : []),
   )
+  const [aspect, setAspect] = useState<Aspect>(savedAspect)
   const [levels, setLevels] = useState<Array<{ height: number; bitrate: number }>>(
     () => (mocksEnabled ? MOCK_LEVELS : []),
   )
@@ -1054,6 +1062,25 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
   const pipLabel = t(pip.active ? 'room.exitPip' : 'room.pip')
   const playLabel = t(playing ? 'room.pause' : 'room.play')
 
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return undefined
+    const apply = () => {
+      const { x, y } = aspectScale(aspect, { width: video.clientWidth, height: video.clientHeight }, { width: video.videoWidth, height: video.videoHeight })
+      video.style.transform = x === 1 && y === 1 ? '' : `scale(${x}, ${y})`
+    }
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(video)
+    video.addEventListener('resize', apply)
+    video.addEventListener('loadedmetadata', apply)
+    return () => {
+      observer.disconnect()
+      video.removeEventListener('resize', apply)
+      video.removeEventListener('loadedmetadata', apply)
+    }
+  }, [aspect, videoRef])
+
   const settingGroups: SettingGroup[] = useMemo(() => {
     const groups: SettingGroup[] = [{
       id: 'subtitles',
@@ -1113,7 +1140,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     if (levels.length > 1) {
       groups.push({
         id: 'quality',
-        tab: 'audio',
+        tab: 'video',
         label: t('room.quality'),
         current: level,
         onPick: (value) => {
@@ -1129,8 +1156,20 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
         ],
       })
     }
+    groups.push({
+      id: 'aspect',
+      tab: 'video',
+      label: t('room.aspect'),
+      current: ASPECTS.indexOf(aspect),
+      onPick: (value) => {
+        const next = ASPECTS[value] ?? 'original'
+        setAspect(next)
+        saveAspect(next)
+      },
+      options: ASPECTS.map((entry, index) => ({ value: index, label: ASPECT_LABELS[entry] ? t(ASPECT_LABELS[entry]) : entry })),
+    })
     return groups
-  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, t])
+  }, [subtitleTracks, subtitle, pickSubtitle, delayMs, pickDelay, isController, hostSubtitles, copyFromHost, audioTracks, audioTrack, levels, level, aspect, t])
 
   useEffect(() => { onSettings?.(settingGroups) }, [onSettings, settingGroups])
 
