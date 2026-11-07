@@ -12,6 +12,7 @@ pub mod torrent;
 pub mod updates;
 pub mod upload_plan;
 pub mod uploader;
+pub mod url_source;
 
 use std::path::PathBuf;
 

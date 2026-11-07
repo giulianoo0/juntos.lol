@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use tauri::http::{header, HeaderValue, Method, Request, Response, StatusCode};
+use http::{header, HeaderValue, Method, Request, Response, StatusCode, Uri};
 use url::Url;
 
 const HEADER_NAMES: [&str; 3] = ["user-agent", "referer", "origin"];
@@ -122,7 +122,7 @@ impl MediaProxy {
     }
 
     /// Follows redirects itself, so each hop is checked like the first.
-    async fn fetch(
+    pub async fn fetch(
         &self,
         mut url: Url,
         method: &Method,
@@ -171,7 +171,7 @@ struct Asked {
 }
 
 impl Asked {
-    fn parse(uri: &tauri::http::Uri) -> Option<Self> {
+    fn parse(uri: &Uri) -> Option<Self> {
         let query = Url::parse(&format!("http://x/?{}", uri.query()?)).ok()?;
         let (mut url, mut key, mut raw_headers) = (None, None, None);
         for (name, value) in query.query_pairs() {
@@ -194,10 +194,10 @@ impl Asked {
         })
     }
 
-    /// Where the page reached this proxy: `juntos-media://localhost`, or
-    /// `http://juntos-media.localhost` on Windows.
-    fn base(&self, uri: &tauri::http::Uri) -> String {
-        let scheme = uri.scheme_str().unwrap_or(crate::serve::SCHEME);
+    /// Where the page reached this proxy: `juntos-media://localhost`,
+    /// `http://juntos-media.localhost` on Windows, or the phone's loopback.
+    fn base(&self, uri: &Uri) -> String {
+        let scheme = uri.scheme_str().unwrap_or("http");
         let authority = uri.authority().map(|a| a.as_str()).unwrap_or("localhost");
         format!("{scheme}://{authority}")
     }
@@ -208,7 +208,11 @@ fn parse_headers(raw: &str) -> Option<Vec<(&'static str, String)>> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(raw.trim_end_matches('='))
         .ok()?;
-    let object: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes).ok()?;
+    headers_from(serde_json::from_slice(&bytes).ok()?)
+}
+
+/// The allowed headers of `object`, or None when it holds anything else.
+pub fn headers_from(object: serde_json::Map<String, serde_json::Value>) -> Option<Vec<(&'static str, String)>> {
     let mut out = Vec::new();
     for (name, value) in object {
         let name = HEADER_NAMES
@@ -383,7 +387,7 @@ fn encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-fn reply(status: StatusCode) -> tauri::http::response::Builder {
+fn reply(status: StatusCode) -> http::response::Builder {
     Response::builder()
         .status(status)
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
@@ -461,7 +465,7 @@ mod tests {
     fn the_request_needs_url_and_key() {
         let uri = |q: &str| {
             format!("juntos-media://localhost/_proxy?{q}")
-                .parse::<tauri::http::Uri>()
+                .parse::<Uri>()
                 .unwrap()
         };
         let asked = Asked::parse(&uri("u=http%3A%2F%2Fcdn.example.com%2Fa.ts&k=abc")).unwrap();

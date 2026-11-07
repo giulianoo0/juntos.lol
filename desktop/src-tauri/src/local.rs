@@ -59,6 +59,25 @@ pub fn covered(regions: &[RegionState], position_ms: u64, need_low: bool, durati
 pub enum Input {
     Container(Arc<dyn ByteSource>),
     Youtube(Arc<youtube::Resolver>, String),
+    /// An address FFmpeg reads itself, an HLS playlist through the phone's media proxy.
+    Url(String),
+}
+
+/// One input of every run: bytes the bridge serves, or an address FFmpeg reads.
+#[derive(Clone)]
+enum Feed {
+    Bytes(Arc<dyn ByteSource>),
+    Url(String),
+}
+
+impl Feed {
+    /// The address FFmpeg opens, and the capability to revoke after it ("" for none).
+    fn open(&self, bridge: &Bridge, reader: String) -> (String, String) {
+        match self {
+            Feed::Bytes(source) => bridge.register_input(InputTarget { source: source.clone(), reader }),
+            Feed::Url(url) => (url.clone(), String::new()),
+        }
+    }
 }
 
 /// What the site needs to open the room once the source is understood.
@@ -143,7 +162,7 @@ impl Subtitles {
 
 struct Production {
     dir: PathBuf,
-    sources: Vec<Arc<dyn ByteSource>>,
+    sources: Vec<Feed>,
     plan: SourcePlan,
     page_subtitles: Option<PageSubtitles>,
     subtitles: Mutex<Option<Subtitles>>,
@@ -158,7 +177,7 @@ struct Production {
 }
 
 impl Production {
-    fn new(dir: PathBuf, sources: Vec<Arc<dyn ByteSource>>, plan: SourcePlan, page_subtitles: Option<PageSubtitles>, meta: Meta) -> Arc<Self> {
+    fn new(dir: PathBuf, sources: Vec<Feed>, plan: SourcePlan, page_subtitles: Option<PageSubtitles>, meta: Meta) -> Arc<Self> {
         Arc::new(Production {
             dir,
             sources,
@@ -229,20 +248,22 @@ impl Producer {
             return Ok(existing.meta.lock().clone());
         }
         let bridge = self.bridge().await?;
-        let (sources, plan, page_subtitles): (Vec<Arc<dyn ByteSource>>, SourcePlan, Option<PageSubtitles>) = match input {
-            Input::Container(bytes) => {
-                let (url, cap) = bridge.register_input(InputTarget { source: bytes.clone(), reader: format!("probe:{key}") });
-                let args: Vec<String> = ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", &url]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                let probed = process::run_capture(&self.ffprobe, &args, Duration::from_secs(120)).await;
+        let probe = |feed: Feed| {
+            let (url, cap) = feed.open(&bridge, format!("probe:{key}"));
+            let ffprobe = self.ffprobe.clone();
+            let bridge = bridge.clone();
+            async move {
+                let probed = process::run_capture(&ffprobe, &plan::probe_args(&url), Duration::from_secs(120)).await;
                 bridge.revoke(&cap, "");
-                (vec![bytes], plan::plan_streams(&probed?)?, None)
+                anyhow::Ok((vec![feed], plan::plan_streams(&probed?)?, None))
             }
+        };
+        let (sources, plan, page_subtitles): (Vec<Feed>, SourcePlan, Option<PageSubtitles>) = match input {
+            Input::Container(bytes) => probe(Feed::Bytes(bytes)).await?,
+            Input::Url(url) => probe(Feed::Url(url)).await?,
             Input::Youtube(resolver, url) => {
                 let materialized = resolver.materialize(&youtube::Request { url }).await?;
-                let sources = materialized.streams.into_iter().map(|s| s as Arc<dyn ByteSource>).collect();
+                let sources = materialized.streams.into_iter().map(|s| Feed::Bytes(s as Arc<dyn ByteSource>)).collect();
                 let page = PageSubtitles { client: resolver.client.clone(), picks: materialized.subtitles };
                 (sources, materialized.plan, Some(page))
             }
@@ -308,7 +329,7 @@ impl Producer {
         let mut keyframe = None;
         if position_ms > 0 {
             let target = position_ms as f64 / 1000.0;
-            let (url, cap) = bridge.register_input(InputTarget { source: production.sources[0].clone(), reader: format!("key:{key}") });
+            let (url, cap) = production.sources[0].open(&bridge, format!("key:{key}"));
             let args = plan::keyframe_args(&url, target);
             keyframe = process::run_capture(&self.ffprobe, &args, Duration::from_secs(120)).await.ok().and_then(|out| plan::first_frame_pts(&out));
             bridge.revoke(&cap, "");
@@ -319,7 +340,7 @@ impl Producer {
         let mut urls = Vec::new();
         let mut caps = Vec::new();
         for (index, source) in production.sources.iter().enumerate() {
-            let (url, cap) = bridge.register_input(InputTarget { source: source.clone(), reader: format!("local:{key}:{n}:{index}") });
+            let (url, cap) = source.open(&bridge, format!("local:{key}:{n}:{index}"));
             urls.push(url);
             caps.push(cap);
         }
@@ -520,7 +541,7 @@ impl Producer {
         let (room_id, generation) = (target.room_id.clone(), target.generation);
         let dir = self.root.join(key).join("subs").join(format!("from_{start_ms}"));
         let _ = std::fs::remove_dir_all(&dir);
-        let (input_url, cap) = bridge.register_input(InputTarget { source: production.sources[0].clone(), reader: format!("subs:{key}:{start_ms}") });
+        let (input_url, cap) = production.sources[0].open(&bridge, format!("subs:{key}:{start_ms}"));
         let input = Revoke(bridge.clone(), cap);
         let run_id = format!("local_{key}_{start_ms}");
         let extractor = subs::Extractor {
@@ -642,7 +663,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let plan = plan::plan_streams(PROBE).unwrap();
         let meta = Meta { key: "k".into(), title: "Filme".into(), duration_ms: plan.duration_ms, audio_langs: vec![], video_codecs: None, low_resolution: None, regions: vec![] };
-        producer.entries.lock().insert("k".into(), Production::new(dir, vec![Arc::new(Empty)], plan, None, meta));
+        producer.entries.lock().insert("k".into(), Production::new(dir, vec![Feed::Bytes(Arc::new(Empty))], plan, None, meta));
         producer
     }
 
@@ -795,7 +816,7 @@ mod tests {
             client: reqwest::Client::new(),
             picks: vec![youtube::SubtitlePick { language: "pt-BR".into(), title: "Português (Brasil)".into(), url: format!("{base}/sub.vtt"), auto: false }],
         };
-        producer.entries.lock().insert("y".into(), Production::new(dir, vec![Arc::new(Empty)], plan, Some(page), meta));
+        producer.entries.lock().insert("y".into(), Production::new(dir, vec![Feed::Bytes(Arc::new(Empty))], plan, Some(page), meta));
         producer
     }
 
