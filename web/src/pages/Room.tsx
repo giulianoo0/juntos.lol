@@ -86,6 +86,7 @@ import {
   startUrlUpload,
   startYoutubeUpload,
   startExtensionUpload,
+  ExtensionNeedsAppError,
   openExtensionSource,
   sourceKindFor,
   youtubeFileName,
@@ -694,6 +695,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       setSourceError(isTorrentError(error) ? torrentErrorKey(error)
         : isYoutubeError(error) ? youtubeErrorKey(error)
         : error instanceof UnsupportedMediaError && error.reason === 'encrypted' ? 'extensions.error.encrypted'
+        : error instanceof ExtensionNeedsAppError ? 'extensions.needsApp'
         : 'room.changeFailed')
     }
   }

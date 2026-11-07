@@ -549,7 +549,11 @@ export async function openExtensionSource(
     const { openHls } = await import('./pipeline/hlsInput')
     const allow = (url: string) => urlAllowed(url, opts.hosts) || (relay?.owns(url) ?? false)
     const start = through ? await relay!.via(source.url) : source.url
-    return { kind: 'hls', url: start, plan: await openHls(start, { fetch: opts.fetch, relay: through ? undefined : relay, allow }) }
+    try {
+      return { kind: 'hls', url: start, plan: await openHls(start, { fetch: opts.fetch, relay: through ? undefined : relay, allow }) }
+    } catch (error) {
+      throw error instanceof TypeError && !relay ? new ExtensionNeedsAppError() : error
+    }
   }
   const get = opts.fetch ?? fetch
   const strict: typeof fetch = (input, init) => get(input, { ...init, redirect: 'error' })
@@ -561,7 +565,8 @@ export async function openExtensionSource(
     return { kind: 'file', url: source.url, size: (await probeSize(source.url, { fetch: strict })).size }
   } catch (error) {
     // No CORS, or a redirect: the relay follows it hop by hop within the extension's hosts.
-    if (!(error instanceof TypeError) || !relay) throw error
+    if (!(error instanceof TypeError)) throw error
+    if (!relay) throw new ExtensionNeedsAppError()
     const url = await relay.via(source.url)
     return { kind: 'file', url, size: (await probeSize(url, { fetch: strict })).size }
   }

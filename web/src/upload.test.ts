@@ -17,6 +17,7 @@ import {
   type RoomUploadProgress,
   lastUploadFailureDetail,
   openExtensionSource,
+  ExtensionNeedsAppError,
   resumableSourceFor,
   startExtensionUpload,
 } from './upload'
@@ -413,6 +414,12 @@ describe('fonte de uma extensão', () => {
     const opened = await openExtensionSource(source, { fetch, relay, hosts: ['files.example.com'] })
     expect(opened).toEqual({ kind: 'file', url: `juntos-media://localhost/_proxy?u=${encodeURIComponent('http://files.example.com/a.mkv')}&k=k`, size: 900 })
     expect(fetch.mock.calls.every(([url]) => String(url).startsWith('juntos-media:'))).toBe(true)
+  })
+
+  it('sem CORS e sem proxy (extensão de qualquer host), o arquivo e a playlist pedem o app', async () => {
+    const fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') })
+    await expect(openExtensionSource({ kind: 'file', url: 'https://cdn.qualquer.dev/a.mp4' }, { fetch, hosts: ['*'] })).rejects.toBeInstanceOf(ExtensionNeedsAppError)
+    await expect(openExtensionSource({ kind: 'hls', url: 'https://cdn.qualquer.dev/a.m3u8' }, { fetch, hosts: ['*'] })).rejects.toBeInstanceOf(ExtensionNeedsAppError)
   })
 
   it('não guarda a fonte para retomar quando o preparo nem começa', async () => {
