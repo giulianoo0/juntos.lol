@@ -4,11 +4,15 @@
  * the first-paint chunk. Anything borrowed here must stay a type-only import.
  */
 import type { MediaInput } from './mediaInput'
+import type { HlsPlan } from './hlsInput'
 
 export type RemuxSource =
   | { kind: 'file'; file: File }
   | { kind: 'stream'; url: string; name: string; size: number }
-  | { kind: 'url'; url: string; name: string; size: number }
+  /** external: an extension's url, read as given (no `prio`) and never through a redirect. */
+  | { kind: 'url'; url: string; name: string; size: number; external?: boolean }
+  /** An HLS stream read as one file; `plan` is the playlist already opened, while its signature held. */
+  | { kind: 'hls'; url: string; name: string; plan?: HlsPlan; proxy?: string }
   | { kind: 'input'; input: MediaInput }
 
 export interface RemuxSideFile {
@@ -34,6 +38,7 @@ export function sourceIsCloneable(source: RemuxSource): boolean {
 export function sourceSize(source: RemuxSource): number {
   return source.kind === 'file' ? source.file.size
     : source.kind === 'input' ? source.input.size
+    : source.kind === 'hls' ? source.plan?.size ?? 0
     : source.size
 }
 

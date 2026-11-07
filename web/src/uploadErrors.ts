@@ -27,7 +27,7 @@ export function isUnreachableRead(error: unknown): boolean {
 /** The code for a failure about reading the source, null when it is not one. */
 export function readFailureCode(failure: unknown, kind: string): string | null {
   if (isUnreadableFile(failure)) return FILE_UNREADABLE
-  if (isUnreachableRead(failure)) return kind === 'url' ? SOURCE_UNREACHABLE : WORKER_UNREACHABLE
+  if (isUnreachableRead(failure)) return kind === 'url' || kind === 'hls' ? SOURCE_UNREACHABLE : WORKER_UNREACHABLE
   return null
 }
 

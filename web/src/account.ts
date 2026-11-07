@@ -36,6 +36,8 @@ export interface Me extends AccountCard {
   stats: AccountStats
   /** Never sent yet to join the juntos server on Discord. */
   guildPending?: boolean
+  /** May register new extension ids. */
+  canPublishExtensions?: boolean
 }
 
 /** A profile; stats are left out when the account does not show them to the viewer. */

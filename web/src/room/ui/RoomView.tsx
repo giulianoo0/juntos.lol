@@ -201,7 +201,6 @@ export function RoomView({ vm }: { vm: RoomViewModel }) {
         onOpenChange={(open) => { if (!open) closeShare() }}
         title={sharing ? sourceLabel(strings)[sharing] : ''}
         closeLabel={strings.close}
-        wide={sharing === 'catalog'}
       >
         {sharePicker}
       </Modal>

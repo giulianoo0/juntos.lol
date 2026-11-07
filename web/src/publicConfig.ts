@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
+import type { ExtensionPlace } from './extensions/protocol'
 
 /** What the server tells every page: identifiers, never secrets. Empty means off. */
 export interface PublicConfig {
   turnstileSiteKey: string
   discordAppId: string
-  catalogAddonUrl: string
+  /** Where extensions live, one subdomain each: `santamagia.com` in production. */
+  extensionBase?: string
+  extensionScheme?: string
+  extensionRaw?: string
 }
 
 let loaded: Promise<PublicConfig> | null = null
@@ -29,4 +33,13 @@ export function usePublicConfig(): PublicConfig | null {
     return () => { live = false }
   }, [])
   return config
+}
+
+/** The extensions' place from the config; undefined (production's) when it says nothing usable. */
+export function extensionPlace(config: PublicConfig | null): ExtensionPlace | undefined {
+  const base = config?.extensionBase
+  const scheme = config?.extensionScheme
+  if (!base || !/^[a-z0-9.-]+(:\d{1,5})?$/.test(base) || (scheme !== 'https' && scheme !== 'http')) return undefined
+  const raw = config?.extensionRaw
+  return raw && /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?(\/(?!\.+(\/|$))[A-Za-z0-9._~-]+)*$/.test(raw) ? { base, scheme, raw } : { base, scheme }
 }

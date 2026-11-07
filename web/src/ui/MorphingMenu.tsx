@@ -17,7 +17,7 @@ interface MorphingMenuProps {
 
 /**
  * The old menu's interface over the spring popover, for the screens that
- * still call it (the screen stage, the catalog's dropdowns, the old room):
+ * still call it (the screen stage, the old room):
  * every menu opens with the one physics. New code uses `SpringPopover`.
  */
 export function MorphingMenu({

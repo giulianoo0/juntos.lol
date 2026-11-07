@@ -3,10 +3,17 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
-import { changeRoomSource, startUrlUpload } from '../upload'
+import { changeRoomSource, openExtensionSource, startExtensionUpload, startUrlUpload } from '../upload'
+import { refreshSource } from '../extensions/bridge'
+import { freshInstalled, saveInstalled } from '../extensions/installed'
+import { refreshMe } from '../account'
 import { requestScreenStream } from '../screenshare'
 import { desktop, resetDesktopForTests } from '../platform'
 
+vi.mock('../extensions/installed', async (original) => ({
+  ...await original<typeof import('../extensions/installed')>(),
+  freshInstalled: vi.fn(async (installed: unknown) => installed),
+}))
 vi.mock('../screenshare', () => ({
   screenShareSupported: vi.fn().mockReturnValue(true),
   displayCaptureAvailable: vi.fn().mockReturnValue(true),
@@ -36,6 +43,12 @@ vi.mock('../upload', async (importOriginal) => ({
     mediaGeneration: 1, uploadEndpoint: '/api/upload/', streamStartBytes: 1024,
   }),
   startUrlUpload: vi.fn(),
+  openExtensionSource: vi.fn(),
+  startExtensionUpload: vi.fn(),
+}))
+vi.mock('../extensions/bridge', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../extensions/bridge')>()),
+  refreshSource: vi.fn(),
 }))
 
 class FakeWebSocket {
@@ -354,6 +367,139 @@ describe('retomar o preparo', () => {
     await joined()
 
     await waitFor(() => expect(startUrlUpload).toHaveBeenCalledWith('abc123', 1, 'https://example.test/movie.mkv', 'movie.mkv', 10))
+  })
+})
+
+describe('extensões', () => {
+  const SHA = 'a'.repeat(40)
+  const SUB = 'lczfxd2q74zxknb5'
+  const exemplo = {
+    id: 'exemplo', name: 'Exemplo', version: '1.0.0', protocol: 1 as const, entry: 'index.html',
+    hosts: { connect: [], images: [], media: ['*.cdn.exemplo.com'] },
+  }
+  const opened = { kind: 'hls' as const, url: 'https://a.cdn.exemplo.com/a.m3u8', plan: { segments: [], size: 10 } }
+  const signedIn = { id: 1, nickname: 'Giuli', avatar: '', visibility: 'friends', discordVisibility: 'private', createdAt: '2026-01-01T00:00:00Z', stats: { sessions: 0, hours: 0, friends: 0 } }
+
+  afterEach(async () => {
+    vi.stubGlobal('fetch', vi.fn(() => json({ status: 401 })))
+    await act(() => refreshMe())
+  })
+
+  /** The room's doors plus the registry, the manifest and who is signed in. */
+  function serveWithExtensions(me: Record<string, unknown> | null = null) {
+    const roomFetch = serve()
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/me') return me ? json({ body: me }) : json({ status: 401 })
+      if (url === '/api/extensions/exemplo') return json({ body: { id: 'exemplo', name: 'Exemplo', sub: SUB, source: 'github:dono/exemplo' } })
+      if (url === '/api/extensions/exemplo/latest') return json({ body: { sha: SHA } })
+      if (url === `https://raw.githubusercontent.com/dono/exemplo/${SHA}/juntos.json`) return json({ body: exemplo })
+      return roomFetch(url)
+    }))
+  }
+
+  async function install() {
+    fireEvent.click(await screen.findByRole('button', { name: 'Adicionar' }))
+    fireEvent.change(screen.getByLabelText('ID da extensão'), { target: { value: 'exemplo' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Instalar' }))
+    await waitFor(() => expect(document.querySelector('iframe')).toHaveAttribute('src'))
+  }
+
+  it('o host abre o painel de extensões pelo menu de compartilhar', async () => {
+    serveWithExtensions()
+    await joined('m1')
+
+    await pickShare('Extensões')
+
+    expect(await screen.findByRole('dialog', { name: 'Extensões' })).toBeInTheDocument()
+    expect(screen.getByText('Nenhuma extensão.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Publicar extensão' })).not.toBeInTheDocument()
+  })
+
+  it('a conta que publica vê onde publicar', async () => {
+    serveWithExtensions({ ...signedIn, canPublishExtensions: true })
+    await joined('m1')
+    await act(() => refreshMe())
+
+    await pickShare('Extensões')
+
+    expect(await screen.findByRole('button', { name: 'Publicar extensão' })).toBeInTheDocument()
+  })
+
+  it('o convidado sem palco pede o palco em vez de abrir o painel', async () => {
+    serveWithExtensions()
+    await joined('m2')
+
+    await pickShare('Extensões')
+
+    expect(sent()).toContainEqual({ type: 'stageRequest', kind: 'media' })
+    expect(screen.queryByRole('dialog', { name: 'Extensões' })).not.toBeInTheDocument()
+  })
+
+  it('o play da extensão abre a playlist antes de trocar a fonte da sala', async () => {
+    serveWithExtensions()
+    const order: string[] = []
+    vi.mocked(openExtensionSource).mockImplementation(async () => { order.push('playlist'); return opened })
+    vi.mocked(changeRoomSource).mockImplementationOnce(async () => {
+      order.push('room')
+      return { status: 'uploading', fileName: 'Episódio', mediaGeneration: 4 }
+    })
+    await joined('m1')
+    await pickShare('Extensões')
+    await install()
+    const source = { kind: 'hls', url: 'https://a.cdn.exemplo.com/a.m3u8?signature=s' }
+
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { juntos: 1, type: 'play', title: 'Série', subtitle: '1. Episódio', ref: 'ep-1', source },
+        origin: `https://${SUB}.santamagia.com`,
+        source: document.querySelector('iframe')!.contentWindow,
+      }))
+    })
+
+    await waitFor(() => expect(startExtensionUpload).toHaveBeenCalledWith(
+      'abc123', 4,
+      { extensionId: 'exemplo', sub: SUB, ref: 'ep-1', title: 'Série · 1. Episódio', source },
+      opened,
+    ))
+    expect(order).toEqual(['playlist', 'room'])
+    expect(openExtensionSource).toHaveBeenCalledWith(source, { proxy: `https://${SUB}.santamagia.com`, hosts: ['*.cdn.exemplo.com'] })
+    expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'upload', 'Série · 1. Episódio', undefined, undefined)
+  })
+
+  it('retoma o preparo pedindo à extensão uma fonte nova', async () => {
+    saveInstalled({ id: 'exemplo', sub: SUB, version: SHA, manifest: exemplo })
+    localStorage.setItem('ss.resume.abc123', JSON.stringify({
+      kind: 'extension', fileName: 'Série', title: 'Série', extensionId: 'exemplo', sub: SUB, ref: 'ep-1', savedAt: Date.now(),
+    }))
+    const fresh = { kind: 'hls' as const, url: 'https://a.cdn.exemplo.com/new.m3u8' }
+    vi.mocked(refreshSource).mockResolvedValue(fresh)
+    vi.mocked(openExtensionSource).mockResolvedValue(opened)
+    serve({ room: () => roomBody({ status: 'uploading' }) })
+
+    await joined()
+
+    await waitFor(() => expect(startExtensionUpload).toHaveBeenCalledWith(
+      'abc123', 1,
+      { extensionId: 'exemplo', sub: SUB, ref: 'ep-1', title: 'Série', source: fresh },
+      opened,
+    ))
+    expect(refreshSource).toHaveBeenCalledWith(expect.objectContaining({ id: 'exemplo', sub: SUB }), undefined, 'ep-1', 'pt-BR')
+  })
+
+  it('não retoma por uma extensão que pede aprovação de novo', async () => {
+    saveInstalled({ id: 'exemplo', sub: SUB, version: SHA, manifest: exemplo })
+    localStorage.setItem('ss.resume.abc123', JSON.stringify({
+      kind: 'extension', fileName: 'Série', title: 'Série', extensionId: 'exemplo', sub: SUB, ref: 'ep-1', savedAt: Date.now(),
+    }))
+    vi.mocked(freshInstalled).mockResolvedValueOnce(null)
+    serve({ room: () => roomBody({ status: 'uploading' }) })
+
+    await joined()
+
+    await waitFor(() => expect(freshInstalled).toHaveBeenCalled())
+    expect(refreshSource).not.toHaveBeenCalled()
+    expect(startExtensionUpload).not.toHaveBeenCalled()
   })
 })
 

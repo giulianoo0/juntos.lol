@@ -18,6 +18,9 @@ import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type Rem
 import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 import { backendFor, type YoutubeSession } from './youtube'
 import { openRemoteTorrent } from './remoteTorrent'
+import { probeSize } from './pipeline/probeSize'
+import type { HlsPlan } from './pipeline/hlsInput'
+import { urlAllowed, type ExtSource } from './extensions/protocol'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -144,12 +147,17 @@ export function uploadActive(roomID: string): boolean {
 // room can pick the preparo back up. A picked File has no way back.
 
 export interface ResumableSource {
-  kind: 'torrent' | 'url' | 'youtube' | 'live'
+  kind: 'torrent' | 'url' | 'youtube' | 'live' | 'extension'
   fileName: string
   magnet?: string
   filePath?: string
   url?: string
   size?: number
+  /** An extension's source is never kept: its urls expire, so the extension is asked for `ref` again. */
+  extensionId?: string
+  sub?: string
+  ref?: string
+  title?: string
   savedAt: number
 }
 
@@ -498,6 +506,53 @@ export function startUrlUpload(
   startRoomUpload(roomID, mediaGeneration, { kind: 'url', url, name: fileName, size }, sideFiles)
 }
 
+/** What an extension asked the room to play. */
+export interface ExtensionPick {
+  extensionId: string
+  sub: string
+  ref: string
+  title: string
+  source: ExtSource
+}
+
+/** An extension's source, opened while its signed url still holds. */
+export type OpenedExtensionSource =
+  | { kind: 'hls'; url: string; plan: HlsPlan }
+  | { kind: 'file'; url: string; size: number }
+
+/**
+ * Opens what an extension handed over: the playlist and every segment's
+ * size for HLS, the size for a file. Done the moment the extension asks, not
+ * after the room switches over, because its urls are signed for seconds. A
+ * CDN that sends no CORS is read through the extension's media proxy.
+ */
+/** `hosts` are the extension's media hosts: its playlist may lead only there, or to its media proxy. */
+export async function openExtensionSource(source: ExtSource, opts: { fetch?: typeof fetch; proxy?: string; hosts: readonly string[] }): Promise<OpenedExtensionSource> {
+  if (source.kind === 'hls') {
+    const { openHls } = await import('./pipeline/hlsInput')
+    const proxied = opts.proxy ? `${opts.proxy}/_juntos/media?` : null
+    const allow = (url: string) => urlAllowed(url, opts.hosts) || (proxied !== null && url.startsWith(proxied))
+    return { kind: 'hls', url: source.url, plan: await openHls(source.url, { ...opts, allow }) }
+  }
+  const get = opts.fetch ?? fetch
+  const strict: typeof fetch = (input, init) => get(input, { ...init, redirect: 'error' })
+  try {
+    return { kind: 'file', url: source.url, size: (await probeSize(source.url, { fetch: strict })).size }
+  } catch (error) {
+    // No CORS, or a redirect: the proxy follows it hop by hop within the extension's hosts.
+    if (!(error instanceof TypeError) || !opts.proxy) throw error
+    const url = `${opts.proxy}/_juntos/media?u=${encodeURIComponent(source.url)}`
+    return { kind: 'file', url, size: (await probeSize(url, { fetch: strict })).size }
+  }
+}
+
+export function startExtensionUpload(roomID: string, mediaGeneration: number, pick: ExtensionPick, opened: OpenedExtensionSource): void {
+  saveResumableSource(roomID, { kind: 'extension', fileName: pick.title, title: pick.title, extensionId: pick.extensionId, sub: pick.sub, ref: pick.ref })
+  startRoomUpload(roomID, mediaGeneration, opened.kind === 'hls'
+    ? { kind: 'hls', url: opened.url, name: pick.title, plan: opened.plan }
+    : { kind: 'url', url: opened.url, name: pick.title, size: opened.size, external: true }, [])
+}
+
 interface RoomUploadOptions {
   onProgress?: (progress: UploadProgress) => void
   cleanup?: () => void
@@ -579,7 +634,7 @@ export function startRoomUpload(
         const cause = error.failure
         const why = cause instanceof Error ? `plan failed: ${cause.name}: ${cause.message}` : `plan failed: ${String(cause)}`
         finish(readFailureCode(cause, source.kind)
-          ?? (source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA), why)
+          ?? (source.kind === 'url' || source.kind === 'hls' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA), why)
         return
       }
       console.error('client media pipeline failed', error)

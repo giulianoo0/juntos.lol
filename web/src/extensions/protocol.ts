@@ -1,0 +1,147 @@
+/**
+ * The juntos ↔ extension contract (protocol v1). An extension runs on its own
+ * origin and only talks through postMessage; everything it sends is untrusted
+ * until it passes here, and what passes is rebuilt field by field so nothing
+ * it attached rides along.
+ */
+
+export interface ExtensionManifest {
+  id: string
+  name: string
+  version: string
+  protocol: 1
+  entry: string
+  icon?: string
+  hosts: { connect: string[]; images: string[]; media: string[] }
+  captcha?: 'hcaptcha'
+}
+
+export interface ThemeTokens {
+  mode: 'dark' | 'light'
+  vars: Record<string, string>
+}
+
+export type ExtSource = { kind: 'hls' | 'file'; url: string }
+
+export type HostToExt =
+  | { juntos: 1; type: 'init'; theme: ThemeTokens; locale: string; canPlay: boolean }
+  | { juntos: 1; type: 'theme'; theme: ThemeTokens }
+  | { juntos: 1; type: 'refresh'; nonce: string; ref: string }
+
+export type ExtPlay = { juntos: 1; type: 'play'; title: string; subtitle?: string; poster?: string; ref: string; source: ExtSource }
+
+export type ExtToHost =
+  | { juntos: 1; type: 'ready' }
+  | ExtPlay
+  | { juntos: 1; type: 'refreshed'; nonce: string; source: ExtSource | null }
+  | { juntos: 1; type: 'close' }
+  | { juntos: 1; type: 'toast'; text: string }
+
+export interface ExtensionPlace {
+  base: string
+  scheme: 'https' | 'http'
+  /** Where extension repositories are read raw, GitHub's own by default. */
+  raw?: string
+}
+
+const PROD_PLACE: ExtensionPlace = { base: 'santamagia.com', scheme: 'https' }
+
+const MAX_TEXT = 300
+const MAX_REF = 128
+const MAX_URL = 2048
+
+export function extensionOrigin(sub: string, place: ExtensionPlace = PROD_PLACE): string {
+  return `${place.scheme}://${sub}.${place.base}`
+}
+
+type Plain = Record<string, unknown>
+
+/** A plain object literal, never an array or something with a borrowed prototype. */
+function plain(value: unknown): Plain | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const proto = Object.getPrototypeOf(value) as unknown
+  return proto === Object.prototype || proto === null ? value as Plain : null
+}
+
+function own(object: Plain, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(object, key) ? object[key] : undefined
+}
+
+function text(value: unknown, max = MAX_TEXT): string | null {
+  return typeof value === 'string' && value.length <= max ? value : null
+}
+
+/** Whether `host` is one of `allowed`; `*.domain` takes any subdomain, not the domain itself. */
+export function hostAllowed(host: string, allowed: readonly string[]): boolean {
+  return allowed.some((entry) => entry.startsWith('*.')
+    ? host.endsWith(entry.slice(1)) && host.length > entry.length - 1
+    : host === entry)
+}
+
+/**
+ * Whether `raw` is an https url, without credentials or port, on one of
+ * `allowed`, and never this page's own host: read from here, it would carry
+ * the person's juntos cookies.
+ */
+export function urlAllowed(raw: string, allowed: readonly string[]): boolean {
+  let url: URL
+  try { url = new URL(raw) } catch { return false }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return false
+  if (url.hostname === globalThis.location?.hostname) return false
+  return hostAllowed(url.hostname, allowed)
+}
+
+function safeUrl(value: unknown, allowed: readonly string[]): string | null {
+  const raw = text(value, MAX_URL)
+  return raw !== null && urlAllowed(raw, allowed) ? raw : null
+}
+
+function source(value: unknown, manifest: ExtensionManifest): ExtSource | null {
+  const object = plain(value)
+  if (!object) return null
+  const kind = own(object, 'kind')
+  if (kind !== 'hls' && kind !== 'file') return null
+  const url = safeUrl(own(object, 'url'), manifest.hosts.media)
+  return url === null ? null : { kind, url }
+}
+
+export function parseExtMessage(data: unknown, manifest: ExtensionManifest): ExtToHost | null {
+  const message = plain(data)
+  if (!message || own(message, 'juntos') !== 1) return null
+  switch (own(message, 'type')) {
+    case 'ready': return { juntos: 1, type: 'ready' }
+    case 'close': return { juntos: 1, type: 'close' }
+    case 'toast': {
+      const said = text(own(message, 'text'))
+      return said === null ? null : { juntos: 1, type: 'toast', text: said }
+    }
+    case 'refreshed': {
+      const nonce = text(own(message, 'nonce'), MAX_REF)
+      if (nonce === null) return null
+      // A source that does not pass is an answer all the same: no source,
+      // so the host stops waiting for this nonce now instead of timing out.
+      return { juntos: 1, type: 'refreshed', nonce, source: source(own(message, 'source'), manifest) }
+    }
+    case 'play': {
+      const title = text(own(message, 'title'))
+      const ref = text(own(message, 'ref'), MAX_REF)
+      const found = source(own(message, 'source'), manifest)
+      if (title === null || ref === null || found === null) return null
+      const out: ExtPlay = { juntos: 1, type: 'play', title, ref, source: found }
+      const subtitle = own(message, 'subtitle')
+      if (subtitle !== undefined) {
+        const said = text(subtitle)
+        if (said === null) return null
+        out.subtitle = said
+      }
+      const poster = own(message, 'poster')
+      if (poster !== undefined) {
+        const url = safeUrl(poster, manifest.hosts.images)
+        if (url === null) return null
+        out.poster = url
+      }
+      return out
+    }
+    default: return null
+  }
+}

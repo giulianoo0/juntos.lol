@@ -47,14 +47,14 @@ import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
 import { playEnteredChime, playJoinChime, playKnockChime, playLeaveChime, playRequestChime, preloadChimes } from '../ui/chime'
-import type { ChatEntry, LocalCopy, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
-import type { OverlayFocus } from '../catalog/CatalogOverlay'
-const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
-import { openCatalogStream } from '../catalog/openStream'
+import type { ChatEntry, LocalCopy, Member, PresenceEvent, RoomInfo, RoomWaiting } from '../types'
+const ExtensionsPanel = lazy(() => import('../extensions/ExtensionsPanel').then((module) => ({ default: module.ExtensionsPanel })))
+import { refreshSource, type LoadedExtension } from '../extensions/bridge'
+import { freshInstalled, installedExtension } from '../extensions/installed'
+import { extensionOrigin, type ExtPlay } from '../extensions/protocol'
+import { extensionPlace, loadPublicConfig, usePublicConfig } from '../publicConfig'
+import { UnsupportedMediaError } from '../pipeline/unsupported'
 import { WorkerProbes } from '../components/WorkerProbes'
-import type { TitlePick } from '../catalog/MetaDetails'
-import { NextEpisodeCard } from '../catalog/NextEpisode'
-import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { YoutubePicker } from '../components/YoutubePicker'
@@ -83,6 +83,8 @@ import {
   startTorrentUpload,
   startUrlUpload,
   startYoutubeUpload,
+  startExtensionUpload,
+  openExtensionSource,
   sourceKindFor,
   youtubeFileName,
   type MediaSourceKind,
@@ -477,6 +479,20 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           startUrlUpload(room.id, next.mediaGeneration, source.url ?? '', source.fileName, source.size ?? 0)
           return
         }
+        if (source.kind === 'extension') {
+          const installed = installedExtension(source.extensionId ?? '')
+          if (!installed || !source.ref) throw new Error('the extension is no longer installed here')
+          const place = extensionPlace(await loadPublicConfig().catch(() => null))
+          const extension = await freshInstalled(installed, place?.raw)
+          if (!extension) throw new Error('the extension changed what it reaches and waits for approval in Extensões')
+          const fresh = await refreshSource(extension, place, source.ref, t.language)
+          if (!fresh) throw new Error('the extension gave no source back')
+          const title = source.title ?? source.fileName
+          const opened = await openExtensionSource(fresh, { proxy: extensionOrigin(extension.sub, place), hosts: extension.manifest.hosts.media })
+          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', title)
+          startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: source.ref, title, source: fresh }, opened)
+          return
+        }
         if (source.kind === 'live') {
           if (liveRoomRef.current.live) return
           await startYoutubeLive(room.id, { url: source.url ?? '', title: source.fileName }, { memberId: sync.memberId, capability: sync.capability })
@@ -629,22 +645,18 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     if (!liveRoom.live) stopLive(room.id)
   }, [liveRoom.live, room.id])
   const selfNickname = sync.members.find((member) => member.id === sync.memberId)?.nickname ?? ''
-  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [extensionsOpen, setExtensionsOpen] = useState(false)
+  // Mounted from the first open on, so closing can play its way out.
+  const [extensionsMounted, setExtensionsMounted] = useState(false)
+  const publicConfig = usePublicConfig()
+  const place = useMemo(() => extensionPlace(publicConfig), [publicConfig])
   useEffect(() => {
     if (!sync.memberId || !sync.connected) return
     const origin = sourceOriginFor(room.id)
     if (!origin || !(uploadActive(room.id) || remuxHandleFor(room.id))) return
     sync.send('source', { origin })
   }, [room.id, sync.memberId, sync.connected, sync.send, liveRoom.mediaGeneration])
-  const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
   const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
-  const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(nowPlayingKey(room.id)) ?? 'null') as NowPlaying | null
-    } catch {
-      return null
-    }
-  })
   const gate: GateStep = uploadFailed !== null ? 'failed'
     : mediaStatus === 'processing' || mediaStatus === 'uploading' ? 'preparing'
     : mediaStatus === 'error' ? 'error'
@@ -676,7 +688,10 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       await run()
     } catch (error) {
       console.error('change source failed', error)
-      setSourceError(isTorrentError(error) ? torrentErrorKey(error) : isYoutubeError(error) ? youtubeErrorKey(error) : 'room.changeFailed')
+      setSourceError(isTorrentError(error) ? torrentErrorKey(error)
+        : isYoutubeError(error) ? youtubeErrorKey(error)
+        : error instanceof UnsupportedMediaError && error.reason === 'encrypted' ? 'extensions.error.encrypted'
+        : 'room.changeFailed')
     }
   }
 
@@ -737,32 +752,19 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     })
   }
 
-  const chooseCatalogStream = (pick: TitlePick) => {
-    setCatalogOpen(false)
-    setCatalogFocus(null)
-    const playing = nowPlayingFromPick(pick)
-    setNowPlaying(playing)
-    try {
-      if (playing) localStorage.setItem(nowPlayingKey(room.id), JSON.stringify(playing))
-      else localStorage.removeItem(nowPlayingKey(room.id))
-    } catch {}
+  // The extension's url is signed for seconds: the playlist is opened before
+  // anything else, the room's switch included.
+  const playFromExtension = (extension: LoadedExtension, play: ExtPlay) => {
+    setExtensionsOpen(false)
+    const title = play.subtitle ? `${play.title} · ${play.subtitle}` : play.title
     void swapSource(async () => {
-      if (pick.stream.location.kind === 'url') {
-        const { url } = pick.stream.location
-        const next = await openMedia('upload', pick.displayName)
-        startUrlUpload(room.id, next.mediaGeneration, url, `${pick.displayName}.mkv`, 0)
-        return
-      }
-      const opened = await openCatalogStream(pick.stream, pick.target, undefined, { onProbe: setSwapProbes })
-      try {
-        const next = await openMedia(sourceKindFor(opened.session.backend, 'upload'), pick.displayName, undefined, torrentCopy(opened.session, opened.file))
-        startTorrentUpload(room.id, next.mediaGeneration, opened, undefined, { memberId: sync.memberId, capability: sync.capability })
-      } catch (error) {
-        opened.session.destroy()
-        throw error
-      }
+      const opened = await openExtensionSource(play.source, { proxy: extensionOrigin(extension.sub, place), hosts: extension.manifest.hosts.media })
+      const next = await openMedia('upload', title)
+      startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: play.ref, title, source: play.source }, opened)
     })
   }
+  const closeExtensions = useCallback(() => setExtensionsOpen(false), [])
+  const toastText = useCallback((text: string) => toast(text), [toast])
 
   const chatEntries = useMemo((): ChatEntry[] => [
     ...sync.messages,
@@ -801,13 +803,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     })
   }, [room.id, liveRoom.mediaGeneration])
 
-  const nextEpisode = useNextEpisode(
-    nowPlaying,
-    videoRef,
-    canDrive && roomHasMedia && mediaStatus === 'ready',
-    chooseCatalogStream,
-  )
-
   const send = sync.send
   const sendChat = useCallback((text: string) => send('chat', { text }), [send])
 
@@ -837,15 +832,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   ) : null
 
   const visibleRequests = sync.titleRequests.filter((request) => !dismissedRequests.includes(request.id)).slice(-3)
-
-  const openRequestedTitle = (request: TitleRequest) => {
-    setCatalogFocus({
-      open: { meta: { id: request.metaId, type: request.metaType, name: request.name, poster: request.poster, releaseInfo: '' } },
-      season: request.season,
-      episode: request.episode,
-    })
-    setCatalogOpen(true)
-  }
 
   const strings = useRoomStrings()
   const { me: account } = useMe()
@@ -900,13 +886,13 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
   const viewStages: ViewStage[] = roomStages.map((stage) => ({
     id: stage.id,
     kind: stage.kind,
-    title: stage.kind === 'screen' ? strings.screenOf.replace('{name}', stage.title) : stage.kind === 'live' ? stage.title || t('stage.kind.live') : liveRoom.fileName || nowPlaying?.name || t('stage.kind.media'),
+    title: stage.kind === 'screen' ? strings.screenOf.replace('{name}', stage.title) : stage.kind === 'live' ? stage.title || t('stage.kind.live') : liveRoom.fileName || t('stage.kind.media'),
     ownerId: stage.ownerId ?? '',
   }))
   const spotlight = currentSpotlight(stageRoom, sync.stages)
   const sources: ShareSource[] = [
     ...(screenShareSupported() && (appCanCapture() || displayCaptureAvailable()) ? ['screen' as const] : []),
-    'file', 'torrent', 'youtube', 'drive', 'catalog',
+    'file', 'torrent', 'youtube', 'drive', 'extensions',
   ]
   const memberIdByName = new Map(sync.members.map((member) => [member.nickname, member.id]))
   const { chat, reactions: serverReactions } = splitReactions(chatEntries.map((entry, index): ViewChatMessage => ({
@@ -946,12 +932,12 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       setCam: call.setCam,
       share: (source) => {
         setSourceError('')
-        if (source === 'catalog') { setCatalogFocus(null); setCatalogOpen(true); return }
         if (!mayOpen(source)) {
           if (!sync.stages.asked.includes(source === 'screen' ? 'screen' : 'media')) sync.requestStage(source === 'screen' ? 'screen' : 'media')
           toast(t('stage.waiting'))
           return
         }
+        if (source === 'extensions') { setExtensionsMounted(true); setExtensionsOpen(true) }
         if (source === 'file') fileInputRef.current?.click()
         if (source === 'screen') {
           if (!screenShareSupported()) { setSourceError('error.screenUnsupported'); return }
@@ -1099,15 +1085,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
                   t={t}
                 />
               ) : null}
-              {nextEpisode.pending && nowPlaying ? (
-                <NextEpisodeCard
-                  video={nextEpisode.pending.video}
-                  poster={nowPlaying.poster}
-                  seconds={nextEpisode.seconds}
-                  onPlayNow={nextEpisode.playNow}
-                  onDismiss={nextEpisode.dismiss}
-                />
-              ) : null}
             </>
           }
         />
@@ -1203,11 +1180,6 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
                   ? ` · S${String(request.season).padStart(2, '0')}E${String(request.episode).padStart(2, '0')}`
                   : ''}
               </p>
-              {sync.isController ? (
-                <button type="button" className="request-open" onClick={() => openRequestedTitle(request)}>
-                  {t('request.viewSources')}
-                </button>
-              ) : null}
             </div>
             <button
               type="button"
@@ -1221,28 +1193,19 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
         ))}
       </div>
     ) : null}
-    {catalogOpen ? (
-      <Suspense fallback={null}>
-        <CatalogOverlay
-          mode={mayOpenMedia ? 'host' : 'viewer'}
-          focus={catalogFocus}
-          onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
-          onPickStream={chooseCatalogStream}
-          onRequestTitle={(open, episode) => {
-            sync.send('titleRequest', {
-              title: {
-                metaId: open.meta.id,
-                metaType: open.meta.type,
-                name: open.meta.name,
-                poster: open.meta.poster,
-                season: episode.season,
-                episode: episode.episode,
-              },
-            })
-          }}
+    <Suspense fallback={null}>
+      {extensionsMounted ? (
+        <ExtensionsPanel
+          open={extensionsOpen && mayOpenMedia}
+          canPlay={mayOpenMedia}
+          canPublish={account?.canPublishExtensions === true}
+          place={place}
+          onClose={closeExtensions}
+          onPlay={playFromExtension}
+          onToast={toastText}
         />
-      </Suspense>
-    ) : null}
+      ) : null}
+    </Suspense>
     <StillThere
       deadlineMs={sync.stillThereDeadlineMs}
       serverOffsetMs={sync.serverOffsetMs}

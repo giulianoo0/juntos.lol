@@ -79,6 +79,7 @@ export interface RangeReaderOptions {
   refresh?: () => Promise<boolean>
   onBytes?: (n: number) => void
   headers?: Record<string, string>
+  fetch?: typeof fetch
 }
 
 const DEFAULT_ATTEMPTS = 8
@@ -141,7 +142,7 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
     const firstByte = setTimeout(() => requestAbort?.abort(), opts.firstByteMs ?? DEFAULT_FIRST_BYTE_MS)
     let response: Response
     try {
-      response = await fetch(opts.url(), {
+      response = await (opts.fetch ?? fetch)(opts.url(), {
         signal: requestAbort.signal,
         headers: { ...opts.headers, Range: `bytes=${cursor}-${target - 1}` },
       })

@@ -79,6 +79,6 @@ function classify(error: unknown, kind: RemuxJob['source']['kind']): string {
   const failure = error instanceof PlanFailedError ? error.failure : error
   const read = readFailureCode(failure, kind)
   if (read) return read
-  if (error instanceof PlanFailedError) return kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
+  if (error instanceof PlanFailedError) return kind === 'url' || kind === 'hls' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA
   return error instanceof Error ? error.message : 'upload failed'
 }

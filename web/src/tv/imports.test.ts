@@ -56,7 +56,8 @@ const PREPARES_MEDIA = [
   /^torrent\.ts$/,
   /^live\.ts$/,
   /^screen\/(useScreenShare|JlocalPicker|AppScreenPicker|ScreenStage)\.tsx?$/,
-  /^catalog\//,
+  // protocol.ts only validates messages and urls; the rest of extensions/ opens and drives them.
+  /^extensions\/(?!protocol\.ts$)/,
   /^components\/(TorrentPicker|DrivePicker|YoutubePicker)\.tsx$/,
   /^pages\/Room\.tsx$/,
 ]

@@ -42,13 +42,17 @@ export function fileInput(file: File): MediaInput {
 /** Bytes at a url that answers Range requests. Every read streams the body as
  * it arrives, resumes across capped or truncated responses, and retries blips;
  * the priority rides in the query string so the GET needs no preflight. */
-export function rangeInput(url: string, name: string, size: number): MediaInput {
+export function rangeInput(url: string, name: string, size: number, { external = false }: { external?: boolean } = {}): MediaInput {
   const gate = new ReadGate()
   const tap = new ByteTap()
+  // An extension's url may be signed over its query and only its hosts were
+  // checked, so it goes out untouched and a redirect fails the read.
+  const strict: typeof fetch = (input, init) => fetch(input, { ...init, redirect: 'error' })
   const opts = (hint?: ReadHint) => ({
-    url: () => (hint?.prio ? withParam(url, 'prio', hint.prio) : url),
+    url: () => (hint?.prio && !external ? withParam(url, 'prio', hint.prio) : url),
     size,
     gate,
+    ...(external ? { fetch: strict } : {}),
   })
   return {
     name,

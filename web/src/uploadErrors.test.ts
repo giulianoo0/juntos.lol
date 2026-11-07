@@ -8,8 +8,8 @@ describe('readFailureCode', () => {
     expect(readFailureCode(unreachable(), 'worker')).toBe(WORKER_UNREACHABLE)
   })
 
-  it('blames the origin when a plugin url stops answering', () => {
-    expect(readFailureCode(unreachable(), 'url')).toBe(SOURCE_UNREACHABLE)
+  it.each(['url', 'hls'])('blames the origin when a %s source stops answering', (kind) => {
+    expect(readFailureCode(unreachable(), kind)).toBe(SOURCE_UNREACHABLE)
   })
 
   it('recognises a read failure rebuilt by a worker postMessage', () => {

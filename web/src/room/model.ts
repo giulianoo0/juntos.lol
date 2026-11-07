@@ -94,7 +94,7 @@ export interface Reaction {
 }
 
 /** What the "Compartilhar" menu opens. */
-export type ShareSource = 'screen' | 'file' | 'torrent' | 'youtube' | 'drive' | 'catalog'
+export type ShareSource = 'screen' | 'file' | 'torrent' | 'youtube' | 'drive' | 'extensions'
 
 export interface RoomActions {
   setMic: (on: boolean) => void

@@ -16,6 +16,9 @@ import {
   subscribeUploadProgress,
   type RoomUploadProgress,
   lastUploadFailureDetail,
+  openExtensionSource,
+  resumableSourceFor,
+  startExtensionUpload,
 } from './upload'
 
 const subtitleFakes = vi.hoisted(() => {
@@ -316,6 +319,92 @@ describe('url upload', () => {
     const done = vi.fn()
     subscribeUploadDone('room9', done)
     await vi.waitFor(() => expect(done).toHaveBeenCalledWith(SOURCE_UNREACHABLE))
+  })
+})
+
+describe('fonte de uma extensão', () => {
+  const pick = (kind: 'hls' | 'file', url: string) => ({
+    extensionId: 'exemplo', sub: 'lczfxd2q74zxknb5', ref: '15228', title: 'Emma', source: { kind, url },
+  })
+
+  beforeEach(() => {
+    clientPipeline.planClientRemux.mockResolvedValue(plan)
+    clientPipeline.runClientRemux.mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  it('remuxa o HLS como um arquivo só, com o tamanho da soma dos segmentos', async () => {
+    const opened = await openExtensionSource({ kind: 'hls', url: 'https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8' }, {
+      hosts: ['*.cdn-exemplo.net'],
+      fetch: vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => String(url).endsWith('.m3u8')
+        ? new Response('#EXTM3U\n#EXTINF:6,\na.ts\n#EXTINF:6,\nb.ts\n#EXT-X-ENDLIST')
+        : new Response(null, { status: 200, headers: { 'Content-Length': init?.method === 'HEAD' ? '700' : '0' } })),
+    })
+
+    startExtensionUpload('room-ext1', 3, pick('hls', 'https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8'), opened)
+
+    await vi.waitFor(() => expect(clientPipeline.planClientRemux).toHaveBeenCalledOnce())
+    expect(clientPipeline.planClientRemux.mock.calls[0][0]).toMatchObject({ name: 'Emma', size: 1400 })
+    expect(resumableSourceFor('room-ext1')).toMatchObject({ kind: 'extension', extensionId: 'exemplo', ref: '15228', title: 'Emma', fileName: 'Emma' })
+  })
+
+  it('lê o tamanho de um arquivo antes de remuxar, em vez de supor zero', async () => {
+    const fetch = vi.fn(async () => new Response(null, { status: 200, headers: { 'Content-Length': '5000', 'Content-Type': 'video/mp4' } }))
+    const opened = await openExtensionSource({ kind: 'file', url: 'https://files.example.com/a.mp4' }, { fetch, hosts: ['files.example.com'] })
+
+    startExtensionUpload('room-ext2', 1, pick('file', 'https://files.example.com/a.mp4'), opened)
+
+    await vi.waitFor(() => expect(clientPipeline.planClientRemux).toHaveBeenCalledOnce())
+    expect(clientPipeline.planClientRemux.mock.calls[0][0]).toMatchObject({ name: 'Emma', size: 5000 })
+    expect(fetch.mock.calls.every((call) => (call as unknown[])[1] !== undefined && ((call as unknown[])[1] as RequestInit).redirect === 'error')).toBe(true)
+  })
+
+  it('o arquivo da extensão que redireciona vai pelo proxy, que confere cada salto', async () => {
+    const proxy = 'https://abcdefghijklmnop.ext.example'
+    const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      // fetch with redirect: 'error' fails like this on a 302.
+      if (new URL(String(url)).host === 'files.example.com' && init?.redirect === 'error') throw new TypeError('Failed to fetch')
+      return new Response(null, { status: 200, headers: { 'Content-Length': '5000' } })
+    })
+
+    const opened = await openExtensionSource({ kind: 'file', url: 'https://files.example.com/a.mp4' }, { fetch, proxy, hosts: ['files.example.com'] })
+
+    expect(opened).toEqual({ kind: 'file', url: `${proxy}/_juntos/media?u=${encodeURIComponent('https://files.example.com/a.mp4')}`, size: 5000 })
+  })
+
+  it('recusa a playlist da extensão que leva a um host que ela não declarou', async () => {
+    const fetch = vi.fn(async (url: RequestInfo | URL) => String(url).endsWith('.m3u8')
+      ? new Response('#EXTM3U\n#EXTINF:6,\nhttp://127.0.0.1:40392/state\n#EXT-X-ENDLIST')
+      : new Response(null, { status: 200, headers: { 'Content-Length': '700' } }))
+
+    await expect(openExtensionSource({ kind: 'hls', url: 'https://a.media.example/ep/1080p.m3u8' }, { fetch, hosts: ['*.media.example'] })).rejects.toThrow()
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('127.0.0.1'))).toBe(false)
+  })
+
+  it('aceita os segmentos que o proxy da extensão reescreveu para si', async () => {
+    const proxy = 'https://abcdefghijklmnop.ext.example'
+    const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(url)).host === 'a.media.example') throw new TypeError('Failed to fetch')
+      return String(url).includes('1080p.m3u8')
+        ? new Response(`#EXTM3U\n#EXTINF:6,\n${proxy}/_juntos/media?u=${encodeURIComponent('https://a.media.example/ep/a.ts')}\n#EXT-X-ENDLIST`)
+        : new Response(null, { status: 200, headers: { 'Content-Length': init?.method === 'HEAD' ? '700' : '0' } })
+    })
+
+    const opened = await openExtensionSource({ kind: 'hls', url: 'https://a.media.example/ep/1080p.m3u8' }, { fetch, proxy, hosts: ['*.media.example'] })
+
+    expect(opened.kind === 'hls' && opened.plan.size).toBe(700)
+  })
+
+  it('não guarda a fonte para retomar quando o preparo nem começa', async () => {
+    const fetch = vi.fn(async () => new Response('nope', { status: 403 }))
+
+    await expect(openExtensionSource({ kind: 'hls', url: 'https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8' }, { fetch, hosts: ['*.cdn-exemplo.net'] })).rejects.toThrow()
+    expect(resumableSourceFor('room-ext3')).toBeNull()
   })
 })
 

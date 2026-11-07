@@ -26,7 +26,7 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-// The TV only watches: it opens no YouTube and runs no catalog plugins.
+// The TV only watches: it opens no YouTube.
 const onTv = isTvPage(window.location.pathname)
 
 if (!onTv) {
@@ -37,10 +37,3 @@ if (!onTv) {
 
 // One page load for /data's tally: nothing in it names the browser.
 try { navigator.sendBeacon?.('/api/visit') } catch {}
-
-if (!onTv) {
-  const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
-  const idle = window.requestIdleCallback
-  if (typeof idle === 'function') idle(checkPlugins, { timeout: 3_000 })
-  else window.setTimeout(checkPlugins, 1_500)
-}

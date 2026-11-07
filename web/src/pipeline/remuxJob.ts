@@ -6,10 +6,12 @@
  * is drawing the player.
  */
 import { fileInput, rangeInput, type MediaInput } from './mediaInput'
+import { hlsInput } from './hlsInput'
 export * from './remuxTypes'
 import type { RemuxJob, RemuxSource } from './remuxTypes'
 import type { SeekTrace } from './seekTrace'
 import { publishSubtitles } from './subtitlePublish'
+import { UnsupportedMediaError } from './unsupported'
 import { lastPlanRefusal, planClientRemux, runClientRemux, type ClientRemuxHandle } from './clientMedia'
 
 export interface RemuxJobCallbacks {
@@ -18,14 +20,7 @@ export interface RemuxJobCallbacks {
   onTrace?: (trace: SeekTrace) => void
 }
 
-export class UnsupportedMediaError extends Error {
-  readonly reason: string | null
-  constructor(reason: string | null = null) {
-    super(reason ? `unsupported media: ${reason}` : 'unsupported media')
-    this.name = 'UnsupportedMediaError'
-    this.reason = reason
-  }
-}
+export { UnsupportedMediaError }
 
 export class PlanFailedError extends Error {
   failure: unknown
@@ -36,11 +31,12 @@ export class PlanFailedError extends Error {
   }
 }
 
-function buildInput(source: RemuxSource): MediaInput {
+async function buildInput(source: RemuxSource): Promise<MediaInput> {
   switch (source.kind) {
     case 'file': return fileInput(source.file)
     case 'stream': return rangeInput(source.url, source.name, source.size)
-    case 'url': return rangeInput(source.url, source.name, source.size)
+    case 'url': return rangeInput(source.url, source.name, source.size, { external: source.external })
+    case 'hls': return hlsInput(source.url, source.name, { plan: source.plan, proxy: source.proxy })
     case 'input': return source.input
   }
 }
@@ -48,11 +44,13 @@ function buildInput(source: RemuxSource): MediaInput {
 /** Runs the whole preparo and resolves when the remux completes. Errors are
  * thrown raw — the caller classifies them. */
 export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace }: RemuxJobCallbacks): Promise<void> {
-  const input = coldAware(buildInput(job.source))
+  let input: ColdAwareInput
   let plan: Awaited<ReturnType<typeof planClientRemux>>
   try {
+    input = coldAware(await buildInput(job.source))
     plan = await planClientRemux(input)
   } catch (error) {
+    if (error instanceof UnsupportedMediaError) throw error
     throw new PlanFailedError(error)
   }
   if (!plan) throw new UnsupportedMediaError(lastPlanRefusal())

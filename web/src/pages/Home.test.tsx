@@ -14,7 +14,7 @@ const giu = { id: 128, nickname: 'giu', avatar: 'fox.bowtie', visibility: 'frien
 
 async function signedIn(me: typeof giu | null) {
   vi.stubGlobal('fetch', vi.fn((input: string) => input === '/api/me' ? respond(me ? 200 : 401, me ?? { error: 'not_signed_in' })
-    : input === '/api/config' ? respond(200, { turnstileSiteKey: '', discordAppId: '42', catalogAddonUrl: '' })
+    : input === '/api/config' ? respond(200, { turnstileSiteKey: '', discordAppId: '42' })
     : respond(404)))
   await refreshMe()
 }

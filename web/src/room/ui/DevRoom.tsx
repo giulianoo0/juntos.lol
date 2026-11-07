@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomTv, RoomTvDevice, RoomViewModel, ShareSource, Spotlight, Stage, StageRequest, Knock, Removed } from '../model'
+import type { ChatMessage, EntryViewModel, JoinMode, Person, RoomTv, RoomTvDevice, RoomViewModel, Spotlight, Stage, StageRequest, Knock, Removed } from '../model'
 import { profilePath } from '../../account'
 import { openDownloadApp } from '../../components/DownloadApp'
 import { Segmented } from '../../ui/Segmented'
@@ -80,11 +80,11 @@ function FakeStage({ stage, size }: { stage: Stage; size: 'focus' | 'thumb' }) {
   )
 }
 
-function SharePicker({ source, close }: { source: ShareSource; close: () => void }) {
+function SharePicker({ close }: { close: () => void }) {
   return (
     <div className={styles.picker}>
       <div className={styles.pickerList}>
-        {(source === 'catalog' ? ['Duna: Parte Dois', 'Interestelar', 'Ainda Estou Aqui', 'Oppenheimer'] : ['Duna.Parte.Dois.2024.2160p.mkv', 'Extras/Trailer.mkv']).map((item) => (
+        {['Duna.Parte.Dois.2024.2160p.mkv', 'Extras/Trailer.mkv'].map((item) => (
           <button key={item} type="button" className={styles.pickerRow} onClick={close}>{item}</button>
         ))}
       </div>
@@ -198,7 +198,7 @@ export function DevRoom() {
     knocks,
     removed,
     ...splitReactions(chat),
-    sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'catalog'],
+    sources: ['screen', 'file', 'torrent', 'youtube', 'drive', 'extensions'],
     appOnly: params.get('app') === '1' ? [] : ['youtube'],
     levelOf: fakeLevel,
     tv,
@@ -258,7 +258,7 @@ export function DevRoom() {
         return <FakeCamera name={people[index]?.name ?? ''} hue={(index * 47 + 200) % 360} />
       },
       renderStage: (stage, size) => <FakeStage stage={stage} size={size} />,
-      renderShare: (source, close) => (source === 'torrent' || source === 'youtube' || source === 'catalog' ? <SharePicker source={source} close={close} /> : null),
+      renderShare: (source, close) => (source === 'torrent' || source === 'youtube' ? <SharePicker close={close} /> : null),
     },
     // `update` and the setters are stable enough for a dev page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
