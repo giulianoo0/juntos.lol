@@ -29,10 +29,12 @@ type StreamId = usize;
 // 32 mb lookahead by default.
 const PER_STREAM_BUF_DEFAULT: u64 = 64 * 1024 * 1024;
 
-// ss patch: right after a stream opens, seeks or blocks, piece selection is
-// narrowed to max(2 MiB, 1.5 s of media) ahead of it until half of that has
-// arrived, so the swarm converges on the playhead instead of spreading over
-// the 64 MiB read-ahead. Same idea as torrentplayer's critical window.
+// ss patch: while a reader is blocked on a stream (right after opening or
+// seeking, or once it caught up with the swarm), piece selection is narrowed
+// to max(2 MiB, 1.5 s of media) ahead of it until half of that has arrived,
+// so the swarm converges on the playhead instead of spreading over the 64 MiB
+// read-ahead. Same idea as torrentplayer's critical window. A stream that is
+// only parked somewhere, never read, does not take it.
 const CRITICAL_MIN_BYTES: u64 = 2 * 1024 * 1024;
 
 struct StreamState {
@@ -471,7 +473,7 @@ impl ManagedTorrent {
     }
 
     /// Media bitrate of a file in bytes per second, once known. It sizes the
-    /// window fetched first after a stream of it opens, seeks or blocks
+    /// window fetched first when a reader of it blocks
     /// (1.5 s of media, at least 2 MiB), for open streams and later ones.
     pub fn set_stream_bytes_per_sec(&self, file_id: usize, bytes_per_sec: u64) -> anyhow::Result<()> {
         self.streams()?.set_bytes_per_sec(file_id, bytes_per_sec);
@@ -528,7 +530,7 @@ impl ManagedTorrent {
                 file_id,
                 position: 0,
                 waker: None,
-                critical: true,
+                critical: false,
                 bytes_per_sec: streams.bytes_per_sec.get(&file_id).map(|b| *b).unwrap_or(0),
                 file_len: fd_len,
                 file_abs_offset: fd_offset,
@@ -536,7 +538,6 @@ impl ManagedTorrent {
         );
         streams.changed.notify_one();
 
-        s.torrent.notify_new_pieces();
         debug!(stream_id = s.stream_id, file_id, "started stream");
 
         Ok(s)
@@ -659,16 +660,17 @@ mod tests {
     }
 
     #[test]
-    fn seek_and_block_reenter_critical() {
-        let (s, l) = streams(MIB, &[(0, true)]);
-        s.settle_critical(&l, |p| p.get() == 0);
-        assert!(s.mark_critical(0));
-        assert!(!s.mark_critical(0));
+    fn only_a_blocked_reader_enters_critical() {
+        let (s, l) = streams(MIB, &[(0, false)]);
         s.streams.get_mut(&0).unwrap().position = 50 * MIB;
-        assert_eq!(ids(&s.next_pieces(&l, |p| p.get() == 0, |_| true).0), vec![50, 51, 52]);
+        assert!(!s.next_pieces(&l, |_| false, |_| true).1);
+
+        assert!(s.register_waker(0, std::task::Waker::noop().clone()));
+        assert!(!s.register_waker(0, std::task::Waker::noop().clone()));
+        assert_eq!(ids(&s.next_pieces(&l, |_| false, |_| true).0), vec![50, 51, 52]);
 
         s.settle_critical(&l, |_| true);
+        assert!(!s.next_pieces(&l, |_| false, |_| true).1);
         assert!(s.register_waker(0, std::task::Waker::noop().clone()));
-        assert!(s.next_pieces(&l, |_| false, |_| true).1);
     }
 }
