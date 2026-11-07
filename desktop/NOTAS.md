@@ -1,1 +1,1 @@
-Um torrent que já estava aberto no app volta na hora, em vez de esperar os metadados de novo e cair na transmissão remota.
+Extensões abrem dentro do app, e o Stremio Addons já vem instalado: o que ele acha toca direto pela sua rede, arquivo ou HLS.
