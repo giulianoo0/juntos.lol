@@ -4,7 +4,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -21,6 +23,8 @@ type ExtensionAccess struct {
 	GitHub   *extension.GitHub
 	Accounts *account.Store
 	Quota    *Quota
+	// Human is the gate a media ticket waits behind; nil asks nobody.
+	Human gin.HandlerFunc
 }
 
 type extensionView struct {
@@ -39,6 +43,54 @@ func RegisterExtensionRoutes(rg *gin.RouterGroup, cfg config.Config, access Exte
 	rg.GET("/extensions/:id", extensionByID(access.Registry))
 	rg.GET("/extensions/:id/latest", latestExtension(access))
 	rg.POST("/extensions", sameOrigin(cfg), registerExtension(cfg, access))
+	human := access.Human
+	if human == nil {
+		human = func(*gin.Context) {}
+	}
+	rg.POST("/extensions/media-ticket", sameOrigin(cfg), human, mediaTicket(cfg, newWindowLimiter(mediaTicketsPerHour, time.Hour)))
+}
+
+const (
+	mediaTicketTTL      = 6 * time.Hour
+	mediaTicketsPerHour = 240
+	maxTicketURL        = 2048
+)
+
+// mediaTicket signs one url for an extension's media proxy. The page asks
+// for it when a CDN sends no CORS; the proxy refuses a request without one,
+// so the Origin a script can write itself is no longer the only lock.
+func mediaTicket(cfg config.Config, limiter *windowLimiter) gin.HandlerFunc {
+	key := []byte(cfg.ExtensionMediaKey)
+	return func(c *gin.Context) {
+		if len(key) == 0 {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "media_proxy_off"})
+			return
+		}
+		var body struct {
+			Sub string `json:"sub"`
+			URL string `json:"url"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil || !extension.ValidSub(body.Sub) || !proxiableURL(body.URL) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "bad_request"})
+			return
+		}
+		if !limiter.allow(requestIP(c.Request, cfg.BehindCloudflare)) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "quota_exceeded"})
+			return
+		}
+		expires := time.Now().Add(mediaTicketTTL)
+		c.JSON(http.StatusOK, gin.H{"ticket": extension.MediaTicket(key, body.Sub, body.URL, expires), "expiresAt": expires.UTC()})
+	}
+}
+
+// proxiableURL is what the proxy would fetch at all: https, no port, no
+// credentials. Whether the host is one of the extension's is the proxy's call.
+func proxiableURL(raw string) bool {
+	if raw == "" || len(raw) > maxTicketURL {
+		return false
+	}
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.Port() == "" && u.User == nil
 }
 
 // entryByID writes the 404 or 500 itself when ok is false.

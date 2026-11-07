@@ -12,7 +12,7 @@ export type RemuxSource =
   /** external: an extension's url, read as given (no `prio`) and never through a redirect. */
   | { kind: 'url'; url: string; name: string; size: number; external?: boolean }
   /** An HLS stream read as one file; `plan` is the playlist already opened, while its signature held. */
-  | { kind: 'hls'; url: string; name: string; plan?: HlsPlan; proxy?: string }
+  | { kind: 'hls'; url: string; name: string; plan?: HlsPlan }
   | { kind: 'input'; input: MediaInput }
 
 export interface RemuxSideFile {

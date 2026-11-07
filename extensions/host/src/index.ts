@@ -10,6 +10,8 @@ export interface Env {
   EXT_BASE: string
   EXT_SCHEME: string
   GITHUB_RAW?: string
+  /** Secret: EXTENSION_MEDIA_KEY of juntos, which signs the media tickets. */
+  MEDIA_KEY?: string
 }
 
 const SUB = /^[a-z2-7]{16}$/
@@ -59,7 +61,7 @@ export async function handle(req: Request, env: Env, deps: Deps): Promise<Respon
       return new Response(null, { status: 302, headers: { location: `/@${version}/${manifest.entry}`, 'cache-control': 'no-store' } })
     }
     if (r.kind === 'media') {
-      return proxyMedia(req, manifest, { origins, self: `${env.EXT_SCHEME}://${sub}.${env.EXT_BASE}`, fetch: deps.fetch })
+      return proxyMedia(req, manifest, { origins, self: `${env.EXT_SCHEME}://${sub}.${env.EXT_BASE}`, sub, key: env.MEDIA_KEY ?? '', fetch: deps.fetch })
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } })
 

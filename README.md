@@ -263,6 +263,7 @@ Estas rotas atendem o cliente web e ainda não têm garantia de estabilidade com
 | `GET` | `/api/extensions/host/:sub` | `{id, source}` do subdomínio, para o host de extensões; 404 se ninguém o tem. |
 | `POST` | `/api/extensions` | Registra o id do `juntos.json` de um repositório público e com licença do GitHub (`{"repo": "dono/repo"}`); só contas de `EXTENSION_PUBLISHERS`, com cota por hora. |
 | `GET` | `/api/extensions/:id/latest` | O sha do HEAD do repositório de uma extensão. |
+| `POST` | `/api/extensions/media-ticket` | Assina uma URL para o proxy de mídia de uma extensão (`{"sub", "url"}` → `{ticket, expiresAt}`, 6 h); pede a verificação humana e tem limite por IP. Sem `EXTENSION_MEDIA_KEY`, 503. |
 
 ## Persistência e segurança
 

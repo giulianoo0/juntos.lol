@@ -29,6 +29,12 @@ function cdn(files: Record<string, string | Uint8Array>, { onHead }: { onHead?: 
 
 const media = (lines: string[]) => ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:6', ...lines, '#EXT-X-ENDLIST'].join('\n')
 
+
+const extRelay = {
+  via: async (url: string) => `https://ext.example/_juntos/media?u=${encodeURIComponent(url)}`,
+  owns: (url: string) => url.startsWith('https://ext.example/_juntos/media?'),
+}
+
 describe('HLS como um arquivo só', () => {
   it('soma os segmentos e lê atravessando de um para o outro', async () => {
     const a = bytes(100, 0)
@@ -158,7 +164,7 @@ describe('HLS como um arquivo só', () => {
       return proxied(input, init)
     })
 
-    const plan = await openHls('https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8?signature=s', { fetch, proxy: 'https://ext.example' })
+    const plan = await openHls('https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8?signature=s', { fetch, relay: extRelay })
 
     expect(fetch).toHaveBeenCalledWith(
       `https://ext.example/_juntos/media?u=${encodeURIComponent('https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8?signature=s')}`,
@@ -233,7 +239,7 @@ describe('HLS como um arquivo só', () => {
         : new Response(segment.slice(0, 1), { status: 206, headers: { 'Content-Range': `bytes 0-0/${segment.byteLength}` } })
     })
 
-    const plan = await openHls('https://cdn.example.com/ep/1080p.m3u8', { fetch, proxy: 'https://ext.example' })
+    const plan = await openHls('https://cdn.example.com/ep/1080p.m3u8', { fetch, relay: extRelay })
 
     expect(plan.segments.map((s) => s.url)).toEqual(['https://ext.example/_juntos/media?u=seg'])
     expect(plan.size).toBe(12)

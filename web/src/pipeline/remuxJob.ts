@@ -36,7 +36,7 @@ async function buildInput(source: RemuxSource): Promise<MediaInput> {
     case 'file': return fileInput(source.file)
     case 'stream': return rangeInput(source.url, source.name, source.size)
     case 'url': return rangeInput(source.url, source.name, source.size, { external: source.external })
-    case 'hls': return hlsInput(source.url, source.name, { plan: source.plan, proxy: source.proxy })
+    case 'hls': return hlsInput(source.url, source.name, { plan: source.plan })
     case 'input': return source.input
   }
 }

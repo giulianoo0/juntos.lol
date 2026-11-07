@@ -250,9 +250,9 @@ Juntos e extensão só trocam `postMessage` (seção 6). Dos dois lados:
   rede local de quem abre, e a extensão pode fazer o navegador bater ali. O
   CORS impede ler a resposta, não o pedido.
 - **Os hosts declarados veem você**: o seu IP, como em qualquer site.
-- **O proxy de mídia não exige origem.** Ele responde a qualquer um, mas só
-  para hosts que alguma extensão registrada declarou em `hosts.media` (seção
-  7).
+- **O proxy de mídia só lê com ticket.** Cada URL precisa de um ticket que o
+  juntos assina depois da verificação humana, com limite por IP; o proxy
+  assina sozinho os segmentos das playlists que reescreve (seção 7).
 
 A confiança termina em quem escreveu a extensão. Por isso publicar um id é
 fechado e o código tem de ser aberto (seção 9): qualquer um pode ler o que
@@ -472,10 +472,19 @@ Se a primeira leitura (a playlist, ou a medição do arquivo) falha por CORS, o
 navegador do host refaz tudo por:
 
 ```
-https://<sub>.santamagia.com/_juntos/media?u=<url codificada>
+https://<sub>.santamagia.com/_juntos/media?u=<url codificada>&t=<ticket>
 ```
 
+O ticket vem de `POST /api/extensions/media-ticket` (`{"sub", "url"}`), pedido
+pelo site do juntos: `<exp>.<HMAC-SHA256 em base64url>` de
+`juntos-media/1\n<sub>\n<exp>\n<url>`, com a chave `EXTENSION_MEDIA_KEY`
+(no Worker, o secret `MEDIA_KEY`). Vale 6 horas e só para aquela URL e aquele
+`sub`.
+
 Regras do proxy:
+
+- Sem ticket válido para `u` (ausente, de outra URL ou extensão, vencido ou
+  adulterado), ou sem `MEDIA_KEY` no Worker: `403` sem buscar nada.
 
 - Só `GET` e `HEAD` (outros: 405).
 - Só `https:`, sem porta nem credenciais, e o host tem de estar em
@@ -486,7 +495,8 @@ Regras do proxy:
   `accept-ranges`, `content-type`, `etag`, `last-modified`, `cache-control`.
 - Numa `.m3u8` (pelo caminho ou `content-type` com `mpegurl`), reescreve as
   linhas de URI e os `URI="…"` de `EXT-X-KEY`/`EXT-X-MAP` para passarem pelo
-  próprio proxy, com URL absoluta. Playlist sai com `cache-control: no-store`.
+  próprio proxy, com URL absoluta e um ticket que vence junto com o da
+  playlist. Playlist sai com `cache-control: no-store`.
 - `Access-Control-Allow-Origin` só para as origens do juntos que pediram.
 - Toda resposta leva `Content-Security-Policy: sandbox; default-src 'none'` e
   `nosniff`.
@@ -817,6 +827,7 @@ Servidor (Go):
 | `EXTENSION_BASE` | `santamagia.com` | Domínio dos subdomínios; vai ao site em `/api/config` como `extensionBase`. Dev: `localhost:8787`. |
 | `EXTENSION_SCHEME` | `https` | `https` ou `http` (só dev); vai como `extensionScheme`. |
 | `EXTENSION_PUBLISHERS` | `1` | Ids de conta que podem registrar extensões, separados por vírgula. |
+| `EXTENSION_MEDIA_KEY` | vazio | Chave dos tickets do proxy de mídia, a mesma do secret `MEDIA_KEY` do Worker. Sem ela o proxy não deixa nada passar. |
 | `GITHUB_TOKEN` | vazio | Token do GitHub (só leitura de repositórios públicos basta). Sem ele, a API aceita 60 chamadas por hora por IP; vai só para a API, nunca para os arquivos. |
 | `GITHUB_API_BASE` | `https://api.github.com` | Onde ler HEAD e licença; dev aponta para um GitHub local. |
 | `GITHUB_RAW_BASE` | `https://raw.githubusercontent.com` | Onde ler os arquivos; vai ao site em `/api/config` como `extensionRaw`, de onde o painel lê o `juntos.json`. |
@@ -829,6 +840,7 @@ Worker (`extensions/host/wrangler.toml`):
 | `JUNTOS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:8090,http://localhost:8090` | `https://juntos.lol` | Quem pode embutir (`frame-ancestors`), falar com o SDK e receber CORS do proxy. |
 | `EXT_BASE` | `localhost:8787` | `santamagia.com` | Sufixo do host; tem de bater com `EXTENSION_BASE`. |
 | `EXT_SCHEME` | `http` | `https` | Esquema das URLs que o proxy reescreve. |
+| `MEDIA_KEY` (secret) | `.dev.vars` | `wrangler secret put MEDIA_KEY --env production` | A mesma chave de `EXTENSION_MEDIA_KEY` do servidor; sem ela o proxy recusa tudo. |
 | `GITHUB_RAW` | vazio (GitHub) | vazio (GitHub) | Onde ler os arquivos das extensões; tem de bater com `GITHUB_RAW_BASE` do servidor. |
 
 ### Publicar o Worker

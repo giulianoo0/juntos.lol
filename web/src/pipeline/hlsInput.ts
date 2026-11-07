@@ -8,8 +8,8 @@
  *
  * Every request refuses redirects: the playlist's hosts were checked, where a
  * redirect would lead was not. A refused redirect, like a CDN without CORS,
- * sends the whole opening through the extension's media proxy, which checks
- * each hop.
+ * sends the whole opening through a relay (the extension's media proxy, which
+ * checks each hop, or the desktop app's).
  *
  * Opening (`openHls`) is the time-critical part: a signed playlist url can
  * expire within seconds, so the caller opens the plan as soon as it has the
@@ -37,10 +37,21 @@ export interface HlsPlan {
   size: number
 }
 
+/**
+ * Reads for us what the browser may not: the extension's media proxy (a
+ * ticket from juntos per url) or the desktop app's, on the person's network.
+ */
+export interface MediaRelay {
+  /** The url to read `url` through. */
+  via(url: string): Promise<string>
+  /** Whether `url` already goes through this relay, as the segments of a playlist it rewrote do. */
+  owns(url: string): boolean
+}
+
 export interface HlsOptions {
   fetch?: typeof fetch
-  /** The extension's origin; its media proxy reads for us when the CDN sends no CORS. */
-  proxy?: string
+  /** Where to read from when the CDN sends no CORS or redirects. */
+  relay?: MediaRelay
   /** Whether the playlist may lead to `url`: a variant or segment anywhere else stops the opening. */
   allow?: (url: string) => boolean
 }
@@ -169,10 +180,6 @@ async function measure(pending: Pending[], get: typeof fetch): Promise<HlsSegmen
   return out
 }
 
-function proxied(proxy: string, url: string): string {
-  return `${proxy}/_juntos/media?u=${encodeURIComponent(url)}`
-}
-
 function checked(url: string, allow: HlsOptions['allow']): string {
   if (allow && !allow(url)) throw new Error(`playlist leads outside the extension's hosts: ${new URL(url).host}`)
   return url
@@ -193,15 +200,15 @@ async function planFrom(url: string, get: typeof fetch, allow: HlsOptions['allow
 }
 
 /** Resolves the playlist to its segments and their sizes. */
-export async function openHls(url: string, { fetch: get = fetch, proxy, allow }: HlsOptions = {}): Promise<HlsPlan> {
+export async function openHls(url: string, { fetch: get = fetch, relay, allow }: HlsOptions = {}): Promise<HlsPlan> {
   const direct = strict(get)
   try {
     return await planFrom(url, direct, allow)
   } catch (error) {
     // A TypeError is the browser refusing to show an answer, anywhere from the
     // playlist to the last segment: no CORS, or a redirect.
-    if (!(error instanceof TypeError) || !proxy) throw error
-    return await planFrom(proxied(proxy, url), direct, allow)
+    if (!(error instanceof TypeError) || !relay) throw error
+    return await planFrom(await relay.via(url), direct, allow)
   }
 }
 

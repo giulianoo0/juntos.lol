@@ -19,7 +19,7 @@ import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MED
 import { backendFor, type YoutubeSession } from './youtube'
 import { openRemoteTorrent } from './remoteTorrent'
 import { probeSize } from './pipeline/probeSize'
-import type { HlsPlan } from './pipeline/hlsInput'
+import type { HlsPlan, MediaRelay } from './pipeline/hlsInput'
 import { urlAllowed, type ExtSource } from './extensions/protocol'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
@@ -524,24 +524,26 @@ export type OpenedExtensionSource =
  * Opens what an extension handed over: the playlist and every segment's
  * size for HLS, the size for a file. Done the moment the extension asks, not
  * after the room switches over, because its urls are signed for seconds. A
- * CDN that sends no CORS is read through the extension's media proxy.
+ * CDN that sends no CORS is read through `relay`.
+ *
+ * `hosts` are the extension's media hosts: its playlist may lead only there,
+ * or to the relay.
  */
-/** `hosts` are the extension's media hosts: its playlist may lead only there, or to its media proxy. */
-export async function openExtensionSource(source: ExtSource, opts: { fetch?: typeof fetch; proxy?: string; hosts: readonly string[] }): Promise<OpenedExtensionSource> {
+export async function openExtensionSource(source: ExtSource, opts: { fetch?: typeof fetch; relay?: MediaRelay; hosts: readonly string[] }): Promise<OpenedExtensionSource> {
+  const { relay } = opts
   if (source.kind === 'hls') {
     const { openHls } = await import('./pipeline/hlsInput')
-    const proxied = opts.proxy ? `${opts.proxy}/_juntos/media?` : null
-    const allow = (url: string) => urlAllowed(url, opts.hosts) || (proxied !== null && url.startsWith(proxied))
-    return { kind: 'hls', url: source.url, plan: await openHls(source.url, { ...opts, allow }) }
+    const allow = (url: string) => urlAllowed(url, opts.hosts) || (relay?.owns(url) ?? false)
+    return { kind: 'hls', url: source.url, plan: await openHls(source.url, { fetch: opts.fetch, relay, allow }) }
   }
   const get = opts.fetch ?? fetch
   const strict: typeof fetch = (input, init) => get(input, { ...init, redirect: 'error' })
   try {
     return { kind: 'file', url: source.url, size: (await probeSize(source.url, { fetch: strict })).size }
   } catch (error) {
-    // No CORS, or a redirect: the proxy follows it hop by hop within the extension's hosts.
-    if (!(error instanceof TypeError) || !opts.proxy) throw error
-    const url = `${opts.proxy}/_juntos/media?u=${encodeURIComponent(source.url)}`
+    // No CORS, or a redirect: the relay follows it hop by hop within the extension's hosts.
+    if (!(error instanceof TypeError) || !relay) throw error
+    const url = await relay.via(source.url)
     return { kind: 'file', url, size: (await probeSize(url, { fetch: strict })).size }
   }
 }

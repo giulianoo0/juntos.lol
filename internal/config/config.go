@@ -98,6 +98,9 @@ type Config struct {
 	// ExtensionPublishers are the accounts that may register an extension
 	// id: EXTENSION_PUBLISHERS, comma separated, account 1 by default.
 	ExtensionPublishers []int64
+	// The key media tickets are signed with, shared with the extension host
+	// Worker: EXTENSION_MEDIA_KEY. Without it the media proxy lets nothing through.
+	ExtensionMediaKey string
 	// Where extensions are read from on GitHub: GITHUB_API_BASE and
 	// GITHUB_RAW_BASE, GitHub itself by default and a local server in dev.
 	GitHubAPIBase string
@@ -279,6 +282,7 @@ func Load() (Config, error) {
 		}
 		cfg.ExtensionPublishers = append(cfg.ExtensionPublishers, id)
 	}
+	cfg.ExtensionMediaKey = strings.TrimSpace(os.Getenv("EXTENSION_MEDIA_KEY"))
 	cfg.TurnstileSiteKey = strings.TrimSpace(os.Getenv("TURNSTILE_SITE_KEY"))
 	cfg.TurnstileSecret = strings.TrimSpace(os.Getenv("TURNSTILE_SECRET"))
 	for _, host := range strings.Split(os.Getenv("TURNSTILE_HOSTNAMES"), ",") {

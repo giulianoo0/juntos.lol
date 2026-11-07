@@ -173,7 +173,9 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		}
 	}
 	if options.extensions != nil {
-		RegisterExtensionRoutes(r.Group("/api"), cfg, *options.extensions)
+		access := *options.extensions
+		access.Human = human.Require()
+		RegisterExtensionRoutes(r.Group("/api"), cfg, access)
 	}
 	registerFrontend(r, cfg.WebDir)
 	return r

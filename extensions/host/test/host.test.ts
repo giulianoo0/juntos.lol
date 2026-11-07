@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { handle, type Env } from '../src/index'
+import { signTicket } from '../src/ticket'
 
 const env: Env = {
   JUNTOS_ORIGIN: 'https://juntos.lol',
   JUNTOS_ORIGINS: 'https://juntos.lol,http://localhost:5173',
   EXT_BASE: 'santamagia.com',
   EXT_SCHEME: 'https',
+  MEDIA_KEY: 'chave-de-teste',
 }
 
 const EXT = 'lczfxd2q74zxknb5'
@@ -259,7 +261,9 @@ describe('SDK', () => {
 
 describe('proxy de mídia', () => {
   const seg = 'https://sa-east-1.cdn.exemplo.dev/a/1/seg1.ts?sig=1'
-  const media = (u: string) => `/_juntos/media?u=${encodeURIComponent(u)}`
+  const EXP = Math.floor(Date.now() / 1000) + 3600
+  const ticketFor = (u: string, exp = EXP, sub = EXT) => signTicket('chave-de-teste', sub, u, exp)
+  const media = async (u: string) => `/_juntos/media?u=${encodeURIComponent(u)}&t=${encodeURIComponent(await ticketFor(u))}`
   const fromJuntos = (path: string, opts: { init?: RequestInit; upstream?: Upstream } = {}) => {
     const headers = new Headers(opts.init?.headers)
     if (!headers.has('origin')) headers.set('origin', 'https://juntos.lol')
@@ -271,7 +275,7 @@ describe('proxy de mídia', () => {
     ['de origem fora da lista', 'https://evil.example'],
     ['de uma origem de extensão', 'https://abcdefghijklmnop.santamagia.com'],
   ])('só atende o juntos: recusa pedido %s sem buscar nada', async (_, origin) => {
-    const res = await get(media(seg), {
+    const res = await get(await media(seg), {
       init: origin ? { headers: { origin } } : {},
       upstream: { [seg]: () => new Response('x') },
     })
@@ -280,7 +284,7 @@ describe('proxy de mídia', () => {
   })
 
   it('repassa Range e devolve 206 com CORS para a origem do juntos', async () => {
-    const res = await fromJuntos(media(seg), {
+    const res = await fromJuntos(await media(seg), {
       init: { headers: { range: 'bytes=0-9', origin: 'https://juntos.lol' } },
       upstream: {
         [seg]: (req) =>
@@ -299,7 +303,7 @@ describe('proxy de mídia', () => {
   })
 
   it('não devolve CORS para origem fora da lista', async () => {
-    const res = await get(media(seg), {
+    const res = await get(await media(seg), {
       init: { headers: { origin: 'https://evil.com' } },
       upstream: { [seg]: () => new Response('x') },
     })
@@ -317,13 +321,13 @@ describe('proxy de mídia', () => {
     ['IPv6 local', 'https://[::1]/a.ts'],
     ['localhost', 'https://localhost/a.ts'],
   ])('recusa %s', async (_, u) => {
-    const res = await fromJuntos(media(u), { upstream: { [u]: () => new Response('x') } })
+    const res = await fromJuntos(await media(u), { upstream: { [u]: () => new Response('x') } })
     expect(res.status).toBe(403)
     expect(res.calls.some((c) => c.url === u)).toBe(false)
   })
 
   it('responde HEAD com os cabeçalhos e sem corpo', async () => {
-    const res = await fromJuntos(media(seg), {
+    const res = await fromJuntos(await media(seg), {
       init: { method: 'HEAD', headers: { origin: 'https://juntos.lol' } },
       upstream: { [seg]: (r) => new Response(r.method === 'HEAD' ? null : 'corpo', { headers: { 'content-length': '5' } }) },
     })
@@ -335,13 +339,13 @@ describe('proxy de mídia', () => {
   })
 
   it('recusa método diferente de GET', async () => {
-    const res = await fromJuntos(media(seg), { init: { method: 'POST', body: 'x' }, upstream: { [seg]: () => new Response('x') } })
+    const res = await fromJuntos(await media(seg), { init: { method: 'POST', body: 'x' }, upstream: { [seg]: () => new Response('x') } })
     expect(res.status).toBe(405)
     expect(res.calls.some((c) => c.url === seg)).toBe(false)
   })
 
   it('não segue redirecionamento para host fora da lista', async () => {
-    const res = await fromJuntos(media(seg), {
+    const res = await fromJuntos(await media(seg), {
       upstream: { [seg]: () => new Response(null, { status: 302, headers: { location: 'https://evil.com/x' } }) },
     })
     expect(res.status).toBe(403)
@@ -362,12 +366,16 @@ describe('proxy de mídia', () => {
       'https://us.cdn.exemplo.dev/a/seg2.m4s',
       '#EXT-X-ENDLIST',
     ].join('\n')
-    const res = await fromJuntos(media(pl), {
+    const res = await fromJuntos(await media(pl), {
       upstream: { [pl]: () => new Response(body, { headers: { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': '999' } }) },
     })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-length')).not.toBe('999')
-    const proxied = (u: string) => `https://${EXT}.santamagia.com/_juntos/media?u=${encodeURIComponent(u)}`
+    const proxied = (u: string) => `https://${EXT}.santamagia.com/_juntos/media?u=${encodeURIComponent(u)}&t=${encodeURIComponent(signed.get(u)!)}`
+    const signed = new Map<string, string>()
+    for (const u of ['https://sa-east-1.cdn.exemplo.dev/a/1/init.mp4?k=1', 'https://sa-east-1.cdn.exemplo.dev/a/1/seg1.m4s?k=1', 'https://us.cdn.exemplo.dev/a/seg2.m4s']) {
+      signed.set(u, await ticketFor(u))
+    }
     expect((await res.text()).split('\n')).toEqual([
       '#EXTM3U',
       '#EXT-X-VERSION:7',
@@ -385,17 +393,44 @@ describe('proxy de mídia', () => {
   it('recusa playlist acima de 4 MB sem reescrever', async () => {
     const pl = 'https://sa-east-1.cdn.exemplo.dev/a/grande.m3u8'
     const big = '#EXTM3U\n' + 'seg.ts\n'.repeat(700_000)
-    const res = await fromJuntos(media(pl), { upstream: { [pl]: () => new Response(big, { headers: { 'content-type': 'application/vnd.apple.mpegurl' } }) } })
+    const res = await fromJuntos(await media(pl), { upstream: { [pl]: () => new Response(big, { headers: { 'content-type': 'application/vnd.apple.mpegurl' } }) } })
     expect(res.status).toBe(502)
   })
 
   it('reescreve URI de EXT-X-KEY', async () => {
     const pl = 'https://sa-east-1.cdn.exemplo.dev/a/p.m3u8'
-    const res = await fromJuntos(media(pl), {
+    const res = await fromJuntos(await media(pl), {
       upstream: { [pl]: () => new Response('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="k.bin",IV=0x1\n') },
     })
+    const key = 'https://sa-east-1.cdn.exemplo.dev/a/k.bin'
     expect(await res.text()).toContain(
-      `#EXT-X-KEY:METHOD=AES-128,URI="https://${EXT}.santamagia.com/_juntos/media?u=${encodeURIComponent('https://sa-east-1.cdn.exemplo.dev/a/k.bin')}",IV=0x1`,
+      `#EXT-X-KEY:METHOD=AES-128,URI="https://${EXT}.santamagia.com/_juntos/media?u=${encodeURIComponent(key)}&t=${encodeURIComponent(await ticketFor(key))}",IV=0x1`,
     )
+  })
+
+  it.each([
+    ['sem ticket', async () => `/_juntos/media?u=${encodeURIComponent(seg)}`],
+    ['com ticket de outra url', async () => `/_juntos/media?u=${encodeURIComponent(seg)}&t=${encodeURIComponent(await ticketFor(seg + 'x'))}`],
+    ['com ticket de outra extensão', async () => `/_juntos/media?u=${encodeURIComponent(seg)}&t=${encodeURIComponent(await ticketFor(seg, EXP, 'aaaaaaaaaaaaaaaa'))}`],
+    ['com ticket vencido', async () => `/_juntos/media?u=${encodeURIComponent(seg)}&t=${encodeURIComponent(await ticketFor(seg, Math.floor(Date.now() / 1000) - 1))}`],
+    ['com ticket adulterado', async () => `/_juntos/media?u=${encodeURIComponent(seg)}&t=${encodeURIComponent((await ticketFor(seg)).slice(0, -2) + 'AA')}`],
+  ])('recusa pedido do juntos %s, sem buscar nada', async (_, path) => {
+    const res = await fromJuntos(await path(), { upstream: { [seg]: () => new Response('x') } })
+    expect(res.status).toBe(403)
+    expect(res.calls.some((c) => c.url === seg)).toBe(false)
+  })
+
+  it('sem chave configurada não deixa nada passar', async () => {
+    const f = fakeFetch({ [seg]: () => new Response('x') })
+    const res = await handle(new Request(`https://${EXT}.santamagia.com${await media(seg)}`, { headers: { origin: 'https://juntos.lol' } }), { ...env, MEDIA_KEY: undefined }, { fetch: f.fetch })
+    expect(res.status).toBe(403)
+    expect(f.calls.some((c) => c.url === seg)).toBe(false)
+  })
+})
+
+describe('ticket de mídia', () => {
+  it('é o mesmo que o juntos assina (internal/extension/ticket_test.go)', async () => {
+    expect(await signTicket('chave-de-teste', 'pbosap5oxsmmteeo', 'https://cdn.exemplo.dev/a.m3u8', 1794100000))
+      .toBe('1794100000.EXqQumSlBlPyRZ7yfJlLVsEwEvCBkZWh_pInmzZ9Bgs')
   })
 })

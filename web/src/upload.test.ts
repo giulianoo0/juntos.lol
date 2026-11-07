@@ -372,9 +372,10 @@ describe('fonte de uma extensão', () => {
       return new Response(null, { status: 200, headers: { 'Content-Length': '5000' } })
     })
 
-    const opened = await openExtensionSource({ kind: 'file', url: 'https://files.example.com/a.mp4' }, { fetch, proxy, hosts: ['files.example.com'] })
+    const relay = { via: async (url: string) => `${proxy}/_juntos/media?u=${encodeURIComponent(url)}&t=1`, owns: (url: string) => url.startsWith(proxy) }
+    const opened = await openExtensionSource({ kind: 'file', url: 'https://files.example.com/a.mp4' }, { fetch, relay, hosts: ['files.example.com'] })
 
-    expect(opened).toEqual({ kind: 'file', url: `${proxy}/_juntos/media?u=${encodeURIComponent('https://files.example.com/a.mp4')}`, size: 5000 })
+    expect(opened).toEqual({ kind: 'file', url: `${proxy}/_juntos/media?u=${encodeURIComponent('https://files.example.com/a.mp4')}&t=1`, size: 5000 })
   })
 
   it('recusa a playlist da extensão que leva a um host que ela não declarou', async () => {
@@ -395,7 +396,8 @@ describe('fonte de uma extensão', () => {
         : new Response(null, { status: 200, headers: { 'Content-Length': init?.method === 'HEAD' ? '700' : '0' } })
     })
 
-    const opened = await openExtensionSource({ kind: 'hls', url: 'https://a.media.example/ep/1080p.m3u8' }, { fetch, proxy, hosts: ['*.media.example'] })
+    const relay = { via: async (url: string) => `${proxy}/_juntos/media?u=${encodeURIComponent(url)}&t=1`, owns: (url: string) => url.startsWith(`${proxy}/_juntos/media?`) }
+    const opened = await openExtensionSource({ kind: 'hls', url: 'https://a.media.example/ep/1080p.m3u8' }, { fetch, relay, hosts: ['*.media.example'] })
 
     expect(opened.kind === 'hls' && opened.plan.size).toBe(700)
   })

@@ -1,9 +1,14 @@
 import { hostAllowed, type ExtensionManifest } from './manifest'
+import { checkTicket, signTicket } from './ticket'
 
 interface MediaContext {
   origins: string[]
   self: string
+  sub: string
+  /** The key tickets are signed with (EXTENSION_MEDIA_KEY in juntos); empty lets nothing through. */
+  key: string
   fetch: typeof fetch
+  now?: () => number
 }
 
 const PASS_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control']
@@ -21,23 +26,28 @@ function allowedUrl(raw: string | null, m: ExtensionManifest): URL | null {
   return hostAllowed(u.hostname, m.hosts.media) ? u : null
 }
 
-function rewritePlaylist(text: string, base: URL, self: string): string {
-  const proxied = (ref: string) => {
+/** Every uri of the playlist through this proxy, each with a ticket that ends with the playlist's. */
+async function rewritePlaylist(text: string, base: URL, ctx: MediaContext, exp: number): Promise<string> {
+  const proxied = async (ref: string) => {
+    let url: string
     try {
-      return `${self}/_juntos/media?u=${encodeURIComponent(new URL(ref, base).href)}`
+      url = new URL(ref, base).href
     } catch {
       return ref
     }
+    const t = await signTicket(ctx.key, ctx.sub, url, exp)
+    return `${ctx.self}/_juntos/media?u=${encodeURIComponent(url)}&t=${encodeURIComponent(t)}`
   }
-  return text
-    .split('\n')
-    .map((line) => {
-      const t = line.trim()
-      if (!t) return line
-      if (t.startsWith('#')) return line.replace(/URI="([^"]*)"/g, (_, ref: string) => `URI="${proxied(ref)}"`)
-      return proxied(t)
-    })
-    .join('\n')
+  const lines = await Promise.all(text.split('\n').map(async (line) => {
+    const t = line.trim()
+    if (!t) return line
+    if (!t.startsWith('#')) return proxied(t)
+    const refs = [...line.matchAll(/URI="([^"]*)"/g)].map((m) => m[1])
+    const signed = await Promise.all(refs.map(proxied))
+    let i = 0
+    return line.replace(/URI="([^"]*)"/g, () => `URI="${signed[i++]}"`)
+  }))
+  return lines.join('\n')
 }
 
 function isPlaylist(url: URL, res: Response): boolean {
@@ -91,7 +101,13 @@ export async function proxyMedia(req: Request, m: ExtensionManifest, ctx: MediaC
     return new Response(null, { status: 405, headers })
   }
 
-  let target = allowedUrl(new URL(req.url).searchParams.get('u'), m)
+  const params = new URL(req.url).searchParams
+  const asked = params.get('u')
+  // The Origin above is something any script can write; the ticket comes
+  // from juntos itself, for this url and this extension, and expires.
+  const exp = asked ? await checkTicket(ctx.key, ctx.sub, asked, params.get('t'), (ctx.now ?? Date.now)()) : null
+  if (exp === null) return new Response(null, { status: 403, headers })
+  let target = allowedUrl(asked, m)
   const range = req.headers.get('range')
   let res: Response | null = null
   for (let hop = 0; target && hop <= MAX_REDIRECTS; hop++) {
@@ -112,7 +128,7 @@ export async function proxyMedia(req: Request, m: ExtensionManifest, ctx: MediaC
     headers.set('cache-control', 'no-store')
     const text = await readCapped(res, MAX_PLAYLIST_BYTES)
     if (text === null) return new Response(null, { status: 502, headers })
-    return new Response(rewritePlaylist(text, target, ctx.self), { status: 200, headers })
+    return new Response(await rewritePlaylist(text, target, ctx, exp), { status: 200, headers })
   }
   for (const h of PASS_HEADERS) {
     const v = res.headers.get(h)

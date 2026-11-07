@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
 	"github.com/giulianoo0/ss/internal/account"
@@ -241,4 +243,46 @@ func TestLatestIsTheHeadOfTheRepository(t *testing.T) {
 	require.JSONEq(t, `{"sha":"`+kiwiHead+`"}`, w.Body.String())
 
 	require.Equal(t, http.StatusNotFound, rig.do(http.MethodGet, "/api/extensions/nada/latest", "").Code)
+}
+
+func TestMediaTicketSignsAURLForTheProxy(t *testing.T) {
+	cfg := testCfg(t)
+	cfg.ExtensionMediaKey = "chave"
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/t", mediaTicket(cfg, newWindowLimiter(2, time.Hour)))
+	ask := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/t", strings.NewReader(body)))
+		return w
+	}
+	sub := extension.SubFor("kiwi")
+
+	w := ask(`{"sub":"` + sub + `","url":"https://a.kiwicdn.com/v.m3u8"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var got struct {
+		Ticket    string    `json:"ticket"`
+		ExpiresAt time.Time `json:"expiresAt"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(t, extension.MediaTicket([]byte("chave"), sub, "https://a.kiwicdn.com/v.m3u8", got.ExpiresAt), got.Ticket)
+	require.WithinDuration(t, time.Now().Add(mediaTicketTTL), got.ExpiresAt, time.Minute)
+
+	for _, bad := range []string{
+		`{"sub":"` + sub + `","url":"http://a.kiwicdn.com/v"}`,
+		`{"sub":"` + sub + `","url":"https://a.kiwicdn.com:8443/v"}`,
+		`{"sub":"` + sub + `","url":"https://u:p@a.kiwicdn.com/v"}`,
+		`{"sub":"nao-e-sub","url":"https://a.kiwicdn.com/v"}`,
+	} {
+		require.Equal(t, http.StatusBadRequest, ask(bad).Code, bad)
+	}
+	require.Equal(t, http.StatusOK, ask(`{"sub":"`+sub+`","url":"https://a.kiwicdn.com/2"}`).Code)
+	require.Equal(t, http.StatusTooManyRequests, ask(`{"sub":"`+sub+`","url":"https://a.kiwicdn.com/3"}`).Code, "o limite por IP vale")
+
+	cfg.ExtensionMediaKey = ""
+	off := gin.New()
+	off.POST("/t", mediaTicket(cfg, newWindowLimiter(2, time.Hour)))
+	w = httptest.NewRecorder()
+	off.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/t", strings.NewReader(`{"sub":"`+sub+`","url":"https://a.kiwicdn.com/v"}`)))
+	require.Equal(t, http.StatusServiceUnavailable, w.Code, "sem chave o proxy não deixa nada passar")
 }
