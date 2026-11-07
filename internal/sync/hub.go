@@ -1072,6 +1072,9 @@ func (r *roomConn) handleInbound(event clientInbound) {
 		readyCtx, cancelReady := context.WithTimeout(r.hub.ctx, storeTimeout)
 		defer cancelReady()
 		r.recordSync(readyCtx, event.client, message, now)
+		if r.gate == nil && r.playing && r.pauseAtEnd(readyCtx, now, 0) {
+			return
+		}
 		if r.gate != nil {
 			if !r.evaluateGate() {
 				r.broadcastWaiting()

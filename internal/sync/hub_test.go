@@ -540,6 +540,39 @@ func TestHubPausesAtTheEndWhenTheMediaRunsOutShortOfItsDuration(t *testing.T) {
 	}
 }
 
+// A host whose player stops on the last frame without an ended event (the
+// desktop app's WebKit does) never asks for the pause: the room's clock must
+// not run on past the end, where the others wait for media that never comes.
+func TestHubStopsTheClockAtTheEndWithoutAnEndedReport(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host, guest := startedRoom(t, server)
+	require.NoError(t, store.SetMediaDuration(t.Context(), "r1", 30_200))
+	time.Sleep(300 * time.Millisecond)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_200, BufferAheadMs: 0}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		ended := readHubEvent(t, conn)
+		require.Equal(t, "state", ended.Type)
+		require.False(t, ended.State.Playing)
+		require.Equal(t, int64(30_200), ended.State.PositionMs)
+	}
+}
+
+func TestHubLetsTheClockRunShortOfTheEnd(t *testing.T) {
+	_, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	host, guest := startedRoom(t, server)
+	require.NoError(t, store.SetMediaDuration(t.Context(), "r1", 60_000))
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_100, BufferAheadMs: 4_000}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(300*time.Millisecond)))
+		var event Outbound
+		require.Error(t, conn.ReadJSON(&event), "the room stopped short of the end: %+v", event)
+	}
+}
+
 func TestHubDoesNotStopForAStallReportedOverAFullBuffer(t *testing.T) {
 	hub, _, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
 	hub.gateTimeout = time.Minute

@@ -241,6 +241,11 @@ func (r *roomConn) gateOnStall(ctx context.Context, now int64) {
 		return
 	}
 
+	// Running dry at the end of the media is the episode ending: a remux can
+	// stop a few seconds short of the container's duration.
+	if r.pauseAtEnd(ctx, now, endSlackMs) {
+		return
+	}
 	state, err := r.hub.store.GetState(ctx, r.id)
 	if err != nil {
 		slog.ErrorContext(ctx, "load state for stall gate failed", "room_id", r.id, "error", err)
@@ -250,24 +255,38 @@ func (r *roomConn) gateOnStall(ctx context.Context, now int64) {
 		return
 	}
 	positionMs := ExpectedPositionMs(state, now)
-	// Running dry at the end of the media is the episode ending: a remux can
-	// stop a few seconds short of the container's duration. The room pauses
-	// at the end instead of waiting for media that will never come.
-	if storedRoom, err := r.hub.store.Get(ctx, r.id); err == nil && storedRoom.DurationMs > 0 &&
-		positionMs >= storedRoom.DurationMs-endSlackMs {
-		state.Playing = false
-		state.PositionMs = storedRoom.DurationMs
-		state.ServerTimeMs = now
-		if err := r.hub.store.SetState(ctx, r.id, state); err != nil {
-			slog.ErrorContext(ctx, "persist end of media failed", "room_id", r.id, "error", err)
-			return
-		}
-		r.playing = false
-		r.broadcast(Outbound{Type: "state", State: &state})
-		return
-	}
 	slog.InfoContext(ctx, "room stopped for a stalled viewer", "room_id", r.id)
 	r.openGate(ctx, nil, positionMs, state, now)
+}
+
+// pauseAtEnd stops the room's clock at the end of the media, or slackMs short
+// of it: past the end there is nothing for anyone to play, and a player that
+// stops on the last frame without an ended event (the desktop app's WebKit)
+// never asks for the pause. It reports whether it paused.
+func (r *roomConn) pauseAtEnd(ctx context.Context, now, slackMs int64) bool {
+	state, err := r.hub.store.GetState(ctx, r.id)
+	if err != nil {
+		slog.ErrorContext(ctx, "load state for the end of media failed", "room_id", r.id, "error", err)
+		return false
+	}
+	if !state.Playing {
+		return false
+	}
+	stored, err := r.hub.store.Get(ctx, r.id)
+	if err != nil || stored.DurationMs <= 0 || ExpectedPositionMs(state, now) < stored.DurationMs-slackMs {
+		return false
+	}
+	state.Playing = false
+	state.PositionMs = stored.DurationMs
+	state.ServerTimeMs = now
+	if err := r.hub.store.SetState(ctx, r.id, state); err != nil {
+		slog.ErrorContext(ctx, "persist end of media failed", "room_id", r.id, "error", err)
+		return false
+	}
+	slog.InfoContext(ctx, "room paused at the end of the media", "room_id", r.id, "position_ms", state.PositionMs)
+	r.playing = false
+	r.broadcast(Outbound{Type: "state", State: &state})
+	return true
 }
 
 // handleIgnore drops a member from everything the room waits for. It is the

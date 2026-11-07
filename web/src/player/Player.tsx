@@ -245,8 +245,10 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     ? [{ n: 0, startMs: mediaOffsetMs, producedMs: Math.round(duration * 1000), growing: true }]
     : null)
   const knownEndMs = room.durationMs && room.durationMs > 0 ? room.durationMs : null
+  // A finished region a few ms short of the declared duration is the whole
+  // rest of the media: the source's length is rounded, the remux's is exact.
   const producedToEnd = knownEndMs !== null && coldRegions !== null
-    && coldRegions.some((r) => regionHolds(r, knownEndMs - 1))
+    && coldRegions.some((r) => regionHolds(r, knownEndMs - 1) || (!r.growing && r.startMs + r.producedMs >= knownEndMs - END_SLACK_MS))
   const coldFor = (ms: number): boolean => coldRegions !== null
     && !(producedToEnd && ms >= (knownEndMs ?? 0))
     && !coldRegions.some((r) => regionHolds(r, ms))

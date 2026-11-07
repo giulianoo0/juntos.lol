@@ -1176,6 +1176,28 @@ describe('scrubbing', () => {
     expect(video.play).not.toHaveBeenCalled()
   })
 
+  it('a room paused at its declared end is the end, though the finished media stops a few ms short of it', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const short = { ...room, durationMs: 19_000, mediaRegions: [{ n: 0, startMs: 0, producedMs: 18_933, growing: false }] }
+    const ended = { playing: false, positionMs: 19_000, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={short} isController={false} videoRef={videoRef} send={vi.fn()} t={t} syncState={ended} serverOffsetMs={0} />,
+    )
+
+    expect(container.querySelector('.player-preparing')).toBeNull()
+  })
+
+  it('a region still growing short of the end is not the end yet', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const short = { ...room, durationMs: 1_440_000, mediaRegions: [{ n: 0, startMs: 1_000_000, producedMs: 300_000, growing: true }] }
+    const parked = { playing: false, positionMs: 1_440_000, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={short} isController={false} videoRef={videoRef} send={vi.fn()} t={t} syncState={parked} serverOffsetMs={0} />,
+    )
+
+    expect(container.querySelector('.player-preparing')).not.toBeNull()
+  })
+
   it('reads the thumb off the room clock while the region is still being built', () => {
     const videoRef = createRef<HTMLVideoElement>()
     const regioned = { ...longRoom, mediaRegions: [{ n: 0, startMs: 0, producedMs: 300_000, growing: true }] }
