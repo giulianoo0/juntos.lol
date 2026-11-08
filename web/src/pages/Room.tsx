@@ -662,7 +662,12 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     sync.send('source', { origin })
   }, [room.id, sync.memberId, sync.connected, sync.send, liveRoom.mediaGeneration])
   const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
-  const gate: GateStep = uploadFailed !== null ? 'failed'
+  // What an extension asked for takes seconds to open before the room switches
+  // over; the stage answers now and the room's own preparing takes it from there.
+  const [pickedSource, setPickedSource] = useState<{ title: string; generation: number } | null>(null)
+  const opensPicked = pickedSource !== null && pickedSource.generation === liveRoom.mediaGeneration
+  const gate: GateStep = opensPicked ? 'preparing'
+    : uploadFailed !== null ? 'failed'
     : mediaStatus === 'processing' || mediaStatus === 'uploading' ? 'preparing'
     : mediaStatus === 'error' ? 'error'
     : null
@@ -693,6 +698,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       await run()
     } catch (error) {
       console.error('change source failed', error)
+      setPickedSource(null)
       setSourceError(isTorrentError(error) ? torrentErrorKey(error)
         : isYoutubeError(error) ? youtubeErrorKey(error)
         : error instanceof UnsupportedMediaError && error.reason === 'encrypted' ? 'extensions.error.encrypted'
@@ -745,6 +751,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           stageUsed('live')
         } finally {
           session.destroy()
+          setPickedSource(null)
         }
         return
       }
@@ -771,6 +778,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       openDownloadApp()
       return
     }
+    setPickedSource({ title, generation: liveRoom.mediaGeneration })
     if (source.kind === 'youtube') {
       void swapSource(async () => {
         const session = await openYoutube(`https://www.youtube.com/watch?v=${source.id}`)
@@ -860,9 +868,9 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
       inline
       step={gate}
       room={liveRoom}
-      progress={uploadProgress}
-      preparation={liveRoom.preparation}
-      swarm={swarmStats}
+      progress={opensPicked ? null : uploadProgress}
+      preparation={opensPicked ? undefined : liveRoom.preparation}
+      swarm={opensPicked ? null : swarmStats}
       failure={uploadFailed}
       errorMessage={liveErrorText(liveRoom.errorMessage, t)}
     />
@@ -919,11 +927,11 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     app: member.client === 'desktop',
     tv: member.tv || undefined,
   }))
-  const roomStages = stagesOf(stageRoom)
+  const roomStages = stagesOf(opensPicked && !roomHasMedia ? { ...stageRoom, status: 'uploading', sourceMemberId: sync.memberId } : stageRoom)
   const viewStages: ViewStage[] = roomStages.map((stage) => ({
     id: stage.id,
     kind: stage.kind,
-    title: stage.kind === 'screen' ? strings.screenOf.replace('{name}', stage.title) : stage.kind === 'live' ? stage.title || t('stage.kind.live') : liveRoom.fileName || t('stage.kind.media'),
+    title: stage.kind === 'screen' ? strings.screenOf.replace('{name}', stage.title) : stage.kind === 'live' ? stage.title || t('stage.kind.live') : (opensPicked ? pickedSource.title : liveRoom.fileName) || t('stage.kind.media'),
     ownerId: stage.ownerId ?? '',
   }))
   const spotlight = currentSpotlight(stageRoom, sync.stages)

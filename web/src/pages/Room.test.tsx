@@ -392,8 +392,8 @@ describe('extensões', () => {
   })
 
   /** The room's doors plus the registry, the manifest and who is signed in. */
-  function serveWithExtensions(me: Record<string, unknown> | null = null) {
-    const roomFetch = serve()
+  function serveWithExtensions(me: Record<string, unknown> | null = null, room?: unknown) {
+    const roomFetch = serve(room === undefined ? {} : { room })
     vi.stubGlobal('fetch', vi.fn((url: string) => {
       if (url === '/api/me') return me ? json({ body: me }) : json({ status: 401 })
       if (url === '/api/extensions/exemplo') return json({ body: { id: 'exemplo', name: 'Exemplo', sub: SUB, source: 'github:dono/exemplo' } })
@@ -479,6 +479,25 @@ describe('extensões', () => {
       origin: `https://${SUB}.santamagia.com`,
       source: document.querySelector('iframe')!.contentWindow,
     }))
+  })
+
+  it('a sala vazia mostra o preparo assim que a extensão pede, e larga se a abertura falhar', async () => {
+    serveWithExtensions(null, roomBody({ status: 'empty', fileName: '' }))
+    let refuse: (error: Error) => void = () => undefined
+    vi.mocked(openExtensionSource).mockImplementationOnce(() => new Promise((_, reject) => { refuse = reject }))
+    await joined('m1')
+    await pickShare('Extensões')
+    await install()
+
+    playFromFrame({ title: 'Série', source: { kind: 'hls', url: 'https://a.cdn.exemplo.com/a.m3u8?signature=s' } })
+
+    expect(await screen.findByRole('heading', { name: 'Preparando seu vídeo' })).toBeInTheDocument()
+    expect(changeRoomSource).not.toHaveBeenCalled()
+
+    await act(async () => refuse(new Error('playlist answered 500')))
+
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Preparando seu vídeo' })).not.toBeInTheDocument())
+    expect(await screen.findByRole('alert')).toHaveTextContent('Não foi possível trocar o que está tocando')
   })
 
   it('o torrent da extensão abre o arquivo do índice pedido pelo caminho de torrent', async () => {
