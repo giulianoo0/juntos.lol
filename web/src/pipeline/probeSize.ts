@@ -20,18 +20,26 @@ function rangeTotal(response: Response): number | null {
   return match ? Number(match[1]) : null
 }
 
-export async function probeSize(url: string, { fetch: get = fetch, signal }: { fetch?: typeof fetch; signal?: AbortSignal } = {}): Promise<ProbedSize> {
-  try {
-    const head = await get(url, { method: 'HEAD', signal })
-    const size = head.ok ? length(head) : null
-    if (size !== null) return { size, type: head.headers.get('Content-Type') }
-  } catch (error) {
-    if (signal?.aborted) throw error
+/** Kept across the probes of one origin: a HEAD it refused once is not asked again. */
+export interface ProbeMemo {
+  headRefused: boolean
+}
+
+export async function probeSize(url: string, { fetch: get = fetch, signal, memo }: { fetch?: typeof fetch; signal?: AbortSignal; memo?: ProbeMemo } = {}): Promise<ProbedSize> {
+  if (!memo?.headRefused) {
+    try {
+      const head = await get(url, { method: 'HEAD', signal })
+      const size = head.ok ? length(head) : null
+      if (size !== null) return { size, type: head.headers.get('Content-Type') }
+    } catch (error) {
+      if (signal?.aborted) throw error
+    }
   }
   const first = await get(url, { headers: { Range: 'bytes=0-0' }, signal })
   // A 200 here is the whole file coming down: its length is all that is wanted.
   first.body?.cancel().catch(() => {})
   const size = first.status === 206 ? rangeTotal(first) : first.ok ? length(first) : null
   if (size === null) throw new Error(`no size for ${new URL(url).host} (${first.status})`)
+  if (memo) memo.headRefused = true
   return { size, type: first.headers.get('Content-Type') }
 }

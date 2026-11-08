@@ -126,13 +126,13 @@ describe('HLS como um arquivo só', () => {
     expect(fetch.mock.calls.some(([, init]) => init?.method === 'HEAD')).toBe(false)
   })
 
-  it('mede os segmentos no máximo 16 de cada vez', async () => {
+  it('mede os segmentos no máximo 32 de cada vez', async () => {
     let inFlight = 0
     let most = 0
     const files: Record<string, string | Uint8Array> = {
-      '/ep/1080p.m3u8': media(Array.from({ length: 40 }, (_, i) => [`#EXTINF:6,`, `s${i}.ts`]).flat()),
+      '/ep/1080p.m3u8': media(Array.from({ length: 80 }, (_, i) => [`#EXTINF:6,`, `s${i}.ts`]).flat()),
     }
-    for (let i = 0; i < 40; i++) files[`/ep/s${i}.ts`] = bytes(5, i)
+    for (let i = 0; i < 80; i++) files[`/ep/s${i}.ts`] = bytes(5, i)
     const fetch = cdn(files, {
       onHead: async () => {
         inFlight += 1
@@ -144,8 +144,8 @@ describe('HLS como um arquivo só', () => {
 
     const plan = await openHls('https://cdn.example.com/ep/1080p.m3u8', { fetch })
 
-    expect(plan.size).toBe(200)
-    expect(most).toBe(16)
+    expect(plan.size).toBe(400)
+    expect(most).toBe(32)
   })
 
   it('refaz tudo pelo proxy da extensão quando o CDN não deixa ler (CORS)', async () => {
@@ -211,6 +211,24 @@ describe('HLS como um arquivo só', () => {
     expect(await input.read(10, 20)).toEqual(a.slice(10, 20))
     expect(await input.read(150, 160)).toEqual(b.slice(50))
     expect(fetch.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/ep/720p_000.ts', '/ep/720p_001.ts'])
+  })
+
+  it('depois que o CDN recusa HEAD, os segmentos seguintes vão direto ao GET', async () => {
+    const files: Record<string, string | Uint8Array> = {
+      '/ep/1080p.m3u8': media(Array.from({ length: 200 }, (_, i) => [`#EXTINF:6,`, `s${i}.ts`]).flat()),
+    }
+    for (let i = 0; i < 200; i++) files[`/ep/s${i}.ts`] = bytes(5, i)
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const body = files[new URL(String(input)).pathname]
+      if (init?.method === 'HEAD') return new Response(null, { status: 405 })
+      const data = typeof body === 'string' ? new TextEncoder().encode(body) : body
+      return new Response(data.slice(), { status: 200, headers: { 'Content-Length': String(data.byteLength) } })
+    })
+
+    const plan = await openHls('https://cdn.example.com/ep/1080p.m3u8', { fetch })
+
+    expect(plan.size).toBe(1000)
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === 'HEAD').length).toBeLessThanOrEqual(32)
   })
 
   it('nenhum pedido segue redirecionamento', async () => {

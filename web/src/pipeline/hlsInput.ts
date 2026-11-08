@@ -18,7 +18,7 @@
 import { CustomSource } from 'mediabunny'
 import { ByteTap, teeInto } from './byteTap'
 import type { MediaInput } from './mediaInput'
-import { probeSize } from './probeSize'
+import { probeSize, type ProbeMemo } from './probeSize'
 import { ReadGate, rangeBytes, rangeStream, type RangeReaderOptions } from './rangeRead'
 import { UnsupportedMediaError } from './unsupported'
 
@@ -56,7 +56,7 @@ export interface HlsOptions {
   allow?: (url: string) => boolean
 }
 
-const MEASURE_AT_ONCE = 16
+const MEASURE_AT_ONCE = 32
 const REMOTE_CACHE_BYTES = 96 * 2 ** 20
 const WHOLE_SEGMENTS_KEPT = 4
 
@@ -167,12 +167,13 @@ function mediaSegments(text: string, base: string): Pending[] {
 
 async function measure(pending: Pending[], get: typeof fetch): Promise<HlsSegment[]> {
   const out: HlsSegment[] = new Array(pending.length)
+  const memo: ProbeMemo = { headRefused: false }
   let next = 0
   const lane = async () => {
     while (next < pending.length) {
       const index = next++
       const segment = pending[index]
-      const size = segment.size ?? (await probeSize(segment.url, { fetch: get })).size
+      const size = segment.size ?? (await probeSize(segment.url, { fetch: get, memo })).size
       out[index] = { url: segment.url, offset: segment.offset, size, whole: segment.whole }
     }
   }
