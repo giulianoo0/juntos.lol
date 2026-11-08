@@ -30,7 +30,7 @@ const ptBR = {
   closePanel: 'Fechar painel',
   peopleInRoom: 'Pessoas na sala',
   message: 'Mensagem',
-  chatEmpty: 'Puxa assunto',
+  chatEmpty: 'Chat',
   send: 'Enviar',
   host: 'host',
   you: 'você',

@@ -91,7 +91,7 @@ fun ChatSheet(chat: List<ChatMessage>, members: List<Member>, onSend: (String) -
         SheetTitle("Chat")
         if (chat.isEmpty()) {
             Box(Modifier.fillMaxWidth().heightIn(min = 160.dp), contentAlignment = Alignment.Center) {
-                Text("Puxa assunto", color = c.textMuted, fontSize = JuntosTextSize.sm)
+                Text("Chat", color = c.textMuted, fontSize = JuntosTextSize.sm)
             }
         } else {
             LazyColumn(Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 420.dp), state = list, verticalArrangement = Arrangement.spacedBy(10.dp)) {
