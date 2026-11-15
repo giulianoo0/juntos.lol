@@ -127,6 +127,12 @@ const TAP_TOGGLE_DELAY_MS = 200
  */
 const STALL_BUFFER_SEC = 1
 const END_SLACK_MS = 1000
+/**
+ * How short of the declared duration a finished region may stop and still be
+ * the whole film: a torrent's remux can end seconds early (END_SLACK_MS in
+ * the desktop app's local.rs, finishedEndSlackMs on the server).
+ */
+const FINISHED_END_SLACK_MS = 10_000
 const NO_SUBTITLE_TRACKS: NonNullable<RoomInfo['subtitleTracks']> = []
 const NO_FONT_URLS: string[] = []
 /** Tracks imported into this browser alone are indexed from here, above any
@@ -253,12 +259,17 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
     ? [{ n: 0, startMs: mediaOffsetMs, producedMs: Math.round(duration * 1000), growing: true }]
     : null)
   const knownEndMs = room.durationMs && room.durationMs > 0 ? room.durationMs : null
-  // A finished region a few ms short of the declared duration is the whole
-  // rest of the media: the source's length is rounded, the remux's is exact.
+  // A finished region a few seconds short of the declared duration is the
+  // whole rest of the media: the source's length is rounded or padded, the
+  // remux's is exact. Past its edge there is nothing more to wait for.
+  const finishedEdges = knownEndMs === null || coldRegions === null ? [] : coldRegions
+    .filter((r) => !r.growing && r.startMs + r.producedMs >= knownEndMs - FINISHED_END_SLACK_MS)
+    .map((r) => Math.min(knownEndMs, r.startMs + r.producedMs))
   const producedToEnd = knownEndMs !== null && coldRegions !== null
-    && coldRegions.some((r) => regionHolds(r, knownEndMs - 1) || (!r.growing && r.startMs + r.producedMs >= knownEndMs - END_SLACK_MS))
+    && (finishedEdges.length > 0 || coldRegions.some((r) => regionHolds(r, knownEndMs - 1)))
+  const mediaEndMs = finishedEdges.length > 0 ? Math.min(...finishedEdges) : knownEndMs
   const coldFor = (ms: number): boolean => coldRegions !== null
-    && !(producedToEnd && ms >= (knownEndMs ?? 0))
+    && !(producedToEnd && ms >= (mediaEndMs ?? 0))
     && !coldRegions.some((r) => regionHolds(r, ms))
   const coldWait = coldTargetMs !== null && coldFor(coldTargetMs)
   if (coldWaitRef) coldWaitRef.current = coldWait
@@ -830,10 +841,10 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
       ? room.durationMs
       : Math.round((video.duration + loadedOffsetSecRef.current) * 1000)
     const expected = expectedPositionMs(sync, Date.now() + serverOffsetRef.current)
-    if (room.durationMs && expected < room.durationMs - REGION_BEHIND_MS * 5) return
+    if (mediaEndMs !== null && expected < mediaEndMs - REGION_BEHIND_MS * 5) return
     playRequestedRef.current = false
     send('pause', { positionMs: end, rate: video.playbackRate })
-  }, [isController, room.durationMs, send, videoRef])
+  }, [isController, mediaEndMs, room.durationMs, send, videoRef])
 
   const pendingSentServerMs = useRef(0)
   const seek = useCallback((seconds: number) => {
@@ -1366,7 +1377,7 @@ export function Player({ room, mediaRoot: localRoot, isController, memberId = ''
           const video = event.currentTarget
           // A remux can end a few seconds short of the container's duration:
           // running dry there is the end of the episode, not a stall.
-          if (knownEndMs !== null && (video.currentTime + mediaOffsetSec) * 1000 >= knownEndMs - END_SLACK_MS) {
+          if (mediaEndMs !== null && (video.currentTime + mediaOffsetSec) * 1000 >= mediaEndMs - END_SLACK_MS) {
             reportEnded()
             return
           }

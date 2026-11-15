@@ -1187,6 +1187,17 @@ describe('scrubbing', () => {
     expect(container.querySelector('.player-preparing')).toBeNull()
   })
 
+  it('a finished region that stops seconds short of the declared end, as a torrent remux can, is the end', () => {
+    const videoRef = createRef<HTMLVideoElement>()
+    const short = { ...room, durationMs: 19_000, mediaRegions: [{ n: 0, startMs: 0, producedMs: 13_000, growing: false }] }
+    const late = { playing: false, positionMs: 16_000, rate: 1, serverTimeMs: 100_000 }
+    const { container } = render(
+      <Player room={short} isController={false} videoRef={videoRef} send={vi.fn()} t={t} syncState={late} serverOffsetMs={0} />,
+    )
+
+    expect(container.querySelector('.player-preparing')).toBeNull()
+  })
+
   it('a region still growing short of the end is not the end yet', () => {
     const videoRef = createRef<HTMLVideoElement>()
     const short = { ...room, durationMs: 1_440_000, mediaRegions: [{ n: 0, startMs: 1_000_000, producedMs: 300_000, growing: true }] }

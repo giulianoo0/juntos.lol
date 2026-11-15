@@ -540,6 +540,48 @@ func TestHubPausesAtTheEndWhenTheMediaRunsOutShortOfItsDuration(t *testing.T) {
 	}
 }
 
+// A remux of a torrent can end several seconds short of the container's
+// duration. The app takes such a finished region as the whole film, and a
+// browser guest running dry at its edge is at the end too: the room must not
+// stop and wait for media that will never be made.
+func TestHubPausesAtTheEndWhenAFinishedRegionStopsSecondsShortOfIt(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	require.NoError(t, store.SetMediaDuration(t.Context(), "r1", 36_000))
+	require.NoError(t, store.SetMediaRegions(t.Context(), "r1", []room.MediaRegion{{N: 0, StartMs: 0, ProducedMs: 30_400, Growing: false}}))
+	host, guest := startedRoom(t, server)
+	time.Sleep(600 * time.Millisecond)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_400, BufferAheadMs: 0, Stalled: true}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		ended := readHubEvent(t, conn)
+		require.Equal(t, "state", ended.Type)
+		require.False(t, ended.State.Playing)
+		require.Equal(t, int64(36_000), ended.State.PositionMs)
+	}
+}
+
+func TestHubStillWaitsForARegionStillGrowingShortOfTheEnd(t *testing.T) {
+	hub, store, server := newHubTestServer(t, config.Config{MaxParticipants: 20, RoomIdleSeconds: 10})
+	hub.gateTimeout = time.Minute
+	hub.stallCooldown = 0
+	require.NoError(t, store.SetMediaDuration(t.Context(), "r1", 36_000))
+	require.NoError(t, store.SetMediaRegions(t.Context(), "r1", []room.MediaRegion{{N: 0, StartMs: 0, ProducedMs: 30_400, Growing: true}}))
+	host, guest := startedRoom(t, server)
+	time.Sleep(600 * time.Millisecond)
+
+	require.NoError(t, guest.WriteJSON(Inbound{Type: "ready", PositionMs: 30_400, BufferAheadMs: 0, Stalled: true}))
+
+	for _, conn := range []*websocket.Conn{host, guest} {
+		stopped := readHubEvent(t, conn)
+		require.Equal(t, "state", stopped.Type)
+		require.False(t, stopped.State.Playing)
+		require.Less(t, stopped.State.PositionMs, int64(36_000))
+	}
+}
+
 // A host whose player stops on the last frame without an ended event (the
 // desktop app's WebKit does) never asks for the pause: the room's clock must
 // not run on past the end, where the others wait for media that never comes.

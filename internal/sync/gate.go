@@ -18,6 +18,9 @@ const (
 	stallCredibleBufferMs int64 = 5000
 	// A stall this close to the end of the media is the episode ending.
 	endSlackMs int64 = 1000
+	// How short of the container's duration a finished remux may stop and
+	// still be the whole film (END_SLACK_MS in the desktop app's local.rs).
+	finishedEndSlackMs int64 = 10_000
 )
 
 // memberReport is the latest readiness a client reported. Only the room
@@ -273,7 +276,7 @@ func (r *roomConn) pauseAtEnd(ctx context.Context, now, slackMs int64) bool {
 		return false
 	}
 	stored, err := r.hub.store.Get(ctx, r.id)
-	if err != nil || stored.DurationMs <= 0 || ExpectedPositionMs(state, now) < stored.DurationMs-slackMs {
+	if err != nil || stored.DurationMs <= 0 || ExpectedPositionMs(state, now) < mediaEndMs(stored)-slackMs {
 		return false
 	}
 	state.Playing = false
@@ -311,4 +314,18 @@ func (r *roomConn) handleIgnore(sender *client, message Inbound) {
 	if !r.evaluateGate() {
 		r.broadcastWaiting()
 	}
+}
+
+// mediaEndMs is where the media runs out for good: the container's duration,
+// or the end of a finished region that stops a few seconds short of it, as a
+// remux of a torrent can.
+func mediaEndMs(stored *room.Room) int64 {
+	end := stored.DurationMs
+	for _, region := range stored.MediaRegions {
+		edge := region.StartMs + region.ProducedMs
+		if !region.Growing && edge < end && edge+finishedEndSlackMs >= stored.DurationMs {
+			end = edge
+		}
+	}
+	return end
 }
