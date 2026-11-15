@@ -6,13 +6,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import lol.juntos.core.api.Account
 import lol.juntos.core.api.JuntosApi
 import lol.juntos.core.api.PersistentCookieJar
-import okhttp3.Cookie
 import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /** internal/httpapi/accounts.go accountCookie. */
 const val ACCOUNT_COOKIE = "ss_account"
-
-private const val SESSION_MS = 30L * 24 * 60 * 60 * 1000
 
 /**
  * Who this phone is signed in as. The session is the site's `ss_account` cookie, kept in
@@ -22,7 +19,6 @@ class Accounts(
     private val api: JuntosApi,
     private val cookies: PersistentCookieJar,
     baseUrl: String,
-    private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val base = baseUrl.toHttpUrl()
     private val signed = MutableStateFlow<Account?>(null)
@@ -39,19 +35,18 @@ class Accounts(
         signed.value = account
     }
 
-    /** Keeps the session the Discord login left on the site and learns who it is. */
-    suspend fun signIn(session: String) {
-        val cookie = Cookie.Builder()
-            .name(ACCOUNT_COOKIE)
-            .value(session)
-            .hostOnlyDomain(base.host)
-            .path("/")
-            .expiresAt(now() + SESSION_MS)
-            .httpOnly()
-            .apply { if (base.isHttps) secure() }
-            .build()
-        cookies.saveFromResponse(base, listOf(cookie))
+    /**
+     * Where the browser starts the sign-in: the site sends it through Discord when needed
+     * and comes back with a code worth something only next to [verifier].
+     */
+    fun startUrl(verifier: String): String =
+        base.newBuilder().addPathSegments("api/auth/app").addQueryParameter("challenge", challengeOf(verifier)).build().toString()
+
+    /** Trades the code the browser brought back for this phone's own session. */
+    suspend fun signIn(code: String, verifier: String): Boolean {
+        runCatching { api.redeemAppLogin(code, verifier) }.getOrElse { return false }
         refresh()
+        return signed.value != null
     }
 
     suspend fun signOut() {
@@ -61,10 +56,10 @@ class Accounts(
     }
 }
 
-/** The `ss_account` value in a `Cookie` header as WebView's CookieManager gives it, or null. */
-fun sessionFrom(cookieHeader: String?): String? = cookieHeader
-    ?.split(';')
-    ?.map { it.trim() }
-    ?.firstOrNull { it.startsWith("$ACCOUNT_COOKIE=") }
-    ?.substringAfter('=')
-    ?.takeIf { it.isNotEmpty() }
+/** A fresh secret for one sign-in: 32 random bytes, base64url. */
+fun newVerifier(random: java.security.SecureRandom = java.security.SecureRandom()): String =
+    java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(random::nextBytes))
+
+/** What the site keeps of [verifier]: its SHA-256, base64url, as internal/httpapi/app_login.go checks it. */
+fun challengeOf(verifier: String): String =
+    java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()))

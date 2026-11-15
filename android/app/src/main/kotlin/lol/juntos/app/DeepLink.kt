@@ -12,3 +12,17 @@ fun roomIdFrom(uri: Uri?): String? {
     }
     return id?.takeIf { it.matches(Regex("[A-Za-z0-9]{4,32}")) }
 }
+
+/** The sign-in code the browser hands back: https://juntos.lol/api/auth/app/done?code= or juntos://signed-in?code=. */
+fun appLoginCodeFrom(uri: Uri?, host: String): String? {
+    if (uri == null) return null
+    val ours = when (uri.scheme) {
+        "https" -> uri.host == host && uri.path == "/api/auth/app/done"
+        "juntos" -> uri.host == "signed-in"
+        else -> false
+    }
+    return uri.getQueryParameter("code")?.takeIf { ours && it.matches(Regex("[A-Za-z0-9_-]{16,64}")) }
+}
+
+/** The pref that keeps a sign-in's verifier while the browser is out with Discord. */
+const val LOGIN_VERIFIER = "login.verifier"

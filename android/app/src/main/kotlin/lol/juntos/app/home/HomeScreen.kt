@@ -160,7 +160,7 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
                 UpdatePill(graph.updater)
                 graph.accounts?.let {
                     Spacer(Modifier.width(8.dp))
-                    AccountButton(it)
+                    AccountButton(it, graph.prefs)
                 }
             }
             Spacer(Modifier.height(36.dp))

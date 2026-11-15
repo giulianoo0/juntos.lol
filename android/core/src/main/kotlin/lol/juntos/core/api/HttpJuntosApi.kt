@@ -105,6 +105,10 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
         if (e.status == 401) null else throw e
     }
 
+    override suspend fun redeemAppLogin(code: String, verifier: String) {
+        send(post(url("api", "auth", "app", "redeem"), RedeemBody(code, verifier)))
+    }
+
     override suspend fun logout() {
         send(Request.Builder().url(url("api", "auth", "logout")).post(ByteArray(0).toRequestBody(JSON)).build())
     }
@@ -135,6 +139,8 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
         runCatching { JuntosJson.decodeFromString<ErrorBody>(reply.body).error }.getOrNull() ?: "http_${reply.status}"
 
     @Serializable private class HumanBody(val token: String)
+
+    @Serializable private class RedeemBody(val code: String, val verifier: String)
 
     @Serializable private class CreateRoomBody(val nickname: String, val name: String, val joinMode: String, val password: String)
 

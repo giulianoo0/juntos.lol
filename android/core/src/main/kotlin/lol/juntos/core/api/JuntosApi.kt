@@ -60,6 +60,9 @@ interface JuntosApi {
     /** The account `ss_account` signs in as, or null for a guest or a session the server ended. */
     suspend fun me(): Account? = null
 
+    /** Spends the code the browser's sign-in handed the app, with its verifier; `ss_account` lands in the jar. */
+    suspend fun redeemAppLogin(code: String, verifier: String): Unit = throw UnsupportedOperationException()
+
     /** Ends the account's session on the server. */
     suspend fun logout(): Unit = Unit
 

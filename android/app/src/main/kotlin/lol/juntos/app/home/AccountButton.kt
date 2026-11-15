@@ -30,7 +30,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import lol.juntos.app.account.DiscordLogin
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
+import lol.juntos.app.LOGIN_VERIFIER
+import lol.juntos.app.entry.Prefs
+import lol.juntos.core.account.newVerifier
 import lol.juntos.app.room.JuntosSheet
 import lol.juntos.core.account.Accounts
 import lol.juntos.design.Avatar
@@ -44,11 +49,11 @@ import lol.juntos.design.pressScale
 
 /** The header's account: Discord's sign-in for a guest, the account's face (and its sheet) once signed in. */
 @Composable
-fun AccountButton(accounts: Accounts) {
+fun AccountButton(accounts: Accounts, prefs: Prefs) {
     val c = Juntos.colors
     val scope = rememberCoroutineScope()
     val me by accounts.me.collectAsState()
-    var signingIn by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
 
@@ -60,7 +65,12 @@ fun AccountButton(accounts: Accounts) {
                 .height(36.dp)
                 .clip(CircleShape)
                 .background(c.discord)
-                .clickable(interaction, indication = null, role = Role.Button) { signingIn = true }
+                .clickable(interaction, indication = null, role = Role.Button) {
+                    // In the person's own browser, where Discord already knows them.
+                    val verifier = newVerifier()
+                    prefs.put(LOGIN_VERIFIER, verifier)
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(accounts.startUrl(verifier)))) }
+                }
                 .padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -81,15 +91,6 @@ fun AccountButton(accounts: Accounts) {
         )
     }
 
-    if (signingIn) {
-        DiscordLogin(
-            onSession = { token ->
-                signingIn = false
-                scope.launch { accounts.signIn(token) }
-            },
-            onClose = { signingIn = false },
-        )
-    }
     if (open && signed != null) {
         JuntosSheet(onDismiss = { open = false }) {
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         openRoom.value = roomIdFrom(intent?.data)
         val graph = (application as JuntosApplication).graph
+        signIn(intent?.data)
         lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { graph.updater.keepChecking() } }
         setContent {
             JuntosTheme {
@@ -35,5 +36,16 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         roomIdFrom(intent.data)?.let { openRoom.value = it }
+        signIn(intent.data)
+    }
+
+    /** The browser came back from Discord: the code and the verifier kept at the start make the session. */
+    private fun signIn(uri: android.net.Uri?) {
+        val graph = (application as JuntosApplication).graph
+        val accounts = graph.accounts ?: return
+        val code = appLoginCodeFrom(uri, android.net.Uri.parse(graph.baseUrl).host.orEmpty()) ?: return
+        val verifier = graph.prefs.get(LOGIN_VERIFIER)?.takeIf { it.isNotEmpty() } ?: return
+        graph.prefs.put(LOGIN_VERIFIER, "")
+        lifecycleScope.launch { accounts.signIn(code, verifier) }
     }
 }

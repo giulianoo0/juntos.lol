@@ -80,6 +80,8 @@ type accountRoutes struct {
 	askDMs *windowLimiter
 	// guildChecks is keyed by account.
 	guildChecks *windowLimiter
+	// handoffs carry a sign-in from the browser over to the phone app.
+	handoffs *appHandoffs
 }
 
 // RegisterAccountRoutes mounts the account API. Without a Discord secret the
@@ -96,6 +98,7 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 		roomCards: NewDiscordRooms(rooms, cfg),
 
 		guildChecks: newWindowLimiter(guildChecksPerHour, time.Hour),
+		handoffs:    newAppHandoffs(),
 	}
 	if cfg.DiscordBotToken != "" && cfg.PublicOrigin != "" {
 		routes.bot = &discord.API{Base: cfg.DiscordAPIBase, BotToken: cfg.DiscordBotToken, Client: &http.Client{Timeout: 10 * time.Second}}
@@ -109,7 +112,10 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	}
 	rg.GET("/auth/discord", routes.startLogin)
 	rg.GET("/auth/discord/callback", routes.finishLogin)
+	rg.GET("/auth/app", routes.startAppLogin)
+	rg.GET("/auth/app/done", routes.appLoginDone)
 	rg.Use(sameOrigin(cfg))
+	rg.POST("/auth/app/redeem", routes.redeemAppLogin)
 	rg.POST("/auth/logout", routes.logout)
 	rg.GET("/me", routes.me)
 	rg.PATCH("/me", routes.patchMe)

@@ -34,12 +34,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="juntos.lol" android:pathPrefix="/room/" />
+                <data android:path="/api/auth/app/done" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="juntos" android:host="room" />
+                <data android:host="signed-in" />
             </intent-filter>
         </activity>
         <service
