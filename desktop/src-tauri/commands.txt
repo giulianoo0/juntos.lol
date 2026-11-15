@@ -29,3 +29,5 @@ screen_permission_guide
 local_subtitles
 e2e_log
 pip_window
+extension_store_get
+extension_store_set

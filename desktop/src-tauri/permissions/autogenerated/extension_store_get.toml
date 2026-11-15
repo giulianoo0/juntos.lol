@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extension-store-get"
+description = "Enables the extension_store_get command without any pre-configured scope."
+commands.allow = ["extension_store_get"]
+
+[[permission]]
+identifier = "deny-extension-store-get"
+description = "Denies the extension_store_get command without any pre-configured scope."
+commands.deny = ["extension_store_get"]

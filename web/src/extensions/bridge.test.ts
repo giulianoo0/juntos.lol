@@ -51,6 +51,17 @@ describe('pedir a fonte de novo à extensão', () => {
     void asking
   })
 
+  it('responde o cofre da extensão; fora do app, sem guardar nada', async () => {
+    const asking = refreshSource(extension, place, '15228')
+    const sent = vi.spyOn(frame().contentWindow!, 'postMessage')
+
+    fromFrame({ juntos: 1, type: 'store', nonce: 's1', key: 'sessao', value: 'x' })
+
+    await vi.waitFor(() => expect(sent).toHaveBeenCalledWith({ juntos: 1, type: 'stored', nonce: 's1', ok: false, value: null }, origin))
+    frame().remove()
+    void asking
+  })
+
   it('desiste em 20 s sem resposta e tira o iframe', async () => {
     vi.useFakeTimers()
     const asking = refreshSource(extension, place, '15228')

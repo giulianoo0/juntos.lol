@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useT } from '../i18n/useT'
 import { connectFrame, dressFrame, type Bridge, type LoadedExtension } from './bridge'
 import type { ExtToHost, ExtensionPlace } from './protocol'
-import { appCalls, appReads } from './relay'
+import { appCalls, appReads, appStores } from './relay'
 import { useThemeTokens } from './theme'
 
 interface ExtensionFrameProps {
@@ -31,7 +31,7 @@ export function ExtensionFrame({ extension, place, canPlay, onMessage, className
       frame,
       extension,
       place,
-      () => ({ theme: latest.current.theme, locale: latest.current.locale, canPlay: latest.current.canPlay, app: appReads(), fetch: appCalls() }),
+      () => ({ theme: latest.current.theme, locale: latest.current.locale, canPlay: latest.current.canPlay, app: appReads(), fetch: appCalls(), store: appStores() }),
       (message) => latest.current.onMessage(message),
     )
     bridgeRef.current = bridge

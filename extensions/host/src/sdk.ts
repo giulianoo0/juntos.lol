@@ -24,6 +24,8 @@ export interface InitMessage {
   app: boolean
   /** The app sends `juntos.fetch` calls itself, with any User-Agent. */
   fetch: boolean
+  /** The app keeps `juntos.store` sealed on disk, with the key in the system keychain. */
+  store: boolean
 }
 export interface PlayRequest {
   title: string
@@ -36,9 +38,11 @@ export interface PlayRequest {
 
 type SdkWindow = Pick<Window, 'parent' | 'document' | 'addEventListener' | 'fetch'> & {
   location: { ancestorOrigins?: ArrayLike<string> }
+  localStorage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 }
 
 const CALL_WAIT_MS = 60_000
+const STORE_WAIT_MS = 10_000
 const INIT_WAIT_MS = 2_000
 
 const VAR_NAME = /^--[A-Za-z0-9_-]{1,64}$/
@@ -59,6 +63,7 @@ export function installJuntos(win: SdkWindow, origins: string[]) {
   let readied = false
   let nextCall = 0
   const calls = new Map<string, (answer: { status: number; contentType?: unknown; body: unknown }) => void>()
+  const stores = new Map<string, (answer: { ok: boolean; value: unknown }) => void>()
 
   function applyTheme(t: ThemeTokens) {
     const root = win.document.documentElement
@@ -92,7 +97,7 @@ export function installJuntos(win: SdkWindow, origins: string[]) {
     if (parentOrigin && e.origin !== parentOrigin) return
     if (d.type === 'init' && isTheme(d.theme) && typeof d.locale === 'string' && typeof d.canPlay === 'boolean') {
       parentOrigin = e.origin
-      init = { juntos: 1, type: 'init', theme: d.theme, locale: d.locale, canPlay: d.canPlay, app: d.app === true, fetch: d.fetch === true }
+      init = { juntos: 1, type: 'init', theme: d.theme, locale: d.locale, canPlay: d.canPlay, app: d.app === true, fetch: d.fetch === true, store: d.store === true }
       applyTheme(init.theme)
       for (const cb of initCbs) cb(init)
     } else if (d.type === 'theme' && isTheme(d.theme)) {
@@ -104,6 +109,8 @@ export function installJuntos(win: SdkWindow, origins: string[]) {
       void answerRefresh(d.nonce, d.ref)
     } else if (d.type === 'fetched' && typeof d.nonce === 'string' && typeof d.status === 'number') {
       calls.get(d.nonce)?.({ status: d.status, contentType: d.contentType, body: d.body })
+    } else if (d.type === 'stored' && typeof d.nonce === 'string' && typeof d.ok === 'boolean') {
+      stores.get(d.nonce)?.({ ok: d.ok, value: d.value })
     }
   })
 
@@ -150,6 +157,44 @@ export function installJuntos(win: SdkWindow, origins: string[]) {
     return viaApp(String(input), (opts.method ?? 'GET').toUpperCase(), headers, opts.body ?? undefined)
   }
 
+  function viaStore(key: string, value?: string | null): Promise<string | null> {
+    const nonce = `s${nextCall++}`
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { stores.delete(nonce); reject(new Error('juntos.store: no answer')) }, STORE_WAIT_MS)
+      stores.set(nonce, (answer) => {
+        stores.delete(nonce)
+        clearTimeout(timer)
+        if (!answer.ok) reject(new Error('juntos.store: refused'))
+        else resolve(typeof answer.value === 'string' ? answer.value : null)
+      })
+      post({ type: 'store', nonce, key, ...(value === undefined ? {} : { value }) })
+    })
+  }
+
+  /**
+   * Text that survives the app closing. In the desktop app it is sealed on
+   * disk with a key in the system keychain, reachable only by this
+   * extension; elsewhere it is the frame's localStorage.
+   */
+  const store = {
+    async get(key: string): Promise<string | null> {
+      if ((await settledInit())?.store) return viaStore(key)
+      try { return win.localStorage?.getItem(key) ?? null } catch { return null }
+    },
+    async set(key: string, value: string | null): Promise<void> {
+      if ((await settledInit())?.store) {
+        await viaStore(key, value)
+        return
+      }
+      try {
+        if (value === null) win.localStorage?.removeItem(key)
+        else win.localStorage?.setItem(key, value)
+      } catch {
+        // storage blocked: the value lives as long as the page
+      }
+    },
+  }
+
   return {
     onInit(cb: (i: InitMessage) => void) {
       initCbs.push(cb)
@@ -163,6 +208,7 @@ export function installJuntos(win: SdkWindow, origins: string[]) {
     },
     ready: () => { readied = true; post({ type: 'ready' }) },
     fetch: juntosFetch,
+    store,
     play: (p: PlayRequest) => post({ ...p, type: 'play' }),
     close: () => post({ type: 'close' }),
     toast: (text: string) => post({ type: 'toast', text }),

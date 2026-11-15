@@ -1,6 +1,6 @@
 import type { MediaRelay } from '../pipeline/hlsInput'
 import { settledDesktop, type DesktopApp } from '../platform'
-import { extensionOrigin, type ExtFetch, type ExtFetched, type ExtHeaders, type ExtensionPlace } from './protocol'
+import { extensionOrigin, type ExtFetch, type ExtFetched, type ExtHeaders, type ExtStore, type ExtStored, type ExtensionPlace } from './protocol'
 
 /**
  * The extension's media proxy, for a CDN that sends no CORS. Each url it
@@ -87,4 +87,28 @@ export async function appCall(call: ExtFetch, app: DesktopApp | null = settledDe
 /** Whether this page can play what only the app reads. */
 export function appReads(): boolean {
   return appRelay() !== undefined
+}
+
+/** Whether the app carrying this page keeps what extensions store, sealed on disk. */
+export function appStores(app: DesktopApp | null = settledDesktop()): boolean {
+  return Boolean(app?.features.includes('extensionStore'))
+}
+
+/**
+ * Reads or keeps a value for extension `id`, which the page names from the
+ * frame that asked: an extension reaches only its own.
+ */
+export async function appStore(id: string, asked: ExtStore, app: DesktopApp | null = settledDesktop()): Promise<ExtStored> {
+  const answer = (ok: boolean, value: string | null = null): ExtStored => ({ juntos: 1, type: 'stored', nonce: asked.nonce, ok, value })
+  if (!app || !appStores(app)) return answer(false)
+  try {
+    if (asked.value === undefined) {
+      const value = await app.invoke<string | null>('extension_store_get', { id, key: asked.key })
+      return answer(true, typeof value === 'string' ? value : null)
+    }
+    await app.invoke('extension_store_set', { id, key: asked.key, value: asked.value })
+    return answer(true)
+  } catch {
+    return answer(false)
+  }
 }

@@ -34,6 +34,7 @@ bytes = "1"
 async-trait = "0.1"
 rand = "0.8"
 base64 = "0.22"
+aes-gcm = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -47,6 +48,7 @@ objc2-core-video = "0.3"
 objc2-screen-capture-kit = "0.3"
 objc2-video-toolbox = "0.3"
 block2 = "0.6"
+keyring = { version = "3", features = ["apple-native"] }
 dispatch2 = "0.3"
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
@@ -56,6 +58,7 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 base64 = "0.22"
 windows-core = "0.62"
+keyring = { version = "3", features = ["windows-native"] }
 windows = { version = "0.62", features = [
     "Foundation",
     "Graphics",
@@ -88,6 +91,8 @@ windows = { version = "0.62", features = [
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# No secret service on every desktop: the key stays in memory, so nothing outlives the run.
+keyring = "3"
 webkit2gtk = "2.0"
 
 [dev-dependencies]

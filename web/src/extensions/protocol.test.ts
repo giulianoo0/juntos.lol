@@ -38,6 +38,9 @@ describe('mensagens da extensão', () => {
     ['youtube', play({}, { kind: 'youtube', url: undefined, id: 'dQw4w9WgXcQ' })],
     ['fetch à API', { juntos: 1, type: 'fetch', nonce: 'n1', url: 'https://prod-api.exemplo.com/v3/auth/login', method: 'POST', headers: { 'user-agent': 'app-android', authorization: `Bearer ${'t'.repeat(2000)}`, 'content-type': 'application/json', 'x-app': '1.5.1' }, body: '{"a":1}' }],
     ['fetch sem corpo nem headers', { juntos: 1, type: 'fetch', nonce: 'n1', url: 'https://prod-api.exemplo.com/v2/feed', method: 'GET' }],
+    ['ler do cofre', { juntos: 1, type: 'store', nonce: 'n1', key: 'sessao' }],
+    ['guardar no cofre', { juntos: 1, type: 'store', nonce: 'n1', key: 'sessao', value: '{"refresh":"r"}' }],
+    ['esquecer do cofre', { juntos: 1, type: 'store', nonce: 'n1', key: 'sessao', value: null }],
     ['legendas', play({ subtitles: [{ url: 'https://files.example.com/pt.srt', lang: 'por', label: 'Português' }, { url: 'https://files.example.com/en.vtt', lang: 'eng' }] })],
   ])('aceita %s', (_, message) => {
     expect(parseExtMessage(message, manifest)).toEqual(message)
@@ -124,6 +127,19 @@ describe('chamada da extensão pelo app', () => {
     ['corpo que não é texto', { body: { a: 1 } }],
   ])('recusa %s', (_, extra) => {
     expect(parseExtMessage(call(extra), manifest)).toBeNull()
+  })
+})
+
+describe('cofre da extensão', () => {
+  const store = (extra: Record<string, unknown>) => ({ juntos: 1, type: 'store', nonce: 'n1', key: 'sessao', ...extra })
+
+  it.each([
+    ['chave vazia', { key: '' }],
+    ['chave que não é texto', { key: 7 }],
+    ['valor que não é texto', { value: { a: 1 } }],
+    ['valor grande demais', { value: 'x'.repeat((64 << 10) + 1) }],
+  ])('recusa %s', (_, extra) => {
+    expect(parseExtMessage(store(extra), manifest)).toBeNull()
   })
 })
 

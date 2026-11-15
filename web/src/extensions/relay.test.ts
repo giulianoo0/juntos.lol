@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { appCall, appCalls, appRelay, extensionRelay, relayFor } from './relay'
+import { appCall, appCalls, appRelay, appStore, extensionRelay, relayFor } from './relay'
+import type { DesktopApp } from '../platform'
 
 const place = { base: 'ext.example', scheme: 'https' as const }
 
@@ -81,5 +82,32 @@ describe('relayFor', () => {
   it('extensão de qualquer host não tem proxy no Worker', () => {
     expect(relayFor({ sub: 'abcdefghijklmnop', manifest: { hosts: { media: ['*'] } } }, place)).toBeUndefined()
     expect(relayFor({ sub: 'abcdefghijklmnop', manifest: { hosts: { media: ['cdn.example.com'] } } }, place)).toBeDefined()
+  })
+})
+
+describe('appStore', () => {
+  const app = (invoke: (...args: never[]) => Promise<unknown>) => ({ version: '0.2.15', mediaRoot: 'juntos-media://localhost', features: ['extensionStore'], invoke: invoke as DesktopApp['invoke'] })
+
+  it('lê e guarda pelo app em nome da extensão que a página nomeia', async () => {
+    const invoke = vi.fn(async (cmd: string) => cmd === 'extension_store_get' ? '{"refresh":"r"}' : null)
+
+    expect(await appStore('tomato', { juntos: 1, type: 'store', nonce: 'n1', key: 'sessao' }, app(invoke)))
+      .toEqual({ juntos: 1, type: 'stored', nonce: 'n1', ok: true, value: '{"refresh":"r"}' })
+    expect(await appStore('tomato', { juntos: 1, type: 'store', nonce: 'n2', key: 'sessao', value: null }, app(invoke)))
+      .toEqual({ juntos: 1, type: 'stored', nonce: 'n2', ok: true, value: null })
+
+    expect(invoke.mock.calls).toEqual([
+      ['extension_store_get', { id: 'tomato', key: 'sessao' }],
+      ['extension_store_set', { id: 'tomato', key: 'sessao', value: null }],
+    ])
+  })
+
+  it('responde ok falso no navegador, num app antigo ou quando o app falha', async () => {
+    const asked = { juntos: 1 as const, type: 'store' as const, nonce: 'n1', key: 'sessao' }
+    const failing = vi.fn(async () => { throw new Error('keychain') })
+    expect((await appStore('tomato', asked, null)).ok).toBe(false)
+    expect((await appStore('tomato', asked, { ...app(failing), features: [] })).ok).toBe(false)
+    expect(failing).not.toHaveBeenCalled()
+    expect(await appStore('tomato', asked, app(failing))).toEqual({ juntos: 1, type: 'stored', nonce: 'n1', ok: false, value: null })
   })
 })

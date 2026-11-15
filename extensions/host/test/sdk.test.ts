@@ -4,7 +4,7 @@ import { installJuntos } from '../src/sdk'
 
 const ORIGINS = ['https://juntos.lol', 'http://localhost:5173']
 const theme = { mode: 'light' as const, vars: { '--bg': '#fff', '--accent': 'rgb(1 2 3)' } }
-const init = { juntos: 1, type: 'init', theme, locale: 'pt-BR', canPlay: true, app: true, fetch: false }
+const init = { juntos: 1, type: 'init', theme, locale: 'pt-BR', canPlay: true, app: true, fetch: false, store: false }
 
 function setup(ancestor?: string, fetch: typeof globalThis.fetch = vi.fn()) {
   const posted: { data: unknown; origin: string }[] = []
@@ -16,7 +16,13 @@ function setup(ancestor?: string, fetch: typeof globalThis.fetch = vi.fn()) {
     location: { ancestorOrigins: ancestor ? [ancestor] : [] },
     addEventListener: target.addEventListener.bind(target),
     fetch,
+    localStorage: new Map<string, string>() as never,
   }
+  Object.assign(win.localStorage as object, {
+    getItem(this: Map<string, string>, k: string) { return this.get(k) ?? null },
+    setItem(this: Map<string, string>, k: string, v: string) { this.set(k, v) },
+    removeItem(this: Map<string, string>, k: string) { this.delete(k) },
+  })
   const sdk = installJuntos(win as never, ORIGINS)
   const send = (data: unknown, origin = 'https://juntos.lol', source: unknown = parent) =>
     target.dispatchEvent(Object.assign(new Event('message'), { data, origin, source }))
@@ -211,5 +217,47 @@ describe('juntos.fetch', () => {
     const call = posted.map((p) => p.data as Record<string, unknown>).find((d) => d.type === 'fetch')!
     send({ juntos: 1, type: 'fetched', nonce: call.nonce, status: 200, body: 'x' })
     expect(await (await answer).text()).toBe('x')
+  })
+})
+
+describe('juntos.store', () => {
+  const asked = (posted: { data: unknown }[]) => posted.map((p) => p.data as Record<string, unknown>).filter((d) => d.type === 'store')
+
+  it('no app, lê e guarda pelo juntos', async () => {
+    const { sdk, send, posted } = setup()
+    sdk.ready()
+    send({ ...init, store: true })
+
+    const reading = sdk.store.get('sessao')
+    await flush()
+    send({ juntos: 1, type: 'stored', nonce: asked(posted)[0].nonce, ok: true, value: '{"r":1}' })
+    expect(await reading).toBe('{"r":1}')
+
+    const forgetting = sdk.store.set('sessao', null)
+    await flush()
+    expect(asked(posted)[1]).toEqual({ juntos: 1, type: 'store', nonce: expect.any(String), key: 'sessao', value: null })
+    send({ juntos: 1, type: 'stored', nonce: asked(posted)[1].nonce, ok: true, value: null })
+    await forgetting
+  })
+
+  it('no app, recusa vira erro em vez de valor vazio', async () => {
+    const { sdk, send, posted } = setup()
+    sdk.ready()
+    send({ ...init, store: true })
+    const reading = sdk.store.get('sessao')
+    await flush()
+    send({ juntos: 1, type: 'stored', nonce: asked(posted)[0].nonce, ok: false, value: null })
+    await expect(reading).rejects.toThrow('refused')
+  })
+
+  it('fora do app, é o localStorage do frame', async () => {
+    const { sdk, send, posted } = setup()
+    sdk.ready()
+    send(init)
+    await sdk.store.set('sessao', 'x')
+    expect(await sdk.store.get('sessao')).toBe('x')
+    await sdk.store.set('sessao', null)
+    expect(await sdk.store.get('sessao')).toBeNull()
+    expect(asked(posted)).toEqual([])
   })
 })

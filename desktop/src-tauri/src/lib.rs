@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod commands;
+pub mod ext_store;
 pub mod hls;
 pub mod local;
 pub mod pip;
@@ -107,6 +108,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_hello,
+            commands::extension_store_get,
+            commands::extension_store_set,
             commands::torrent_open,
             commands::torrent_select,
             commands::torrent_stats,
@@ -273,7 +276,7 @@ mod tests {
     #[test]
     fn the_site_is_granted_each_command_the_build_declares() {
         let granted: Vec<String> = site_permissions().collect();
-        assert_eq!(granted.len(), 31);
+        assert_eq!(granted.len(), 33);
         assert_eq!(granted[0], "allow-app-hello");
         assert!(granted.contains(&"allow-local-prepare".to_string()));
         assert!(granted.contains(&"allow-screen-start".to_string()));

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extension-store-set"
+description = "Enables the extension_store_set command without any pre-configured scope."
+commands.allow = ["extension_store_set"]
+
+[[permission]]
+identifier = "deny-extension-store-set"
+description = "Denies the extension_store_set command without any pre-configured scope."
+commands.deny = ["extension_store_set"]

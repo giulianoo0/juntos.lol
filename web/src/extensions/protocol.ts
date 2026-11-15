@@ -38,14 +38,21 @@ export type ExtFetch = {
   juntos: 1; type: 'fetch'; nonce: string; url: string; method: CallMethod; headers?: Record<string, string>; body?: string
 }
 
+/** What an extension keeps through the desktop app: `value` null forgets `key`; no `value` reads it. */
+export type ExtStore = { juntos: 1; type: 'store'; nonce: string; key: string; value?: string | null }
+
+/** The answer to a `store`: `ok` false when nothing could be kept or read (a browser, an old app). */
+export type ExtStored = { juntos: 1; type: 'stored'; nonce: string; ok: boolean; value: string | null }
+
 /** The answer to a `fetch`; status 0 when nothing came back. */
 export type ExtFetched = { juntos: 1; type: 'fetched'; nonce: string; status: number; contentType?: string; body: string }
 
 export type HostToExt =
-  | { juntos: 1; type: 'init'; theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean; fetch: boolean }
+  | { juntos: 1; type: 'init'; theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean; fetch: boolean; store: boolean }
   | { juntos: 1; type: 'theme'; theme: ThemeTokens }
   | { juntos: 1; type: 'refresh'; nonce: string; ref: string }
   | ExtFetched
+  | ExtStored
 
 export type ExtPlay = {
   juntos: 1; type: 'play'; title: string; subtitle?: string; poster?: string; ref: string; source: ExtSource; subtitles?: ExtSubtitle[]
@@ -58,6 +65,7 @@ export type ExtToHost =
   | { juntos: 1; type: 'close' }
   | { juntos: 1; type: 'toast'; text: string }
   | ExtFetch
+  | ExtStore
 
 export interface ExtensionPlace {
   base: string
@@ -81,6 +89,8 @@ const CALL_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 const CALL_HEADER_NAMES: readonly string[] = [...HEADER_NAMES, 'authorization', 'content-type', 'accept', 'accept-language']
 const CALL_CUSTOM_HEADER = /^x-[a-z0-9-]{1,62}$/
 const MAX_CALL_HEADER = 4096
+const MAX_STORE_KEY = 128
+const MAX_STORE_VALUE = 64 << 10
 const MAX_CALL_HEADERS = 16
 export const MAX_CALL_BODY = 1 << 20
 const INFO_HASH = /^[0-9a-f]{40}$/i
@@ -293,6 +303,15 @@ export function parseExtMessage(data: unknown, manifest: ExtensionManifest): Ext
       if (sent && Object.keys(sent).length > 0) out.headers = sent
       if (body !== undefined) out.body = body as string
       return out
+    }
+    case 'store': {
+      const nonce = text(own(message, 'nonce'), MAX_REF)
+      const key = text(own(message, 'key'), MAX_STORE_KEY)
+      const value = own(message, 'value')
+      if (nonce === null || key === null || key === '') return null
+      if (value === undefined) return { juntos: 1, type: 'store', nonce, key }
+      if (value !== null && text(value, MAX_STORE_VALUE) === null) return null
+      return { juntos: 1, type: 'store', nonce, key, value: value as string | null }
     }
     case 'play': {
       const title = text(own(message, 'title'))

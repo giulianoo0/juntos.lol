@@ -27,6 +27,7 @@ pub struct AppState {
     pub tools: Tools,
     pub producer: Arc<Producer>,
     pub proxy: Arc<crate::proxy::MediaProxy>,
+    pub ext_store: Arc<crate::ext_store::ExtStore>,
     torrents: OnceCell<Torrents>,
     resolver: OnceCell<Option<Arc<youtube::Resolver>>>,
     uploads: Mutex<HashMap<String, (String, Arc<Upload>)>>,
@@ -34,6 +35,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(site: Url, data_dir: std::path::PathBuf, tools: Tools) -> Self {
+        let ext_store = Arc::new(crate::ext_store::ExtStore::new(data_dir.join("extensions")));
         let producer = Producer::new(data_dir.join("cache"), tools.ffmpeg.clone(), tools.ffprobe.clone(), cache::DEFAULT_CAP_BYTES);
         Self {
             site,
@@ -41,6 +43,7 @@ impl AppState {
             tools,
             producer,
             proxy: Arc::new(crate::proxy::MediaProxy::new()),
+            ext_store,
             torrents: OnceCell::new(),
             resolver: OnceCell::new(),
             uploads: Mutex::new(HashMap::new()),
@@ -79,6 +82,20 @@ fn err(error: impl std::fmt::Display) -> String {
 pub fn app_hello(app: tauri::AppHandle, state: State<'_, AppState>, protocol_version: u32, min_protocol_version: Option<u32>) -> site::Hello {
     let version = app.package_info().version.to_string();
     site::hello(min_protocol_version.unwrap_or(protocol_version), &version, cfg!(windows), state.proxy.key())
+}
+
+/// What extension `id` kept under `key`; the site asks for the frame it carries.
+#[tauri::command]
+pub async fn extension_store_get(state: State<'_, AppState>, id: String, key: String) -> Result<Option<String>, String> {
+    let store = state.ext_store.clone();
+    tokio::task::spawn_blocking(move || store.get(&id, &key)).await.map_err(err)?
+}
+
+/// Keeps `value` for extension `id` under `key`; None forgets it.
+#[tauri::command]
+pub async fn extension_store_set(state: State<'_, AppState>, id: String, key: String, value: Option<String>) -> Result<(), String> {
+    let store = state.ext_store.clone();
+    tokio::task::spawn_blocking(move || store.set(&id, &key, value)).await.map_err(err)?
 }
 
 #[tauri::command]
