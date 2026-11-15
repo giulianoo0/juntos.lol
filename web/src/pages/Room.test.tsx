@@ -467,6 +467,7 @@ describe('extensões', () => {
       'abc123', 4,
       { extensionId: 'exemplo', sub: SUB, ref: 'ep-1', title: 'Série · 1. Episódio', source },
       opened,
+      expect.any(Function),
     ))
     expect(order).toEqual(['playlist', 'room'])
     expect(openExtensionSource).toHaveBeenCalledWith(source, expect.objectContaining({ relay: expect.objectContaining({ via: expect.any(Function) }), hosts: ['*.cdn.exemplo.com'] }))
@@ -549,6 +550,7 @@ describe('extensões', () => {
       'abc123', 1,
       { extensionId: 'exemplo', sub: SUB, ref: 'ep-1', title: 'Série', source: fresh },
       opened,
+      expect.any(Function),
     ))
     expect(refreshSource).toHaveBeenCalledWith(expect.objectContaining({ id: 'exemplo', sub: SUB }), undefined, 'ep-1', 'pt-BR')
   })

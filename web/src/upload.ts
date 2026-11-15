@@ -19,7 +19,7 @@ import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MED
 import { backendFor, type YoutubeSession } from './youtube'
 import { openRemoteTorrent } from './remoteTorrent'
 import { probeSize } from './pipeline/probeSize'
-import type { HlsPlan, MediaRelay } from './pipeline/hlsInput'
+import type { HlsPlan, HlsRenew, MediaRelay } from './pipeline/hlsInput'
 import { needsApp, urlAllowed, type ExtUrlSource } from './extensions/protocol'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
@@ -547,10 +547,9 @@ export async function openExtensionSource(
   if (through && !relay) throw new ExtensionNeedsAppError()
   if (source.kind === 'hls') {
     const { openHls } = await import('./pipeline/hlsInput')
-    const allow = (url: string) => urlAllowed(url, opts.hosts) || (relay?.owns(url) ?? false)
-    const start = through ? await relay!.via(source.url) : source.url
+    const { start, hls } = await extensionHls(source, opts)
     try {
-      return { kind: 'hls', url: start, plan: await openHls(start, { fetch: opts.fetch, relay: through ? undefined : relay, allow }) }
+      return { kind: 'hls', url: start, plan: await openHls(start, hls) }
     } catch (error) {
       throw error instanceof TypeError && !relay ? new ExtensionNeedsAppError() : error
     }
@@ -572,16 +571,56 @@ export async function openExtensionSource(
   }
 }
 
-export function startExtensionUpload(roomID: string, mediaGeneration: number, pick: ExtensionPick, opened: OpenedExtensionSource): void {
+/** Where an extension's playlist is read from, and what it may lead to. */
+async function extensionHls(source: ExtUrlSource, opts: { fetch?: typeof fetch; relay?: MediaRelay; hosts: readonly string[] }) {
+  const { relay } = opts
+  const through = needsApp(source)
+  const allow = (url: string) => urlAllowed(url, opts.hosts) || (relay?.owns(url) ?? false)
+  const start = through ? await relay!.via(source.url) : source.url
+  return { start, hls: { fetch: opts.fetch, relay: through ? undefined : relay, allow } }
+}
+
+const RENEW_ATTEMPTS = 3
+const RENEW_BACKOFF_MS = 1_000
+
+/**
+ * Signs an extension's HLS again: the extension hands a fresh playlist for
+ * the same episode, and its segment urls replace the expired ones. A service
+ * that fails now and then gets a few tries before the preparo gives up.
+ */
+export function extensionHlsRenewer(
+  fresh: () => Promise<ExtUrlSource | null>,
+  opts: { fetch?: typeof fetch; relay: (source: ExtUrlSource) => MediaRelay | undefined; hosts: readonly string[] },
+): HlsRenew {
+  return async () => {
+    for (let attempt = 0; attempt < RENEW_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, RENEW_BACKOFF_MS * 2 ** (attempt - 1)))
+      try {
+        const source = await fresh()
+        if (!source || source.kind !== 'hls') continue
+        const relay = opts.relay(source)
+        if (needsApp(source) && !relay) return null
+        const { reopenHls } = await import('./pipeline/hlsInput')
+        const { start, hls } = await extensionHls(source, { fetch: opts.fetch, relay, hosts: opts.hosts })
+        return await reopenHls(start, hls)
+      } catch {
+      }
+    }
+    return null
+  }
+}
+
+export function startExtensionUpload(roomID: string, mediaGeneration: number, pick: ExtensionPick, opened: OpenedExtensionSource, renewHls?: HlsRenew): void {
   saveResumableSource(roomID, { kind: 'extension', fileName: pick.title, title: pick.title, extensionId: pick.extensionId, sub: pick.sub, ref: pick.ref })
   startRoomUpload(roomID, mediaGeneration, opened.kind === 'hls'
     ? { kind: 'hls', url: opened.url, name: pick.title, plan: opened.plan }
-    : { kind: 'url', url: opened.url, name: pick.title, size: opened.size, external: true }, [])
+    : { kind: 'url', url: opened.url, name: pick.title, size: opened.size, external: true }, [], { renewHls })
 }
 
 interface RoomUploadOptions {
   onProgress?: (progress: UploadProgress) => void
   cleanup?: () => void
+  renewHls?: HlsRenew
 }
 
 /**
@@ -593,7 +632,7 @@ export function startRoomUpload(
   mediaGeneration: number,
   source: RemuxSource,
   sideFiles: RemuxSideFile[],
-  { onProgress, cleanup = () => {} }: RoomUploadOptions = {},
+  { onProgress, cleanup = () => {}, renewHls }: RoomUploadOptions = {},
 ): void {
   const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
   releaseExternal(roomID)
@@ -623,9 +662,13 @@ export function startRoomUpload(
     const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
     ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
     const settle = (fn: () => void) => { fn(); worker.terminate() }
-    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string; detail?: string; trace?: SeekTrace }>) => {
+    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string; detail?: string; trace?: SeekTrace; id?: number }>) => {
       const message = event.data
-      if (message.type === 'trouble') console.error('[remux-worker]', message.detail)
+      if (message.type === 'renew') {
+        const id = message.id
+        void (renewHls ? renewHls().catch(() => null) : Promise.resolve(null))
+          .then((urls) => worker.postMessage({ type: 'renewed', id, urls }))
+      } else if (message.type === 'trouble') console.error('[remux-worker]', message.detail)
       else if (message.type === 'trace' && message.trace) console.info(formatSeekTrace('host', message.trace))
       else if (message.type === 'progress') onProgressPct(message.pct ?? 0)
       else if (message.type === 'handle' && ownHandle) remuxHandles.set(roomID, ownHandle)
@@ -646,6 +689,7 @@ export function startRoomUpload(
     try {
       await runRemuxJob(job, {
         onProgress: onProgressPct,
+        renewHls,
         onHandle: (handle) => {
           ownHandle = handle
           remuxHandles.set(roomID, handle)

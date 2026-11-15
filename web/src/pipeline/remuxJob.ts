@@ -6,7 +6,7 @@
  * is drawing the player.
  */
 import { fileInput, rangeInput, type MediaInput } from './mediaInput'
-import { hlsInput } from './hlsInput'
+import { hlsInput, type HlsRenew } from './hlsInput'
 export * from './remuxTypes'
 import type { RemuxJob, RemuxSource } from './remuxTypes'
 import type { SeekTrace } from './seekTrace'
@@ -18,6 +18,8 @@ export interface RemuxJobCallbacks {
   onProgress?: (pct: number) => void
   onHandle?: (handle: ClientRemuxHandle) => void
   onTrace?: (trace: SeekTrace) => void
+  /** Signs an HLS source's segments again once theirs run out. */
+  renewHls?: HlsRenew
 }
 
 export { UnsupportedMediaError }
@@ -31,23 +33,23 @@ export class PlanFailedError extends Error {
   }
 }
 
-async function buildInput(source: RemuxSource): Promise<MediaInput> {
+async function buildInput(source: RemuxSource, renewHls?: HlsRenew): Promise<MediaInput> {
   switch (source.kind) {
     case 'file': return fileInput(source.file)
     case 'stream': return rangeInput(source.url, source.name, source.size)
     case 'url': return rangeInput(source.url, source.name, source.size, { external: source.external })
-    case 'hls': return hlsInput(source.url, source.name, { plan: source.plan })
+    case 'hls': return hlsInput(source.url, source.name, { plan: source.plan, renew: renewHls })
     case 'input': return source.input
   }
 }
 
 /** Runs the whole preparo and resolves when the remux completes. Errors are
  * thrown raw — the caller classifies them. */
-export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace }: RemuxJobCallbacks): Promise<void> {
+export async function runRemuxJob(job: RemuxJob, { onProgress, onHandle, onTrace, renewHls }: RemuxJobCallbacks): Promise<void> {
   let input: ColdAwareInput
   let plan: Awaited<ReturnType<typeof planClientRemux>>
   try {
-    input = coldAware(await buildInput(job.source))
+    input = coldAware(await buildInput(job.source, renewHls))
     plan = await planClientRemux(input)
   } catch (error) {
     if (error instanceof UnsupportedMediaError) throw error

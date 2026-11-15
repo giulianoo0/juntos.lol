@@ -14,6 +14,11 @@
  * Opening (`openHls`) is the time-critical part: a signed playlist url can
  * expire within seconds, so the caller opens the plan as soon as it has the
  * url and hands the plain-data plan to wherever the remux runs.
+ *
+ * Segment signatures can run out long before the remux reaches them (one CDN
+ * signs each segment for 30 s and answers 400 after). A segment refused that
+ * way asks `renew` for the same playlist signed again, and every segment url
+ * is swapped for its fresh one by position.
  */
 import { CustomSource } from 'mediabunny'
 import { ByteTap, teeInto } from './byteTap'
@@ -55,6 +60,9 @@ export interface HlsOptions {
   /** Whether the playlist may lead to `url`: a variant or segment anywhere else stops the opening. */
   allow?: (url: string) => boolean
 }
+
+/** The segment urls of the same playlist, signed again, in order; null when there are none. */
+export type HlsRenew = () => Promise<string[] | null>
 
 const MEASURE_AT_ONCE = 32
 const REMOTE_CACHE_BYTES = 96 * 2 ** 20
@@ -186,7 +194,7 @@ function checked(url: string, allow: HlsOptions['allow']): string {
   return url
 }
 
-async function planFrom(url: string, get: typeof fetch, allow: HlsOptions['allow']): Promise<HlsPlan> {
+async function segmentsFrom(url: string, get: typeof fetch, allow: HlsOptions['allow']): Promise<Pending[]> {
   let base = url
   let text = await playlistText(base, get)
   const variant = heaviestVariant(text, base)
@@ -196,24 +204,37 @@ async function planFrom(url: string, get: typeof fetch, allow: HlsOptions['allow
   }
   const pending = mediaSegments(text, base)
   for (const segment of pending) checked(segment.url, allow)
-  const segments = await measure(pending, get)
+  return pending
+}
+
+async function planFrom(url: string, get: typeof fetch, allow: HlsOptions['allow']): Promise<HlsPlan> {
+  const segments = await measure(await segmentsFrom(url, get, allow), get)
   return { segments, size: segments.reduce((total, segment) => total + segment.size, 0) }
 }
 
-/** Resolves the playlist to its segments and their sizes. */
-export async function openHls(url: string, { fetch: get = fetch, relay, allow }: HlsOptions = {}): Promise<HlsPlan> {
+async function directOrRelayed<T>(url: string, { fetch: get = fetch, relay, allow }: HlsOptions, open: (url: string, get: typeof fetch, allow: HlsOptions['allow']) => Promise<T>): Promise<T> {
   const direct = strict(get)
   try {
-    return await planFrom(url, direct, allow)
+    return await open(url, direct, allow)
   } catch (error) {
     // A TypeError is the browser refusing to show an answer, anywhere from the
     // playlist to the last segment: no CORS, or a redirect.
     if (!(error instanceof TypeError) || !relay) throw error
-    return await planFrom(await relay.via(url), direct, allow)
+    return await open(await relay.via(url), direct, allow)
   }
 }
 
-export async function hlsInput(url: string, name: string, opts: HlsOptions & { plan?: HlsPlan } = {}): Promise<MediaInput> {
+/** Resolves the playlist to its segments and their sizes. */
+export function openHls(url: string, opts: HlsOptions = {}): Promise<HlsPlan> {
+  return directOrRelayed(url, opts, planFrom)
+}
+
+/** The segment urls of a playlist opened again, without measuring them: the sizes are the plan's. */
+export async function reopenHls(url: string, opts: HlsOptions = {}): Promise<string[]> {
+  return (await directOrRelayed(url, opts, segmentsFrom)).map((segment) => segment.url)
+}
+
+export async function hlsInput(url: string, name: string, opts: HlsOptions & { plan?: HlsPlan; renew?: HlsRenew } = {}): Promise<MediaInput> {
   const plan = opts.plan ?? await openHls(url, opts)
   const { segments, size } = plan
   const starts: number[] = []
@@ -221,6 +242,36 @@ export async function hlsInput(url: string, name: string, opts: HlsOptions & { p
   const gate = new ReadGate()
   const tap = new ByteTap()
   const get = strict(opts.fetch ?? fetch)
+
+  // Bumped on every renewal: a read refused under an older signature only retries.
+  const urls = segments.map((segment) => segment.url)
+  let signing = 0
+  let renewing: Promise<boolean> | null = null
+  const renewFrom = (seen: number): Promise<boolean> => {
+    if (seen !== signing) return Promise.resolve(true)
+    const { renew } = opts
+    if (!renew) return Promise.resolve(false)
+    renewing ??= renew()
+      .then((fresh) => {
+        if (!fresh || fresh.length !== urls.length) return false
+        fresh.forEach((url, index) => { urls[index] = url })
+        signing += 1
+        return true
+      })
+      .catch(() => false)
+      .finally(() => { renewing = null })
+    return renewing
+  }
+  const reading = (index: number, total: number): RangeReaderOptions => {
+    let seen = signing
+    return {
+      url: () => { seen = signing; return urls[index] },
+      refresh: () => renewFrom(seen),
+      size: total,
+      gate,
+      fetch: get,
+    }
+  }
 
   // Whole segments, newest last; a read that comes back for one finds it here.
   const kept = new Map<number, Promise<Uint8Array>>()
@@ -232,7 +283,7 @@ export async function hlsInput(url: string, name: string, opts: HlsOptions & { p
       return hit
     }
     const segment = segments[index]
-    const read = rangeBytes({ url: () => segment.url, size: segment.size, gate, fetch: get }, 0, segment.size)
+    const read = rangeBytes(reading(index, segment.size), 0, segment.size)
     read.catch(() => { if (kept.get(index) === read) kept.delete(index) })
     kept.set(index, read)
     while (kept.size > WHOLE_SEGMENTS_KEPT) kept.delete(kept.keys().next().value!)
@@ -263,7 +314,7 @@ export async function hlsInput(url: string, name: string, opts: HlsOptions & { p
       out.push({
         index,
         whole: segment.whole,
-        opts: { url: () => segment.url, size: segment.offset + segment.size, gate, fetch: get },
+        opts: reading(index, segment.offset + segment.size),
         from: segment.offset + from,
         to: segment.offset + to,
       })

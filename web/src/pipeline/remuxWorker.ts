@@ -18,10 +18,12 @@ export type WorkerToPage =
   | { type: 'failed'; code: string; detail?: string }
   | { type: 'trouble'; detail: string }
   | { type: 'trace'; trace: SeekTrace }
+  | { type: 'renew'; id: number }
 
 export type PageToWorker =
   | { type: 'start'; job: RemuxJob }
   | { type: 'follow'; absoluteMs: number }
+  | { type: 'renewed'; id: number; urls: string[] | null }
 
 const post = (message: WorkerToPage) => { self.postMessage(message) }
 
@@ -42,6 +44,15 @@ self.addEventListener('error', (event) => {
 let handle: ClientRemuxHandle | null = null
 let pendingFollowMs: number | null = null
 
+// Only the page can reach the extension that signs the segments again.
+const renewals = new Map<number, (urls: string[] | null) => void>()
+let nextRenewal = 0
+const renewHls = () => new Promise<string[] | null>((resolve) => {
+  const id = nextRenewal++
+  renewals.set(id, resolve)
+  post({ type: 'renew', id })
+})
+
 self.onmessage = (event: MessageEvent<PageToWorker>) => {
   const message = event.data
   if (message.type === 'follow') {
@@ -49,10 +60,16 @@ self.onmessage = (event: MessageEvent<PageToWorker>) => {
     else pendingFollowMs = message.absoluteMs
     return
   }
+  if (message.type === 'renewed') {
+    renewals.get(message.id)?.(message.urls)
+    renewals.delete(message.id)
+    return
+  }
   if (message.type !== 'start') return
   void runRemuxJob(message.job, {
     onProgress: (pct) => post({ type: 'progress', pct }),
     onTrace: (trace) => post({ type: 'trace', trace }),
+    renewHls,
     onHandle: (next) => {
       handle = next
       if (pendingFollowMs !== null) next.follow(pendingFollowMs)

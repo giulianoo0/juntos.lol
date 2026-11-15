@@ -165,7 +165,9 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
       attempts = Math.max(attempts - 1, 0)
       return null
     }
-    if (response.status === 401 || response.status === 403) {
+    // A signed url past its expiry answers 401, 403, or, on some CDNs, 400.
+    if (response.status === 401 || response.status === 403 || (response.status === 400 && opts.refresh)) {
+      response.body?.cancel().catch(() => {})
       if (!refreshed && opts.refresh && await opts.refresh()) { refreshed = true; return null }
       throw new ReadFailedError(response.status, `read refused (${response.status})`)
     }
@@ -249,6 +251,8 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
           cursor += chunk.byteLength
           deliveredByBody += chunk.byteLength
           attempts = 0
+          // A fresh signature that served bytes may run out too, much later.
+          refreshed = false
           opts.onBytes?.(chunk.byteLength)
           controller.enqueue(chunk)
           return

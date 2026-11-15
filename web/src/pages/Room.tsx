@@ -51,7 +51,7 @@ import type { ChatEntry, LocalCopy, Member, PresenceEvent, RoomInfo, RoomWaiting
 const ExtensionsPanel = lazy(() => import('../extensions/ExtensionsPanel').then((module) => ({ default: module.ExtensionsPanel })))
 import { refreshSource, type LoadedExtension } from '../extensions/bridge'
 import { freshInstalled, installedExtension } from '../extensions/installed'
-import { needsApp, torrentMagnet, type ExtPlay } from '../extensions/protocol'
+import { needsApp, torrentMagnet, type ExtPlay, type ExtensionPlace } from '../extensions/protocol'
 import { appReads, appRelay, relayFor } from '../extensions/relay'
 import { importExtensionSubtitles } from '../extensions/subtitles'
 import { extensionDefaults, extensionPlace, loadPublicConfig, usePublicConfig } from '../publicConfig'
@@ -88,6 +88,7 @@ import {
   startExtensionUpload,
   ExtensionNeedsAppError,
   openExtensionSource,
+  extensionHlsRenewer,
   sourceKindFor,
   youtubeFileName,
   type MediaSourceKind,
@@ -389,6 +390,14 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
   )
 }
 
+/** Signs an extension's HLS again by asking the extension, out of sight, for the same `ref`. */
+function extensionRenewer(extension: LoadedExtension, place: ExtensionPlace | undefined, ref: string, locale: string) {
+  return extensionHlsRenewer(async () => {
+    const source = await refreshSource(extension, place, ref, locale)
+    return source && (source.kind === 'hls' || source.kind === 'file') ? source : null
+  }, { relay: (source) => appRelay(source.headers) ?? relayFor(extension, place), hosts: extension.manifest.hosts.media })
+}
+
 // Mirrors the guest name the server hands out, so a blank field is valid.
 function guestName(): string {
   const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -494,7 +503,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
           const title = source.title ?? source.fileName
           const opened = await openExtensionSource(fresh, { relay: appRelay(fresh.headers) ?? relayFor(extension, place), hosts: extension.manifest.hosts.media })
           const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', title)
-          startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: source.ref, title, source: fresh }, opened)
+          startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: source.ref, title, source: fresh }, opened, extensionRenewer(extension, place, source.ref, t.language))
           return
         }
         if (source.kind === 'live') {
@@ -804,7 +813,7 @@ function ConnectedRoom({ roomId, initialRoom, roomName, nickname, initialMedia, 
     void swapSource(async () => {
       const opened = await openExtensionSource(source, { relay: appRelay(source.headers) ?? relayFor(extension, place), hosts: extension.manifest.hosts.media })
       const next = await openMedia('upload', title)
-      startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: play.ref, title, source }, opened)
+      startExtensionUpload(room.id, next.mediaGeneration, { extensionId: extension.id, sub: extension.sub, ref: play.ref, title, source }, opened, extensionRenewer(extension, place, play.ref, t.language))
       if (play.subtitles) void importExtensionSubtitles(room.id, sync.memberId, sync.capability, next.mediaGeneration, play.subtitles)
     })
   }

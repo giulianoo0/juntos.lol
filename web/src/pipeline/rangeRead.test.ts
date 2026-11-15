@@ -86,14 +86,14 @@ describe('rangeBytes', () => {
     expect(await rangeBytes(opts(), 0, 40)).toEqual(FILE.subarray(0, 40))
   })
 
-  it('treats 404 as terminal', async () => {
-    install(() => new Response('', { status: 404 }))
+  it.each([400, 404])('treats %i as terminal when nothing can sign the url again', async (status) => {
+    install(() => new Response('', { status }))
     await expect(rangeBytes(opts(), 0, 50)).rejects.toBeInstanceOf(ReadFailedError)
     expect(calls).toHaveLength(1)
   })
 
-  it('refreshes once on 401 then continues', async () => {
-    install((s, e, n) => (n === 1 ? new Response('', { status: 401 }) : body(s, e)))
+  it.each([401, 403, 400])('refreshes once on %i then continues', async (status) => {
+    install((s, e, n) => (n === 1 ? new Response('', { status }) : body(s, e)))
     const refresh = vi.fn(async () => true)
     expect(await rangeBytes({ ...opts(), refresh }, 0, 50)).toEqual(FILE.subarray(0, 50))
     expect(refresh).toHaveBeenCalledTimes(1)
@@ -104,6 +104,13 @@ describe('rangeBytes', () => {
     const refresh = vi.fn(async () => true)
     await expect(rangeBytes({ ...opts(), refresh }, 0, 50)).rejects.toBeInstanceOf(ReadFailedError)
     expect(calls).toHaveLength(2)
+  })
+
+  it('refreshes again when the fresh url also runs out after serving bytes', async () => {
+    install((s, e, n) => (n === 1 || n === 3 ? new Response('', { status: 400 }) : body(s, e, 20)))
+    const refresh = vi.fn(async () => true)
+    expect(await rangeBytes({ ...opts(), refresh }, 0, 50)).toEqual(FILE.subarray(0, 50))
+    expect(refresh).toHaveBeenCalledTimes(2)
   })
 
   it('refuses an origin that ignored Range', async () => {

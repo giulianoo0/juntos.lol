@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { hlsInput, openHls } from './hlsInput'
+import { hlsInput, openHls, reopenHls } from './hlsInput'
 import { UnsupportedMediaError } from './unsupported'
 
 const bytes = (length: number, seed: number) => Uint8Array.from({ length }, (_, i) => (seed + i) % 256)
@@ -305,5 +305,56 @@ describe('HLS como um arquivo só', () => {
 
     expect(await input.read(0, 10)).toEqual(bytes(10, 0))
     expect(fetch.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/ep/seg0.ts'])
+  })
+})
+
+describe('assinatura dos segmentos que vence no meio do preparo', () => {
+  /** A CDN that signs every segment for a while and answers 400 to any other signature. */
+  function signingCdn(files: Record<string, string | Uint8Array>) {
+    const signed = { current: 'a' }
+    const inner = cdn(files)
+    const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('.ts') && url.searchParams.get('sig') !== signed.current) {
+        return new Response('Invalid signature', { status: 400 })
+      }
+      return inner(input, init)
+    })
+    return { fetch, signed }
+  }
+  const playlist = (sig: string) => media(['#EXTINF:6,', `seg0.ts?sig=${sig}`, '#EXTINF:6,', `seg1.ts?sig=${sig}`, '#EXTINF:6,', `seg2.ts?sig=${sig}`])
+
+  it('pede os segmentos assinados de novo e segue lendo de onde parou', async () => {
+    const { fetch, signed } = signingCdn({ '/ep/1080p.m3u8': playlist('a'), '/ep/seg0.ts': bytes(10, 0), '/ep/seg1.ts': bytes(10, 10), '/ep/seg2.ts': bytes(10, 20) })
+    const plan = await openHls('https://cdn.example.com/ep/1080p.m3u8', { fetch })
+    const renew = vi.fn(async () => ['seg0', 'seg1', 'seg2'].map((name) => `https://cdn.example.com/ep/${name}.ts?sig=b`))
+    const input = await hlsInput('https://cdn.example.com/ep/1080p.m3u8', 'Ranma', { fetch, plan, renew })
+    expect(await input.read(0, 10)).toEqual(bytes(10, 0))
+
+    signed.current = 'b'
+    const [first, second] = await Promise.all([input.read(10, 20), input.read(20, 30)])
+
+    expect(first).toEqual(bytes(10, 10))
+    expect(second).toEqual(bytes(10, 20))
+    expect(renew).toHaveBeenCalledTimes(1)
+  })
+
+  it('sem segmentos assinados de novo, a leitura falha em vez de ler o vencido para sempre', async () => {
+    const { fetch, signed } = signingCdn({ '/ep/1080p.m3u8': playlist('a'), '/ep/seg0.ts': bytes(10, 0), '/ep/seg1.ts': bytes(10, 10), '/ep/seg2.ts': bytes(10, 20) })
+    const plan = await openHls('https://cdn.example.com/ep/1080p.m3u8', { fetch })
+    const input = await hlsInput('https://cdn.example.com/ep/1080p.m3u8', 'Ranma', { fetch, plan, renew: async () => null })
+
+    signed.current = 'b'
+
+    await expect(input.read(10, 20)).rejects.toThrow(/400/)
+  })
+
+  it('relê a playlist sem medir os segmentos de novo', async () => {
+    const { fetch } = signingCdn({ '/ep/1080p.m3u8': playlist('b') })
+
+    const urls = await reopenHls('https://cdn.example.com/ep/1080p.m3u8', { fetch })
+
+    expect(urls).toEqual(['seg0', 'seg1', 'seg2'].map((name) => `https://cdn.example.com/ep/${name}.ts?sig=b`))
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 })

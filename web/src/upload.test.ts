@@ -20,6 +20,7 @@ import {
   ExtensionNeedsAppError,
   resumableSourceFor,
   startExtensionUpload,
+  extensionHlsRenewer,
 } from './upload'
 
 const subtitleFakes = vi.hoisted(() => {
@@ -420,6 +421,34 @@ describe('fonte de uma extensão', () => {
     const fetch = vi.fn(async () => { throw new TypeError('Failed to fetch') })
     await expect(openExtensionSource({ kind: 'file', url: 'https://cdn.qualquer.dev/a.mp4' }, { fetch, hosts: ['*'] })).rejects.toBeInstanceOf(ExtensionNeedsAppError)
     await expect(openExtensionSource({ kind: 'hls', url: 'https://cdn.qualquer.dev/a.m3u8' }, { fetch, hosts: ['*'] })).rejects.toBeInstanceOf(ExtensionNeedsAppError)
+  })
+
+  it('assina os segmentos de novo pela extensão, tentando outra vez quando o serviço falha', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn(async () => new Response('#EXTM3U\n#EXTINF:6,\na.ts?sig=2\n#EXTINF:6,\nb.ts?sig=2\n#EXT-X-ENDLIST'))
+    const fresh = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ kind: 'hls', url: 'https://us-east-2.cdn-exemplo.net/ep/1080p.m3u8?sig=2' })
+    const renew = extensionHlsRenewer(fresh, { fetch, relay: () => undefined, hosts: ['*.cdn-exemplo.net'] })
+
+    const urls = renew()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(await urls).toEqual(['https://us-east-2.cdn-exemplo.net/ep/a.ts?sig=2', 'https://us-east-2.cdn-exemplo.net/ep/b.ts?sig=2'])
+    expect(fresh).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('a playlist assinada de novo também só leva aos hosts da extensão', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn(async () => new Response('#EXTM3U\n#EXTINF:6,\nhttp://127.0.0.1:40392/state\n#EXT-X-ENDLIST'))
+    const renew = extensionHlsRenewer(async () => ({ kind: 'hls', url: 'https://a.media.example/ep/1080p.m3u8' }), { fetch, relay: () => undefined, hosts: ['*.media.example'] })
+
+    const urls = renew()
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(await urls).toBeNull()
+    vi.useRealTimers()
   })
 
   it('não guarda a fonte para retomar quando o preparo nem começa', async () => {
