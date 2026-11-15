@@ -1,1 +1,1 @@
-Extensões chamam a API do serviço pelo app, com o User-Agent que o serviço espera.
+Extensões guardam o login no app, num cofre com a chave no chaveiro do sistema.
