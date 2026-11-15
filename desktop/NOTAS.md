@@ -1,1 +1,1 @@
-Extensões abrem dentro do app, e o Stremio Addons já vem instalado: o que ele acha toca direto pela sua rede, arquivo ou HLS.
+Extensões chamam a API do serviço pelo app, com o User-Agent que o serviço espera.
