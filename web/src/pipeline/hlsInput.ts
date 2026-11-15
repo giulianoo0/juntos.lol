@@ -40,6 +40,8 @@ export interface HlsSegment {
 export interface HlsPlan {
   segments: HlsSegment[]
   size: number
+  /** The playlist's own length, the sum of its EXTINF; absent when a segment has none. */
+  seconds?: number
 }
 
 /**
@@ -131,8 +133,10 @@ function heaviestVariant(text: string, base: string): string | null {
 
 type Pending = { url: string; offset: number; size: number | null; whole: boolean }
 
-function mediaSegments(text: string, base: string): Pending[] {
+function mediaSegments(text: string, base: string): { pending: Pending[]; seconds: number | null } {
   const out: Pending[] = []
+  let seconds: number | null = 0
+  let timed = false
   const after = new Map<string, number>()
   let range: string | null = null
   let mapped = false
@@ -162,7 +166,15 @@ function mediaSegments(text: string, base: string): Pending[] {
       range = line.slice('#EXT-X-BYTERANGE:'.length)
       continue
     }
+    if (line.startsWith('#EXTINF:')) {
+      const length = Number(line.slice('#EXTINF:'.length).split(',')[0])
+      timed = Number.isFinite(length) && length >= 0
+      if (seconds !== null && timed) seconds += length
+      continue
+    }
     if (line.startsWith('#')) continue
+    if (!timed) seconds = null
+    timed = false
     const url = new URL(line, base).href
     out.push(range ? { url, ...byteRange(range, url, after), whole: false } : { url, offset: 0, size: null, whole: true })
     range = null
@@ -170,7 +182,7 @@ function mediaSegments(text: string, base: string): Pending[] {
   // Without an end it is a live window, which grows while it is read.
   if (!ended) throw new UnsupportedMediaError('live')
   if (out.length === (mapped ? 1 : 0)) throw new Error('playlist has no segments')
-  return out
+  return { pending: out, seconds: seconds !== null && seconds > 0 ? seconds : null }
 }
 
 async function measure(pending: Pending[], get: typeof fetch): Promise<HlsSegment[]> {
@@ -194,7 +206,7 @@ function checked(url: string, allow: HlsOptions['allow']): string {
   return url
 }
 
-async function segmentsFrom(url: string, get: typeof fetch, allow: HlsOptions['allow']): Promise<Pending[]> {
+async function segmentsFrom(url: string, get: typeof fetch, allow: HlsOptions['allow']): Promise<{ pending: Pending[]; seconds: number | null }> {
   let base = url
   let text = await playlistText(base, get)
   const variant = heaviestVariant(text, base)
@@ -202,14 +214,17 @@ async function segmentsFrom(url: string, get: typeof fetch, allow: HlsOptions['a
     base = checked(variant, allow)
     text = await playlistText(base, get)
   }
-  const pending = mediaSegments(text, base)
-  for (const segment of pending) checked(segment.url, allow)
-  return pending
+  const listed = mediaSegments(text, base)
+  for (const segment of listed.pending) checked(segment.url, allow)
+  return listed
 }
 
 async function planFrom(url: string, get: typeof fetch, allow: HlsOptions['allow']): Promise<HlsPlan> {
-  const segments = await measure(await segmentsFrom(url, get, allow), get)
-  return { segments, size: segments.reduce((total, segment) => total + segment.size, 0) }
+  const { pending, seconds } = await segmentsFrom(url, get, allow)
+  const segments = await measure(pending, get)
+  const plan: HlsPlan = { segments, size: segments.reduce((total, segment) => total + segment.size, 0) }
+  if (seconds !== null) plan.seconds = seconds
+  return plan
 }
 
 async function directOrRelayed<T>(url: string, { fetch: get = fetch, relay, allow }: HlsOptions, open: (url: string, get: typeof fetch, allow: HlsOptions['allow']) => Promise<T>): Promise<T> {
@@ -231,7 +246,7 @@ export function openHls(url: string, opts: HlsOptions = {}): Promise<HlsPlan> {
 
 /** The segment urls of a playlist opened again, without measuring them: the sizes are the plan's. */
 export async function reopenHls(url: string, opts: HlsOptions = {}): Promise<string[]> {
-  return (await directOrRelayed(url, opts, segmentsFrom)).map((segment) => segment.url)
+  return (await directOrRelayed(url, opts, segmentsFrom)).pending.map((segment) => segment.url)
 }
 
 export async function hlsInput(url: string, name: string, opts: HlsOptions & { plan?: HlsPlan; renew?: HlsRenew } = {}): Promise<MediaInput> {
@@ -356,6 +371,7 @@ export async function hlsInput(url: string, name: string, opts: HlsOptions & { p
   return {
     name,
     size,
+    durationSeconds: plan.seconds,
     tap,
     read: async (start, end) => {
       const parts = await Promise.all(pieces(start, end).map(pieceBytes))

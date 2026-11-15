@@ -85,7 +85,11 @@ export async function planClientRemux(file: MediaInput): Promise<ClientRemuxPlan
       if (!(await track.canDecode())) return refuse(`audio codec ${track.codec ?? 'unknown'} cannot be decoded in this browser`)
       if (!(await canEncodeAudio('aac'))) return refuse('this browser cannot encode aac, which every audio track is converted to')
     }
-    const durationSeconds = await input.computeDuration()
+    // Finding the end means reading toward it; over a CDN that sends whole
+    // segments that is most of the episode before the room sees a frame.
+    const durationSeconds = file.durationSeconds === undefined
+      ? await input.computeDuration()
+      : await input.getFirstTimestamp() + file.durationSeconds
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       return refuse(`the container reports no usable duration (${durationSeconds})`)
     }

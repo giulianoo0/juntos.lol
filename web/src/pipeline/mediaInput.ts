@@ -17,6 +17,9 @@ export interface ReadHint {
 export interface MediaInput {
   name: string
   size: number
+  /** The length known without reading the media (an HLS playlist's EXTINF):
+   * the planner then needs only the first timestamp, not a search for the end. */
+  durationSeconds?: number
   /** Reads `[start, end)`, like `Blob.slice`. */
   read(start: number, end: number, hint?: ReadHint): Promise<Uint8Array>
   source(): Source

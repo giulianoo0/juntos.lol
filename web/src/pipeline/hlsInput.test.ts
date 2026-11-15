@@ -53,6 +53,30 @@ describe('HLS como um arquivo só', () => {
     expect(await input.read(150, 160)).toEqual(b.slice(50))
   })
 
+  it('a duração vem dos EXTINF da playlist, sem ler o vídeo até o fim', async () => {
+    const fetch = cdn({
+      '/ep/1080p.m3u8': media(['#EXTINF:6.006,', 'seg0.ts', '#EXTINF:4.5,', 'seg1.ts']),
+      '/ep/seg0.ts': bytes(100, 0),
+      '/ep/seg1.ts': bytes(60, 100),
+    })
+
+    const input = await hlsInput('https://cdn-exemplo.net/ep/1080p.m3u8', 'Emma', { fetch })
+
+    expect(input.durationSeconds).toBeCloseTo(10.506)
+  })
+
+  it('sem EXTINF em algum segmento, a duração fica para o vídeo dizer', async () => {
+    const fetch = cdn({
+      '/ep/1080p.m3u8': media(['#EXTINF:6.0,', 'seg0.ts', 'seg1.ts']),
+      '/ep/seg0.ts': bytes(100, 0),
+      '/ep/seg1.ts': bytes(60, 100),
+    })
+
+    const input = await hlsInput('https://cdn-exemplo.net/ep/1080p.m3u8', 'Emma', { fetch })
+
+    expect(input.durationSeconds).toBeUndefined()
+  })
+
   it('escolhe a variante mais pesada da playlist mestre', async () => {
     const fetch = cdn({
       '/ep/master.m3u8': [
