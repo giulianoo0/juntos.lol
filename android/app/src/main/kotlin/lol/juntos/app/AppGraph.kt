@@ -2,6 +2,7 @@ package lol.juntos.app
 
 import lol.juntos.app.entry.MemoryPrefs
 import lol.juntos.app.entry.Prefs
+import lol.juntos.core.account.Accounts
 import lol.juntos.core.api.JuntosApi
 import lol.juntos.core.fake.FakeJuntosApi
 import lol.juntos.core.fake.FakeSyncSessionFactory
@@ -24,6 +25,8 @@ interface AppGraph {
     val prefs: Prefs
     /** The desktop's producer on this phone: what makes it a host of YouTube and torrents. Null in previews. */
     val producer: Producer? get() = null
+    /** The Discord sign-in this phone keeps. Null in previews. */
+    val accounts: Accounts? get() = null
 }
 
 class FakeAppGraph(override val baseUrl: String = BuildConfig.BASE_URL) : AppGraph {

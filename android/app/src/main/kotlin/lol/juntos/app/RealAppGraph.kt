@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import lol.juntos.app.entry.Prefs
 import lol.juntos.app.human.WebHumanGate
+import lol.juntos.core.account.Accounts
 import lol.juntos.core.api.CookieStorage
 import lol.juntos.core.api.HttpJuntosApi
 import lol.juntos.core.api.JuntosApi
@@ -61,9 +62,11 @@ class RealAppGraph(context: Context, override val baseUrl: String = BuildConfig.
     override val updater: Updater = GithubUpdater(app, client)
     override val producer: Producer = Producer(app, baseUrl)
     override val prefs: Prefs = SharedPrefs(app)
+    override val accounts = Accounts(api, cookies, baseUrl)
 
     init {
         // Starting the producer at launch clears what a killed run left on the phone.
         CoroutineScope(Dispatchers.IO).launch { runCatching { producer.start() } }
+        CoroutineScope(Dispatchers.IO).launch { accounts.refresh() }
     }
 }

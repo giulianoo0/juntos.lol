@@ -57,10 +57,20 @@ interface JuntosApi {
     /** A small file off the internet, without this app's cookies; null when it fails or passes [max] bytes. */
     suspend fun fetchBytes(url: String, max: Int): ByteArray? = throw UnsupportedOperationException()
 
+    /** The account `ss_account` signs in as, or null for a guest or a session the server ended. */
+    suspend fun me(): Account? = null
+
+    /** Ends the account's session on the server. */
+    suspend fun logout(): Unit = Unit
+
     /** The host's subtitle for the whole room, as WebVTT. */
     suspend fun importSubtitle(roomId: String, seat: Seat, mediaGeneration: Int, language: String, title: String, vtt: String): Unit =
         throw UnsupportedOperationException()
 }
+
+/** A juntos account, as /api/me answers it. */
+@kotlinx.serialization.Serializable
+data class Account(val id: Long, val nickname: String, val avatar: String = "")
 
 /** A fleet job: `listed` once the worker has the torrent's files. */
 @kotlinx.serialization.Serializable

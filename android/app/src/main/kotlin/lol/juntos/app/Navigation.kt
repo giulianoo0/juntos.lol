@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import lol.juntos.app.entry.EntryScreen
 import lol.juntos.app.entry.Me
 import lol.juntos.app.entry.MeStore
+import lol.juntos.app.entry.validNickname
+import androidx.compose.runtime.collectAsState
 import lol.juntos.app.home.HomeScreen
 import lol.juntos.app.room.RoomScreen
 import lol.juntos.design.JuntosMotion
@@ -85,6 +87,15 @@ fun JuntosNavHost(graph: AppGraph, linkedRoom: String?, onLinkedRoomOpened: () -
                 entering = false
             }
         }
+    }
+
+    // Signed in, the account's name and face are the ones the door starts from.
+    val account by (graph.accounts?.me ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
+    LaunchedEffect(account?.id) {
+        val signed = account ?: return@LaunchedEffect
+        val nickname = signed.nickname.takeIf(::validNickname) ?: me.nickname
+        val avatar = signed.avatar.takeIf { lol.juntos.design.mascotOf(it)?.avatar == it } ?: me.avatar
+        me = Me(nickname, avatar).also(store::save)
     }
 
     LaunchedEffect(linkedRoom) {

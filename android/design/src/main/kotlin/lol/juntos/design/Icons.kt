@@ -64,6 +64,16 @@ object JuntosIcons {
     val Magnet: ImageVector by lazy { lucide("Magnet", "m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15", "m5 8 4 4", "m12 15 4 4") }
 }
 
+/** Discord's mark, filled, on a 24×18 box like the site's DiscordGlyph. */
+val DiscordMark: ImageVector by lazy {
+    ImageVector.Builder("Discord", 24.dp, 18.dp, 24f, 18f).apply {
+        addPath(
+            pathData = addPathNodes("M20.3 1.5A19.6 19.6 0 0 0 15.4 0l-.6 1.3a18 18 0 0 0-5.6 0L8.6 0a19.6 19.6 0 0 0-4.9 1.5C.6 6.2-.3 10.7.1 15.2a19.8 19.8 0 0 0 6 3l1.3-2a12.7 12.7 0 0 1-2-1l.5-.4a14 14 0 0 0 12.1 0l.5.4c-.6.4-1.3.7-2 1l1.3 2a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.7-3.5-13.7ZM8 12.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 7.6 8 7.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"),
+            fill = SolidColor(Color.Black),
+        )
+    }.build()
+}
+
 /** A lucide glyph from its 24-unit stroke paths; Icon tints it like the Material ones. */
 private fun lucide(name: String, vararg paths: String): ImageVector =
     ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {

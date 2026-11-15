@@ -158,6 +158,10 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
                 BetaBadge()
                 Spacer(Modifier.weight(1f))
                 UpdatePill(graph.updater)
+                graph.accounts?.let {
+                    Spacer(Modifier.width(8.dp))
+                    AccountButton(it)
+                }
             }
             Spacer(Modifier.height(36.dp))
             Arrive { Wordmark(ink = c.text, arrow = c.brand, modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(0.82f)) }

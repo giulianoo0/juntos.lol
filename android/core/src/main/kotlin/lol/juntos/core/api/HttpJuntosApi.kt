@@ -99,6 +99,16 @@ class HttpJuntosApi(baseUrl: String, private val client: OkHttpClient) : JuntosA
         }.getOrNull()
     }
 
+    override suspend fun me(): Account? = try {
+        read<Account>(get(url("api", "me")))
+    } catch (e: ApiException) {
+        if (e.status == 401) null else throw e
+    }
+
+    override suspend fun logout() {
+        send(Request.Builder().url(url("api", "auth", "logout")).post(ByteArray(0).toRequestBody(JSON)).build())
+    }
+
     override suspend fun importSubtitle(roomId: String, seat: Seat, mediaGeneration: Int, language: String, title: String, vtt: String) {
         send(post(url("api", "rooms", roomId, "subtitles", "import"), SubtitleImportBody(seat.memberId, seat.capability, mediaGeneration, language, title, vtt)))
     }
