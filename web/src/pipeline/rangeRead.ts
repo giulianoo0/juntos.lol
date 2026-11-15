@@ -78,6 +78,8 @@ export interface RangeReaderOptions {
   stallMs?: number
   maxSlowRetries?: number
   backoffMs?: number
+  /** The most bytes thrown away to resume on an origin that answers a Range with the whole file. */
+  maxSkip?: number
   refresh?: () => Promise<boolean>
   onBytes?: (n: number) => void
   headers?: Record<string, string>
@@ -88,6 +90,8 @@ const DEFAULT_ATTEMPTS = 8
 const DEFAULT_FIRST_BYTE_MS = 45_000
 const DEFAULT_STALL_MS = 30_000
 const DEFAULT_SLOW_RETRIES = 60
+/** A signed segment is a few MB; skipping that much beats failing the preparo. */
+const DEFAULT_MAX_SKIP = 32 * 2 ** 20
 const BACKOFF_BASE_MS = 250
 const BACKOFF_CAP_MS = 8_000
 const TERMINAL_STATUSES = new Set([400, 404, 410, 416])
@@ -125,6 +129,8 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
   let slowRetries = 0
   let refreshed = false
   let deliveredByBody = 0
+  /** Bytes the current body repeats from before `cursor`: an origin that ignored Range starts over. */
+  let skip = 0
   let lastStatus = 0
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   let requestAbort: AbortController | null = null
@@ -176,9 +182,15 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
       response.body?.cancel().catch(() => {})
       return null
     }
+    skip = 0
+    // A CDN that ignores Range sends the whole file again: a body cut short
+    // resumes by skipping what already came, as long as that is cheap.
     if (response.status === 200 && cursor !== 0) {
-      response.body?.cancel().catch(() => {})
-      throw new ReadFailedError(200, 'origin ignored Range')
+      if (cursor > (opts.maxSkip ?? DEFAULT_MAX_SKIP)) {
+        response.body?.cancel().catch(() => {})
+        throw new ReadFailedError(200, 'origin ignored Range')
+      }
+      skip = cursor
     }
     if (response.status === 206) {
       const answered = contentRange(response)
@@ -245,6 +257,11 @@ export function rangeStream(opts: RangeReaderOptions, start: number, end: number
             continue
           }
           let chunk = result.value
+          if (skip > 0) {
+            const dropped = Math.min(skip, chunk.byteLength)
+            skip -= dropped
+            chunk = chunk.subarray(dropped)
+          }
           if (chunk.byteLength === 0) continue
           const room = target - cursor
           if (chunk.byteLength > room) chunk = chunk.subarray(0, room)

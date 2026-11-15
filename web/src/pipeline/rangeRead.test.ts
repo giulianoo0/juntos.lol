@@ -113,9 +113,20 @@ describe('rangeBytes', () => {
     expect(refresh).toHaveBeenCalledTimes(2)
   })
 
-  it('refuses an origin that ignored Range', async () => {
+  it('resumes a body cut short from an origin that ignores Range by skipping what it already has', async () => {
+    let n = 0
+    install(() => {
+      n += 1
+      const cut = n === 1 ? FILE.subarray(0, 30) : FILE
+      return new Response(cut, { status: 200, headers: { 'Content-Length': String(SIZE) } })
+    })
+    expect(await rangeBytes(opts(), 0, SIZE)).toEqual(FILE)
+    expect(calls.map((c) => c.start)).toEqual([0, 30])
+  })
+
+  it('refuses an origin that ignored Range when skipping to the byte would cost too much', async () => {
     install(() => new Response(FILE, { status: 200 }))
-    await expect(rangeBytes(opts(), 10, 50)).rejects.toBeInstanceOf(ReadFailedError)
+    await expect(rangeBytes({ ...opts(), maxSkip: 5 }, 10, 50)).rejects.toBeInstanceOf(ReadFailedError)
   })
 
   it('refuses another file answered in its place, as a host that hands out a "blocked" video does', async () => {
