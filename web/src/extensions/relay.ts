@@ -1,6 +1,6 @@
 import type { MediaRelay } from '../pipeline/hlsInput'
 import { settledDesktop, type DesktopApp } from '../platform'
-import { extensionOrigin, type ExtHeaders, type ExtensionPlace } from './protocol'
+import { extensionOrigin, type ExtFetch, type ExtFetched, type ExtHeaders, type ExtensionPlace } from './protocol'
 
 /**
  * The extension's media proxy, for a CDN that sends no CORS. Each url it
@@ -46,11 +46,41 @@ function base64url(text: string): string {
 export function appRelay(headers?: ExtHeaders, app: DesktopApp | null = settledDesktop()): MediaRelay | undefined {
   if (!app?.mediaProxyKey || !app.features.includes('mediaProxy')) return undefined
   const prefix = `${app.mediaRoot}/_proxy?`
-  const key = encodeURIComponent(app.mediaProxyKey)
-  const sent = headers && Object.keys(headers).length > 0 ? `&h=${base64url(JSON.stringify(headers))}` : ''
   return {
-    via: async (url) => `${prefix}u=${encodeURIComponent(url)}&k=${key}${sent}`,
+    via: async (url) => proxied(app, url, headers),
     owns: (url) => url.startsWith(prefix),
+  }
+}
+
+function proxied(app: DesktopApp, url: string, headers?: Record<string, string>): string {
+  const sent = headers && Object.keys(headers).length > 0 ? `&h=${base64url(JSON.stringify(headers))}` : ''
+  return `${app.mediaRoot}/_proxy?u=${encodeURIComponent(url)}&k=${encodeURIComponent(app.mediaProxyKey!)}${sent}`
+}
+
+/** Whether the app carrying this page sends an extension's API calls for it. */
+export function appCalls(app: DesktopApp | null = settledDesktop()): boolean {
+  return Boolean(app?.mediaProxyKey && app.features.includes('extensionFetch'))
+}
+
+const MAX_CALL_ANSWER = 4 << 20
+
+/**
+ * An extension's `fetch`, made by the app: the webview drops a User-Agent set
+ * in fetch, and some APIs want the one their own app sends. The body goes as
+ * text/plain so the proxy needs no preflight; the real content type rides in
+ * the headers the proxy forwards.
+ */
+export async function appCall(call: ExtFetch, app: DesktopApp | null = settledDesktop(), get: typeof fetch = fetch): Promise<ExtFetched> {
+  const failed: ExtFetched = { juntos: 1, type: 'fetched', nonce: call.nonce, status: 0, body: '' }
+  if (!app || !appCalls(app)) return failed
+  try {
+    const response = await get(proxied(app, call.url, call.headers), { method: call.method, body: call.body, credentials: 'omit' })
+    const body = await response.text()
+    if (body.length > MAX_CALL_ANSWER) return failed
+    const contentType = response.headers.get('content-type')
+    return { juntos: 1, type: 'fetched', nonce: call.nonce, status: response.status, body, ...(contentType ? { contentType } : {}) }
+  } catch {
+    return failed
   }
 }
 

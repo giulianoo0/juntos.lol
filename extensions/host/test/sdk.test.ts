@@ -4,9 +4,9 @@ import { installJuntos } from '../src/sdk'
 
 const ORIGINS = ['https://juntos.lol', 'http://localhost:5173']
 const theme = { mode: 'light' as const, vars: { '--bg': '#fff', '--accent': 'rgb(1 2 3)' } }
-const init = { juntos: 1, type: 'init', theme, locale: 'pt-BR', canPlay: true, app: true }
+const init = { juntos: 1, type: 'init', theme, locale: 'pt-BR', canPlay: true, app: true, fetch: false }
 
-function setup(ancestor?: string) {
+function setup(ancestor?: string, fetch: typeof globalThis.fetch = vi.fn()) {
   const posted: { data: unknown; origin: string }[] = []
   const parent = { postMessage: (data: unknown, origin: string) => posted.push({ data, origin }) }
   const target = new EventTarget()
@@ -15,6 +15,7 @@ function setup(ancestor?: string) {
     document,
     location: { ancestorOrigins: ancestor ? [ancestor] : [] },
     addEventListener: target.addEventListener.bind(target),
+    fetch,
   }
   const sdk = installJuntos(win as never, ORIGINS)
   const send = (data: unknown, origin = 'https://juntos.lol', source: unknown = parent) =>
@@ -46,7 +47,7 @@ describe('SDK', () => {
     sdk.onInit(cb)
     const { app: _app, ...old } = init
     send(old)
-    expect(cb).toHaveBeenCalledWith({ ...old, app: false })
+    expect(cb).toHaveBeenCalledWith({ ...old, app: false, fetch: false })
   })
 
   it('entrega o init a quem se inscreve depois', () => {
@@ -153,5 +154,62 @@ describe('SDK', () => {
     send({ juntos: 1, type: 'refresh', nonce: 'n2', ref: '1' })
     await flush()
     expect(posted).toContainEqual({ data: { juntos: 1, type: 'refreshed', nonce: 'n2', source: null }, origin: 'https://juntos.lol' })
+  })
+})
+
+describe('juntos.fetch', () => {
+  it('no app, manda a chamada ao juntos e devolve a resposta dele', async () => {
+    const direct = vi.fn()
+    const { sdk, send, posted } = setup(undefined, direct as never)
+    sdk.ready()
+    send({ ...init, fetch: true })
+
+    const answer = sdk.fetch('https://api.example.com/login', {
+      method: 'post', headers: { 'User-Agent': 'app-android', 'content-type': 'application/json' }, body: '{"a":1}',
+    })
+    await flush()
+    const call = posted.map((p) => p.data as Record<string, unknown>).find((d) => d.type === 'fetch')!
+    expect(call).toEqual({
+      juntos: 1, type: 'fetch', nonce: expect.any(String), url: 'https://api.example.com/login', method: 'POST',
+      headers: { 'user-agent': 'app-android', 'content-type': 'application/json' }, body: '{"a":1}',
+    })
+    send({ juntos: 1, type: 'fetched', nonce: call.nonce, status: 401, contentType: 'application/json', body: '{"e":1}' })
+
+    const response = await answer
+    expect(response.status).toBe(401)
+    expect(response.headers.get('content-type')).toBe('application/json')
+    expect(await response.json()).toEqual({ e: 1 })
+    expect(direct).not.toHaveBeenCalled()
+  })
+
+  it('status 0 vira erro de rede, como no fetch', async () => {
+    const { sdk, send, posted } = setup()
+    sdk.ready()
+    send({ ...init, fetch: true })
+    const answer = sdk.fetch('https://api.example.com/a')
+    await flush()
+    const call = posted.map((p) => p.data as Record<string, unknown>).find((d) => d.type === 'fetch')!
+    send({ juntos: 1, type: 'fetched', nonce: call.nonce, status: 0, body: '' })
+    await expect(answer).rejects.toBeInstanceOf(TypeError)
+  })
+
+  it('fora do app, é o fetch do navegador', async () => {
+    const direct = vi.fn(async () => new Response('ok'))
+    const { sdk, send } = setup(undefined, direct as never)
+    sdk.ready()
+    send(init)
+    await sdk.fetch('https://api.example.com/a', { method: 'GET' })
+    expect(direct).toHaveBeenCalledWith('https://api.example.com/a', { method: 'GET' })
+  })
+
+  it('espera o init que está a caminho antes de escolher', async () => {
+    const { sdk, send, posted } = setup()
+    sdk.ready()
+    const answer = sdk.fetch('https://api.example.com/a')
+    send({ ...init, fetch: true })
+    await flush()
+    const call = posted.map((p) => p.data as Record<string, unknown>).find((d) => d.type === 'fetch')!
+    send({ juntos: 1, type: 'fetched', nonce: call.nonce, status: 200, body: 'x' })
+    expect(await (await answer).text()).toBe('x')
   })
 })

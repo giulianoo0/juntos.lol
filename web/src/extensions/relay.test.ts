@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { appRelay, extensionRelay, relayFor } from './relay'
+import { appCall, appCalls, appRelay, extensionRelay, relayFor } from './relay'
 
 const place = { base: 'ext.example', scheme: 'https' as const }
 
@@ -44,6 +44,36 @@ describe('appRelay', () => {
     expect(appRelay(undefined, null)).toBeUndefined()
     expect(appRelay(undefined, { ...app, features: [] })).toBeUndefined()
     expect(appRelay(undefined, { ...app, mediaProxyKey: undefined })).toBeUndefined()
+  })
+})
+
+describe('appCall', () => {
+  const app = { version: '0.3.0', mediaRoot: 'juntos-media://localhost', features: ['mediaProxy', 'extensionFetch'], mediaProxyKey: 'k1', invoke: vi.fn() }
+  const call = { juntos: 1 as const, type: 'fetch' as const, nonce: 'n1', url: 'https://api.example.com/login', method: 'POST' as const, headers: { 'user-agent': 'app-android', 'content-type': 'application/json' }, body: '{"a":1}' }
+
+  it('manda pelo proxy do app com os headers e devolve status, tipo e corpo', async () => {
+    const get = vi.fn(async () => new Response('{"ok":true}', { status: 201, headers: { 'content-type': 'application/json' } }))
+
+    const answer = await appCall(call, app, get)
+
+    const [url, init] = get.mock.calls[0] as unknown as [string, RequestInit]
+    const parsed = new URL(url.replace('juntos-media://localhost', 'https://x'))
+    expect(parsed.pathname).toBe('/_proxy')
+    expect(parsed.searchParams.get('u')).toBe('https://api.example.com/login')
+    expect(parsed.searchParams.get('k')).toBe('k1')
+    expect(JSON.parse(atob(parsed.searchParams.get('h')!.replace(/-/g, '+').replace(/_/g, '/')))).toEqual(call.headers)
+    expect(init).toMatchObject({ method: 'POST', body: '{"a":1}' })
+    expect(init.headers).toBeUndefined()
+    expect(answer).toEqual({ juntos: 1, type: 'fetched', nonce: 'n1', status: 201, contentType: 'application/json', body: '{"ok":true}' })
+  })
+
+  it('responde status 0 sem o app, num app antigo ou quando a rede falha', async () => {
+    const get = vi.fn(async () => { throw new TypeError('offline') })
+    expect((await appCall(call, null, get)).status).toBe(0)
+    expect((await appCall(call, { ...app, features: ['mediaProxy'] }, get)).status).toBe(0)
+    expect(get).not.toHaveBeenCalled()
+    expect(await appCall(call, app, get)).toEqual({ juntos: 1, type: 'fetched', nonce: 'n1', status: 0, body: '' })
+    expect(appCalls(app)).toBe(true)
   })
 })
 

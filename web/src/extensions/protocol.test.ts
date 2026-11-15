@@ -36,6 +36,8 @@ describe('mensagens da extensão', () => {
     ['torrent', play({}, { kind: 'torrent', url: undefined, infoHash: 'f181e166e440b355ce73cc8b988f47ad7e8ea6ab', fileIdx: 2, trackers: ['udp://tracker.example:1337/announce'] })],
     ['torrent sem arquivo nem trackers', play({}, { kind: 'torrent', url: undefined, infoHash: 'f181e166e440b355ce73cc8b988f47ad7e8ea6ab' })],
     ['youtube', play({}, { kind: 'youtube', url: undefined, id: 'dQw4w9WgXcQ' })],
+    ['fetch à API', { juntos: 1, type: 'fetch', nonce: 'n1', url: 'https://prod-api.exemplo.com/v3/auth/login', method: 'POST', headers: { 'user-agent': 'app-android', authorization: `Bearer ${'t'.repeat(2000)}`, 'content-type': 'application/json', 'x-app': '1.5.1' }, body: '{"a":1}' }],
+    ['fetch sem corpo nem headers', { juntos: 1, type: 'fetch', nonce: 'n1', url: 'https://prod-api.exemplo.com/v2/feed', method: 'GET' }],
     ['legendas', play({ subtitles: [{ url: 'https://files.example.com/pt.srt', lang: 'por', label: 'Português' }, { url: 'https://files.example.com/en.vtt', lang: 'eng' }] })],
   ])('aceita %s', (_, message) => {
     expect(parseExtMessage(message, manifest)).toEqual(message)
@@ -106,6 +108,22 @@ describe('mensagens da extensão', () => {
   it('recusa fonte que herda a url do protótipo', () => {
     const source = Object.create({ kind: 'hls', url: 'https://sa-east-1.cdn-exemplo.net/a.m3u8' }) as object
     expect(parseExtMessage({ ...play(), source }, manifest)).toBeNull()
+  })
+})
+
+describe('chamada da extensão pelo app', () => {
+  const call = (extra: Record<string, unknown>) => ({ juntos: 1, type: 'fetch', nonce: 'n1', url: 'https://prod-api.exemplo.com/a', method: 'POST', ...extra })
+
+  it.each([
+    ['host fora de hosts.connect', { url: 'https://outra.example/a' }],
+    ['http', { url: 'http://prod-api.exemplo.com/a' }],
+    ['método estranho', { method: 'CONNECT' }],
+    ['cookie', { headers: { cookie: 'a=b' } }],
+    ['host', { headers: { host: 'x' } }],
+    ['header com quebra de linha', { headers: { 'x-app': '1\r\nx-evil: 1' } }],
+    ['corpo que não é texto', { body: { a: 1 } }],
+  ])('recusa %s', (_, extra) => {
+    expect(parseExtMessage(call(extra), manifest)).toBeNull()
   })
 })
 

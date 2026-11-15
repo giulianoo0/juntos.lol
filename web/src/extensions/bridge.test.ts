@@ -4,7 +4,7 @@ import type { ExtensionManifest } from './protocol'
 
 const manifest: ExtensionManifest = {
   id: 'exemplo', name: 'Exemplo', version: '1.0.0', protocol: 1, entry: 'index.html',
-  hosts: { connect: [], images: [], media: ['*.cdn-exemplo.net'] },
+  hosts: { connect: ['api.exemplo.com'], images: [], media: ['*.cdn-exemplo.net'] },
 }
 const extension = { id: 'exemplo', sub: 'lczfxd2q74zxknb5', version: 'f'.repeat(40), manifest }
 const place = { base: 'santamagia.com', scheme: 'https' as const }
@@ -37,6 +37,18 @@ describe('pedir a fonte de novo à extensão', () => {
 
     expect(await asking).toEqual(fresh)
     expect(document.querySelector('iframe')).toBeNull()
+  })
+
+  it('responde o fetch da extensão sem passá-lo adiante; fora do app, com status 0', async () => {
+    const asking = refreshSource(extension, { ...place }, '15228')
+    const sent = vi.spyOn(frame().contentWindow!, 'postMessage')
+
+    fromFrame({ juntos: 1, type: 'fetch', nonce: 'f1', url: 'https://api.exemplo.com/v2/feed', method: 'GET' })
+
+    await vi.waitFor(() => expect(sent).toHaveBeenCalledWith({ juntos: 1, type: 'fetched', nonce: 'f1', status: 0, body: '' }, origin))
+    fromFrame({ juntos: 1, type: 'refreshed', nonce: 'x', source: null })
+    frame().remove()
+    void asking
   })
 
   it('desiste em 20 s sem resposta e tira o iframe', async () => {

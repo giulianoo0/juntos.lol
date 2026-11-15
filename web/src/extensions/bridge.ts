@@ -4,7 +4,7 @@
  * the protocol; what the page sends goes to that origin alone.
  */
 import { extensionOrigin, parseExtMessage, type ExtSource, type ExtToHost, type ExtensionManifest, type ExtensionPlace, type HostToExt, type ThemeTokens } from './protocol'
-import { appReads } from './relay'
+import { appCall, appCalls, appReads } from './relay'
 import { themeTokens } from './theme'
 
 export interface LoadedExtension {
@@ -36,6 +36,8 @@ export interface InitFields {
   canPlay: boolean
   /** The page runs in the desktop app, which reads what the browser cannot (`needsApp`). */
   app: boolean
+  /** The app sends the extension's `fetch` calls for it. */
+  fetch: boolean
 }
 
 export interface Bridge {
@@ -58,6 +60,10 @@ export function connectFrame(
     const message = parseExtMessage(event.data, extension.manifest)
     if (!message) return
     if (message.type === 'ready') post({ juntos: 1, type: 'init', ...init() })
+    if (message.type === 'fetch') {
+      void appCall(message).then(post)
+      return
+    }
     onMessage(message)
   }
   window.addEventListener('message', listen)
@@ -90,7 +96,7 @@ export function refreshSource(extension: LoadedExtension, place: ExtensionPlace 
       frame.remove()
       resolve(source)
     }
-    const bridge = connectFrame(frame, extension, place, () => ({ theme: themeTokens(), locale, canPlay: true, app: appReads() }), (message) => {
+    const bridge = connectFrame(frame, extension, place, () => ({ theme: themeTokens(), locale, canPlay: true, app: appReads(), fetch: appCalls() }), (message) => {
       if (message.type === 'ready') bridge.post({ juntos: 1, type: 'refresh', nonce: asked, ref })
       else if (message.type === 'refreshed' && message.nonce === asked) finish(message.source)
     })

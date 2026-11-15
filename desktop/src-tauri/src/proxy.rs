@@ -3,6 +3,9 @@
 //! `<media root>/_proxy?u=<url>&k=<key>&h=<headers>`; the key comes only over
 //! IPC, so an extension's frame (same webview, no IPC) cannot use it. Reads go
 //! out on the person's own network and never to an address on it.
+//!
+//! The page also sends an extension's API calls here (POST and all), with the
+//! User-Agent and Authorization a webview's fetch would drop or refuse.
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +15,10 @@ use http::{header, HeaderValue, Method, Request, Response, StatusCode, Uri};
 use url::Url;
 
 const HEADER_NAMES: [&str; 3] = ["user-agent", "referer", "origin"];
+const CALL_HEADER_NAMES: [&str; 4] = ["authorization", "content-type", "accept", "accept-language"];
 const MAX_HEADER: usize = 512;
+const MAX_CALL_HEADER: usize = 4096;
+const MAX_CALL_BODY: usize = 1 << 20;
 const MAX_REDIRECTS: usize = 5;
 const MAX_PLAYLIST: usize = 4 << 20;
 /// A read without Range is a segment or a probe; a whole film is never asked for at once.
@@ -56,11 +62,16 @@ impl MediaProxy {
         if request.method() == Method::OPTIONS {
             return reply(StatusCode::NO_CONTENT)
                 .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "range")
+                .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, POST, PUT, PATCH, DELETE")
                 .body(Vec::new())
                 .expect("response");
         }
-        if request.method() != Method::GET && request.method() != Method::HEAD {
+        let call = matches!(*request.method(), Method::POST | Method::PUT | Method::PATCH | Method::DELETE);
+        if !call && request.method() != Method::GET && request.method() != Method::HEAD {
             return empty(StatusCode::METHOD_NOT_ALLOWED);
+        }
+        if request.body().len() > MAX_CALL_BODY {
+            return empty(StatusCode::PAYLOAD_TOO_LARGE);
         }
         let Some(asked) = Asked::parse(request.uri()) else {
             return empty(StatusCode::BAD_REQUEST);
@@ -71,7 +82,7 @@ impl MediaProxy {
         let range = request.headers().get(header::RANGE).cloned();
         let method = request.method().clone();
         let response = match self
-            .fetch(asked.url.clone(), &method, range.as_ref(), &asked.headers)
+            .send(asked.url.clone(), &method, range.as_ref(), &asked.headers, call.then(|| request.body().clone()))
             .await
         {
             Ok(response) => response,
@@ -121,13 +132,24 @@ impl MediaProxy {
         builder.body(body).expect("response")
     }
 
+    pub async fn fetch<N: AsRef<str>>(
+        &self,
+        url: Url,
+        method: &Method,
+        range: Option<&HeaderValue>,
+        headers: &[(N, String)],
+    ) -> Result<(Url, reqwest::Response), StatusCode> {
+        self.send(url, method, range, headers, None).await
+    }
+
     /// Follows redirects itself, so each hop is checked like the first.
-    pub async fn fetch(
+    async fn send<N: AsRef<str>>(
         &self,
         mut url: Url,
         method: &Method,
         range: Option<&HeaderValue>,
-        headers: &[(&'static str, String)],
+        headers: &[(N, String)],
+        body: Option<Vec<u8>>,
     ) -> Result<(Url, reqwest::Response), StatusCode> {
         for _ in 0..=MAX_REDIRECTS {
             if !reachable(&url) {
@@ -136,11 +158,14 @@ impl MediaProxy {
             let method = reqwest::Method::from_bytes(method.as_str().as_bytes())
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
             let mut request = self.client.request(method, url.clone());
-            if !headers.iter().any(|(name, _)| *name == "user-agent") {
+            if !headers.iter().any(|(name, _)| name.as_ref() == "user-agent") {
                 request = request.header("user-agent", DEFAULT_AGENT);
             }
             for (name, value) in headers {
-                request = request.header(*name, value);
+                request = request.header(name.as_ref(), value);
+            }
+            if let Some(body) = &body {
+                request = request.body(body.clone());
             }
             if let Some(range) = range {
                 request = request.header("range", range.as_bytes());
@@ -166,7 +191,7 @@ impl MediaProxy {
 struct Asked {
     url: Url,
     key: String,
-    headers: Vec<(&'static str, String)>,
+    headers: Vec<(String, String)>,
     raw_headers: Option<String>,
 }
 
@@ -203,12 +228,34 @@ impl Asked {
     }
 }
 
-/// `h` is base64url JSON of at most the allowed headers.
-fn parse_headers(raw: &str) -> Option<Vec<(&'static str, String)>> {
+/// `h` is base64url JSON of at most the allowed headers: a CDN's, or an API call's
+/// (its credentials, its content type, and its own `x-` headers).
+fn parse_headers(raw: &str) -> Option<Vec<(String, String)>> {
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(raw.trim_end_matches('='))
         .ok()?;
-    headers_from(serde_json::from_slice(&bytes).ok()?)
+    let object: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes).ok()?;
+    let mut out: Vec<(String, String)> = Vec::new();
+    for (name, value) in object {
+        let name = name.to_ascii_lowercase();
+        let custom = name.len() <= 64
+            && name.strip_prefix("x-").is_some_and(|rest| {
+                !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            });
+        if !custom && !HEADER_NAMES.contains(&name.as_str()) && !CALL_HEADER_NAMES.contains(&name.as_str()) {
+            return None;
+        }
+        let value = value.as_str()?;
+        if value.len() > MAX_CALL_HEADER || !clean(value) || out.iter().any(|(n, _)| *n == name) {
+            return None;
+        }
+        out.push((name, value.to_string()));
+    }
+    Some(out)
+}
+
+fn clean(value: &str) -> bool {
+    !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
 }
 
 /// The allowed headers of `object`, or None when it holds anything else.
@@ -219,9 +266,7 @@ pub fn headers_from(object: serde_json::Map<String, serde_json::Value>) -> Optio
             .into_iter()
             .find(|known| known.eq_ignore_ascii_case(&name))?;
         let value = value.as_str()?;
-        if value.len() > MAX_HEADER
-            || value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
-            || out.iter().any(|(n, _)| *n == name)
+        if value.len() > MAX_HEADER || !clean(value) || out.iter().any(|(n, _)| *n == name)
         {
             return None;
         }
@@ -450,15 +495,30 @@ mod tests {
         assert_eq!(
             ok,
             vec![
-                ("referer", "https://site.example/".to_string()),
-                ("user-agent", "VLC/3".to_string())
+                ("referer".to_string(), "https://site.example/".to_string()),
+                ("user-agent".to_string(), "VLC/3".to_string())
             ]
         );
         assert!(parse_headers(&b64(r#"{"cookie":"a=b"}"#)).is_none());
+        assert!(parse_headers(&b64(r#"{"host":"a"}"#)).is_none());
+        assert!(parse_headers(&b64(r#"{"x-":"a"}"#)).is_none());
+        assert!(parse_headers(&b64(r#"{"x-a b":"a"}"#)).is_none());
         assert!(parse_headers(&b64(r#"{"referer":"a\r\nx-evil: 1"}"#)).is_none());
         assert!(parse_headers(&b64(r#"{"referer":"a","Referer":"b"}"#)).is_none());
         assert!(parse_headers(&b64(r#"{"referer":7}"#)).is_none());
         assert!(parse_headers("não é base64").is_none());
+    }
+
+    #[test]
+    fn an_api_call_carries_its_credentials_and_own_headers() {
+        let token = "t".repeat(2000);
+        let ok = parse_headers(&b64(&format!(
+            r#"{{"Authorization":"Bearer {token}","content-type":"application/json","User-Agent":"app-android","x-app":"1.5"}}"#
+        )))
+        .unwrap();
+        assert_eq!(ok.len(), 4);
+        assert!(ok.contains(&("authorization".to_string(), format!("Bearer {token}"))));
+        assert!(ok.contains(&("x-app".to_string(), "1.5".to_string())));
     }
 
     #[test]

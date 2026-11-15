@@ -31,10 +31,21 @@ export type ExtSource = ExtUrlSource | ExtTorrentSource | ExtYoutubeSource
 
 export interface ExtSubtitle { url: string; lang: string; label?: string }
 
+export type CallMethod = (typeof CALL_METHODS)[number]
+
+/** A call to one of `hosts.connect`, sent through the desktop app with headers a webview cannot set. */
+export type ExtFetch = {
+  juntos: 1; type: 'fetch'; nonce: string; url: string; method: CallMethod; headers?: Record<string, string>; body?: string
+}
+
+/** The answer to a `fetch`; status 0 when nothing came back. */
+export type ExtFetched = { juntos: 1; type: 'fetched'; nonce: string; status: number; contentType?: string; body: string }
+
 export type HostToExt =
-  | { juntos: 1; type: 'init'; theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean }
+  | { juntos: 1; type: 'init'; theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean; fetch: boolean }
   | { juntos: 1; type: 'theme'; theme: ThemeTokens }
   | { juntos: 1; type: 'refresh'; nonce: string; ref: string }
+  | ExtFetched
 
 export type ExtPlay = {
   juntos: 1; type: 'play'; title: string; subtitle?: string; poster?: string; ref: string; source: ExtSource; subtitles?: ExtSubtitle[]
@@ -46,6 +57,7 @@ export type ExtToHost =
   | { juntos: 1; type: 'refreshed'; nonce: string; source: ExtSource | null }
   | { juntos: 1; type: 'close' }
   | { juntos: 1; type: 'toast'; text: string }
+  | ExtFetch
 
 export interface ExtensionPlace {
   base: string
@@ -65,6 +77,12 @@ const MAX_SUBTITLES = 16
 const MAX_FILE_INDEX = 9999
 const MAX_HEADER = 512
 const HEADER_NAMES = ['user-agent', 'referer', 'origin'] as const
+const CALL_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
+const CALL_HEADER_NAMES: readonly string[] = [...HEADER_NAMES, 'authorization', 'content-type', 'accept', 'accept-language']
+const CALL_CUSTOM_HEADER = /^x-[a-z0-9-]{1,62}$/
+const MAX_CALL_HEADER = 4096
+const MAX_CALL_HEADERS = 16
+export const MAX_CALL_BODY = 1 << 20
 const INFO_HASH = /^[0-9a-f]{40}$/i
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/
 const LANG = /^[A-Za-z0-9-]{2,16}$/
@@ -159,6 +177,21 @@ function headers(value: unknown): ExtHeaders | null | undefined {
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+function callHeaders(value: unknown): Record<string, string> | null | undefined {
+  if (value === undefined) return undefined
+  const object = plain(value)
+  if (!object || Object.keys(object).length > MAX_CALL_HEADERS) return null
+  const out: Record<string, string> = {}
+  for (const [key, raw] of Object.entries(object)) {
+    const name = key.toLowerCase()
+    if ((!CALL_HEADER_NAMES.includes(name) && !CALL_CUSTOM_HEADER.test(name)) || name in out) return null
+    const said = text(raw, MAX_CALL_HEADER)
+    if (said === null || /[\r\n\0]/.test(said)) return null
+    out[name] = said
+  }
+  return out
+}
+
 function trackers(value: unknown): string[] | null | undefined {
   if (value === undefined) return undefined
   if (!Array.isArray(value) || value.length > MAX_TRACKERS) return null
@@ -247,6 +280,19 @@ export function parseExtMessage(data: unknown, manifest: ExtensionManifest): Ext
       // A source that does not pass is an answer all the same: no source,
       // so the host stops waiting for this nonce now instead of timing out.
       return { juntos: 1, type: 'refreshed', nonce, source: source(own(message, 'source'), manifest) }
+    }
+    case 'fetch': {
+      const nonce = text(own(message, 'nonce'), MAX_REF)
+      const url = safeUrl(own(message, 'url'), manifest.hosts.connect)
+      const method = own(message, 'method')
+      const sent = callHeaders(own(message, 'headers'))
+      const body = own(message, 'body')
+      if (nonce === null || url === null || sent === null || !CALL_METHODS.includes(method as CallMethod)) return null
+      if (body !== undefined && text(body, MAX_CALL_BODY) === null) return null
+      const out: ExtFetch = { juntos: 1, type: 'fetch', nonce, url, method: method as CallMethod }
+      if (sent && Object.keys(sent).length > 0) out.headers = sent
+      if (body !== undefined) out.body = body as string
+      return out
     }
     case 'play': {
       const title = text(own(message, 'title'))

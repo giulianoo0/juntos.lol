@@ -104,9 +104,9 @@ pub fn hello(site_min: u32, version: &str, windows: bool, proxy_key: &str) -> He
         features: if !compatible {
             Vec::new()
         } else if cfg!(any(target_os = "macos", windows)) {
-            vec!["localSource", "titleBar", "screenCapture", "mediaProxy"]
+            vec!["localSource", "titleBar", "screenCapture", "mediaProxy", "extensionFetch"]
         } else {
-            vec!["localSource", "mediaProxy"]
+            vec!["localSource", "mediaProxy", "extensionFetch"]
         },
         // WebView2 maps custom schemes to http://<scheme>.localhost.
         media_root: if windows { "http://juntos-media.localhost".into() } else { "juntos-media://localhost".into() },

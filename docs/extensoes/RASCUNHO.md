@@ -341,13 +341,14 @@ Ele define `window.juntos` (congelado; não é redefinido se já existir):
 
 | Método | O que faz |
 | --- | --- |
-| `juntos.onInit(cb)` | `cb({ juntos: 1, type: 'init', theme, locale, canPlay, app })` quando o juntos responde ao `ready`. Se o `init` já chegou, chama na hora. |
+| `juntos.onInit(cb)` | `cb({ juntos: 1, type: 'init', theme, locale, canPlay, app, fetch })` quando o juntos responde ao `ready`. Se o `init` já chegou, chama na hora. |
 | `juntos.onTheme(cb)` | `cb(theme)` quando o tema do juntos muda (claro/escuro). |
 | `juntos.onRefresh(cb)` | `cb(ref) → Promise<{kind, url} \| null>`: devolve uma fonte nova para um `ref` dado antes. Só um callback (o último vale). |
 | `juntos.ready()` | Avisa que a extensão está pronta. O juntos só manda `init` (e `refresh`) depois disso. |
 | `juntos.play(p)` | Pede para tocar: `{ title, subtitle?, poster?, ref, source, subtitles? }` (fontes na seção 7). |
 | `juntos.close()` | Fecha o painel. |
 | `juntos.toast(text)` | Mostra um aviso curto no juntos. |
+| `juntos.fetch(url, init?)` | Como `fetch`. No app desktop (`init.fetch`), a chamada sai pelo app, com os headers que o webview descarta (`User-Agent`). Só para `hosts.connect`, corpo só texto. Fora do app, é o `fetch` do navegador. Chamado entre o `ready()` e o `init`, espera o `init` até 2 s. |
 
 O SDK também aplica o tema sozinho: cada `theme.vars` vira uma custom property
 no `:root` e `theme.mode` vira `data-theme="dark|light"` no `<html>`. Use as
@@ -378,7 +379,7 @@ type ExtSource =
   | { kind: 'torrent'; infoHash: string; fileIdx?: number; trackers?: string[] }
   | { kind: 'youtube'; id: string }
 interface ExtSubtitle { url: string; lang: string; label?: string }
-interface InitMessage { theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean }
+interface InitMessage { theme: ThemeTokens; locale: string; canPlay: boolean; app: boolean; fetch: boolean }
 interface PlayRequest { title: string; subtitle?: string; poster?: string; ref: string; source: ExtSource; subtitles?: ExtSubtitle[] }
 interface Juntos {
   onInit(cb: (init: InitMessage) => void): void
@@ -388,6 +389,7 @@ interface Juntos {
   play(p: PlayRequest): void
   close(): void
   toast(text: string): void
+  fetch(url: string | URL, init?: RequestInit): Promise<Response>
 }
 declare global { interface Window { juntos?: Juntos } }
 ```
@@ -402,9 +404,10 @@ direto precisa pôr.
 ### juntos → extensão
 
 ```ts
-{ juntos: 1, type: 'init', theme: ThemeTokens, locale: string, canPlay: boolean, app: boolean }
+{ juntos: 1, type: 'init', theme: ThemeTokens, locale: string, canPlay: boolean, app: boolean, fetch: boolean }
 { juntos: 1, type: 'theme', theme: ThemeTokens }
 { juntos: 1, type: 'refresh', nonce: string, ref: string }
+{ juntos: 1, type: 'fetched', nonce: string, status: number, contentType?: string, body: string }
 ```
 
 - `init` responde a cada `ready`.
@@ -415,6 +418,8 @@ direto precisa pôr.
 - `app` diz se o juntos está no app desktop, que toca também o que só ele lê
   (seção 7). Fora dele, marque essas fontes e não ofereça tocar.
 - `refresh` só é mandado ao iframe oculto da retomada.
+- `fetch` diz se o app manda as chamadas `fetch` da extensão (app desktop
+  novo). `fetched` responde a cada uma; `status: 0` é falha de rede.
 
 ### extensão → juntos
 
@@ -424,6 +429,7 @@ direto precisa pôr.
 { juntos: 1, type: 'refreshed', nonce: string, source: ExtSource | null }
 { juntos: 1, type: 'close' }
 { juntos: 1, type: 'toast', text: string }
+{ juntos: 1, type: 'fetch', nonce: string, url: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', headers?: Record<string, string>, body?: string }
 ```
 
 Validação no juntos (qualquer falha descarta a mensagem inteira):
@@ -441,6 +447,9 @@ Validação no juntos (qualquer falha descarta a mensagem inteira):
 | `source.id` | id do YouTube, 11 caracteres `[A-Za-z0-9_-]`. |
 | `subtitles` | opcional; até 16 `{ url, lang, label? }`: `url` na regra do `poster` mas com `hosts.media`; `lang` de 2 a 16 caracteres `[A-Za-z0-9-]`; `label` até 64. |
 | `poster` | `https:`, sem porta nem usuário/senha, host em `hosts.images`. |
+| `fetch.url` | na regra do `poster`, com `hosts.connect`. |
+| `fetch.headers` | opcional; até 16, só `user-agent`, `referer`, `origin`, `authorization`, `content-type`, `accept`, `accept-language` e `x-*`, cada um até 4096 caracteres sem quebra de linha. |
+| `fetch.body` | opcional; texto até 1 MiB. |
 | mensagem e `source` | objeto simples (nada de array, classe ou protótipo estranho). Campos extras são ignorados. |
 
 `ref` é opaco para o juntos: é o que a extensão usa para achar o vídeo de novo
