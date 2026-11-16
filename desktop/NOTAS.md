@@ -1,1 +1,1 @@
-Extensões guardam o login no app, num cofre com a chave no chaveiro do sistema.
+Entrar com Discord abre o navegador e volta sozinho para o app.
