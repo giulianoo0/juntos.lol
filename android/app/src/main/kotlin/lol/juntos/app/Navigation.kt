@@ -33,8 +33,12 @@ object Routes {
     const val HOME = "home"
     const val ENTRY = "entry/{id}"
     const val ROOM = "room/{id}"
+    const val FRIENDS = "friends"
+    const val DM_KEY = "dmkey"
+    const val CHAT = "chat/{id}"
     fun entry(id: String) = "entry/$id"
     fun room(id: String) = "room/$id"
+    fun chat(id: Long) = "chat/$id"
 }
 
 /** How someone comes through a room's door: what the socket's hello needs, and what it zooms out of. */
@@ -122,7 +126,34 @@ fun JuntosNavHost(graph: AppGraph, linkedRoom: String?, onLinkedRoomOpened: () -
             ) {
                 composable(Routes.HOME) {
                     CompositionLocalProvider(LocalNavScope provides this) {
-                        HomeScreen(graph = graph, nickname = me.nickname, avatar = me.avatar, onOpen = ::open)
+                        HomeScreen(
+                            graph = graph, nickname = me.nickname, avatar = me.avatar, onOpen = ::open,
+                            onFriends = { nav.navigate(Routes.FRIENDS) { launchSingleTop = true } },
+                            onChat = { nav.navigate(Routes.chat(it)) { launchSingleTop = true } },
+                        )
+                    }
+                }
+                composable(Routes.FRIENDS) {
+                    graph.inbox?.let { inbox ->
+                        lol.juntos.app.social.FriendsScreen(
+                            inbox = inbox,
+                            onOpen = { nav.navigate(Routes.chat(it)) { launchSingleTop = true } },
+                            onKey = { nav.navigate(Routes.DM_KEY) { launchSingleTop = true } },
+                            onBack = { nav.popBackStack() },
+                        )
+                    }
+                }
+                composable(Routes.DM_KEY) {
+                    graph.inbox?.let { inbox -> lol.juntos.app.social.KeyScreen(inbox = inbox, onBack = { nav.popBackStack() }) }
+                }
+                composable(Routes.CHAT) { back ->
+                    val id = back.arguments?.getString("id")?.toLongOrNull() ?: 0L
+                    graph.inbox?.let { inbox ->
+                        lol.juntos.app.social.ChatScreen(
+                            inbox = inbox, friendId = id,
+                            onBack = { nav.popBackStack() },
+                            onJoinRoom = { roomId -> open(RoomEntry(roomId, me.nickname, me.avatar)) },
+                        )
                     }
                 }
                 composable(Routes.ENTRY) { back ->

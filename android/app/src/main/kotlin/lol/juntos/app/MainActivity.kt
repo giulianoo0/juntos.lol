@@ -33,6 +33,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as JuntosApplication).graph.inbox?.resume()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        (application as JuntosApplication).graph.inbox?.pause()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         roomIdFrom(intent.data)?.let { openRoom.value = it }

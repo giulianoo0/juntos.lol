@@ -27,6 +27,8 @@ interface AppGraph {
     val producer: Producer? get() = null
     /** The Discord sign-in this phone keeps. Null in previews. */
     val accounts: Accounts? get() = null
+    /** Friends, where they are and the private messages. Null in previews. */
+    val inbox: lol.juntos.core.social.Inbox? get() = null
 }
 
 class FakeAppGraph(override val baseUrl: String = BuildConfig.BASE_URL) : AppGraph {

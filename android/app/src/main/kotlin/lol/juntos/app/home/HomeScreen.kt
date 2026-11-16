@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -120,7 +121,14 @@ private val WORDS = listOf("assistir", "conversar", "maratonar", "jogar", "ouvir
 private val COUCH = listOf("bunny", "robot", "fox", "mushroom", "bear")
 
 @Composable
-fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomEntry) -> Unit) {
+fun HomeScreen(
+    graph: AppGraph,
+    nickname: String,
+    avatar: String,
+    onOpen: (RoomEntry) -> Unit,
+    onFriends: () -> Unit = {},
+    onChat: (Long) -> Unit = {},
+) {
     val c = Juntos.colors
     val scope = rememberCoroutineScope()
     var creating by remember { mutableStateOf(false) }
@@ -158,9 +166,24 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
                 BetaBadge()
                 Spacer(Modifier.weight(1f))
                 UpdatePill(graph.updater)
-                graph.accounts?.let {
+                graph.accounts?.let { accounts ->
+                    val signed by accounts.me.collectAsState()
+                    val inbox = graph.inbox
+                    if (signed != null && inbox != null) {
+                        val inboxState by inbox.state.collectAsState()
+                        Spacer(Modifier.width(8.dp))
+                        Box {
+                            IconPill(
+                                label = if (inboxState.unread > 0) "Amigos (${inboxState.unread})" else "Amigos",
+                                icon = JuntosIcons.Chat,
+                                onClick = onFriends,
+                                size = 36.dp,
+                            )
+                            if (inboxState.unread > 0) lol.juntos.app.social.Badge(inboxState.unread, Modifier.align(Alignment.TopEnd).offset(6.dp, (-6).dp))
+                        }
+                    }
                     Spacer(Modifier.width(8.dp))
-                    AccountButton(it, graph.prefs)
+                    AccountButton(accounts, graph.prefs)
                 }
             }
             Spacer(Modifier.height(36.dp))
@@ -171,6 +194,10 @@ fun HomeScreen(graph: AppGraph, nickname: String, avatar: String, onOpen: (RoomE
             CreateButton(onClick = { creating = true })
             Spacer(Modifier.height(16.dp))
             JoinByCode(onJoin = ::join)
+            graph.inbox?.let { inbox ->
+                Spacer(Modifier.height(24.dp))
+                lol.juntos.app.social.FriendsRow(inbox, onOpen = onChat)
+            }
             Spacer(Modifier.weight(1f).height(48.dp))
             Couch()
         }

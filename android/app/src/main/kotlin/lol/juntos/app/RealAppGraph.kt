@@ -63,8 +63,10 @@ class RealAppGraph(context: Context, override val baseUrl: String = BuildConfig.
     override val producer: Producer = Producer(app, baseUrl)
     override val prefs: Prefs = SharedPrefs(app)
     override val accounts = Accounts(api, cookies, baseUrl)
+    override val inbox = lol.juntos.core.social.Inbox(baseUrl, client, lol.juntos.app.social.KeystoreDevices(prefs), android.os.Build.MODEL ?: "Android")
 
     init {
+        CoroutineScope(Dispatchers.Main).launch { accounts.me.collect { inbox.signedIn(it?.id) } }
         // Starting the producer at launch clears what a killed run left on the phone.
         CoroutineScope(Dispatchers.IO).launch { runCatching { producer.start() } }
         CoroutineScope(Dispatchers.IO).launch { accounts.refresh() }
