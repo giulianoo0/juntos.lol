@@ -77,6 +77,11 @@ pub fn room_link(link: &Url, site: &Url) -> Option<Url> {
     if valid { site.join(&format!("room/{id}")).ok() } else { None }
 }
 
+/// `juntos://signed-in`: the browser finished the sign-in; the window comes forward.
+pub fn signed_in_link(link: &Url) -> bool {
+    link.scheme() == "juntos" && link.host_str() == Some("signed-in")
+}
+
 /// The app's answer to the site's hello.
 #[derive(Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +122,20 @@ pub fn hello(site_min: u32, version: &str, windows: bool, proxy_key: &str) -> He
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_signed_in_link_brings_the_window_forward() {
+        assert!(signed_in_link(&Url::parse("juntos://signed-in").unwrap()));
+        assert!(!signed_in_link(&Url::parse("juntos://room/ABCD").unwrap()));
+        assert!(!signed_in_link(&Url::parse("https://juntos.lol/signed-in").unwrap()));
+    }
+
+    #[test]
+    fn the_browser_sign_in_host_leaves_the_window() {
+        let site = site_origin(None);
+        let www = Url::parse("https://www.juntos.lol/api/auth/app?poll=1&challenge=x").unwrap();
+        assert_eq!(navigation(&www, &site), Navigation::External);
+    }
 
     #[test]
     fn hello_serves_any_site_that_accepts_this_protocol() {

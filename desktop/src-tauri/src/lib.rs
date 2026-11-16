@@ -243,13 +243,16 @@ pub fn run() {
             let linked = app.handle().clone();
             let link_site = site.clone();
             app.deep_link().on_open_url(move |event| {
-                let Some(room) = event.urls().iter().find_map(|url| site::room_link(url, &link_site)) else { return };
-                if let Some(window) = linked.get_webview_window("main") {
+                let Some(window) = linked.get_webview_window("main") else { return };
+                let urls = event.urls();
+                if let Some(room) = urls.iter().find_map(|url| site::room_link(url, &link_site)) {
                     tracing::info!(%room, "room link");
                     let _ = window.navigate(room);
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
+                } else if !urls.iter().any(site::signed_in_link) {
+                    return;
                 }
+                let _ = window.unminimize();
+                let _ = window.set_focus();
             });
 
             app.manage(updates::AppUpdates::default());

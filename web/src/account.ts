@@ -47,9 +47,21 @@ export interface Profile extends AccountCard {
   discord?: DiscordNames
 }
 
+export type DiscordStatus = 'online' | 'idle' | 'dnd' | 'offline'
+
 export interface Friend extends AccountCard {
-  /** roomId only comes for a room anyone may walk into; withMe when it is the room one is in. */
-  presence: { inRoom: boolean; roomId?: string; withMe?: boolean }
+  /**
+   * online: juntos is open on one of their devices, or they are in a room.
+   * roomId (and roomName) only come for a room anyone may walk into; withMe
+   * when it is the room one is in. discord is their status on the juntos
+   * server, absent when unknown.
+   */
+  presence: { online?: boolean; discord?: DiscordStatus; inRoom: boolean; roomId?: string; roomName?: string; withMe?: boolean }
+}
+
+/** The friend's Discord picture, served by the site so their Discord id stays private. */
+export function discordAvatarUrl(id: number): string {
+  return `/api/users/${id}/discord-avatar`
 }
 
 export interface FriendRequests {

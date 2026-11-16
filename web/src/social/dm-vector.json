@@ -1,0 +1,29 @@
+{
+  "text": "Olá! 🍿 juntos às 21h?",
+  "senderDevice": "0b6c1f3e-2a4d-4e8f-9a1b-3c5d7e9f1a2b",
+  "recipientDevice": "f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b",
+  "senderPublicKey": "BEF7Fy1b-rzYDhUM2KB1xWtyjDUEH5tdmpUHMBlb5S9GsVQQp5gyEOCGTKdJ-vGLiJRARnW94dXTWKCaZJJNSVs",
+  "recipientPublicKey": "BJtK5TdkE0vOng_QdbnU4KMx05NYcpm3f9df3yCmlgKWz57wyLARk_9_3LtaLcn8RgGT6J-b36_11cGcpbXl63E",
+  "recipientPrivateJwk": {
+    "key_ops": [
+      "deriveBits"
+    ],
+    "ext": true,
+    "kty": "EC",
+    "x": "m0rlN2QTS86eD9B1udTgozHTk1hymbd_11_fIKaWApY",
+    "y": "z57wyLARk_9_3LtaLcn8RgGT6J-b36_11cGcpbXl63E",
+    "crv": "P-256",
+    "d": "er5zf1piu-KUSj2E83MVg0quUCejS_DFuAZcLnTEJeQ"
+  },
+  "message": {
+    "from": 7,
+    "to": 12,
+    "clientId": "vector-client-0001",
+    "iv": "6jif-qDShsXeHSMk",
+    "body": "YVvLDmvAWU1ogUhmJTPWKLUSyxhcz6PBoFq1-aVy6fz8sPDmTmnWaurpG7fKZOw_STE"
+  },
+  "wrapped": {
+    "iv": "MVwubXE8Dm0Jzoew",
+    "key": "QzY_yKGO3j_jqJvb76SQv8PgvHMYD_Q8d2Xb4JvkfnYMFGDzGIk_4N8ZeiwMZ1va"
+  }
+}

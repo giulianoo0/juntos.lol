@@ -19,6 +19,7 @@ import { SpringPopover } from '../ui/SpringPopover'
 import { Couch } from './home/Couch'
 import { TurningTitle } from './home/TurningTitle'
 import { SiteHeader } from '../components/SiteHeader'
+import { FriendsFeed } from '../social/FriendsFeed'
 import { SmallWordmark, TravellingWordmark } from './home/Wordmark'
 import styles from './Home.module.css'
 
@@ -189,6 +190,8 @@ export function Home({ createRoom }: { createRoom: (input: CreateRoomInput) => P
               </HumanTip>
             </form>
           </div>
+
+          {me ? <FriendsFeed /> : null}
 
           <Couch />
         </section>

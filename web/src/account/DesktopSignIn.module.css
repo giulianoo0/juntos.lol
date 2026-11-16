@@ -1,0 +1,32 @@
+.body {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-6);
+}
+
+.code {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.code span {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 3.25rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  animation: land var(--duration-spring-pop) var(--ease-spring-pop) both;
+}
+
+@keyframes land {
+  from { opacity: 0; scale: 0.6; filter: blur(4px); }
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}

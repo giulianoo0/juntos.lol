@@ -8,6 +8,8 @@ import { DownloadAppHost } from './components/DownloadApp'
 import { AppUpdate } from './components/AppUpdate'
 import { AppChrome } from './components/AppChrome'
 import { GuildJoin } from './account/GuildJoin'
+import { SocialHost } from './social/SocialHost'
+import { DesktopSignIn } from './account/DesktopSignIn'
 import type { CreateRoomInput } from './pages/Home'
 import { isTvPage } from './tv/route'
 
@@ -57,6 +59,8 @@ export default function App() {
         <AppUpdate />
         <AppChrome />
         <GuildJoin />
+        <SocialHost />
+        <DesktopSignIn />
       </Suspense>
     </HistoryRouter>
   )

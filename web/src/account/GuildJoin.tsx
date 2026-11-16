@@ -6,6 +6,7 @@
 import { useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { askGuildJoin, discordLoginUrl, useMe } from '../account'
+import { isDesktop } from '../platform'
 
 const assign = (url: string) => window.location.assign(url)
 
@@ -13,7 +14,8 @@ export function GuildJoin({ leave = assign }: { leave?: (url: string) => void })
   const { me } = useMe()
   const { pathname, search } = useLocation()
   const asked = useRef(false)
-  const pending = me?.guildPending === true && !pathname.startsWith('/room/')
+  // The app signs in through the browser, which already asks Discord for the server.
+  const pending = me?.guildPending === true && !pathname.startsWith('/room/') && !isDesktop()
 
   useEffect(() => {
     if (!pending || asked.current) return

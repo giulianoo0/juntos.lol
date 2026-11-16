@@ -1,3 +1,4 @@
+import { MessagesButton } from '../../social/MessagesButton'
 import { Lock, LockOpen, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { JoinMode } from '../model'
@@ -98,6 +99,7 @@ export function Header({ onPeople, waiting }: {
         <HeroWordmark className={styles.mark} sweepClassName={styles.sweep} sweep={shine} />
       </span>
       <div className={styles.end}>
+        <MessagesButton />
         <AccessMenu />
         <button type="button" className={styles.people} aria-label={strings.peopleInRoom} title={strings.peopleInRoom} onClick={onPeople}>
           <FaceStack people={vm.people} size={24} />

@@ -1,0 +1,78 @@
+.face {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.creature {
+  position: relative;
+  transition: opacity var(--duration-base) var(--ease-out), filter var(--duration-base) var(--ease-out);
+}
+
+.face[data-where='away'] .creature,
+.face[data-where='discord'] .creature {
+  opacity: 0.55;
+  filter: saturate(0.4);
+}
+
+.ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 0 2px transparent;
+  opacity: 0;
+  scale: 0.9;
+  transition:
+    scale var(--duration-spring-pop) var(--ease-spring-pop),
+    opacity var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+.face[data-where='juntos'] .ring {
+  box-shadow: 0 0 0 2px var(--status-success);
+  opacity: 1;
+  scale: 1;
+}
+
+.face[data-where='room'] .ring {
+  box-shadow: 0 0 0 2px var(--brand);
+  opacity: 1;
+  scale: 1;
+}
+
+.discord {
+  position: absolute;
+  right: -6%;
+  bottom: -6%;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--background);
+}
+
+.discord img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+}
+
+.dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 38%;
+  height: 38%;
+  min-width: 7px;
+  min-height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--grey-350);
+  box-shadow: 0 0 0 2px var(--background);
+  transition: background var(--duration-base) var(--ease-out);
+}
+
+.discord[data-status='online'] .dot { background: var(--green-500); }
+.discord[data-status='idle'] .dot { background: var(--amber-500); }
+.discord[data-status='dnd'] .dot { background: var(--red-500); }
+.discord[data-status='offline'] .dot { background: var(--grey-350); }

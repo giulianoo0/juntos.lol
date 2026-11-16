@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { AvatarFace } from '../account/AvatarFace'
 import { discordLoginUrl, logout, profilePath, useMe } from '../account'
 import { NotificationBell } from '../account/NotificationBell'
+import { MessagesButton } from '../social/MessagesButton'
 import { useT } from '../i18n/useT'
 import { TravellingWordmark } from '../pages/home/Wordmark'
 import { arrive } from '../ui/arrive'
@@ -52,6 +53,7 @@ export function SiteHeader({ logo = true, you = true }: {
         {me ? (
           <>
             <NotificationBell />
+            <MessagesButton />
             {you ? (
               <SpringPopover
                 triggerRender={<button type="button" className={`${styles.me} ${arrive}`} />}
