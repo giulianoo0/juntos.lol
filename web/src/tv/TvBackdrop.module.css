@@ -1,0 +1,123 @@
+.backdrop {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: #0e0e10;
+  pointer-events: none;
+}
+
+/* A fine grid of dots over everything: the texture, in grey only. */
+.texture {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1.2px);
+  background-size: 1.5rem 1.5rem;
+}
+
+.shape {
+  position: absolute;
+  display: block;
+  opacity: 0.1;
+  animation:
+    tint 36s linear infinite,
+    float 28s ease-in-out infinite alternate;
+}
+
+.shape[data-shape="circle"] {
+  top: -8rem;
+  left: -6rem;
+  width: 30rem;
+  height: 30rem;
+  border-radius: 50%;
+  animation-delay: 0s, -4s;
+}
+
+.shape[data-shape="square"] {
+  right: -5rem;
+  bottom: -7rem;
+  width: 26rem;
+  height: 26rem;
+  border-radius: 5rem;
+  transform: rotate(18deg);
+  animation-delay: -9s, -12s;
+  animation-name: tint, floatTurned;
+}
+
+.shape[data-shape="pill"] {
+  top: 7rem;
+  right: 18%;
+  width: 22rem;
+  height: 9rem;
+  border-radius: 9rem;
+  transform: rotate(-24deg);
+  animation-delay: -18s, -6s;
+  animation-name: tint, floatPill;
+}
+
+/* The ring is drawn by its border, so it takes the color as border-color. */
+.shape[data-shape="ring"] {
+  bottom: 9rem;
+  left: 22%;
+  width: 14rem;
+  height: 14rem;
+  border: 2.25rem solid;
+  border-radius: 50%;
+  box-sizing: border-box;
+  animation-name: tintBorder, float;
+  animation-delay: -27s, -18s;
+}
+
+.shape[data-shape="dot"] {
+  top: 42%;
+  left: 54%;
+  width: 6rem;
+  height: 6rem;
+  border-radius: 50%;
+  opacity: 0.14;
+  animation-delay: -13s, -22s;
+}
+
+@keyframes tint {
+  0%, 100% { background-color: #ff7640; }
+  20% { background-color: #f5b83d; }
+  40% { background-color: #4fc38a; }
+  60% { background-color: #4f8ff7; }
+  80% { background-color: #b07cf2; }
+}
+
+@keyframes tintBorder {
+  0%, 100% { border-color: #4f8ff7; }
+  20% { border-color: #b07cf2; }
+  40% { border-color: #ff7640; }
+  60% { border-color: #f5b83d; }
+  80% { border-color: #4fc38a; }
+}
+
+@keyframes float {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(2.5rem, 1.5rem, 0); }
+}
+
+@keyframes floatTurned {
+  from { transform: translate3d(0, 0, 0) rotate(18deg); }
+  to { transform: translate3d(-2rem, -1.5rem, 0) rotate(26deg); }
+}
+
+@keyframes floatPill {
+  from { transform: translate3d(0, 0, 0) rotate(-24deg); }
+  to { transform: translate3d(-1.5rem, 2rem, 0) rotate(-16deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shape {
+    animation: none;
+    background-color: #4f8ff7;
+    border-color: #ff7640;
+  }
+}

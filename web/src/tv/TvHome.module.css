@@ -12,7 +12,7 @@
   bottom: 0;
   left: 0;
   overflow: hidden;
-  background: #0c0a0b;
+  background: #0e0e10;
   color: #f4f2f1;
   font-family: var(--font-sans);
   cursor: none;
@@ -28,25 +28,6 @@
 @keyframes homeIn {
   from { opacity: 0; transform: scale(1.02); }
   to { opacity: 1; transform: none; }
-}
-
-/* Two soft lights, painted once: no blur filter, which old TVs redraw slowly. */
-.glow {
-  position: absolute;
-  top: -30%;
-  right: -20%;
-  bottom: -30%;
-  left: -20%;
-  background:
-    radial-gradient(ellipse 45% 40% at 18% 22%, rgba(255, 118, 64, 0.16), rgba(255, 118, 64, 0) 70%),
-    radial-gradient(ellipse 40% 45% at 82% 78%, rgba(93, 103, 238, 0.14), rgba(93, 103, 238, 0) 70%);
-  animation: drift 24s ease-in-out infinite alternate;
-  pointer-events: none;
-}
-
-@keyframes drift {
-  from { transform: translate3d(-2%, -1%, 0); }
-  to { transform: translate3d(2%, 1.5%, 0); }
 }
 
 .top {
@@ -282,7 +263,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .home, .glow, .hero, .shelfTitle, .cell {
+  .home, .hero, .shelfTitle, .cell {
     animation: none;
   }
   .card {

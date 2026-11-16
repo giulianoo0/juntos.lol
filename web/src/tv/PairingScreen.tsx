@@ -3,6 +3,7 @@ import { toString as qrSvg } from 'qrcode'
 import { useT } from '../i18n/useT'
 import { HeroWordmark } from '../pages/home/Wordmark'
 import { formatCode, linkUrl, pairStatus, startPairing, type Pairing, type TvAccount, type TvDevice } from './api'
+import { TvBackdrop } from './TvBackdrop'
 import styles from './tv.module.css'
 
 const POLL_MS = 2_000
@@ -54,6 +55,7 @@ export function PairingScreen({ onLinked }: { onLinked: (link: { token: string; 
   const code = pairing ? pairing.code : ''
   return (
     <main className={styles.pairing}>
+      <TvBackdrop />
       <HeroWordmark className={styles.pairingMark} sweep={false} />
       <h1 className={styles.pairingTitle}>{t('tv.pairTitle')}</h1>
       <div className={styles.pairingCard} data-ready={pairing ? '' : undefined}>

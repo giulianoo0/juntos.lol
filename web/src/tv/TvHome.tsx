@@ -3,6 +3,7 @@ import { useT } from '../i18n/useT'
 import { HeroWordmark } from '../pages/home/Wordmark'
 import { Face } from '../room/ui/Face'
 import { fetchTvFriends, tvDiscordAvatar, type TvAccount, type TvFriend } from './api'
+import { TvBackdrop } from './TvBackdrop'
 import styles from './TvHome.module.css'
 
 const FRIENDS_MS = 30_000
@@ -55,7 +56,7 @@ export function TvHome({ account, token }: { account: TvAccount; token: string }
   const firstName = account.nickname.split(' ')[0]
   return (
     <main className={styles.home}>
-      <div className={styles.glow} aria-hidden="true" />
+      <TvBackdrop />
       <header className={styles.top}>
         <HeroWordmark className={styles.mark} sweep={false} />
         <div className={styles.topEnd}>
