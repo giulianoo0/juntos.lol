@@ -174,7 +174,12 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 			if hub != nil {
 				rooms = hub
 			}
-			RegisterTVRoutes(r, cfg, options.accounts, *options.tv, rooms)
+			tvs := RegisterTVRoutes(r, cfg, options.accounts, *options.tv, rooms)
+			r.GET("/api/tv/friends", tvs.asOwner, routes.friends)
+			if options.social != nil {
+				friendsOf := &socialRoutes{Social: options.social, viewer: routes.viewer}
+				r.GET("/api/tv/friends/:id/discord-avatar", tvs.asOwner, friendsOf.discordAvatar)
+			}
 		}
 	}
 	if options.extensions != nil {

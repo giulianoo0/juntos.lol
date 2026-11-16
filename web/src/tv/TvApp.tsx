@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { HeroWordmark } from '../pages/home/Wordmark'
-import { Face } from '../room/ui/Face'
-import { Loading, Skeleton } from '../ui/Shimmer'
 import { exitTvApp, listenForShell, registerTvKeys } from './keys'
 import { PairingScreen } from './PairingScreen'
+import { TvHome } from './TvHome'
 import { installPointer } from './pointer'
 import { TvRoom, type RoomRemote } from './TvRoom'
 import { useRemote } from './useRemote'
@@ -54,17 +53,11 @@ export function TvApp() {
     <>
       {session.screen === 'pairing' ? <PairingScreen onLinked={linked} /> : null}
       {session.screen === 'checking' ? (
-        <Loading label={t('status.loading')} className={styles.screen}><Skeleton width="100%" height="100%" /></Loading>
-      ) : null}
-      {session.screen === 'waiting' ? (
-        <main className={styles.waiting}>
-          <HeroWordmark className={styles.waitingMark} sweep={false} />
-          <div className={styles.waitingFace}>
-            <Face id={String(session.account.id)} avatar={session.account.avatar} size={260} still={false} />
-          </div>
-          <h1 className={styles.waitingName}>{session.account.nickname}</h1>
+        <main className={styles.splash} aria-busy="true" aria-label={t('status.loading')}>
+          <HeroWordmark className={styles.splashMark} sweep={false} />
         </main>
       ) : null}
+      {session.screen === 'waiting' ? <TvHome account={session.account} token={session.token} /> : null}
       {session.screen === 'room' ? (
         <TvRoom
           key={session.roomId}

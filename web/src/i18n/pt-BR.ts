@@ -607,4 +607,7 @@ export const ptBR: Record<string, string> = {
   "signin.reopen": "Abrir de novo",
   "signin.cancel": "Cancelar",
   "signin.done": "Pronto",
+  "tv.goodMorning": "Bom dia, {name}",
+  "tv.goodAfternoon": "Boa tarde, {name}",
+  "tv.goodEvening": "Boa noite, {name}",
 }

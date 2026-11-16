@@ -46,6 +46,21 @@ export function installTvMock(): void {
       return polls >= 3 ? json({ status: 'linked', token: 'dev-token', account, device }) : json({ status: 'pending' })
     }
     if (path === '/api/tv/me') return json({ account, device })
+    if (path === '/api/tv/friends') {
+      return json({ friends: [
+        { id: 12, nickname: 'Ana', avatar: 'cat.beanie', presence: { online: true, inRoom: true, roomId: 'R1', roomName: 'Sessão de sexta', discord: 'online' } },
+        { id: 13, nickname: 'Bruno', avatar: 'owl', presence: { online: true, inRoom: false, discord: 'idle' } },
+        { id: 14, nickname: 'Caio', avatar: 'robot', presence: { online: false, inRoom: false, discord: 'dnd' } },
+        { id: 15, nickname: 'Dani', avatar: 'frog.crown', presence: { online: false, inRoom: false, discord: 'online' } },
+        { id: 16, nickname: 'Edu', avatar: 'bear', presence: { online: false, inRoom: false, discord: 'offline' } },
+      ] })
+    }
+    const avatarPath = /^\/api\/tv\/friends\/(\d+)\/discord-avatar$/.exec(path)
+    if (avatarPath) {
+      const hue = (Number(avatarPath[1]) * 67) % 360
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="hsl(${hue},70%,55%)"/><circle cx="32" cy="26" r="12" fill="#fff" opacity=".85"/><rect x="14" y="42" width="36" height="18" rx="9" fill="#fff" opacity=".85"/></svg>`
+      return new Response(svg, { headers: { 'content-type': 'image/svg+xml' } })
+    }
     const roomPath = /^\/api\/rooms\/([^/?]+)$/.exec(path)
     if (roomPath) return json(room(decodeURIComponent(roomPath[1]!)))
     if (/\/screenshare\/token$|\/call\/token$/.test(path)) return json({ error: 'screenshare_disabled' }, 503)

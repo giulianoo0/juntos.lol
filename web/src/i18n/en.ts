@@ -607,4 +607,7 @@ export const en: Record<string, string> = {
   "signin.reopen": "Open again",
   "signin.cancel": "Cancel",
   "signin.done": "Done",
+  "tv.goodMorning": "Good morning, {name}",
+  "tv.goodAfternoon": "Good afternoon, {name}",
+  "tv.goodEvening": "Good evening, {name}",
 }

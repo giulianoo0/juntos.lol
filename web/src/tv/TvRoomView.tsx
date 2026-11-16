@@ -223,19 +223,19 @@ export function TvRoomView({ vm, playhead, onMedia, onAudio, onTracks, onStop, k
           <div className={styles.roomButtons}>
             {stage?.kind === 'media' ? (
               <>
-                <BarButton label={t('tv.back10')} onClick={() => media('rewind')} tabIndex={visible ? 0 : -1}><RotateCcw size={30} /></BarButton>
+                <BarButton label={t('tv.back10')} onClick={() => media('rewind')} tabIndex={visible ? 0 : -1}><RotateCcw size={44} /></BarButton>
                 <BarButton label={paused ? t('tv.play') : t('tv.pause')} onClick={() => media('playPause')} tabIndex={visible ? 0 : -1} buttonRef={playRef} big>
-                  {paused ? <Play size={40} fill="currentColor" /> : <Pause size={40} fill="currentColor" />}
+                  {paused ? <Play size={56} fill="currentColor" /> : <Pause size={56} fill="currentColor" />}
                 </BarButton>
-                <BarButton label={t('tv.forward10')} onClick={() => media('forward')} tabIndex={visible ? 0 : -1}><RotateCw size={30} /></BarButton>
+                <BarButton label={t('tv.forward10')} onClick={() => media('forward')} tabIndex={visible ? 0 : -1}><RotateCw size={44} /></BarButton>
                 <span className={styles.roomDivider} />
               </>
             ) : null}
             {stage?.kind === 'media' && onTracks ? (
-              <BarButton label={t('tv.tracks')} onClick={onTracks} tabIndex={visible ? 0 : -1}><Captions size={28} /></BarButton>
+              <BarButton label={t('tv.tracks')} onClick={onTracks} tabIndex={visible ? 0 : -1}><Captions size={42} /></BarButton>
             ) : null}
-            <BarButton label={t('tv.audio')} onClick={onAudio} tabIndex={visible ? 0 : -1} buttonRef={stage?.kind === 'media' ? undefined : playRef}><SlidersHorizontal size={28} /></BarButton>
-            <BarButton label={t('tv.stop')} onClick={onStop} tabIndex={visible ? 0 : -1}><MonitorX size={28} /></BarButton>
+            <BarButton label={t('tv.audio')} onClick={onAudio} tabIndex={visible ? 0 : -1} buttonRef={stage?.kind === 'media' ? undefined : playRef}><SlidersHorizontal size={42} /></BarButton>
+            <BarButton label={t('tv.stop')} onClick={onStop} tabIndex={visible ? 0 : -1}><MonitorX size={42} /></BarButton>
           </div>
         </div>
       </div>

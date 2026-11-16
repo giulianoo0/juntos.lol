@@ -69,3 +69,24 @@ export async function fetchTvMe(token: string): Promise<{ device: TvDevice; acco
   if (!response.ok) throw new Error(`tv me failed: ${response.status}`)
   return await response.json() as { device: TvDevice; account: TvAccount }
 }
+
+export interface TvFriend {
+  id: number
+  nickname: string
+  avatar: string
+  presence: { online?: boolean; discord?: 'online' | 'idle' | 'dnd' | 'offline'; inRoom: boolean; roomId?: string; roomName?: string }
+}
+
+/** The account's friends and where they are, as the TV reads them by its token. */
+export async function fetchTvFriends(token: string): Promise<TvFriend[]> {
+  const response = await fetch('/api/tv/friends', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+  if (!response.ok) throw new Error(`tv friends failed: ${response.status}`)
+  return (await response.json() as { friends: TvFriend[] }).friends
+}
+
+/** A friend's Discord picture as a blob URL: an image tag can't send the token. */
+export async function tvDiscordAvatar(token: string, id: number): Promise<string | null> {
+  const response = await fetch(`/api/tv/friends/${id}/discord-avatar`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok) return null
+  return URL.createObjectURL(await response.blob())
+}

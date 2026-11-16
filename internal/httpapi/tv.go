@@ -58,7 +58,7 @@ type tvRoutes struct {
 }
 
 // RegisterTVRoutes mounts the TV API and the TV's own socket, /ws/tv.
-func RegisterTVRoutes(r *gin.Engine, cfg config.Config, accounts *account.Store, access TVAccess, rooms TVRooms) {
+func RegisterTVRoutes(r *gin.Engine, cfg config.Config, accounts *account.Store, access TVAccess, rooms TVRooms) *tvRoutes {
 	routes := &tvRoutes{
 		cfg: cfg, accounts: accounts, access: access, rooms: rooms,
 		login:   &accountRoutes{cfg: cfg, accounts: accounts},
@@ -78,6 +78,26 @@ func RegisterTVRoutes(r *gin.Engine, cfg config.Config, accounts *account.Store,
 	owner.POST("/devices/:id/stop", routes.stop)
 	owner.PUT("/devices/:id/mix", routes.setMix)
 	r.GET("/ws/tv", routes.socket)
+	return routes
+}
+
+// tvViewerKey carries, through a TV route, the account that linked the TV.
+const tvViewerKey = "tvViewer"
+
+// asOwner lets a TV read what its account reads, by its Bearer token.
+func (t *tvRoutes) asOwner(c *gin.Context) {
+	token, found := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if !found || token == "" {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid_token"})
+		return
+	}
+	_, owner, ok := t.tvSignedIn(c, token)
+	if !ok {
+		c.Abort()
+		return
+	}
+	c.Set(tvViewerKey, owner)
+	c.Next()
 }
 
 // TVOrHuman lets a TV with a live token past the human check: a TV can't

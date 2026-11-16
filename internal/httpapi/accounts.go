@@ -380,6 +380,9 @@ func (a *accountRoutes) logout(c *gin.Context) {
 // viewer is who the request is signed in as; ok is false for nobody, in
 // which case the response has already been written when required is set.
 func (a *accountRoutes) viewer(c *gin.Context, required bool) (account.Account, bool) {
+	if owner, ok := c.Get(tvViewerKey); ok {
+		return owner.(account.Account), true
+	}
 	cookie, err := c.Cookie(accountCookie)
 	if err == nil {
 		id, err := a.accounts.SessionAccount(c.Request.Context(), cookie)
