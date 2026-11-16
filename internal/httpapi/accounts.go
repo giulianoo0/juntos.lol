@@ -82,11 +82,13 @@ type accountRoutes struct {
 	guildChecks *windowLimiter
 	// handoffs carry a sign-in from the browser over to the phone app.
 	handoffs *appHandoffs
+	// social pushes changes to open pages and knows who is online; may be nil.
+	social *Social
 }
 
 // RegisterAccountRoutes mounts the account API. Without a Discord secret the
 // two login routes answer 503 and nobody can sign in; the rest still answers.
-func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *account.Store, rooms *room.Store, presence PresenceSource) {
+func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *account.Store, rooms *room.Store, presence PresenceSource) *accountRoutes {
 	routes := &accountRoutes{
 		cfg: cfg, accounts: accounts, rooms: rooms, presence: presence,
 		callbacks: newWindowLimiter(loginCallbacksPerHour, time.Hour),
@@ -131,6 +133,23 @@ func RegisterAccountRoutes(rg *gin.RouterGroup, cfg config.Config, accounts *acc
 	rg.DELETE("/invites/:id", routes.dismissInvite)
 	rg.GET("/users/:id", routes.profile)
 	rg.GET("/users/:id/history", routes.history)
+	rg.POST("/auth/app/poll", routes.pollAppLogin)
+	rg.POST("/auth/app/confirm", routes.confirmAppLogin)
+	return routes
+}
+
+func (a *accountRoutes) notify(accountID int64) {
+	if a.social != nil {
+		a.social.Notify(accountID)
+	}
+}
+
+func (a *accountRoutes) friendsChanged(ids ...int64) {
+	if a.social != nil {
+		for _, id := range ids {
+			a.social.FriendsChanged(id)
+		}
+	}
 }
 
 // HubAccounts is what the hub signs sockets in with and keeps watches
@@ -242,7 +261,7 @@ func (a *accountRoutes) finishLogin(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "discord_failed"})
 		return
 	}
-	signed, err := a.accounts.SignInDiscord(ctx, account.DiscordUser{ID: user.ID, Username: user.Username, GlobalName: user.GlobalName})
+	signed, err := a.accounts.SignInDiscord(ctx, account.DiscordUser{ID: user.ID, Username: user.Username, GlobalName: user.GlobalName, Avatar: user.Avatar})
 	if err != nil {
 		slog.ErrorContext(ctx, "sign in account", "error", err)
 		c.Status(http.StatusInternalServerError)
@@ -519,7 +538,13 @@ func sameOrigin(cfg config.Config) gin.HandlerFunc {
 }
 
 type friendPresence struct {
-	InRoom bool `json:"inRoom"`
+	// Online: juntos is open on one of the friend's devices, or they are in a room.
+	Online bool `json:"online"`
+	// Discord is the friend's status on the juntos server, "" when unknown.
+	Discord string `json:"discord,omitempty"`
+	InRoom  bool   `json:"inRoom"`
+	// RoomName is the room's name, shown like RoomID.
+	RoomName string `json:"roomName,omitempty"`
 	// RoomID is only shown for a room anyone may walk into.
 	RoomID string `json:"roomId,omitempty"`
 	// WithMe is set when the friend is in the viewer's own room.
@@ -552,22 +577,33 @@ func (a *accountRoutes) friends(c *gin.Context) {
 		present = a.presence.Presence(append([]int64{me.ID}, ids...))
 	}
 	myRoom := present[me.ID]
-	openRooms := map[string]bool{}
+	type openRoom struct {
+		open bool
+		name string
+	}
+	openRooms := map[string]openRoom{}
 	friends := make([]friendCard, 0, len(found))
 	for _, each := range found {
 		friend := friendCard{accountCard: cardOf(each)}
-		// A private account shows no presence, not even to friends.
-		if roomID, here := present[each.ID]; here && each.Visibility != account.VisibilityPrivate {
+		roomID, here := present[each.ID]
+		friend.Presence.Online = here
+		if a.social != nil {
+			friend.Presence.Online = here || a.social.Online(each.ID)
+			friend.Presence.Discord = a.social.DiscordStatus(each)
+		}
+		// A private account shows that it is online, never which room.
+		if here && each.Visibility != account.VisibilityPrivate {
 			friend.Presence.InRoom = true
 			friend.Presence.WithMe = roomID == myRoom
-			open, known := openRooms[roomID]
-			if !known {
+			known, ok := openRooms[roomID]
+			if !ok {
 				stored, err := a.rooms.Get(ctx, roomID)
-				open = err == nil && joinModeOf(stored) == room.JoinOpen
-				openRooms[roomID] = open
+				known = openRoom{open: err == nil && joinModeOf(stored) == room.JoinOpen, name: stored.Name}
+				openRooms[roomID] = known
 			}
-			if open {
+			if known.open {
 				friend.Presence.RoomID = roomID
+				friend.Presence.RoomName = known.name
 			}
 		}
 		friends = append(friends, friend)
@@ -628,6 +664,8 @@ func (a *accountRoutes) requestFriend(c *gin.Context) {
 		if fresh {
 			a.dmFriendRequest(me, request.ID)
 		}
+		a.notify(request.ID)
+		a.friendsChanged(me.ID, request.ID)
 		c.JSON(http.StatusOK, gin.H{"state": state})
 	}
 }
@@ -669,6 +707,8 @@ func (a *accountRoutes) acceptFriend(c *gin.Context) {
 	case err != nil:
 		c.Status(http.StatusInternalServerError)
 	default:
+		a.notify(me.ID)
+		a.friendsChanged(me.ID, from)
 		c.Status(http.StatusNoContent)
 	}
 }
@@ -687,6 +727,9 @@ func (a *accountRoutes) removeFriend(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	a.notify(me.ID)
+	a.notify(other)
+	a.friendsChanged(me.ID, other)
 	c.Status(http.StatusNoContent)
 }
 
@@ -751,6 +794,12 @@ func (a *accountRoutes) inviteFriend(c *gin.Context) {
 	// The site shows the invite too, whatever happens to the DM.
 	if err := a.accounts.AddInvite(ctx, friend.ID, account.RoomInvite{From: me.ID, RoomID: roomID, At: time.Now().UTC()}); err != nil {
 		c.Status(http.StatusInternalServerError)
+		return
+	}
+	a.notify(friend.ID)
+	// Someone with juntos open sees the call there; the DM is for the rest.
+	if a.social != nil && a.social.Online(friend.ID) {
+		c.Status(http.StatusNoContent)
 		return
 	}
 	message := discord.InviteMessage(a.cfg.PublicOrigin, discord.Invite{From: me.Nickname, Number: me.ID, RoomID: roomID, Room: card})
@@ -848,6 +897,7 @@ func (a *accountRoutes) dismissInvite(c *gin.Context) {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	a.notify(me.ID)
 	c.Status(http.StatusNoContent)
 }
 

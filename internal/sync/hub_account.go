@@ -83,12 +83,30 @@ func (h *Hub) Presence(accountIDs []int64) map[int64]string {
 	return present
 }
 
+// OnPresence hears an account walking into its first room or out of its last.
+// It runs outside the hub's lock and must not block.
+func (h *Hub) OnPresence(hook func(accountID int64)) {
+	h.mu.Lock()
+	h.presenceHook = hook
+	h.mu.Unlock()
+}
+
 func (h *Hub) markPresent(accountID int64, roomID string, here bool) {
 	if accountID == 0 {
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	before := len(h.presence[accountID]) > 0
+	h.markPresentLocked(accountID, roomID, here)
+	after := len(h.presence[accountID]) > 0
+	hook := h.presenceHook
+	h.mu.Unlock()
+	if hook != nil && before != after {
+		hook(accountID)
+	}
+}
+
+func (h *Hub) markPresentLocked(accountID int64, roomID string, here bool) {
 	rooms := h.presence[accountID]
 	if here {
 		if rooms == nil {

@@ -388,8 +388,8 @@ func TestFriendsSeeWhereTheOthersAre(t *testing.T) {
 	friends := rig.do(http.MethodGet, "/api/friends", "", anaSession)
 	require.Equal(t, http.StatusOK, friends.Code)
 	require.JSONEq(t, `[
-		{"id":2,"nickname":"Bia","avatar":"","presence":{"inRoom":true,"roomId":"OPEN1234"}},
-		{"id":3,"nickname":"Caio","avatar":"","presence":{"inRoom":true}}
+		{"id":2,"nickname":"Bia","avatar":"","presence":{"online":true,"inRoom":true,"roomId":"OPEN1234"}},
+		{"id":3,"nickname":"Caio","avatar":"","presence":{"online":true,"inRoom":true}}
 	]`, jsonField(t, friends, "friends"), "sala trancada só diz que está em sala")
 
 	require.Equal(t, http.StatusNoContent, rig.do(http.MethodDelete, "/api/friends/2", "", anaSession).Code)

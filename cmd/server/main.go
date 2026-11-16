@@ -19,6 +19,8 @@ import (
 	"github.com/giulianoo0/ss/internal/account"
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/db"
+	"github.com/giulianoo0/ss/internal/discord"
+	"github.com/giulianoo0/ss/internal/dm"
 	"github.com/giulianoo0/ss/internal/extension"
 	"github.com/giulianoo0/ss/internal/httpapi"
 	"github.com/giulianoo0/ss/internal/media"
@@ -72,6 +74,13 @@ func main() {
 	accounts := account.NewStore(pool)
 	tvAccess := httpapi.TVAccess{Devices: tv.NewDevices(pool), Pairs: tv.NewPairs(rdb), Mixes: tv.NewMixes(rdb)}
 	hub.SetAccounts(httpapi.HubAccounts(accounts, tvAccess.Devices))
+	social := httpapi.NewSocial(cfg, accounts, dm.NewStore(pool))
+	hub.OnPresence(social.PresenceChanged)
+	if cfg.DiscordBotToken != "" && cfg.DiscordGuildID != "" {
+		presences := &discord.Presences{Token: cfg.DiscordBotToken, GuildID: cfg.DiscordGuildID, OnChange: social.DiscordChanged}
+		social.SetDiscord(presences)
+		go presences.Run(ctx)
+	}
 	hub.SetClientIP(httpapi.ClientIP(cfg.BehindCloudflare))
 	counter := usage.New(rdb, pool)
 	hub.SetUsage(counter)
@@ -196,6 +205,7 @@ func main() {
 			Accounts: accounts, Quota: quota}),
 		httpapi.WithDiscord(httpapi.DiscordApp(cfg, store, rdb, hub, accounts)),
 		httpapi.WithAccounts(accounts),
+		httpapi.WithSocial(social),
 		httpapi.WithTV(tvAccess),
 		httpapi.WithUsage(counter),
 	)

@@ -74,6 +74,8 @@ type Hub struct {
 	accounts     Accounts
 	// presence counts, per signed-in account, its seats in each room.
 	presence map[int64]map[string]int
+	// presenceHook hears an account's first room and its last.
+	presenceHook func(accountID int64)
 	// devices is, per room, the seat each browser holds: a second tab of the
 	// same browser takes that seat over instead of adding a person.
 	devices   map[string]map[string]string

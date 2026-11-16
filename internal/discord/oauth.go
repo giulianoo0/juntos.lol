@@ -32,6 +32,7 @@ type User struct {
 	ID         string `json:"id"`
 	Username   string `json:"username"`
 	GlobalName string `json:"global_name"`
+	Avatar     string `json:"avatar"`
 }
 
 // DisplayName is the name the person shows on Discord.

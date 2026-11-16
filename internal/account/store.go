@@ -61,6 +61,8 @@ type Account struct {
 	// server, or joined it; GuildJoined once the join went through.
 	GuildAsked  bool `json:"-"`
 	GuildJoined bool `json:"-"`
+	// DiscordAvatar is the avatar hash Discord gave; empty for its default.
+	DiscordAvatar string `json:"-"`
 }
 
 // Changes is a PATCH of an account; nil fields stay as they are. An empty
@@ -78,6 +80,7 @@ type DiscordUser struct {
 	ID         string
 	Username   string
 	GlobalName string
+	Avatar     string
 }
 
 func (u DiscordUser) displayName() string {
@@ -113,14 +116,14 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 const accountColumns = `id, discord_id, nickname, avatar, visibility, discord_username,
 	discord_global_name, discord_public, created_at, sessions, watched_seconds,
-	guild_asked_at IS NOT NULL, guild_joined_at IS NOT NULL`
+	guild_asked_at IS NOT NULL, guild_joined_at IS NOT NULL, discord_avatar`
 
 func scanAccount(row pgx.Row) (Account, error) {
 	var a Account
 	var discordPublic bool
 	err := row.Scan(&a.ID, &a.DiscordID, &a.Nickname, &a.Avatar, &a.Visibility, &a.DiscordUsername,
 		&a.DiscordGlobalName, &discordPublic, &a.CreatedAt, &a.Sessions, &a.WatchedSeconds,
-		&a.GuildAsked, &a.GuildJoined)
+		&a.GuildAsked, &a.GuildJoined, &a.DiscordAvatar)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Account{}, ErrNotFound
 	}
@@ -153,8 +156,8 @@ func (s *Store) SignInDiscord(ctx context.Context, user DiscordUser) (Account, e
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", user.ID); err != nil {
 		return Account{}, err
 	}
-	found, err := scanAccount(tx.QueryRow(ctx, `UPDATE accounts SET discord_username = $2, discord_global_name = $3
-		WHERE discord_id = $1 RETURNING `+accountColumns, user.ID, username, globalName))
+	found, err := scanAccount(tx.QueryRow(ctx, `UPDATE accounts SET discord_username = $2, discord_global_name = $3, discord_avatar = $4
+		WHERE discord_id = $1 RETURNING `+accountColumns, user.ID, username, globalName, cleanAvatarHash(user.Avatar)))
 	if err == nil {
 		return found, tx.Commit(ctx)
 	}
@@ -170,13 +173,29 @@ func (s *Store) SignInDiscord(ctx context.Context, user DiscordUser) (Account, e
 		nickname = "#" + strconv.FormatInt(id, 10)
 	}
 	created, err := scanAccount(tx.QueryRow(ctx, `INSERT INTO accounts
-		(id, discord_id, nickname, visibility, discord_username, discord_global_name, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING `+accountColumns,
-		id, user.ID, nickname, VisibilityPrivate, username, globalName, time.Now().UTC().Truncate(time.Second)))
+		(id, discord_id, nickname, visibility, discord_username, discord_global_name, created_at, discord_avatar)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+accountColumns,
+		id, user.ID, nickname, VisibilityPrivate, username, globalName, time.Now().UTC().Truncate(time.Second), cleanAvatarHash(user.Avatar)))
 	if err != nil {
 		return Account{}, err
 	}
 	return created, tx.Commit(ctx)
+}
+
+var avatarHashRe = regexp.MustCompile(`^(a_)?[0-9a-f]{32}$`)
+
+// cleanAvatarHash keeps a hash as Discord writes them, and nothing else.
+func cleanAvatarHash(hash string) string {
+	if avatarHashRe.MatchString(hash) {
+		return hash
+	}
+	return ""
+}
+
+// SetDiscordAvatar keeps the avatar hash Discord reported for the account.
+func (s *Store) SetDiscordAvatar(ctx context.Context, id int64, hash string) error {
+	_, err := s.pool.Exec(ctx, "UPDATE accounts SET discord_avatar = $2 WHERE id = $1", id, cleanAvatarHash(hash))
+	return err
 }
 
 // ByDiscord is the account a Discord user signed in as, or ErrNotFound.

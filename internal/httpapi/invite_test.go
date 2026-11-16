@@ -187,9 +187,9 @@ func TestFriendsSayWhoIsInMyRoom(t *testing.T) {
 	friends := rig.do(http.MethodGet, "/api/friends", "", session)
 
 	require.JSONEq(t, `[
-		{"id":2,"nickname":"Bia","avatar":"","presence":{"inRoom":true,"withMe":true}},
-		{"id":3,"nickname":"Caio","avatar":"","presence":{"inRoom":true,"roomId":"OPEN1234"}},
-		{"id":4,"nickname":"Dani","avatar":"","presence":{"inRoom":false}}
+		{"id":2,"nickname":"Bia","avatar":"","presence":{"online":true,"inRoom":true,"withMe":true}},
+		{"id":3,"nickname":"Caio","avatar":"","presence":{"online":true,"inRoom":true,"roomId":"OPEN1234"}},
+		{"id":4,"nickname":"Dani","avatar":"","presence":{"online":false,"inRoom":false}}
 	]`, jsonField(t, friends, "friends"))
 }
 

@@ -32,6 +32,7 @@ type serverOptions struct {
 	accounts          *account.Store
 	tv                *TVAccess
 	usage             *usage.Counter
+	social            *Social
 }
 
 // WithRelays shares the room relays with the rest of the process (the kick
@@ -163,7 +164,11 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 		if hub != nil {
 			presence = hub
 		}
-		RegisterAccountRoutes(r.Group("/api"), cfg, options.accounts, store, presence)
+		routes := RegisterAccountRoutes(r.Group("/api"), cfg, options.accounts, store, presence)
+		if options.social != nil {
+			routes.social = options.social
+			options.social.register(r, routes.viewer)
+		}
 		if options.tv != nil {
 			var rooms TVRooms
 			if hub != nil {
