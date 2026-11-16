@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, ArrowUp, Check, CheckCheck, Clock, Lock, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowUp, KeyRound, Lock, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { profilePath, useMe, type Friend } from '../account'
@@ -6,8 +6,9 @@ import { useT, type Translator } from '../i18n/useT'
 import { Tip } from '../ui/Tip'
 import { closeChat, openChat, showList, useChatUi } from './chatUi'
 import { FriendFace } from './FriendFace'
+import { KeyDialog } from './KeyDialog'
 import { useFriends, whereabouts } from './friends'
-import { loadThread, retryMessage, sendMessage, showThread, typing, useInbox, type ChatMessage, type Thread } from './inbox'
+import { loadThread, newClientId, retryMessage, sendMessage, showThread, typing, useInbox, type ChatMessage, type Thread } from './inbox'
 import styles from './Messages.module.css'
 
 const GROUP_MS = 5 * 60_000
@@ -67,6 +68,7 @@ function ThreadList({ friends, threads, status, t }: {
   status: string
   t: Translator
 }) {
+  const [keyOpen, setKeyOpen] = useState(false)
   const ordered = useMemo(() => {
     if (!friends) return []
     return [...friends].sort((a, b) => {
@@ -84,8 +86,14 @@ function ThreadList({ friends, threads, status, t }: {
       <header className={styles.head}>
         <h2 className={styles.title}>{t('social.messages')}</h2>
         {status === 'connecting' ? <Tip label={t('social.offline')}><span className={styles.reconnecting} /></Tip> : null}
+        {status === 'live' ? (
+          <Tip label={t('social.key')} render={<button type="button" className={styles.iconButton} aria-label={t('social.key')} onClick={() => setKeyOpen(true)} />}>
+            <KeyRound size={17} />
+          </Tip>
+        ) : null}
         <button type="button" className={styles.iconButton} aria-label={t('social.close')} onClick={closeChat}><X size={18} /></button>
       </header>
+      <KeyDialog open={keyOpen} onOpenChange={setKeyOpen} />
       {status === 'unsupported' ? <p className={styles.empty}>{t('social.unsupported')}</p> : null}
       {friends && friends.length === 0 ? <p className={styles.empty}>{t('social.noFriends')}</p> : null}
       <ul className={styles.threads}>
@@ -142,6 +150,7 @@ function Conversation({ friend, thread, me, live, t }: { friend: Friend; thread:
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const stick = useRef(true)
   const keepFrom = useRef<number | null>(null)
+  const launch = useRef<{ clientId: string; from: DOMRect } | null>(null)
   const [draft, setDraft] = useState('')
   const [now, setNow] = useState(Date.now())
   const messages = thread?.messages ?? []
@@ -172,6 +181,8 @@ function Conversation({ friend, thread, me, live, t }: { friend: Friend; thread:
       return
     }
     if (stick.current) box.scrollTop = box.scrollHeight
+    flyFromComposer(box, launch.current)
+    launch.current = null
   }, [messages.length, typingNow])
 
   useEffect(() => {
@@ -193,7 +204,10 @@ function Conversation({ friend, thread, me, live, t }: { friend: Friend; thread:
     if (!text) return
     stick.current = true
     setDraft('')
-    void sendMessage(friend.id, text)
+    const clientId = newClientId()
+    const input = inputRef.current
+    if (input) launch.current = { clientId, from: input.getBoundingClientRect() }
+    void sendMessage(friend.id, text, clientId)
     inputRef.current?.focus()
   }
 
@@ -244,6 +258,7 @@ function Conversation({ friend, thread, me, live, t }: { friend: Friend; thread:
                 <div className={styles.row} data-mine={mine || undefined} data-joined={joinsPrevious || undefined}>
                   <div
                     className={styles.bubble}
+                    data-client={message.clientId || undefined}
                     data-mine={mine || undefined}
                     data-state={message.state}
                     data-gone={message.text === null || undefined}
@@ -288,8 +303,30 @@ function Conversation({ friend, thread, me, live, t }: { friend: Friend; thread:
   )
 }
 
+/**
+ * The sent bubble leaves the composer: it starts where the text was typed,
+ * in the field's shape, and springs into its place in the thread.
+ */
+function flyFromComposer(box: HTMLElement, launch: { clientId: string; from: DOMRect } | null) {
+  if (!launch || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  const bubble = box.querySelector<HTMLElement>(`[data-client="${CSS.escape(launch.clientId)}"]`)
+  if (!bubble || typeof bubble.animate !== 'function') return
+  const row = bubble.parentElement ?? bubble
+  const to = bubble.getBoundingClientRect()
+  const dx = launch.from.left + 12 - to.left
+  const dy = launch.from.top + (launch.from.height - to.height) / 2 - to.top
+  const root = getComputedStyle(document.documentElement)
+  bubble.style.animation = 'none'
+  const spring = root.getPropertyValue('--ease-spring-pop').trim() || 'cubic-bezier(0.34, 1.4, 0.64, 1)'
+  row.style.transformOrigin = `${to.left - row.getBoundingClientRect().left}px ${to.bottom - row.getBoundingClientRect().top}px`
+  row.animate([
+    { transform: `translate(${dx}px, ${dy}px) scale(0.92)`, opacity: 0.4, filter: 'blur(2px)' },
+    { transform: 'none', opacity: 1, filter: 'none' },
+  ], { duration: 640, easing: spring })
+}
+
+/** The ticks: one drawn when the server has it, a second drawn beside it, in the brand's color, once it is seen. */
 function Receipt({ message, seen, friendId, t }: { message: ChatMessage; seen: boolean; friendId: number; t: Translator }) {
-  if (message.state === 'sending') return <Tip label={t('social.sending')}><span className={styles.receipt}><Clock size={13} /></span></Tip>
   if (message.state === 'failed') {
     return (
       <Tip
@@ -300,7 +337,16 @@ function Receipt({ message, seen, friendId, t }: { message: ChatMessage; seen: b
       </Tip>
     )
   }
-  return seen
-    ? <Tip label={t('social.seen')}><span className={styles.receipt} data-seen=""><CheckCheck size={14} /></span></Tip>
-    : <Tip label={t('social.delivered')}><span className={styles.receipt}><Check size={14} /></span></Tip>
+  const stage = message.state === 'sending' ? 'sending' : seen ? 'seen' : 'sent'
+  const label = t(stage === 'sending' ? 'social.sending' : stage === 'seen' ? 'social.seen' : 'social.delivered')
+  return (
+    <Tip label={label}>
+      <span className={styles.receipt} data-stage={stage} role="img" aria-label={label}>
+        <svg viewBox="0 0 20 14" width="18" height="13" aria-hidden="true">
+          <path className={styles.tickOne} pathLength={1} d="M1.5 7.5 L5.5 11.5 L13 3" />
+          <path className={styles.tickTwo} pathLength={1} d="M8.5 10.5 L9.5 11.5 L17 3" />
+        </svg>
+      </span>
+    </Tip>
+  )
 }

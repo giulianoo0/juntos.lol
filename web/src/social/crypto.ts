@@ -1,8 +1,9 @@
 /**
  * End-to-end encryption of private messages (scheme `juntos-dm-v1`).
  *
- * Every device holds a P-256 key pair whose private half never leaves it (a
- * non-extractable CryptoKey in IndexedDB). A message is sealed with a fresh
+ * Every device holds a P-256 key pair whose private half stays in IndexedDB and
+ * leaves only when its owner carries it to another device of theirs
+ * (`exportDeviceKey`). A message is sealed with a fresh
  * 256-bit key under AES-GCM, with `from>to:clientId` as associated data, and
  * that key is wrapped, once per device of both accounts, under AES-GCM with a
  * key-encryption key both ends derive alone:
@@ -42,7 +43,7 @@ export interface DeviceKeys {
 }
 
 export async function generateDeviceKeys(): Promise<DeviceKeys> {
-  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']) as CryptoKeyPair
+  const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as CryptoKeyPair
   const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
   return { privateKey: pair.privateKey, publicKey: toBase64Url(raw) }
 }
@@ -143,7 +144,7 @@ export async function pairingCode(challenge: string): Promise<string> {
 }
 
 // The device's keys live in IndexedDB, one record per account, holding the
-// non-extractable private key itself: no script can read its bytes.
+// CryptoKey itself.
 const DB_NAME = 'juntos-dm'
 const STORE = 'devices'
 
@@ -202,4 +203,55 @@ export async function forgetDevice(accountId: number): Promise<void> {
   } finally {
     db.close()
   }
+}
+
+/*
+ * Carrying a device key to another device of the same account, as a QR or as
+ * text: `juntos-key:` and base64url of {a: account, d: device, p: public, k: PKCS#8}.
+ * The device that takes it reads everything the first one could.
+ */
+const KEY_PREFIX = 'juntos-key:'
+
+export class KeyImportError extends Error {
+  readonly reason: 'invalid' | 'other_account'
+  constructor(reason: 'invalid' | 'other_account') {
+    super(reason)
+    this.reason = reason
+  }
+}
+
+/** The device's key as text to carry, or null when it was made unexportable. */
+export async function exportDeviceKey(device: StoredDevice): Promise<string | null> {
+  if (!device.privateKey.extractable) return null
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', device.privateKey))
+  const body = JSON.stringify({ a: device.accountId, d: device.deviceId, p: device.publicKey, k: toBase64Url(pkcs8) })
+  return KEY_PREFIX + toBase64Url(encoder.encode(body))
+}
+
+export async function importDeviceKey(text: string, accountId: number): Promise<StoredDevice> {
+  const trimmed = text.replace(/\s+/g, '')
+  if (!trimmed.startsWith(KEY_PREFIX)) throw new KeyImportError('invalid')
+  let parsed: { a?: unknown; d?: unknown; p?: unknown; k?: unknown }
+  try {
+    parsed = JSON.parse(decoder.decode(fromBase64Url(trimmed.slice(KEY_PREFIX.length))))
+  } catch {
+    throw new KeyImportError('invalid')
+  }
+  const { a, d, p, k } = parsed
+  if (typeof a !== 'number' || typeof d !== 'string' || typeof p !== 'string' || typeof k !== 'string') throw new KeyImportError('invalid')
+  if (a !== accountId) throw new KeyImportError('other_account')
+  let privateKey: CryptoKey
+  try {
+    privateKey = await crypto.subtle.importKey('pkcs8', fromBase64Url(k), { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])
+  } catch {
+    throw new KeyImportError('invalid')
+  }
+  // The public half travels along; it must be the private one's.
+  const jwk = await crypto.subtle.exportKey('jwk', privateKey)
+  const raw = new Uint8Array(65)
+  raw[0] = 4
+  raw.set(fromBase64Url(jwk.x!), 1)
+  raw.set(fromBase64Url(jwk.y!), 33)
+  if (toBase64Url(raw) !== p) throw new KeyImportError('invalid')
+  return { accountId: a, deviceId: d, privateKey, publicKey: p }
 }

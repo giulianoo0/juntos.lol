@@ -8,8 +8,11 @@ import { useEffect, useSyncExternalStore } from 'react'
 import { refreshNotifications } from '../account/notifications'
 import {
   deriveWrapKey,
+  exportDeviceKey,
   forgetDevice,
   generateDeviceKeys,
+  importDeviceKey,
+  KeyImportError,
   loadDevice,
   open,
   randomBytes,
@@ -269,7 +272,7 @@ export function showThread(friendId: number | null) {
   if (friendId !== null) void markRead(friendId)
 }
 
-function newClientId(): string {
+export function newClientId(): string {
   return toBase64Url(randomBytes(12))
 }
 
@@ -432,6 +435,25 @@ function stop() {
   wrapKeys.clear()
   pairDevices.clear()
   publish(empty)
+}
+
+/** This device's key as text to carry to another device, or null. */
+export async function exportKey(): Promise<string | null> {
+  return device ? await exportDeviceKey(device) : null
+}
+
+/** Takes the key of another device of this account: from here on this one is that device. */
+export async function importKey(text: string): Promise<void> {
+  const mine = state.me
+  if (mine === null) throw new KeyImportError('invalid')
+  const taken = await importDeviceKey(text, mine)
+  const previous = device
+  if (previous && previous.deviceId !== taken.deviceId) {
+    await fetch(`/api/dm/devices/${encodeURIComponent(previous.deviceId)}`, { method: 'DELETE' }).catch(() => undefined)
+  }
+  await saveDevice(taken)
+  stop()
+  await start(mine)
 }
 
 async function restart() {

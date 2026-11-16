@@ -1,0 +1,114 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-6) 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* The QR, veiled until asked for: a key on screen is a key in every photo of it. */
+.qr {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  width: min(100%, 17rem);
+  margin: 0 auto;
+  padding: var(--space-5);
+  border: 0;
+  border-radius: var(--radius-2xl);
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.qr[data-revealed] {
+  cursor: default;
+}
+
+.qrArt {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: blur(14px);
+  scale: 0.94;
+  transition:
+    filter var(--duration-spring-pop) var(--ease-spring-pop),
+    scale var(--duration-spring-pop) var(--ease-spring-pop);
+}
+
+.qrArt svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.qr[data-revealed] .qrArt {
+  filter: none;
+  scale: 1;
+}
+
+.veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: #111;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.qr:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.viewfinder {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-2xl);
+  background: var(--hover);
+}
+
+.video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+.viewfinder[data-on] .video {
+  opacity: 1;
+}
+
+.frame {
+  position: absolute;
+  inset: 18%;
+  border-radius: var(--radius-xl);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--white) 85%, transparent);
+  pointer-events: none;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qrArt,
+  .video {
+    transition: none;
+  }
+}

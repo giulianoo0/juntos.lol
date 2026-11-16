@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import vector from './dm-vector.json'
-import { deriveWrapKey, fromBase64Url, generateDeviceKeys, open, pairingCode, safetyNumber, seal, toBase64Url } from './crypto'
+import { deriveWrapKey, exportDeviceKey, fromBase64Url, generateDeviceKeys, importDeviceKey, KeyImportError, open, pairingCode, safetyNumber, seal, toBase64Url } from './crypto'
 
 async function importPrivate(jwk: JsonWebKey) {
   return await crypto.subtle.importKey('jwk', jwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits'])
@@ -47,5 +47,29 @@ describe('juntos-dm-v1', () => {
     expect(fromBase64Url(toBase64Url(bytes))).toEqual(bytes)
     expect(await safetyNumber(['b', 'a'])).toBe(await safetyNumber(['a', 'b']))
     expect(await pairingCode('x')).toMatch(/^[A-Z2-9]{6}$/)
+  })
+
+  it('carries a device key to another device of the same account, and to no other', async () => {
+    const keys = await generateDeviceKeys()
+    const device = { accountId: 7, deviceId: 'dev-7', ...keys }
+    const text = await exportDeviceKey(device)
+    expect(text).toMatch(/^juntos-key:/)
+
+    const taken = await importDeviceKey(` ${text!.slice(0, 40)}\n${text!.slice(40)} `, 7)
+    expect(taken.deviceId).toBe('dev-7')
+    expect(taken.publicKey).toBe(keys.publicKey)
+    const other = await generateDeviceKeys()
+    const there = await deriveWrapKey(taken.privateKey, 'dev-7', other.publicKey, 'o')
+    const here = await deriveWrapKey(other.privateKey, 'o', keys.publicKey, 'dev-7')
+    const sealed = await seal('mesma chave', 7, 8, 'c', [{ deviceId: 'dev-7', wrapKey: here }])
+    expect(await open({ from: 7, to: 8, clientId: 'c', iv: sealed.iv, body: sealed.body }, sealed.keys['dev-7']!, there)).toBe('mesma chave')
+
+    await expect(importDeviceKey(text!, 8)).rejects.toEqual(new KeyImportError('other_account'))
+    await expect(importDeviceKey('juntos-key:abc', 7)).rejects.toBeInstanceOf(KeyImportError)
+  })
+
+  it('reads the key the Android app writes', async () => {
+    const taken = await importDeviceKey(vector.carried, vector.carriedAccount)
+    expect(taken.publicKey).toBe(vector.carriedPublic)
   })
 })
